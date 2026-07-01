@@ -10,10 +10,11 @@ function doGet(e) {
 
 function getRoute_(page) {
   var routes = {
-    index: { file: 'Index', title: '학습 로그라이크' },
-    question: { file: 'QuestionForm', title: '문제 만들기' },
-    admin: { file: 'Admin', title: '문제 승인 관리' },
-    battle: { file: 'Battle', title: '전투' },
+    index: { file: 'Index', title: 'Learning Roguelike' },
+    question: { file: 'QuestionForm', title: 'Question Form' },
+    mypage: { file: 'MyPage', title: 'My Page' },
+    admin: { file: 'Admin', title: 'Admin' },
+    battle: { file: 'Battle', title: 'Battle' },
   };
 
   return routes[page] || routes.index;

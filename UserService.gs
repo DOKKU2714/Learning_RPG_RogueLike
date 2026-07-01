@@ -96,7 +96,7 @@ function isAdmin(email) {
     return false;
   }
 
-  var admin = readTable_(DB_SHEETS.ADMINS).filter(function(row) {
+  var admin = readTableCached_(DB_SHEETS.ADMINS, 600).filter(function(row) {
     return normalizeEmail_(row.email) === normalizedEmail;
   })[0];
   return !!admin && isTruthy_(admin.active);

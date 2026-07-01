@@ -8,8 +8,9 @@ var ALLOWED_REWARD_STAT_KEYS_ = Object.freeze([
   'defense',
 ]);
 
-function generateRewardChoices(runId, stageId) {
+function generateRewardChoices(runId, stageId, authToken) {
   var run = requireRun_(runId);
+  requireRewardRunOwner_(run, authToken);
   if (run.status !== STATUS.RUN_ACTIVE) {
     throw new Error('진행 중인 런에서만 보상을 생성할 수 있습니다.');
   }
@@ -26,7 +27,7 @@ function generateRewardChoices(runId, stageId) {
   var rewardState = stageState.reward || {};
   if (rewardState.stageId === currentStageId && rewardState.choices && rewardState.choices.length) {
     if (!rewardState.currencyGranted) {
-      rewardState.currencyAmount = grantCurrency(runId, rewardGroupId).amount;
+      rewardState.currencyAmount = grantCurrencyForRun_(run, stageState, rewardGroupId).amount;
       rewardState.currencyGranted = true;
       stageState.reward = rewardState;
       updateRowByKey_(DB_SHEETS.RUNS, 'runId', runId, {
@@ -37,8 +38,8 @@ function generateRewardChoices(runId, stageId) {
     return buildRewardChoiceView_(runId, currentStageId, rewardGroupId, rewardState);
   }
 
-  var choices = pickRewardChoices_(rewardGroupId, Number(stage.floor || run.currentFloor));
-  var currencyResult = grantCurrency(runId, rewardGroupId);
+  var choices = pickRewardChoices_(rewardGroupId, Number(stage.floor || run.currentFloor), safeJsonParse_(run.skillsJson, []));
+  var currencyResult = grantCurrencyForRun_(run, stageState, rewardGroupId);
   run = requireRun_(runId);
   stageState = getStageState_(run);
   rewardState = {
@@ -59,8 +60,9 @@ function generateRewardChoices(runId, stageId) {
   return buildRewardChoiceView_(runId, currentStageId, rewardGroupId, rewardState);
 }
 
-function selectReward(runId, rewardId) {
+function selectReward(runId, rewardId, authToken) {
   var run = requireRun_(runId);
+  requireRewardRunOwner_(run, authToken);
   if (run.status !== STATUS.RUN_ACTIVE) {
     throw new Error('진행 중인 런에서만 보상을 선택할 수 있습니다.');
   }
@@ -82,7 +84,7 @@ function selectReward(runId, rewardId) {
   }
 
   if (!rewardState.currencyGranted) {
-    var currencyResult = grantCurrency(runId, rewardState.rewardGroupId);
+    var currencyResult = grantCurrencyForRun_(run, stageState, rewardState.rewardGroupId);
     rewardState.currencyGranted = true;
     rewardState.currencyAmount = currencyResult.amount;
   }
@@ -98,7 +100,13 @@ function selectReward(runId, rewardId) {
   if (reward.type === REWARD_TYPES.STAT) {
     applyStatReward(runState, reward);
   } else if (reward.type === REWARD_TYPES.SKILL) {
-    applySkillReward(runState, reward);
+    if (hasOwnedSkill_(runState.skills, reward.targetId)) {
+      applySkillUpgradeReward_(runState, Object.assign({}, reward, { type: REWARD_TYPES.SKILL_UPGRADE }));
+    } else {
+      applySkillReward(runState, reward);
+    }
+  } else if (reward.type === REWARD_TYPES.SKILL_UPGRADE) {
+    applySkillUpgradeReward_(runState, reward);
   }
 
   rewardState.selectedRewardId = reward.rewardId;
@@ -112,8 +120,8 @@ function selectReward(runId, rewardId) {
     updatedAt: new Date(),
   });
 
-  var movedRun = moveToNextStage(runId);
-  updatePlayerProgressFromRun(runId);
+  var movedRun = moveToNextStageForRun_(requireRun_(runId));
+  updatePlayerProgressFromRun_(requireRun_(runId));
   if (movedRun.status === STATUS.RUN_CLEARED) {
     return {
       cleared: true,
@@ -132,15 +140,21 @@ function selectReward(runId, rewardId) {
   });
 }
 
-function grantCurrency(runId, rewardGroupId) {
+function grantCurrency(runId, rewardGroupId, authToken) {
   var run = requireRun_(runId);
+  requireRewardRunOwner_(run, authToken);
   var stageState = getStageState_(run);
+  return grantCurrencyForRun_(run, stageState, rewardGroupId);
+}
+
+function grantCurrencyForRun_(run, stageState, rewardGroupId) {
+  var runId = run.runId;
   var rewardState = stageState.reward || {};
   if (rewardState.rewardGroupId === rewardGroupId && rewardState.currencyGranted) {
     return { amount: Number(rewardState.currencyAmount || 0), total: Number(run.currency || 0) };
   }
 
-  var group = findRowByKey_(DB_SHEETS.REWARD_GROUPS, 'rewardGroupId', rewardGroupId);
+  var group = findCachedRowByKey_(DB_SHEETS.REWARD_GROUPS, 'rewardGroupId', rewardGroupId, 600);
   if (!group) {
     throw new Error('보상 그룹을 찾을 수 없습니다: ' + rewardGroupId);
   }
@@ -202,8 +216,40 @@ function applySkillReward(runState, reward) {
   return runState;
 }
 
-function moveToNextStage(runId) {
+function applySkillUpgradeReward_(runState, reward) {
+  var skillId = String(reward.targetId || '').trim();
+  if (!skillId) {
+    throw new Error('스킬 강화 보상 targetId가 비어 있습니다.');
+  }
+
+  var found = false;
+  runState.skills = normalizeOwnedSkills_(runState.skills).map(function(skill) {
+    if (skill.skillId === skillId) {
+      found = true;
+      return Object.assign({}, skill, {
+        level: Number(skill.level || 1) + Math.max(1, Number(reward.value || 1)),
+      });
+    }
+    return skill;
+  });
+  if (!found) {
+    runState.skills.push({
+      skillId: skillId,
+      level: Math.max(1, Number(reward.value || 1)),
+      acquiredAt: new Date().toISOString(),
+    });
+  }
+  return runState;
+}
+
+function moveToNextStage(runId, authToken) {
   var run = requireRun_(runId);
+  requireRewardRunOwner_(run, authToken);
+  return moveToNextStageForRun_(run);
+}
+
+function moveToNextStageForRun_(run) {
+  var runId = run.runId;
   var floor = Number(run.currentFloor || 1);
   var stage = Number(run.currentStage || 1);
   var now = new Date();
@@ -240,8 +286,13 @@ function moveToNextStage(runId) {
   });
 }
 
-function updatePlayerProgressFromRun(runId) {
+function updatePlayerProgressFromRun(runId, authToken) {
   var run = requireRun_(runId);
+  requireRewardRunOwner_(run, authToken);
+  return updatePlayerProgressFromRun_(run);
+}
+
+function updatePlayerProgressFromRun_(run) {
   var playerData = getPlayerData_(run.playerId) || ensurePlayerData_(run.playerId);
   var currentBestIndex = (Number(playerData.maxFloor || 1) * 100) + Number(playerData.maxStage || 1);
   var runIndex = (Number(run.currentFloor || 1) * 100) + Number(run.currentStage || 1);
@@ -266,19 +317,19 @@ function updatePlayerProgressFromRun(runId) {
   return updateRowByKey_(DB_SHEETS.PLAYER_DATA, 'playerId', run.playerId, patch);
 }
 
-function pickRewardChoices_(rewardGroupId, floor) {
-  var group = findRowByKey_(DB_SHEETS.REWARD_GROUPS, 'rewardGroupId', rewardGroupId);
+function pickRewardChoices_(rewardGroupId, floor, ownedSkills) {
+  var group = findCachedRowByKey_(DB_SHEETS.REWARD_GROUPS, 'rewardGroupId', rewardGroupId, 600);
   if (!group) {
     throw new Error('보상 그룹을 찾을 수 없습니다: ' + rewardGroupId);
   }
 
   var rewardIds = safeJsonParse_(group.rewardIds, []);
-  var rewards = readTable_(DB_SHEETS.REWARDS).filter(function(reward) {
+  var rewards = readTableCached_(DB_SHEETS.REWARDS, 600).filter(function(reward) {
     var idAllowed = rewardIds.length === 0 || rewardIds.indexOf(reward.rewardId) !== -1;
     var floorAllowed = Number(reward.minFloor || 1) <= floor && Number(reward.maxFloor || GAME_RULES.FLOOR_COUNT) >= floor;
     var typeAllowed = reward.type === REWARD_TYPES.STAT || reward.type === REWARD_TYPES.SKILL || reward.type === REWARD_TYPES.SKILL_UPGRADE || reward.type === REWARD_TYPES.ITEM;
     var statAllowed = reward.type !== REWARD_TYPES.STAT || ALLOWED_REWARD_STAT_KEYS_.indexOf(reward.targetId) !== -1;
-    return idAllowed && floorAllowed && typeAllowed && statAllowed && String(reward.targetId).indexOf('magicAttack') === -1;
+    return idAllowed && floorAllowed && typeAllowed && statAllowed;
   });
 
   var candidates = rewards.slice();
@@ -294,7 +345,25 @@ function pickRewardChoices_(rewardGroupId, floor) {
   if (choices.length === 0) {
     throw new Error('조건에 맞는 보상이 없습니다.');
   }
-  return choices;
+  return choices.map(function(choice) {
+    return adaptOwnedSkillReward_(choice, ownedSkills);
+  });
+}
+
+function adaptOwnedSkillReward_(reward, ownedSkills) {
+  if (reward.type !== REWARD_TYPES.SKILL || !hasOwnedSkill_(ownedSkills, reward.targetId)) {
+    return reward;
+  }
+  return Object.assign({}, reward, {
+    type: REWARD_TYPES.SKILL_UPGRADE,
+    description: '스킬 강화: ' + String(reward.description || reward.targetId).replace(/^스킬 획득:\s*/, ''),
+  });
+}
+
+function hasOwnedSkill_(skills, skillId) {
+  return normalizeOwnedSkills_(skills).some(function(skill) {
+    return skill.skillId === skillId;
+  });
 }
 
 function pickWeightedReward_(rewards) {
@@ -337,4 +406,11 @@ function buildRewardChoiceView_(runId, stageId, rewardGroupId, rewardState) {
 
 function randomInt_(min, max) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function requireRewardRunOwner_(run, authToken) {
+  var player = getCurrentPlayer_(authToken);
+  if (run.playerId !== player.playerId) {
+    throw new Error('현재 플레이어의 런이 아닙니다.');
+  }
 }

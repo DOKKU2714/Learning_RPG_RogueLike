@@ -87,6 +87,15 @@ var QUESTION_TYPES = Object.freeze({
 var ACTION_TYPES = Object.freeze({
   ATTACK: 'attack',
   GUARD: 'guard',
+  SKILL: 'skill',
+});
+
+var SKILL_TYPES = Object.freeze({
+  DAMAGE: 'damage',
+  SHIELD: 'shield',
+  HEAL: 'heal',
+  BUFF: 'buff',
+  DEBUFF: 'debuff',
 });
 
 var REWARD_TYPES = Object.freeze({
@@ -184,6 +193,79 @@ var MASTER_EFFECTS = Object.freeze([
   { effectId: 'buff_focus', name: '집중', category: EFFECT_CATEGORIES.BUFF, statKey: STAT_KEYS.CRITICAL_RATE, effectType: EFFECT_TYPES.FLAT, value: 5, durationType: DURATION_TYPES.STAGE, durationTurns: '', stackable: true, maxStacks: 99, triggerTiming: TRIGGER_TIMINGS.PASSIVE, description: '치명타 확률 n% 증가. 스택 가능.' },
   { effectId: 'buff_smart', name: '똑똑해짐', category: EFFECT_CATEGORIES.BUFF, statKey: STAT_KEYS.QUESTION_DIFFICULTY, effectType: EFFECT_TYPES.FLAT, value: -1, durationType: DURATION_TYPES.STAGE, durationTurns: '', stackable: false, maxStacks: 1, triggerTiming: TRIGGER_TIMINGS.PASSIVE, description: '문제 난이도 -1. 최소 난이도 1 고정.' },
   { effectId: 'buff_wisdom', name: '지혜', category: EFFECT_CATEGORIES.BUFF, statKey: STAT_KEYS.QUESTION_TIME, effectType: EFFECT_TYPES.FLAT, value: 3, durationType: DURATION_TYPES.STAGE, durationTurns: '', stackable: false, maxStacks: 1, triggerTiming: TRIGGER_TIMINGS.PASSIVE, description: '문제 풀이 제한시간 +n초.' },
+]);
+
+var MASTER_SKILLS = Object.freeze([
+  {
+    skillId: 'skill_basic_slash',
+    name: '깊게 베기',
+    type: SKILL_TYPES.DAMAGE,
+    target: 'enemy',
+    baseValue: 18,
+    hitCount: 1,
+    cooldown: '',
+    conditionJson: '{"afterTurn":1,"perStageLimit":3}',
+    difficultyBonus: 1,
+    effectJson: '{}',
+    upgradeJson: '{"damage":4,"chance":0,"effect":0,"buffValue":0,"debuffChance":0}',
+    description: '적 하나에게 큰 피해를 준다.',
+  },
+  {
+    skillId: 'skill_guard_focus',
+    name: '집중 방어',
+    type: SKILL_TYPES.SHIELD,
+    target: 'self',
+    baseValue: 28,
+    hitCount: 1,
+    cooldown: '',
+    conditionJson: '{"afterTurn":1,"perStageLimit":2}',
+    difficultyBonus: 1,
+    effectJson: '{"effectId":"buff_hard","chance":100}',
+    upgradeJson: '{"damage":0,"chance":0,"effect":0,"buffValue":1,"debuffChance":0}',
+    description: '방어막을 만들고 단단함을 얻는다.',
+  },
+  {
+    skillId: 'skill_first_aid',
+    name: '응급 처치',
+    type: SKILL_TYPES.HEAL,
+    target: 'self',
+    baseValue: 20,
+    hitCount: 1,
+    cooldown: '',
+    conditionJson: '{"selfHpBelowPercent":60,"perStageLimit":1}',
+    difficultyBonus: 1,
+    effectJson: '{}',
+    upgradeJson: '{"damage":0,"chance":0,"effect":3,"buffValue":0,"debuffChance":0}',
+    description: '체력을 회복한다. 체력이 낮을 때만 사용할 수 있다.',
+  },
+  {
+    skillId: 'skill_power_shout',
+    name: '힘의 외침',
+    type: SKILL_TYPES.BUFF,
+    target: 'self',
+    baseValue: 0,
+    hitCount: 1,
+    cooldown: '',
+    conditionJson: '{"afterTurn":2,"perStageLimit":2}',
+    difficultyBonus: 1,
+    effectJson: '{"effectId":"buff_power","chance":100}',
+    upgradeJson: '{"damage":0,"chance":0,"effect":0,"buffValue":1,"debuffChance":0}',
+    description: '힘 버프를 얻는다.',
+  },
+  {
+    skillId: 'skill_bleeding_mark',
+    name: '출혈 표식',
+    type: SKILL_TYPES.DEBUFF,
+    target: 'enemy',
+    baseValue: 0,
+    hitCount: 1,
+    cooldown: '',
+    conditionJson: '{"afterTurn":1,"targetHpAbovePercent":20,"perStageLimit":2}',
+    difficultyBonus: 2,
+    effectJson: '{"effectId":"debuff_bleed","chance":100}',
+    upgradeJson: '{"damage":0,"chance":0,"effect":0,"buffValue":0,"debuffChance":10}',
+    description: '적에게 출혈을 건다.',
+  },
 ]);
 
 var MASTER_MONSTER_AI = Object.freeze([

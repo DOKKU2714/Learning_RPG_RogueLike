@@ -35,6 +35,7 @@ function createQuestion(questionPayload, authToken) {
   };
 
   appendRowObject_(DB_SHEETS.QUESTIONS, question);
+  clearTableCache_(DB_SHEETS.QUESTIONS);
   return toClientObject_(question);
 }
 
@@ -58,14 +59,16 @@ function approveQuestion(questionId, difficulty) {
     throw new Error('문제를 찾을 수 없습니다.');
   }
 
-  return toClientObject_(updateRowByKey_(DB_SHEETS.QUESTIONS, 'questionId', questionId, {
+  var updated = updateRowByKey_(DB_SHEETS.QUESTIONS, 'questionId', questionId, {
     difficulty: normalizedDifficulty,
     status: STATUS.QUESTION_APPROVED,
     reviewComment: '',
     approvedBy: adminEmail,
     approvedAt: new Date(),
     updatedAt: new Date(),
-  }));
+  });
+  clearTableCache_(DB_SHEETS.QUESTIONS);
+  return toClientObject_(updated);
 }
 
 function rejectQuestion(questionId, reviewComment) {
@@ -80,13 +83,15 @@ function rejectQuestion(questionId, reviewComment) {
     throw new Error('문제를 찾을 수 없습니다.');
   }
 
-  return toClientObject_(updateRowByKey_(DB_SHEETS.QUESTIONS, 'questionId', questionId, {
+  var updated = updateRowByKey_(DB_SHEETS.QUESTIONS, 'questionId', questionId, {
     status: STATUS.QUESTION_REJECTED,
     reviewComment: comment,
     approvedBy: adminEmail,
     approvedAt: '',
     updatedAt: new Date(),
-  }));
+  });
+  clearTableCache_(DB_SHEETS.QUESTIONS);
+  return toClientObject_(updated);
 }
 
 function getQuestionsByCreator_(creatorId) {

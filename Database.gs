@@ -57,6 +57,60 @@ function readTable_(sheetName) {
   });
 }
 
+function readTableCached_(sheetName, ttlSeconds) {
+  var ttl = Number(ttlSeconds || 300);
+  var cacheKey = 'table:' + sheetName;
+  try {
+    var cached = CacheService.getScriptCache().get(cacheKey);
+    if (cached) {
+      return safeJsonParse_(cached, []);
+    }
+  } catch (error) {
+    return readTable_(sheetName);
+  }
+
+  var rows = readTable_(sheetName);
+  try {
+    CacheService.getScriptCache().put(cacheKey, safeJsonStringify_(rows), ttl);
+  } catch (error) {
+    // Large sheets can exceed Apps Script cache item limits; fall back silently.
+  }
+  return rows;
+}
+
+function findCachedRowByKey_(sheetName, keyColumn, keyValue, ttlSeconds) {
+  return readTableCached_(sheetName, ttlSeconds).filter(function(row) {
+    return String(row[keyColumn]) === String(keyValue);
+  })[0] || null;
+}
+
+function clearTableCache_(sheetName) {
+  try {
+    CacheService.getScriptCache().remove('table:' + sheetName);
+  } catch (error) {
+    // Cache clearing is best-effort.
+  }
+}
+
+function clearMasterTableCaches_() {
+  [
+    DB_SHEETS.SETTINGS,
+    DB_SHEETS.STAGES,
+    DB_SHEETS.MONSTER_GROUPS,
+    DB_SHEETS.MONSTERS,
+    DB_SHEETS.SKILLS,
+    DB_SHEETS.EFFECTS,
+    DB_SHEETS.REWARDS,
+    DB_SHEETS.REWARD_GROUPS,
+    DB_SHEETS.QUESTIONS,
+  ].forEach(clearTableCache_);
+}
+
+function clearRuntimeCaches() {
+  clearMasterTableCaches_();
+  return { ok: true, clearedAt: new Date() };
+}
+
 function appendRowObject_(sheetName, object) {
   var sheet = getSheet_(sheetName);
   var headers = getHeaderRow_(sheet);
@@ -170,6 +224,15 @@ function seedMasterData() {
   MASTER_MONSTER_AI.forEach(function(ai) {
     upsertRowByKey_(DB_SHEETS.MONSTER_AI, 'aiId', ai.aiId, ai);
   });
+  if (typeof EXTRA_MONSTER_AI !== 'undefined') {
+    EXTRA_MONSTER_AI.forEach(function(ai) {
+      upsertRowByKey_(DB_SHEETS.MONSTER_AI, 'patternName', ai.patternName, ai);
+    });
+  }
+
+  MASTER_SKILLS.forEach(function(skill) {
+    upsertRowByKey_(DB_SHEETS.SKILLS, 'skillId', skill.skillId, skill);
+  });
 
   MASTER_MONSTERS.forEach(function(monster) {
     upsertRowByKey_(DB_SHEETS.MONSTERS, 'monsterId', monster.monsterId, monster);
@@ -194,6 +257,8 @@ function seedMasterData() {
   buildStageSeedData_().forEach(function(stage) {
     upsertRowByKey_(DB_SHEETS.STAGES, 'stageId', stage.stageId, stage);
   });
+
+  clearMasterTableCaches_();
 }
 
 /**

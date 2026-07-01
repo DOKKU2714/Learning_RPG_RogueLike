@@ -32,6 +32,7 @@
       <div id="actionPanel" class="action-panel compact-actions">
         <button onclick="chooseAction('attack')">공격</button>
         <button onclick="chooseAction('guard')">수비</button>
+        <div id="skillPanel" class="skill-panel"></div>
       </div>
 
       <div class="player-compact-panel">
@@ -141,6 +142,10 @@
         pendingAction: null,
       },
       stageState: { otherStudentQuestionShown: false, fallbackEvents: [] },
+      availableSkills: [
+        { skillId: 'skill_basic_slash', name: '깊게 베기', type: 'damage', target: 'enemy', available: true, unavailableReason: '', description: '큰 피해를 준다.' },
+        { skillId: 'skill_guard_focus', name: '집중 방어', type: 'shield', target: 'self', available: false, unavailableReason: '이 스테이지에서 더 사용할 수 없습니다.', description: '방어막을 만든다.' },
+      ],
     };
 
     var dummyQuestion = {
@@ -203,8 +208,31 @@
       var battle = view.battle;
       renderMonsters(battle.monsters);
       renderPlayerHud(battle.player);
+      renderSkills(view.availableSkills || []);
       setPlayerTurn(isPlayerTurn && battle.status === 'active');
       pushLog(battle.lastMessage || '전투 시작!');
+    }
+
+    function renderSkills(skills) {
+      var panel = document.getElementById('skillPanel');
+      if (!skills.length) {
+        panel.innerHTML = '<div class="skill-empty">보유 스킬 없음</div>';
+        return;
+      }
+      panel.innerHTML = skills.map(function(skill) {
+        var disabled = skill.available ? '' : ' disabled';
+        var reason = skill.unavailableReason || skill.description || '';
+        return '<button class="skill-button" data-skill-id="' + escapeHtml(skill.skillId) + '" title="' + escapeHtml(reason) + '"' + disabled + '>' +
+          '<span>' + escapeHtml(skill.name) + '</span>' +
+          '<small>Lv.' + escapeHtml(skill.level || 1) + ' ' + escapeHtml(skill.type) + '</small>' +
+          '<small class="skill-preview">' + escapeHtml(skill.previewText || '') + '</small>' +
+        '</button>';
+      }).join('');
+      Array.prototype.forEach.call(panel.querySelectorAll('.skill-button'), function(button) {
+        button.addEventListener('click', function() {
+          chooseSkill(button.getAttribute('data-skill-id'));
+        });
+      });
     }
 
     function renderMonsters(monsters) {
@@ -218,11 +246,33 @@
           '<div class="monster-hp-text">' + hp + ' / ' + maxHp + '</div>' +
           '<div class="thin-hp-bar monster-hp-bar"><span style="width:' + hpPercent + '%"></span></div>' +
           statusIcons +
+          renderMonsterIntent(monster.intent) +
           '<div class="monster-sprite-placeholder compact-monster" data-monster-key="' + escapeHtml(monster.imageKey || 'placeholder') + '">' +
             '<span>' + escapeHtml(monster.name || ('MONSTER ' + (index + 1))) + '</span>' +
           '</div>' +
         '</article>';
       }).join('');
+    }
+
+    function renderMonsterIntent(intent) {
+      var view = intent || { intentIcon: '???', intentText: '???' };
+      var icon = view.intentIcon || '???';
+      var text = view.intentText || view.intentTextTemplate || '???';
+      return '<div class="monster-intent" title="' + escapeHtml(text) + '">' +
+        '<span class="monster-intent-icon">' + escapeHtml(intentIconLabel(icon)) + '</span>' +
+        '<span class="monster-intent-text">' + escapeHtml(text) + '</span>' +
+      '</div>';
+    }
+
+    function intentIconLabel(icon) {
+      var labels = {
+        sword: 'ATK',
+        shield: 'DEF',
+        drop: 'DBF',
+        skill: 'SKL',
+        heal: 'HEAL',
+      };
+      return labels[icon] || icon || '???';
     }
 
     function renderStatusIcons(monster) {
@@ -276,9 +326,36 @@
         .selectQuestionForAction(currentView.playerId, currentView.runId, actionType, 0, getAuthToken());
     }
 
-    function openDummyQuestionModal(actionType) {
+    function chooseSkill(skillId) {
+      if (!isPlayerTurn || isAnimatingTurn) {
+        pushLog('지금은 행동할 수 없습니다.');
+        return;
+      }
+      var target = getFirstAliveMonster(currentView.battle);
+      var targetId = target ? (target.instanceId || target.monsterId) : '';
+      if (isDummyMode || !currentView || currentView.runId === 'dummy-run') {
+        openDummyQuestionModal('skill', skillId, targetId);
+        return;
+      }
+
+      showLoadingModal('스킬 문제를 고르는 중...', '스킬 조건과 문제 난이도를 계산하는 중...');
+      google.script.run
+        .withSuccessHandler(function(questionView) {
+          hideLoadingModal();
+          openQuestionModal(questionView, false);
+        })
+        .withFailureHandler(function(error) {
+          hideLoadingModal();
+          pushLog(error.message);
+        })
+        .useSkill(currentView.runId, skillId, targetId, { authToken: getAuthToken() });
+    }
+
+    function openDummyQuestionModal(actionType, skillId, targetId) {
       var questionView = JSON.parse(JSON.stringify(dummyQuestion));
       questionView.actionType = actionType || 'attack';
+      questionView.skillId = skillId || '';
+      questionView.targetId = targetId || '';
       openQuestionModal(questionView, true);
     }
 
@@ -376,7 +453,7 @@
       }
 
       showLoadingModal('답안을 처리하는 중...', '효율과 전투 결과를 계산하는 중...');
-      google.script.run
+      var runner = google.script.run
         .withSuccessHandler(function(view) {
           hideLoadingModal();
           closeQuestionModal();
@@ -387,8 +464,9 @@
           document.getElementById('questionSubmitButton').disabled = false;
           document.getElementById('questionMessage').textContent = error.message;
           document.getElementById('questionMessage').className = 'message error';
-        })
-        .submitActionAnswer({
+        });
+
+      var answerPayload = {
           runId: currentView.runId,
           authToken: getAuthToken(),
           questionId: currentQuestionView.question.questionId,
@@ -397,7 +475,13 @@
           selectedAnswerText: answer.selectedAnswerText,
           elapsedMs: elapsedMs,
           wrongCountAfterTimeout: wrongCountAfterTimeout,
-        });
+      };
+
+      if (currentQuestionView.actionType === 'skill') {
+        runner.useSkill(currentView.runId, currentQuestionView.skillId, currentQuestionView.targetId, answerPayload);
+      } else {
+        runner.submitActionAnswer(answerPayload);
+      }
     }
 
     async function playTurnSequence(nextView) {
@@ -409,10 +493,21 @@
 
       for (var i = 0; i < events.length; i += 1) {
         var event = events[i];
+        if (event.actor === 'effect') {
+          pushLog(event.message || '');
+          if (event.target === 'monster') {
+            animateMonsterHit(event.targetMonsterId, event.damage);
+          } else if (event.target === 'player') {
+            animatePlayerHit(event.damage);
+          }
+          await delay(520);
+        }
         if (event.actor === 'player') {
           pushLog(event.message || '플레이어의 행동!');
-          if (event.type === 'attack') {
+          if (event.type === 'attack' || event.type === 'skill') {
             animateMonsterHit(event.targetMonsterId, event.damage);
+          } else if ((event.type === 'debuff' || event.type === 'buff') && event.targetMonsterId) {
+            animateMonsterEffect(event.targetMonsterId, event.effectName || 'EFFECT');
           }
           await delay(520);
         }
@@ -424,7 +519,9 @@
         await delay(300);
         for (var j = 0; j < monsterEvents.length; j += 1) {
           pushLog(monsterEvents[j].message || '몬스터의 공격!');
-          animatePlayerHit(monsterEvents[j].hpDamage || monsterEvents[j].damage || 0);
+          if (Number(monsterEvents[j].hpDamage || monsterEvents[j].damage || 0) > 0) {
+            animatePlayerHit(monsterEvents[j].hpDamage || monsterEvents[j].damage || 0);
+          }
           await delay(620);
         }
         pushLog('상대 턴 끝');
@@ -509,6 +606,12 @@
         return;
       }
 
+      if (typeof google.script.run.generateRewardChoices !== 'function') {
+        hideLoadingModal();
+        pushLog('보상 서버 함수가 현재 배포본에 없습니다. clasp push 후 웹앱을 새 버전으로 배포해 주세요.');
+        return;
+      }
+
       showLoadingModal('보상을 준비하는 중...', '보상 후보 3개를 고르는 중...');
       google.script.run
         .withSuccessHandler(function(rewardView) {
@@ -519,23 +622,35 @@
           hideLoadingModal();
           pushLog(error.message);
         })
-        .generateRewardChoices(currentView.runId, currentView.battle.stage.stageId);
+        .generateRewardChoices(currentView.runId, currentView.battle.stage.stageId, getAuthToken());
     }
 
     function renderRewardChoices(rewardView) {
       document.getElementById('rewardCurrencyBadge').textContent = '재화 +' + Number(rewardView.currencyAmount || 0);
-      document.getElementById('rewardChoices').innerHTML = rewardView.choices.map(function(reward) {
-        return '<button class="reward-choice-card" onclick="selectRewardChoice(\'' + escapeHtml(reward.rewardId) + '\')">' +
+      var rewardContainer = document.getElementById('rewardChoices');
+      rewardContainer.innerHTML = rewardView.choices.map(function(reward) {
+        return '<button class="reward-choice-card" data-reward-id="' + escapeHtml(reward.rewardId) + '">' +
           '<strong>' + escapeHtml(reward.description || reward.rewardId) + '</strong>' +
           '<span>' + escapeHtml(reward.type) + ' / ' + escapeHtml(reward.targetId) + '</span>' +
         '</button>';
       }).join('');
+      Array.prototype.forEach.call(rewardContainer.querySelectorAll('.reward-choice-card'), function(button) {
+        button.addEventListener('click', function() {
+          selectRewardChoice(button.getAttribute('data-reward-id'));
+        });
+      });
       document.getElementById('rewardMessage').textContent = '';
       document.getElementById('rewardModal').classList.add('active');
       document.getElementById('rewardModal').setAttribute('aria-hidden', 'false');
     }
 
     function selectRewardChoice(rewardId) {
+      if (!isDummyMode && currentView.runId !== 'dummy-run' && typeof google.script.run.selectReward !== 'function') {
+        hideLoadingModal();
+        document.getElementById('rewardMessage').textContent = '보상 선택 서버 함수가 현재 배포본에 없습니다. clasp push 후 웹앱을 새 버전으로 배포해 주세요.';
+        document.getElementById('rewardMessage').className = 'message error';
+        return;
+      }
       if (isDummyMode || currentView.runId === 'dummy-run') {
         document.getElementById('rewardModal').classList.remove('active');
         pushLog('더미 보상을 선택했습니다. 다음 스테이지로 이동하는 흐름입니다.');
@@ -562,7 +677,7 @@
           document.getElementById('rewardMessage').textContent = error.message;
           document.getElementById('rewardMessage').className = 'message error';
         })
-        .selectReward(currentView.runId, rewardId);
+        .selectReward(currentView.runId, rewardId, getAuthToken());
     }
 
     function animateMonsterHit(monsterId, damage) {
@@ -576,6 +691,17 @@
       spawnFloatingDamage(target, damage, 'damage-white');
     }
 
+    function animateMonsterEffect(monsterId, label) {
+      var target = document.querySelector('[data-monster-id="' + cssEscape(monsterId) + '"] .compact-monster');
+      if (!target) {
+        return;
+      }
+      target.classList.remove('monster-effect');
+      void target.offsetWidth;
+      target.classList.add('monster-effect');
+      spawnFloatingText(target, label || 'EFFECT', 'effect-float');
+    }
+
     function animatePlayerHit(damage) {
       var shell = document.getElementById('battleShell');
       shell.classList.remove('player-hit');
@@ -586,12 +712,16 @@
     }
 
     function spawnFloatingDamage(anchor, damage, className) {
+      spawnFloatingText(anchor, String(Math.max(0, Number(damage || 0))), className);
+    }
+
+    function spawnFloatingText(anchor, text, className) {
       var rect = anchor.getBoundingClientRect();
       var layer = document.getElementById('floatingLayer');
       var layerRect = layer.getBoundingClientRect();
       var element = document.createElement('div');
       element.className = 'floating-damage ' + className;
-      element.textContent = String(Math.max(0, Number(damage || 0)));
+      element.textContent = String(text || '');
       element.style.left = (rect.left + (rect.width / 2) - layerRect.left) + 'px';
       element.style.top = (rect.top - layerRect.top - 8) + 'px';
       layer.appendChild(element);
@@ -651,6 +781,7 @@
     }
 
     function actionLabel(actionType) {
+      if (actionType === 'skill') return '스킬';
       return actionType === 'guard' ? '수비' : '공격';
     }
 

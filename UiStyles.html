@@ -666,6 +666,35 @@
     border-color: #8d2f2f;
   }
 
+  .monster-intent {
+    display: grid;
+    justify-items: center;
+    gap: 2px;
+    margin: 4px auto 6px;
+    max-width: 140px;
+    color: #efefef;
+    text-align: center;
+  }
+
+  .monster-intent-icon {
+    min-width: 34px;
+    border: 1px solid rgba(235, 235, 235, 0.72);
+    background: rgba(0, 0, 0, 0.72);
+    padding: 2px 5px;
+    font-size: 10px;
+    letter-spacing: 0.04em;
+  }
+
+  .monster-intent-text {
+    width: 100%;
+    color: var(--muted);
+    font-size: 11px;
+    line-height: 1.25;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   .compact-monster {
     width: min(150px, 24vw);
     max-width: 150px;
@@ -688,7 +717,7 @@
     display: grid;
     grid-template-columns: minmax(180px, 1fr) auto minmax(220px, 0.8fr);
     gap: 8px;
-    align-items: end;
+    align-items: stretch;
     transform: translateX(-50%);
   }
 
@@ -702,11 +731,14 @@
   }
 
   .battle-log-compact {
-    min-height: 54px;
+    min-height: 112px;
+    display: flex;
+    align-items: stretch;
   }
 
   .battle-log-compact .battle-log {
     min-height: auto;
+    width: 100%;
     font-size: 14px;
     line-height: 1.45;
   }
@@ -722,9 +754,43 @@
     padding: 6px 10px;
   }
 
+  .skill-panel {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+    margin-top: 2px;
+  }
+
+  .skill-button {
+    display: grid;
+    gap: 2px;
+    min-height: 40px;
+    padding: 5px 8px;
+    text-align: left;
+  }
+
+  .skill-button small,
+  .skill-empty {
+    color: var(--muted);
+    font-size: 11px;
+  }
+
+  .skill-preview {
+    color: #f0f0f0;
+  }
+
+  .skill-empty {
+    grid-column: 1 / -1;
+    padding: 4px 2px;
+    text-align: center;
+  }
+
   .player-compact-panel {
     position: relative;
-    min-height: 52px;
+    min-height: 112px;
+    display: grid;
+    align-items: center;
   }
 
   .player-hp-row {
@@ -823,8 +889,18 @@
     color: #d00000;
   }
 
+  .effect-float {
+    color: #f2f2f2;
+    font-size: 16px;
+    letter-spacing: 0.04em;
+  }
+
   .monster-hit {
     animation: monsterHit 420ms ease-out;
+  }
+
+  .monster-effect {
+    animation: monsterEffect 520ms ease-out;
   }
 
   .player-hit {
@@ -842,6 +918,13 @@
     54% { transform: translateX(-4px); }
     72% { transform: translateX(3px); }
     100% { filter: brightness(1); transform: translateX(0); }
+  }
+
+  @keyframes monsterEffect {
+    0% { filter: brightness(1); transform: scale(1); }
+    28% { filter: brightness(2.2) grayscale(1); transform: scale(1.04); }
+    58% { filter: brightness(0.7) grayscale(1); transform: scale(0.98); }
+    100% { filter: brightness(1); transform: scale(1); }
   }
 
   @keyframes playerShake {
@@ -901,6 +984,11 @@
     .battle-hud {
       grid-template-columns: 1fr;
       bottom: 8px;
+    }
+
+    .battle-log-compact,
+    .player-compact-panel {
+      min-height: 68px;
     }
 
     .compact-actions {

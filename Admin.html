@@ -140,6 +140,34 @@
       display: none;
     }
 
+    .stat-table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      margin-bottom: 16px;
+    }
+
+    .stat-table th,
+    .stat-table td {
+      border-bottom: 1px solid var(--line);
+      padding: 10px;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    .stat-table th {
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .stat-prompt {
+      max-width: 360px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
     @media (max-width: 760px) {
       .shell {
         padding: 16px;
@@ -175,6 +203,17 @@
         <button class="secondary" onclick="loadPendingQuestions()">새로고침</button>
       </div>
       <div id="pendingList"></div>
+
+      <div class="panel topline">
+        <h2>학생 통계</h2>
+        <button class="secondary" onclick="loadAdminStats()">새로고침</button>
+      </div>
+      <div id="playerStatsList"></div>
+
+      <div class="panel topline">
+        <h2>문제별 통계</h2>
+      </div>
+      <div id="questionStatsList"></div>
     </section>
   </main>
 
@@ -189,6 +228,7 @@
           document.getElementById('adminPanel').classList.toggle('hidden', !state.isAdmin);
           if (state.isAdmin) {
             loadPendingQuestions();
+            loadAdminStats();
           }
         })
         .withFailureHandler(showAdminError)
@@ -265,6 +305,70 @@
         .withSuccessHandler(loadPendingQuestions)
         .withFailureHandler(showAdminError)
         .rejectQuestion(questionId, comment);
+    }
+
+    function loadAdminStats() {
+      google.script.run
+        .withSuccessHandler(renderAdminPlayerStats)
+        .withFailureHandler(showAdminError)
+        .getAdminPlayerStats();
+      google.script.run
+        .withSuccessHandler(renderAdminQuestionStats)
+        .withFailureHandler(showAdminError)
+        .getAdminQuestionStats();
+    }
+
+    function renderAdminPlayerStats(players) {
+      var container = document.getElementById('playerStatsList');
+      if (!players.length) {
+        container.innerHTML = '<section class="panel"><p class="muted">학생 데이터가 없습니다.</p></section>';
+        return;
+      }
+      container.innerHTML =
+        '<table class="stat-table">' +
+          '<thead><tr><th>학생</th><th>풀이 수</th><th>정답률</th><th>평균 시간</th><th>최대 진행</th><th>재화</th></tr></thead>' +
+          '<tbody>' + players.map(function(player) {
+            return '<tr>' +
+              '<td>' + escapeHtml(player.displayName || ((player.studentId || '') + ' ' + (player.studentName || ''))) + '</td>' +
+              '<td>' + Number(player.totalAnswerCount || 0) + '</td>' +
+              '<td>' + formatRate(player.correctRate) + '</td>' +
+              '<td>' + formatTime(player.averageAnswerTimeMs) + '</td>' +
+              '<td>' + Number(player.maxFloor || 1) + '층 ' + Number(player.maxStage || 1) + '스테이지</td>' +
+              '<td>' + Number(player.currency || 0) + '</td>' +
+            '</tr>';
+          }).join('') + '</tbody>' +
+        '</table>';
+    }
+
+    function renderAdminQuestionStats(questions) {
+      var container = document.getElementById('questionStatsList');
+      if (!questions.length) {
+        container.innerHTML = '<section class="panel"><p class="muted">문제 데이터가 없습니다.</p></section>';
+        return;
+      }
+      container.innerHTML =
+        '<table class="stat-table">' +
+          '<thead><tr><th>문제</th><th>출제자</th><th>상태</th><th>난이도</th><th>풀이</th><th>정답률</th></tr></thead>' +
+          '<tbody>' + questions.map(function(question) {
+            return '<tr>' +
+              '<td class="stat-prompt" title="' + escapeHtml(question.prompt) + '">' + escapeHtml(question.prompt) + '</td>' +
+              '<td>' + escapeHtml(question.creatorName || '-') + '</td>' +
+              '<td>' + escapeHtml(question.status || '-') + '</td>' +
+              '<td>' + escapeHtml(question.difficulty || '-') + '</td>' +
+              '<td>' + Number(question.correctCount || 0) + ' / ' + Number(question.totalCount || 0) + '</td>' +
+              '<td>' + formatRate(question.correctRate) + '</td>' +
+            '</tr>';
+          }).join('') + '</tbody>' +
+        '</table>';
+    }
+
+    function formatRate(rate) {
+      return Number(rate || 0).toFixed(1).replace(/\.0$/, '') + '%';
+    }
+
+    function formatTime(ms) {
+      var value = Number(ms || 0);
+      return value > 0 ? (value / 1000).toFixed(1) + '초' : '-';
     }
 
     function setAdminMessage(message, type) {

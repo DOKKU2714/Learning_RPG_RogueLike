@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <base target="_top">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <?!= include_('UiStyles'); ?>
+  <style>
+    .mypage-shell {
+      width: min(980px, calc(100vw - 24px));
+      margin: 0 auto;
+      padding: 24px 0;
+    }
+
+    .mypage-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      margin: 18px 0;
+    }
+
+    .stat-box {
+      border: 1px solid var(--line);
+      background: rgba(15, 15, 15, 0.86);
+      padding: 12px;
+      min-height: 86px;
+    }
+
+    .stat-box strong {
+      display: block;
+      margin-top: 8px;
+      color: var(--accent);
+      font-size: 22px;
+    }
+
+    .question-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+    }
+
+    .question-table th,
+    .question-table td {
+      border-bottom: 1px solid rgba(180, 180, 180, 0.24);
+      padding: 9px 8px;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    .question-table th {
+      color: var(--muted);
+      font-weight: 400;
+    }
+
+    .question-prompt {
+      max-width: 420px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    @media (max-width: 760px) {
+      .mypage-grid {
+        grid-template-columns: 1fr 1fr;
+      }
+
+      .question-table {
+        font-size: 13px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="mypage-shell fade-in">
+    <section class="rpg-panel">
+      <div style="display:flex; justify-content:space-between; gap:12px; align-items:center; flex-wrap:wrap;">
+        <div>
+          <p class="muted">MY PAGE</p>
+          <h1 id="playerName" class="rpg-title">내 정보</h1>
+        </div>
+        <button class="secondary" onclick="goHome()">메인으로</button>
+      </div>
+      <div id="mypageMessage" class="message"></div>
+    </section>
+
+    <section id="summaryPanel" class="rpg-panel">
+      <h2 class="rpg-title">요약</h2>
+      <div class="mypage-grid">
+        <div class="stat-box">
+          <span class="muted">전체 정답률</span>
+          <strong id="correctRate">-</strong>
+        </div>
+        <div class="stat-box">
+          <span class="muted">평균 풀이 시간</span>
+          <strong id="averageTime">-</strong>
+        </div>
+        <div class="stat-box">
+          <span class="muted">최대 진행</span>
+          <strong id="maxProgress">-</strong>
+        </div>
+        <div class="stat-box">
+          <span class="muted">총 풀이 수</span>
+          <strong id="totalAnswers">-</strong>
+        </div>
+      </div>
+    </section>
+
+    <section class="rpg-panel">
+      <h2 class="rpg-title">내 문제 통계</h2>
+      <div id="questionStats"></div>
+    </section>
+  </main>
+
+  <?!= include_('UiLoadingModal'); ?>
+
+  <script>
+    var WEB_APP_URL = '<?= getWebAppUrl_() ?>';
+
+    function init() {
+      showLoadingModal('로딩 중...', '내 정보를 불러오는 중...');
+      google.script.run
+        .withSuccessHandler(function(state) {
+          if (!state.isRegistered || !state.player) {
+            hideLoadingModal();
+            setMessage('로그인 정보가 없습니다. 메인 화면에서 로그인해 주세요.', 'error');
+            return;
+          }
+          loadMyInfo(state.player.playerId);
+        })
+        .withFailureHandler(showError)
+        .getCurrentUser(getAuthToken());
+    }
+
+    function loadMyInfo(playerId) {
+      google.script.run
+        .withSuccessHandler(function(info) {
+          hideLoadingModal();
+          renderMyInfo(info);
+        })
+        .withFailureHandler(showError)
+        .getMyInfo(playerId, getAuthToken());
+    }
+
+    function renderMyInfo(info) {
+      var player = info.player || {};
+      var summary = info.summary || {};
+      document.getElementById('playerName').textContent = player.displayName || player.studentName || '내 정보';
+      document.getElementById('correctRate').textContent = formatRate(summary.correctRate);
+      document.getElementById('averageTime').textContent = formatTime(summary.averageAnswerTimeMs);
+      document.getElementById('maxProgress').textContent = Number(summary.maxFloor || 1) + '층 ' + Number(summary.maxStage || 1) + '스테이지';
+      document.getElementById('totalAnswers').textContent = Number(summary.totalAnswerCount || 0) + '문제';
+      renderQuestions(info.questionStats || []);
+    }
+
+    function renderQuestions(questions) {
+      var container = document.getElementById('questionStats');
+      if (!questions.length) {
+        container.innerHTML = '<p class="muted">아직 만든 문제가 없습니다.</p>';
+        return;
+      }
+      container.innerHTML =
+        '<table class="question-table">' +
+          '<thead><tr><th>문제</th><th>상태</th><th>난이도</th><th>풀이</th><th>정답률</th></tr></thead>' +
+          '<tbody>' + questions.map(function(question) {
+            return '<tr>' +
+              '<td class="question-prompt" title="' + escapeHtml(question.prompt) + '">' + escapeHtml(question.prompt) + '</td>' +
+              '<td>' + escapeHtml(question.status || '-') + '</td>' +
+              '<td>' + escapeHtml(question.difficulty || '-') + '</td>' +
+              '<td>' + Number(question.correctCount || 0) + ' / ' + Number(question.totalCount || 0) + '</td>' +
+              '<td>' + formatRate(question.correctRate) + '</td>' +
+            '</tr>';
+          }).join('') + '</tbody>' +
+        '</table>';
+    }
+
+    function formatRate(rate) {
+      return Number(rate || 0).toFixed(1).replace(/\.0$/, '') + '%';
+    }
+
+    function formatTime(ms) {
+      var value = Number(ms || 0);
+      return value > 0 ? (value / 1000).toFixed(1) + '초' : '-';
+    }
+
+    function getAuthToken() {
+      return sessionStorage.getItem('learningRpgAuthToken') || '';
+    }
+
+    function goHome() {
+      window.top.location.href = WEB_APP_URL;
+    }
+
+    function setMessage(message, type) {
+      var element = document.getElementById('mypageMessage');
+      element.textContent = message || '';
+      element.className = 'message ' + (type || '');
+    }
+
+    function showError(error) {
+      hideLoadingModal();
+      setMessage(error.message || String(error), 'error');
+    }
+
+    function showLoadingModal(title, text) {
+      document.getElementById('loadingTitle').textContent = title || '로딩 중...';
+      document.getElementById('loadingText').textContent = text || '데이터를 불러오는 중...';
+      document.getElementById('loadingModal').classList.add('active');
+    }
+
+    function hideLoadingModal() {
+      document.getElementById('loadingModal').classList.remove('active');
+    }
+
+    function escapeHtml(value) {
+      return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+
+    init();
+  </script>
+</body>
+</html>

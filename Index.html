@@ -166,6 +166,8 @@
     }
 
     function showMyInfo() {
+      goToPage('mypage');
+      return;
       if (!currentState || !currentState.playerData) {
         setMainMessage('플레이어 정보가 없습니다.', 'error');
         return;
