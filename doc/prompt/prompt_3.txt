@@ -1,0 +1,44 @@
+3단계 작업을 시작해줘.
+
+전제:
+2단계 전투 MVP가 구현되어 있다.
+
+목표:
+스테이지 클리어 후 랜덤 보상 3개 중 하나를 선택하고, 재화를 별도로 지급한다.
+
+구현 범위:
+1. 전투 승리 시 Reward 화면을 표시한다.
+2. RewardGroups에서 현재 스테이지 rewardGroupId를 읽는다.
+3. Rewards에서 조건에 맞는 보상 후보를 가져온다.
+4. 랜덤 보상 3개를 중복 없이 제시한다.
+5. 플레이어는 3개 중 하나만 선택한다.
+6. 재화는 RewardGroups의 currencyMin~currencyMax 범위에서 무조건 추가 지급한다.
+7. 보상 타입은 stat, skill, skillUpgrade, item을 지원하되, 이번 단계에서는 stat과 skill만 우선 구현한다.
+8. stat 보상에는 attack, hp, hpRegen, evasion, criticalRate, criticalDamage, defense만 허용한다.
+9. magicAttack 관련 보상은 만들지 않는다.
+10. skillUpgrade와 item은 데이터 구조만 남기고 실제 효과는 다음 단계로 미룬다.
+11. 보상 선택 후 Runs의 statsJson, skillsJson, currency를 갱신한다.
+12. 다음 스테이지로 이동한다.
+13. 층 마지막 스테이지 클리어 시 다음 층 1스테이지로 이동한다.
+14. 5층 5스테이지 클리어 시 run status를 cleared로 변경한다.
+15. PlayerData의 maxFloor, maxStage, currency, bestClearTimeMs를 갱신한다.
+
+필수 함수:
+- generateRewardChoices(runId, stageId)
+- selectReward(runId, rewardId)
+- grantCurrency(runId, rewardGroupId)
+- applyStatReward(runState, reward)
+- applySkillReward(runState, reward)
+- moveToNextStage(runId)
+- updatePlayerProgressFromRun(runId)
+
+완료 기준:
+- 스테이지 클리어 후 보상 3개 표시
+- 하나 선택 가능
+- 재화 추가 지급
+- 다음 스테이지 진행 가능
+- PlayerData 진행도 갱신
+- 마법공격력 보상 없음
+
+주의:
+아직 스킬 실제 사용, 버프/디버프, 아이템 효과는 구현하지 마라.

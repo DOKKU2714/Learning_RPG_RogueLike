@@ -1,0 +1,137 @@
+0단계 작업을 시작해줘.
+
+목표:
+v0.5 기획서를 기준으로 Google Spreadsheet 데이터베이스 구조를 초기화한다.
+
+구현 범위:
+1. Constants.gs를 생성한다.
+2. Database.gs를 생성한다.
+3. 모든 시트명과 컬럼명을 상수로 정의한다.
+4. setupDatabase() 함수를 구현한다.
+5. seedMasterData() 함수를 구현한다.
+6. resetDatabaseForDev() 함수를 구현하되, 개발용이며 기존 데이터를 삭제할 수 있음을 주석으로 명확히 표시한다.
+7. 사진 업로드/카메라 기능은 제외한다.
+8. 마법공격력 관련 컬럼과 변수는 만들지 않는다.
+
+필수 시트:
+- Settings
+- Admins
+- Players
+- PlayerData
+- Runs
+- Questions
+- AnswerLogs
+- Stages
+- MonsterGroups
+- Monsters
+- MonsterAI
+- Skills
+- Effects
+- Items
+- Rewards
+- RewardGroups
+- BattleLogs
+
+시트별 헤더:
+
+Settings:
+key, value, type, description, updatedAt
+
+Admins:
+email, name, role, active, createdAt
+
+Players:
+playerId, email, displayName, avatarType, avatarKey, createdAt, lastLoginAt, isActive
+
+PlayerData:
+playerId, maxFloor, maxStage, bestClearTimeMs, totalAnswerCount, correctAnswerCount, averageAnswerTimeMs, currency, baseStatsJson, ownedSkillsJson, ownedItemsJson, updatedAt
+
+Runs:
+runId, playerId, status, currentFloor, currentStage, currentHp, currentShield, statsJson, skillsJson, itemsJson, stageStateJson, startedAt, updatedAt, endedAt, clearTimeMs
+
+Questions:
+questionId, type, prompt, choice1, choice2, choice3, choice4, answer, answerAliases, explanation, difficulty, creatorId, creatorName, subject, unit, tags, status, reviewComment, approvedBy, approvedAt, createdAt, updatedAt, correctCount, totalCount
+
+AnswerLogs:
+answerLogId, questionId, playerId, creatorId, runId, battleId, floor, stage, actionType, selectedAnswer, isCorrect, elapsedMs, maxTimeMs, efficiency, finalDifficulty, isOtherPlayerQuestion, createdAt
+
+Stages:
+stageId, floor, stage, name, baseDifficulty, minDifficulty, maxDifficulty, monsterGroupId, bossMonsterId, rewardGroupId, requiredOtherQuestionCount
+
+MonsterGroups:
+monsterGroupId, name, monsterIds, weights
+
+Monsters:
+monsterId, name, type, imageKey, hp, attack, hpRegen, evasion, criticalRate, criticalDamage, defense, aiId, skillIds, description
+
+MonsterAI:
+aiId, patternName, actionType, conditionJson, probability, skillId, intentIcon, intentTextTemplate
+
+Skills:
+skillId, name, type, target, baseValue, hitCount, cooldown, conditionJson, difficultyBonus, effectJson, upgradeJson, description
+
+Effects:
+effectId, name, category, statKey, effectType, value, durationType, durationTurns, stackable, maxStacks, triggerTiming, description
+
+Items:
+itemId, name, type, target, effectJson, triggerTiming, description
+
+Rewards:
+rewardId, type, targetId, value, weight, minFloor, maxFloor, description
+
+RewardGroups:
+rewardGroupId, rewardIds, currencyMin, currencyMax, description
+
+BattleLogs:
+battleLogId, runId, playerId, floor, stage, result, summaryJson, createdAt
+
+기본 스탯 JSON:
+{
+  "attack": 10,
+  "hp": 100,
+  "hpRegen": 5,
+  "evasion": 0,
+  "criticalRate": 5,
+  "criticalDamage": 150,
+  "defense": 0
+}
+
+주의:
+magicAttack, magicPower, spellPower 같은 마법공격력 관련 값을 만들지 마라.
+
+Effects 기본 데이터:
+- debuff_bleed: 출혈
+- debuff_poison: 중독
+- debuff_freeze: 빙결
+- debuff_burn: 발화
+- debuff_stun: 기절
+- debuff_weak: 약화, attack percent -25
+- debuff_corrosion: 부식, defense percent -33
+- debuff_dazed: 멍해짐, questionTime flat -3
+- debuff_foolish: 멍청해짐, questionDifficulty flat +1
+- buff_power: 힘, attack flat n, stackable true
+- buff_hard: 단단함, defense flat n, stackable true
+- buff_focus: 집중, criticalRate flat n, stackable true
+- buff_smart: 똑똑해짐, questionDifficulty flat -1, minimum difficulty 1
+- buff_wisdom: 지혜, questionTime flat +n
+
+공통 유틸 함수:
+- getSpreadsheet_()
+- getSheet_(sheetName)
+- ensureSheet_(sheetName, headers)
+- readTable_(sheetName)
+- appendRowObject_(sheetName, object)
+- updateRowByKey_(sheetName, keyColumn, keyValue, patchObject)
+- findRowByKey_(sheetName, keyColumn, keyValue)
+- safeJsonParse_(value, fallback)
+- safeJsonStringify_(value)
+- generateId_(prefix)
+
+완료 기준:
+- setupDatabase() 실행 시 모든 시트 생성
+- 헤더가 정확히 들어감
+- seedMasterData() 실행 시 기본 데이터 생성
+- 마법공격력 관련 항목 없음
+- Apps Script 실행 오류 없음
+
+아직 UI, 문제 생성, 전투는 구현하지 마라.

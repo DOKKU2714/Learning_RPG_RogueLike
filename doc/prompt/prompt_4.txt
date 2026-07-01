@@ -1,0 +1,85 @@
+4단계 작업을 시작해줘.
+
+전제:
+3단계까지 구현되어 기본 전투, 보상, 진행 저장이 가능하다.
+
+목표:
+스킬 사용, 스킬 조건, 스킬 강화, 버프/디버프 시스템을 구현한다.
+
+구현 범위:
+1. Battle 화면에 보유 스킬 목록을 표시한다.
+2. Skills 시트의 conditionJson을 읽어 사용 가능 여부를 계산한다.
+3. 지원 조건:
+   - afterTurn
+   - selfHpBelowPercent
+   - selfHpAbovePercent
+   - targetHpBelowPercent
+   - targetHpAbovePercent
+   - perStageLimit
+   - requiredStat
+   - requiredEffect
+4. 사용 불가능한 스킬은 비활성화하고 이유를 툴팁으로 표시한다.
+5. 스킬 사용 시 문제를 출제한다.
+6. 스킬의 difficultyBonus를 문제 난이도에 반영한다.
+7. activeEffects를 기준으로 최종 문제 난이도를 계산한다.
+8. activeEffects를 기준으로 최종 제한시간을 계산한다.
+9. 문제 난이도는 최소 1, 최대 10으로 제한한다.
+10. 제한시간은 최소 3초 이하로 내려가지 않도록 안전장치를 둔다.
+11. 풀이 효율을 스킬 효과에 적용한다.
+12. 스킬 타입 damage, shield, heal, buff, debuff를 구현한다.
+13. Effects 시트를 읽어 버프/디버프를 적용한다.
+14. durationType이 stage이면 현재 스테이지 동안 지속한다.
+15. durationType이 turn이면 durationTurns만큼 지속한다.
+16. 스테이지가 바뀌면 stage 지속 버프/디버프는 제거한다.
+17. 버프/디버프 지속 턴을 처리한다.
+18. 스택 가능한 효과는 누적한다.
+
+디버프 구현:
+- 출혈: N턴 간 행동할 때마다 피해
+- 중독: N턴 간 턴 종료 시 피해
+- 빙결: 2턴 행동 불가, 공격받으면 추가 피해와 함께 해제
+- 발화: N턴 간 턴 시작 시 피해
+- 기절: 1턴 행동 불가
+- 약화: 공격력 25% 감소
+- 부식: 방어력 33% 감소
+- 멍해짐: N턴간 문제 풀이 제한시간 -3초
+- 멍청해짐: N턴간 문제 난이도 +1
+
+버프 구현:
+- 힘: 공격력 n 증가, 스택 가능
+- 단단함: 방어력 n 증가, 스택 가능
+- 집중: 치명타 확률 n% 증가, 스택 가능
+- 똑똑해짐: 문제 난이도 -1, 단 최소 난이도 1 고정
+- 지혜: 문제 풀이 제한시간 +n초
+
+스킬 강화:
+- upgradeJson을 기준으로 damage, effect, chance, buffValue, debuffChance를 증가시킨다.
+- 쿨타임 감소 강화는 구현하지 않는다.
+
+필수 함수:
+- getAvailableSkills(runState, battleState)
+- canUseSkill(skill, runState, battleState)
+- getSkillUnavailableReason(skill, runState, battleState)
+- useSkill(runId, skillId, targetId, answerPayload)
+- applySkillEffect(battleState, skill, efficiency)
+- applyEffect(target, effect, source)
+- tickEffectsAtTurnStart(battleState)
+- tickEffectsAtTurnEnd(battleState)
+- clearStageDurationEffects(battleState)
+- calculateEffectiveStats(baseStats, activeEffects)
+- calculateFinalQuestionDifficulty(baseDifficulty, activeEffects)
+- calculateFinalQuestionTimeLimit(baseDifficulty, activeEffects)
+- getSkillUpgradeValue(skill, level)
+
+완료 기준:
+- 스킬 사용 가능
+- 조건에 맞지 않는 스킬 비활성화
+- 버프/디버프 적용
+- stage 지속 효과 처리
+- turn 지속 효과 처리
+- 스테이지 변경 시 stage 효과 제거
+- 멍해짐, 멍청해짐, 똑똑해짐, 지혜가 문제 난이도/제한시간에 반영
+- 스킬 강화 수치 반영
+
+주의:
+몬스터 의도 표시는 아직 구현하지 마라.

@@ -1,0 +1,39 @@
+6단계 작업을 시작해줘.
+
+전제:
+전투, 문제 풀이 로그, 보상, 진행 저장이 구현되어 있다.
+
+목표:
+학생이 내 정보를 확인할 수 있게 하고, 선생님이 기본 통계를 볼 수 있게 한다.
+
+구현 범위:
+1. MyPage.html을 만든다.
+2. 학생의 이름을 표시한다.
+3. 전체 정답률을 표시한다.
+4. 평균 문제 풀이 시간을 표시한다.
+5. 최대 층-스테이지를 표시한다.
+6. 내 문제 목록을 표시한다.
+7. 각 문제별 정답률을 표시한다.
+8. Questions의 correctCount, totalCount를 기준으로 문제별 정답률을 계산한다.
+9. AnswerLogs를 기준으로 학생별 평균 풀이 시간을 계산한다.
+10. Admin.html에 학생 통계 목록을 추가한다.
+11. Admin.html에 문제별 통계 목록을 추가한다.
+12. 통계 계산은 매번 전체 AnswerLogs를 읽지 않도록 PlayerData와 Questions의 캐시 컬럼을 우선 사용한다.
+13. 필요한 경우 recalculateStatsForDev() 개발용 함수를 만든다.
+
+필수 함수:
+- getMyInfo(playerId)
+- getMyQuestionStats(playerId)
+- getPlayerAnswerSummary(playerId)
+- getAdminPlayerStats()
+- getAdminQuestionStats()
+- recalculateStatsForDev()
+
+완료 기준:
+- 내 정보 화면 표시
+- 내 문제별 정답률 표시
+- 관리자 통계 표시
+- 평균 풀이 시간 표시
+
+주의:
+리더보드는 아직 구현하지 마라.

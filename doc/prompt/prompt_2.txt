@@ -1,0 +1,71 @@
+2단계 작업을 시작해줘.
+
+전제:
+0단계 DB와 1단계 사용자/문제/관리자 기능이 구현되어 있다.
+
+목표:
+공격과 수비만 가능한 최소 전투 시스템을 만든다.
+
+구현 범위:
+1. 게임 시작 조건을 검사한다.
+2. Settings.gameEnabled가 true여야 한다.
+3. 학생이 만든 문제가 1개 이상 있어야 한다.
+4. Runs 시트에 active run을 생성한다.
+5. 1층 1스테이지부터 시작한다.
+6. Stages에서 현재 스테이지 정보를 가져온다.
+7. MonsterGroups와 Monsters에서 몬스터를 생성한다.
+8. Battle.html을 만든다.
+9. 플레이어 행동은 공격, 수비만 제공한다.
+10. 행동 선택 시 문제를 1개 출제한다.
+11. 문제 선택 시 현재 플레이어가 만든 문제보다 다른 학생 문제를 우선한다.
+12. 각 스테이지에서 다른 학생 문제가 최소 1개 이상 출현하도록 Runs.stageStateJson에 otherStudentQuestionShown 값을 저장한다.
+13. 다른 학생 문제가 출현하면 문제 화면에 출제자를 강조 표시한다.
+14. 출제자 강조 표시 예: "출제자: 김OO" 배지, 강조 색상, 아이콘 등
+15. 문제 기본 제한시간 공식은 10초 + ((난이도 - 1) * 2초)이다.
+16. 정답 효율은 0.5 + 0.75 * (remainingMs / maxMs)로 계산한다.
+17. 오답 시 기본 효율은 0.5다.
+18. 시간 종료 후 추가 오답은 0.1씩 감소한다.
+19. 공격은 공격력 * 효율로 피해를 준다.
+20. 수비는 (기본 방어막 + 방어력) * 효율로 방어막을 생성한다.
+21. 방어막은 몬스터 공격 피해를 먼저 대신 받고, 다음 턴 시작 시 사라진다.
+22. 몬스터는 기본 공격만 한다.
+23. 승리/패배 판정을 구현한다.
+24. AnswerLogs에 문제 풀이 기록을 저장한다.
+25. Questions의 correctCount, totalCount를 갱신한다.
+
+문제 선택 규칙:
+- 현재 스테이지의 minDifficulty~maxDifficulty 범위에서 approved 문제를 고른다.
+- 현재 플레이어가 만든 문제는 가능하면 제외한다.
+- 각 스테이지에서 다른 학생 문제가 최소 1개 이상 나오지 않았다면 다른 학생 문제를 우선 선택한다.
+- 다른 학생 문제가 없으면 fallback으로 자기 문제 또는 승인된 전체 문제를 사용한다.
+- fallback 발생 시 BattleLogs summaryJson에 기록한다.
+
+필수 함수:
+- canStartGame(playerId)
+- startRun(playerId)
+- getActiveRun(playerId)
+- loadStage(stageId)
+- startBattle(runId)
+- selectQuestionForAction(playerId, runId, actionType, difficultyBonus)
+- calculateQuestionTimeLimit(difficulty, activeEffects)
+- calculateFinalQuestionDifficulty(baseDifficulty, activeEffects)
+- calculateEfficiency(isCorrect, remainingMs, maxMs, wrongCountAfterTimeout)
+- applyAttack(battleState, efficiency)
+- applyGuard(battleState, efficiency)
+- applyMonsterTurn(battleState)
+- saveRunState(runId, battleState)
+- logAnswer(answerPayload)
+- updateQuestionStats(questionId, isCorrect)
+
+완료 기준:
+- 게임 시작 버튼으로 1층 1스테이지 전투 진입 가능
+- 공격/수비 가능
+- 문제 풀이 후 효율 적용
+- 다른 학생 문제 출제 시 출제자 강조 표시
+- 몬스터 처치 시 승리
+- 플레이어 체력 0 이하 시 패배
+- AnswerLogs 기록
+- Questions 통계 갱신
+
+주의:
+아직 스킬, 아이템, 보상 3개 선택, 버프/디버프, 몬스터 의도 표시는 구현하지 마라.

@@ -1,0 +1,46 @@
+7단계 작업을 시작해줘.
+
+전제:
+PlayerData에 maxFloor, maxStage, bestClearTimeMs, totalAnswerCount, correctAnswerCount가 저장되어 있다.
+
+목표:
+메인 메뉴에 리더보드를 추가하고 학생 순위를 표시한다.
+
+구현 범위:
+1. 메인 메뉴에 리더보드 버튼을 추가한다.
+2. Leaderboard.html을 만든다.
+3. PlayerData와 Players를 조합해 리더보드 데이터를 만든다.
+4. 표시 항목:
+   - 순위
+   - 이름
+   - 최대 층-스테이지
+   - 클리어 시간
+   - 정답률
+5. 내부 비교용 progressScore를 계산한다.
+6. progressScore = maxFloor * 100 + maxStage
+7. 정렬 기준:
+   1순위: 최대 층-스테이지 높은 순
+   2순위: 클리어 시간 짧은 순
+   3순위: 정답률 높은 순
+8. 미클리어 학생은 클리어 시간 없음으로 표시한다.
+9. 미클리어 학생의 clearTimeMs는 정렬 시 매우 큰 값으로 취급한다.
+10. 정답률은 correctAnswerCount / totalAnswerCount로 계산한다.
+11. totalAnswerCount가 0이면 정답률은 0%로 표시한다.
+12. 동점 처리 방식은 우선 동일 순위가 아니라 정렬 순서대로 순위를 부여한다.
+13. 모바일에서는 가로 스크롤 가능한 테이블로 표시한다.
+
+필수 함수:
+- getLeaderboard()
+- calculateProgressScore(playerData)
+- calculateAccuracyRate(playerData)
+- formatClearTime(clearTimeMs)
+- sortLeaderboardRows(rows)
+
+완료 기준:
+- 메인 메뉴에서 리더보드 접근 가능
+- 최대 층-스테이지, 클리어 시간, 정답률 표시
+- 정렬 기준대로 순위 표시
+- 모바일에서 표가 깨지지 않음
+
+주의:
+랭킹 외 기능은 추가하지 마라.

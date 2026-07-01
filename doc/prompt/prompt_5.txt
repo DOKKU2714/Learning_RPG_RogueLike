@@ -1,0 +1,41 @@
+5단계 작업을 시작해줘.
+
+전제:
+4단계까지 구현되어 스킬, 버프, 디버프가 작동한다.
+
+목표:
+몬스터의 다음 행동을 미리 정하고, 플레이어 턴에 의도 아이콘으로 표시한다.
+
+구현 범위:
+1. MonsterAI 시트의 데이터를 읽어 몬스터 행동 후보를 만든다.
+2. 각 몬스터는 플레이어 턴 시작 시 다음 행동 intent를 결정한다.
+3. intent는 battleState에 저장한다.
+4. 플레이어 화면에서 몬스터 위에 intentIcon과 intentText를 표시한다.
+5. 공격 intent는 예상 피해량을 표시한다.
+6. 수비 intent는 예상 방어막 수치를 표시한다.
+7. 스킬 intent는 스킬명, 예상 피해/효과, 디버프 부여 가능성을 표시한다.
+8. unknown intent는 ???로 표시한다.
+9. 몬스터 턴에는 저장된 intent를 실행한다.
+10. 보스는 boss 타입에 따라 특수 패턴을 사용할 수 있게 한다.
+11. 보스전에서는 문제 난이도 +1을 적용한다.
+12. 보스전에서 일정 확률로 주관식 문제를 출제할 수 있도록 구조를 만든다.
+13. 보스전 문제에도 activeEffects 기반 난이도/제한시간 보정을 적용한다.
+
+필수 함수:
+- decideMonsterIntents(battleState)
+- selectMonsterAction(monster, aiRows, battleState)
+- buildIntentText(action, monster, battleState)
+- renderMonsterIntent(intent)
+- executeMonsterIntent(battleState, monsterId)
+- applyBossDifficultyBonus(stage, questionDifficulty)
+- shouldUseShortQuestionInBoss(bossConfig)
+
+완료 기준:
+- 플레이어 턴에 몬스터 다음 행동 표시
+- 몬스터 턴에 표시된 행동 그대로 실행
+- 공격/수비/스킬 intent 표시
+- 보스 난이도 보정 적용
+- 버프/디버프의 문제 난이도/시간 보정과 충돌하지 않음
+
+주의:
+사진 기반 플레이어 몬스터 이벤트는 아직 구현하지 마라.

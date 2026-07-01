@@ -1,0 +1,73 @@
+1단계 작업을 시작해줘.
+
+전제:
+0단계 DB 초기화가 완료되어 있다.
+
+목표:
+학생이 이름을 등록하고 문제를 만들 수 있게 하며, 선생님이 문제를 승인/반려할 수 있게 한다.
+
+구현 범위:
+1. doGet(e)에서 page 파라미터 기반 라우팅을 구현한다.
+2. Index.html을 만든다.
+3. 최초 접속 시 Google 계정 이메일을 기준으로 Players에서 사용자를 확인한다.
+4. 등록되지 않은 학생은 이름 입력 화면을 보여준다.
+5. 사진 기능은 구현하지 않는다.
+6. 등록 시 avatarType은 "initial", avatarKey는 이름 첫 글자 또는 기본값으로 저장한다.
+7. QuestionForm.html을 만든다.
+8. 객관식/주관식 문제를 생성할 수 있게 한다.
+9. 객관식은 선택지 4개를 입력받는다.
+10. 주관식은 answer와 answerAliases를 입력받을 수 있게 한다.
+11. 학생은 최소 1개, 최대 10개까지 문제를 생성할 수 있다.
+12. 생성된 문제는 status = pending으로 저장한다.
+13. creatorId와 creatorName을 함께 저장한다.
+14. Admin.html을 만든다.
+15. Admins 시트에 등록된 이메일만 관리자 화면에 접근할 수 있게 한다.
+16. 관리자는 pending 문제 목록을 보고 difficulty 1~10을 지정한 뒤 approve/reject 할 수 있다.
+17. 반려 시 reviewComment를 저장한다.
+
+필수 서버 함수:
+- getCurrentUser()
+- registerPlayer(displayName)
+- getPlayerByEmail(email)
+- getPlayerData(playerId)
+- createQuestion(questionPayload)
+- getMyQuestions()
+- getPendingQuestions()
+- approveQuestion(questionId, difficulty)
+- rejectQuestion(questionId, reviewComment)
+- isAdmin(email)
+- getAppSettings()
+
+화면:
+Index.html:
+- 인트로
+- 사용자 등록 여부 확인
+- 이름 등록
+- 메인 화면 버튼: 게임 시작, 문제 만들기, 내 정보, 리더보드
+- 게임 시작 버튼은 아직 실제 전투로 연결하지 말고 조건 메시지만 표시
+- 리더보드 버튼은 아직 구현 예정 메시지만 표시
+
+QuestionForm.html:
+- 객관식/주관식 선택
+- 문제 내용 입력
+- 객관식 선택지 4개
+- 정답 입력
+- 주관식 복수 인정 답안 입력
+- 과목, 단원, 태그 입력
+- 여러 문제를 연속 등록 가능
+
+Admin.html:
+- pending 문제 목록
+- 문제 내용, 선택지, 정답, 태그, 출제자 확인
+- 난이도 1~10 선택
+- 승인 버튼
+- 반려 사유 입력 후 반려 버튼
+
+완료 기준:
+- 학생 등록 가능
+- 문제 생성 가능
+- creatorId, creatorName 저장
+- 관리자 승인/반려 가능
+- 승인된 문제만 status = approved
+- 사진 기능 없음
+- 전투 기능 없음
