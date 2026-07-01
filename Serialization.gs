@@ -10,8 +10,19 @@ function toClientObject_(object) {
 }
 
 function toClientValue_(value) {
+  if (value === null || value === undefined) {
+    return value;
+  }
   if (Object.prototype.toString.call(value) === '[object Date]') {
     return Utilities.formatDate(value, CONFIG.TIMEZONE, 'yyyy-MM-dd HH:mm:ss');
+  }
+  if (Array.isArray(value)) {
+    return value.map(function(item) {
+      return toClientValue_(item);
+    });
+  }
+  if (typeof value === 'object') {
+    return toClientObject_(value);
   }
   return value;
 }

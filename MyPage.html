@@ -83,7 +83,7 @@
       <div id="mypageMessage" class="message"></div>
     </section>
 
-    <section id="summaryPanel" class="rpg-panel">
+    <section class="rpg-panel">
       <h2 class="rpg-title">요약</h2>
       <div class="mypage-grid">
         <div class="stat-box">
@@ -107,7 +107,7 @@
 
     <section class="rpg-panel">
       <h2 class="rpg-title">내 문제 통계</h2>
-      <div id="questionStats"></div>
+      <div id="questionStats"><p class="muted">불러오는 중...</p></div>
     </section>
   </main>
 
@@ -120,9 +120,10 @@
       showLoadingModal('로딩 중...', '내 정보를 불러오는 중...');
       google.script.run
         .withSuccessHandler(function(state) {
-          if (!state.isRegistered || !state.player) {
+          if (!state || !state.isRegistered || !state.player) {
             hideLoadingModal();
-            setMessage('로그인 정보가 없습니다. 메인 화면에서 로그인해 주세요.', 'error');
+            setMessage('로그인 정보가 없습니다. 메인 화면에서 다시 로그인해 주세요.', 'error');
+            document.getElementById('questionStats').innerHTML = '<p class="muted">로그인 후 확인할 수 있습니다.</p>';
             return;
           }
           loadMyInfo(state.player.playerId);
@@ -142,6 +143,12 @@
     }
 
     function renderMyInfo(info) {
+      if (!info) {
+        setMessage('내 정보 응답이 비어 있습니다. 배포 버전과 서버 함수를 확인해 주세요.', 'error');
+        document.getElementById('questionStats').innerHTML = '<p class="muted">정보를 표시할 수 없습니다.</p>';
+        return;
+      }
+
       var player = info.player || {};
       var summary = info.summary || {};
       document.getElementById('playerName').textContent = player.displayName || player.studentName || '내 정보';
@@ -158,6 +165,7 @@
         container.innerHTML = '<p class="muted">아직 만든 문제가 없습니다.</p>';
         return;
       }
+
       container.innerHTML =
         '<table class="question-table">' +
           '<thead><tr><th>문제</th><th>상태</th><th>난이도</th><th>풀이</th><th>정답률</th></tr></thead>' +
@@ -198,7 +206,8 @@
 
     function showError(error) {
       hideLoadingModal();
-      setMessage(error.message || String(error), 'error');
+      setMessage((error && error.message) || String(error), 'error');
+      document.getElementById('questionStats').innerHTML = '<p class="muted">정보를 불러오지 못했습니다.</p>';
     }
 
     function showLoadingModal(title, text) {
