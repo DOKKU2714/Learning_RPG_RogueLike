@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <base target="_top">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    :root {
+      --bg: #f6f8fb;
+      --panel: #ffffff;
+      --text: #1d2433;
+      --muted: #667085;
+      --line: #d9e0ea;
+      --primary: #2563eb;
+      --primary-dark: #1d4ed8;
+      --danger: #b42318;
+      --ok: #087443;
+      --accent: #f59e0b;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: Arial, sans-serif;
+      color: var(--text);
+      background: var(--bg);
+    }
+
+    .shell {
+      width: min(1080px, 100%);
+      margin: 0 auto;
+      padding: 24px;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 16px;
+    }
+
+    .topline {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .battle-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    .stat-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      margin: 8px 0;
+    }
+
+    .bar {
+      height: 14px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: #e5e7eb;
+    }
+
+    .bar-fill {
+      height: 100%;
+      width: 0%;
+      background: var(--ok);
+      transition: width 160ms ease;
+    }
+
+    .monster .bar-fill {
+      background: var(--danger);
+    }
+
+    .shield {
+      color: var(--primary);
+      font-weight: 700;
+    }
+
+    .actions {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    button {
+      min-height: 44px;
+      border: 0;
+      border-radius: 6px;
+      padding: 10px 14px;
+      font: inherit;
+      font-weight: 700;
+      color: #ffffff;
+      background: var(--primary);
+      cursor: pointer;
+    }
+
+    button:hover {
+      background: var(--primary-dark);
+    }
+
+    button.secondary {
+      color: var(--text);
+      background: #edf2f7;
+    }
+
+    button:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+
+    .message {
+      min-height: 24px;
+      margin-top: 12px;
+      font-weight: 700;
+    }
+
+    .error {
+      color: var(--danger);
+    }
+
+    .ok {
+      color: var(--ok);
+    }
+
+    .muted {
+      color: var(--muted);
+    }
+
+    .question-box {
+      display: none;
+    }
+
+    .question-box.active {
+      display: block;
+    }
+
+    .creator-badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 30px;
+      border-radius: 999px;
+      padding: 4px 10px;
+      margin: 0 0 12px;
+      color: #7c2d12;
+      background: #ffedd5;
+      font-weight: 700;
+    }
+
+    .timer {
+      height: 10px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: #e5e7eb;
+      margin: 12px 0;
+    }
+
+    .timer-fill {
+      height: 100%;
+      width: 100%;
+      background: var(--accent);
+      transition: width 200ms linear;
+    }
+
+    .choices {
+      display: grid;
+      gap: 8px;
+      margin: 12px 0;
+    }
+
+    .choice {
+      display: block;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 10px;
+      background: #ffffff;
+    }
+
+    input[type="text"] {
+      width: 100%;
+      min-height: 42px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 10px;
+      font: inherit;
+    }
+
+    @media (max-width: 720px) {
+      .shell {
+        padding: 16px;
+      }
+
+      .battle-grid,
+      .actions {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <section class="panel">
+      <div class="topline">
+        <div>
+          <h1 id="stageTitle">전투</h1>
+          <p id="battleSummary" class="muted">전투 상태를 불러오는 중입니다.</p>
+        </div>
+        <button class="secondary" onclick="goHome()">메인으로</button>
+      </div>
+      <div id="message" class="message"></div>
+    </section>
+
+    <section class="battle-grid">
+      <article class="panel">
+        <h2>플레이어</h2>
+        <div class="stat-row"><span>체력</span><strong id="playerHp">-</strong></div>
+        <div class="bar"><div id="playerHpBar" class="bar-fill"></div></div>
+        <p class="shield">방어막: <span id="playerShield">0</span></p>
+        <p class="muted">공격력 <span id="playerAttack">-</span> · 방어력 <span id="playerDefense">-</span></p>
+      </article>
+
+      <article class="panel monster">
+        <h2 id="monsterName">몬스터</h2>
+        <div class="stat-row"><span>체력</span><strong id="monsterHp">-</strong></div>
+        <div class="bar"><div id="monsterHpBar" class="bar-fill"></div></div>
+        <p class="muted">기본 공격력 <span id="monsterAttack">-</span></p>
+      </article>
+    </section>
+
+    <section class="panel">
+      <h2>행동</h2>
+      <div class="actions">
+        <button id="attackButton" onclick="chooseAction('attack')">공격</button>
+        <button id="guardButton" onclick="chooseAction('guard')">수비</button>
+      </div>
+      <p class="muted">행동을 선택하면 문제가 1개 출제됩니다. 수비 방어막은 몬스터 공격을 먼저 막고 다음 턴 시작 시 사라집니다.</p>
+    </section>
+
+    <section id="questionBox" class="panel question-box">
+      <div id="creatorBadge"></div>
+      <h2 id="questionPrompt">문제</h2>
+      <p id="questionMeta" class="muted"></p>
+      <div class="timer"><div id="timerFill" class="timer-fill"></div></div>
+      <p id="timerText" class="muted"></p>
+      <div id="answerArea"></div>
+      <button onclick="submitAnswer()">답 제출</button>
+    </section>
+  </main>
+
+  <script>
+    var WEB_APP_URL = '<?= getWebAppUrl_() ?>';
+    var currentView = null;
+    var currentQuestion = null;
+    var questionStartedAt = 0;
+    var timerId = null;
+    var timeoutWrongCount = 0;
+
+    function init() {
+      google.script.run
+        .withSuccessHandler(function(view) {
+          currentView = view;
+          renderBattle(view);
+        })
+        .withFailureHandler(showError)
+        .getBattleView(getAuthToken());
+    }
+
+    function renderBattle(view) {
+      var battle = view.battle;
+      document.getElementById('stageTitle').textContent = battle.stage.name;
+      document.getElementById('battleSummary').textContent =
+        '턴 ' + battle.turn + ' · 다른 학생 문제 출현: ' + (view.stageState.otherStudentQuestionShown ? '완료' : '대기');
+      setMessage(battle.lastMessage || '', battle.status === 'active' ? '' : 'ok');
+
+      renderHp('player', battle.player.hp, battle.player.maxHp);
+      document.getElementById('playerShield').textContent = battle.player.shield || 0;
+      document.getElementById('playerAttack').textContent = battle.player.stats.attack;
+      document.getElementById('playerDefense').textContent = battle.player.stats.defense;
+
+      document.getElementById('monsterName').textContent = battle.monster.name;
+      renderHp('monster', battle.monster.currentHp, battle.monster.maxHp);
+      document.getElementById('monsterAttack').textContent = battle.monster.attack;
+
+      var isActive = battle.status === 'active' && !battle.pendingAction;
+      document.getElementById('attackButton').disabled = !isActive;
+      document.getElementById('guardButton').disabled = !isActive;
+      document.getElementById('questionBox').classList.toggle('active', !!battle.pendingAction);
+      if (battle.pendingAction) {
+        renderQuestion({
+          question: battle.pendingAction.question,
+          actionType: battle.pendingAction.actionType,
+          maxMs: battle.pendingAction.maxMs,
+          finalDifficulty: battle.pendingAction.finalDifficulty,
+          isOtherPlayerQuestion: battle.pendingAction.isOtherPlayerQuestion,
+        });
+      }
+    }
+
+    function renderHp(prefix, current, max) {
+      var safeMax = Math.max(1, Number(max || 1));
+      var safeCurrent = Math.max(0, Number(current || 0));
+      document.getElementById(prefix + 'Hp').textContent = safeCurrent + ' / ' + safeMax;
+      document.getElementById(prefix + 'HpBar').style.width = Math.round((safeCurrent / safeMax) * 100) + '%';
+    }
+
+    function chooseAction(actionType) {
+      if (!currentView) {
+        return;
+      }
+      setMessage('문제를 고르는 중입니다.', 'ok');
+      google.script.run
+        .withSuccessHandler(renderQuestion)
+        .withFailureHandler(showError)
+        .selectQuestionForAction(currentView.playerId, currentView.runId, actionType, 0, getAuthToken());
+    }
+
+    function renderQuestion(questionView) {
+      currentQuestion = questionView;
+      questionStartedAt = Date.now();
+      timeoutWrongCount = 0;
+      clearInterval(timerId);
+
+      var question = questionView.question;
+      document.getElementById('questionBox').classList.add('active');
+      document.getElementById('questionPrompt').textContent = question.prompt;
+      document.getElementById('questionMeta').textContent =
+        '행동: ' + actionLabel(questionView.actionType) + ' · 난이도 ' + questionView.finalDifficulty +
+        ' · 제한시간 ' + Math.round(questionView.maxMs / 1000) + '초';
+      document.getElementById('creatorBadge').innerHTML = questionView.isOtherPlayerQuestion
+        ? '<span class="creator-badge">출제자: ' + escapeHtml(question.creatorName || '다른 학생') + '</span>'
+        : '';
+
+      renderAnswerArea(question);
+      tickTimer();
+      timerId = setInterval(tickTimer, 200);
+    }
+
+    function renderAnswerArea(question) {
+      var area = document.getElementById('answerArea');
+      if (question.type === 'multipleChoice') {
+        var choices = [question.choice1, question.choice2, question.choice3, question.choice4];
+        area.innerHTML = '<div class="choices">' + choices.map(function(choice, index) {
+          var number = index + 1;
+          return '<label class="choice"><input type="radio" name="choice" value="' + number + '" data-text="' + escapeHtml(choice) + '"> ' +
+            number + '. ' + escapeHtml(choice) + '</label>';
+        }).join('') + '</div>';
+        return;
+      }
+
+      area.innerHTML = '<input id="shortAnswer" type="text" placeholder="정답 입력">';
+    }
+
+    function tickTimer() {
+      if (!currentQuestion) {
+        return;
+      }
+
+      var elapsed = Date.now() - questionStartedAt;
+      var remaining = Math.max(0, currentQuestion.maxMs - elapsed);
+      var ratio = remaining / currentQuestion.maxMs;
+      document.getElementById('timerFill').style.width = Math.round(ratio * 100) + '%';
+      document.getElementById('timerText').textContent = remaining > 0
+        ? '남은 시간 ' + Math.ceil(remaining / 1000) + '초'
+        : '시간이 지났습니다. 답은 계속 제출할 수 있지만, 오답 효율이 낮아집니다.';
+    }
+
+    function submitAnswer() {
+      if (!currentQuestion) {
+        return;
+      }
+
+      var selected = getSelectedAnswer(currentQuestion.question);
+      if (!selected.selectedAnswer && !selected.selectedAnswerText) {
+        setMessage('답을 입력하거나 선택해 주세요.', 'error');
+        return;
+      }
+
+      var elapsed = Date.now() - questionStartedAt;
+      var afterTimeout = elapsed > currentQuestion.maxMs;
+      if (afterTimeout) {
+        timeoutWrongCount += 1;
+      }
+
+      setMessage('답안을 처리하는 중입니다.', 'ok');
+      google.script.run
+        .withSuccessHandler(function(view) {
+          clearInterval(timerId);
+          currentQuestion = null;
+          currentView = view;
+          document.getElementById('questionBox').classList.remove('active');
+          renderBattle(view);
+        })
+        .withFailureHandler(showError)
+        .submitActionAnswer({
+          runId: currentView.runId,
+          authToken: getAuthToken(),
+          questionId: currentQuestion.question.questionId,
+          selectedAnswer: selected.selectedAnswer,
+          selectedChoiceIndex: selected.selectedChoiceIndex,
+          selectedAnswerText: selected.selectedAnswerText,
+          elapsedMs: elapsed,
+          wrongCountAfterTimeout: afterTimeout ? timeoutWrongCount : 0,
+        });
+    }
+
+    function getSelectedAnswer(question) {
+      if (question.type === 'multipleChoice') {
+        var checked = document.querySelector('input[name="choice"]:checked');
+        return {
+          selectedAnswer: checked ? checked.value : '',
+          selectedChoiceIndex: checked ? checked.value : '',
+          selectedAnswerText: checked ? checked.getAttribute('data-text') : '',
+        };
+      }
+
+      var input = document.getElementById('shortAnswer');
+      return {
+        selectedAnswer: input ? input.value.trim() : '',
+        selectedChoiceIndex: '',
+        selectedAnswerText: input ? input.value.trim() : '',
+      };
+    }
+
+    function actionLabel(actionType) {
+      return actionType === 'guard' ? '수비' : '공격';
+    }
+
+    function setMessage(message, type) {
+      var element = document.getElementById('message');
+      element.textContent = message;
+      element.className = 'message ' + (type || '');
+    }
+
+    function showError(error) {
+      setMessage(error.message, 'error');
+    }
+
+    function goHome() {
+      window.top.location.href = WEB_APP_URL;
+    }
+
+    function getAuthToken() {
+      return sessionStorage.getItem('learningRpgAuthToken') || '';
+    }
+
+    function escapeHtml(value) {
+      return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+
+    init();
+  </script>
+</body>
+</html>

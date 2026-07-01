@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <base target="_top">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    :root {
+      --bg: #f7f8fb;
+      --panel: #ffffff;
+      --text: #1d2433;
+      --muted: #667085;
+      --line: #d9e0ea;
+      --primary: #2563eb;
+      --primary-dark: #1d4ed8;
+      --danger: #b42318;
+      --danger-dark: #912018;
+      --ok: #087443;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: Arial, sans-serif;
+      color: var(--text);
+      background: var(--bg);
+    }
+
+    .shell {
+      width: min(1080px, 100%);
+      margin: 0 auto;
+      padding: 24px;
+    }
+
+    .panel,
+    .question-card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 16px;
+    }
+
+    .topline {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 140px 1fr;
+      gap: 10px;
+      align-items: start;
+    }
+
+    select,
+    textarea {
+      width: 100%;
+      min-height: 42px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 10px;
+      font: inherit;
+      background: #ffffff;
+    }
+
+    textarea {
+      min-height: 72px;
+      resize: vertical;
+    }
+
+    button {
+      min-height: 42px;
+      border: 0;
+      border-radius: 6px;
+      padding: 10px 14px;
+      font: inherit;
+      font-weight: 700;
+      color: #ffffff;
+      background: var(--primary);
+      cursor: pointer;
+    }
+
+    button:hover {
+      background: var(--primary-dark);
+    }
+
+    button.secondary {
+      color: var(--text);
+      background: #edf2f7;
+    }
+
+    button.danger {
+      background: var(--danger);
+    }
+
+    button.danger:hover {
+      background: var(--danger-dark);
+    }
+
+    .muted {
+      color: var(--muted);
+    }
+
+    .message {
+      min-height: 24px;
+      margin-top: 12px;
+      font-weight: 700;
+    }
+
+    .message.error {
+      color: var(--danger);
+    }
+
+    .message.ok {
+      color: var(--ok);
+    }
+
+    .choices {
+      margin: 8px 0;
+      padding-left: 20px;
+    }
+
+    .actions {
+      display: grid;
+      grid-template-columns: 140px 1fr auto auto;
+      gap: 10px;
+      align-items: end;
+      margin-top: 14px;
+    }
+
+    .hidden {
+      display: none;
+    }
+
+    @media (max-width: 760px) {
+      .shell {
+        padding: 16px;
+      }
+
+      .grid,
+      .actions {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <section class="panel">
+      <div class="topline">
+        <div>
+          <h1>문제 승인 관리</h1>
+          <p id="userSummary" class="muted">관리자 권한을 확인하고 있습니다.</p>
+        </div>
+        <button class="secondary" onclick="goHome()">메인으로</button>
+      </div>
+      <div id="adminMessage" class="message"></div>
+    </section>
+
+    <section id="deniedPanel" class="panel hidden">
+      <p>Admins 시트에 등록된 활성 이메일만 관리자 화면에 접근할 수 있습니다.</p>
+    </section>
+
+    <section id="adminPanel" class="hidden">
+      <div class="panel topline">
+        <h2>승인 대기 문제</h2>
+        <button class="secondary" onclick="loadPendingQuestions()">새로고침</button>
+      </div>
+      <div id="pendingList"></div>
+    </section>
+  </main>
+
+  <script>
+    var WEB_APP_URL = '<?= getWebAppUrl_() ?>';
+
+    function init() {
+      google.script.run
+        .withSuccessHandler(function(state) {
+          document.getElementById('userSummary').textContent = state.email || '이메일을 확인할 수 없습니다.';
+          document.getElementById('deniedPanel').classList.toggle('hidden', state.isAdmin);
+          document.getElementById('adminPanel').classList.toggle('hidden', !state.isAdmin);
+          if (state.isAdmin) {
+            loadPendingQuestions();
+          }
+        })
+        .withFailureHandler(showAdminError)
+        .getCurrentUser();
+    }
+
+    function loadPendingQuestions() {
+      setAdminMessage('목록을 불러오는 중입니다.', 'ok');
+      google.script.run
+        .withSuccessHandler(renderPendingQuestions)
+        .withFailureHandler(showAdminError)
+        .getPendingQuestions();
+    }
+
+    function renderPendingQuestions(questions) {
+      setAdminMessage(questions.length + '개의 승인 대기 문제가 있습니다.', 'ok');
+      var list = document.getElementById('pendingList');
+      if (!questions.length) {
+        list.innerHTML = '<section class="panel"><p class="muted">승인 대기 문제가 없습니다.</p></section>';
+        return;
+      }
+
+      list.innerHTML = questions.map(function(question) {
+        return '<article class="question-card" id="card-' + escapeHtml(question.questionId) + '">' +
+          '<div class="grid">' +
+            '<strong>출제자</strong><span>' + escapeHtml(question.creatorName) + '</span>' +
+            '<strong>유형</strong><span>' + escapeHtml(question.type) + '</span>' +
+            '<strong>문제</strong><span>' + escapeHtml(question.prompt) + '</span>' +
+            '<strong>선택지</strong><span>' + renderChoices(question) + '</span>' +
+            '<strong>정답</strong><span>' + escapeHtml(question.answer) + '</span>' +
+            '<strong>복수 답안</strong><span>' + escapeHtml(question.answerAliases || '-') + '</span>' +
+            '<strong>태그</strong><span>' + escapeHtml([question.subject, question.unit, question.tags].filter(Boolean).join(' · ') || '-') + '</span>' +
+            '<strong>해설</strong><span>' + escapeHtml(question.explanation || '-') + '</span>' +
+          '</div>' +
+          '<div class="actions">' +
+            '<div><label for="difficulty-' + escapeHtml(question.questionId) + '">난이도</label>' + difficultySelect(question.questionId) + '</div>' +
+            '<div><label for="comment-' + escapeHtml(question.questionId) + '">반려 사유</label><textarea id="comment-' + escapeHtml(question.questionId) + '" placeholder="반려할 때 입력"></textarea></div>' +
+            '<button onclick="approve(\'' + escapeJs(question.questionId) + '\')">승인</button>' +
+            '<button class="danger" onclick="rejectQuestionItem(\'' + escapeJs(question.questionId) + '\')">반려</button>' +
+          '</div>' +
+        '</article>';
+      }).join('');
+    }
+
+    function renderChoices(question) {
+      var choices = [question.choice1, question.choice2, question.choice3, question.choice4].filter(Boolean);
+      if (!choices.length) {
+        return '-';
+      }
+      return '<ol class="choices">' + choices.map(function(choice) {
+        return '<li>' + escapeHtml(choice) + '</li>';
+      }).join('') + '</ol>';
+    }
+
+    function difficultySelect(questionId) {
+      var options = [];
+      for (var i = 1; i <= 10; i += 1) {
+        options.push('<option value="' + i + '">' + i + '</option>');
+      }
+      return '<select id="difficulty-' + escapeHtml(questionId) + '">' + options.join('') + '</select>';
+    }
+
+    function approve(questionId) {
+      var difficulty = document.getElementById('difficulty-' + questionId).value;
+      google.script.run
+        .withSuccessHandler(loadPendingQuestions)
+        .withFailureHandler(showAdminError)
+        .approveQuestion(questionId, difficulty);
+    }
+
+    function rejectQuestionItem(questionId) {
+      var comment = document.getElementById('comment-' + questionId).value;
+      google.script.run
+        .withSuccessHandler(loadPendingQuestions)
+        .withFailureHandler(showAdminError)
+        .rejectQuestion(questionId, comment);
+    }
+
+    function setAdminMessage(message, type) {
+      var element = document.getElementById('adminMessage');
+      element.textContent = message;
+      element.className = 'message ' + (type || '');
+    }
+
+    function showAdminError(error) {
+      setAdminMessage(error.message, 'error');
+    }
+
+    function goHome() {
+      window.top.location.href = WEB_APP_URL;
+    }
+
+    function escapeHtml(value) {
+      return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+
+    function escapeJs(value) {
+      return String(value == null ? '' : value).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    }
+
+    init();
+  </script>
+</body>
+</html>

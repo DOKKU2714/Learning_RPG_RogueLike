@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <base target="_top">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    :root {
+      --bg: #f7f8fb;
+      --panel: #ffffff;
+      --text: #1d2433;
+      --muted: #667085;
+      --line: #d9e0ea;
+      --primary: #2563eb;
+      --primary-dark: #1d4ed8;
+      --danger: #b42318;
+      --ok: #087443;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: Arial, sans-serif;
+      color: var(--text);
+      background: var(--bg);
+    }
+
+    .shell {
+      width: min(960px, 100%);
+      margin: 0 auto;
+      padding: 24px;
+    }
+
+    .screen {
+      display: none;
+    }
+
+    .screen.active {
+      display: block;
+    }
+
+    .intro {
+      min-height: 100vh;
+      display: none;
+      place-items: center;
+      padding: 24px;
+      text-align: center;
+      background: #172033;
+      color: #ffffff;
+      cursor: pointer;
+    }
+
+    .intro.active {
+      display: grid;
+    }
+
+    .intro-box {
+      width: min(560px, 100%);
+    }
+
+    h1 {
+      margin: 0 0 12px;
+      font-size: 32px;
+    }
+
+    h2 {
+      margin: 0 0 16px;
+      font-size: 24px;
+    }
+
+    p {
+      line-height: 1.6;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 16px;
+    }
+
+    .muted {
+      color: var(--muted);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 8px;
+      font-weight: 700;
+    }
+
+    input {
+      width: 100%;
+      min-height: 42px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 10px;
+      font: inherit;
+    }
+
+    button {
+      min-height: 42px;
+      border: 0;
+      border-radius: 6px;
+      padding: 10px 14px;
+      font: inherit;
+      font-weight: 700;
+      color: #ffffff;
+      background: var(--primary);
+      cursor: pointer;
+    }
+
+    button:hover {
+      background: var(--primary-dark);
+    }
+
+    button.secondary {
+      color: var(--text);
+      background: #edf2f7;
+    }
+
+    button.secondary:hover {
+      background: #e2e8f0;
+    }
+
+    .message {
+      min-height: 24px;
+      margin-top: 12px;
+      font-weight: 700;
+    }
+
+    .message.error {
+      color: var(--danger);
+    }
+
+    .message.ok {
+      color: var(--ok);
+    }
+
+    .avatar {
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      display: inline-grid;
+      place-items: center;
+      margin-right: 12px;
+      color: #ffffff;
+      background: var(--primary);
+      font-weight: 700;
+      vertical-align: middle;
+    }
+
+    .topline {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    @media (max-width: 560px) {
+      .shell {
+        padding: 16px;
+      }
+
+      h1 {
+        font-size: 26px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <section id="introScreen" class="intro screen active" onclick="enterApp()">
+    <div class="intro-box">
+      <h1>학습 로그라이크</h1>
+      <p>문제를 만들고, 친구들의 문제를 풀며 5층까지 올라갑니다.</p>
+      <p class="muted">화면을 클릭해서 시작하세요.</p>
+    </div>
+  </section>
+
+  <main id="appScreen" class="shell screen">
+    <section class="panel">
+      <div class="topline">
+        <div>
+          <h2 id="mainTitle">접속 확인 중</h2>
+          <p id="userSummary" class="muted">학번과 비밀번호로 로그인해 주세요.</p>
+        </div>
+        <button class="secondary" onclick="refreshCurrentUser()">새로고침</button>
+      </div>
+    </section>
+
+    <section id="registerPanel" class="panel screen">
+      <h2>로그인 / 회원가입</h2>
+      <p class="muted">처음이면 학번, 이름, 비밀번호를 입력하고 회원가입을 누르세요. 이미 등록했다면 학번과 비밀번호로 로그인하세요.</p>
+      <div class="grid">
+        <div>
+          <label for="studentId">학번</label>
+          <input id="studentId" maxlength="30" autocomplete="username" placeholder="예: 202601">
+        </div>
+        <div>
+          <label for="studentName">이름</label>
+          <input id="studentName" maxlength="20" placeholder="예: 김도현">
+        </div>
+        <div>
+          <label for="password">비밀번호</label>
+          <input id="password" type="password" maxlength="40" autocomplete="current-password" placeholder="4자 이상">
+        </div>
+      </div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:12px;">
+        <button onclick="login()">로그인</button>
+        <button class="secondary" onclick="register()">회원가입</button>
+        <button class="secondary" onclick="goToPage('admin')">관리자 접속</button>
+      </div>
+      <div id="registerMessage" class="message"></div>
+    </section>
+
+    <section id="mainPanel" class="panel screen">
+      <div id="playerBadge"></div>
+      <div class="grid" style="margin-top: 16px;">
+        <button onclick="showGameStartMessage()">게임 시작</button>
+        <button onclick="goToPage('question')">문제 만들기</button>
+        <button class="secondary" onclick="showMyInfo()">내 정보</button>
+        <button class="secondary" onclick="showLeaderboardMessage()">리더보드</button>
+        <button id="adminButton" class="secondary" onclick="goToPage('admin')" style="display:none;">관리자</button>
+      </div>
+      <div id="mainMessage" class="message"></div>
+    </section>
+
+    <section id="infoPanel" class="panel screen">
+      <h2>내 정보</h2>
+      <div id="infoContent"></div>
+    </section>
+  </main>
+
+  <script>
+    var WEB_APP_URL = '<?= getWebAppUrl_() ?>';
+    var currentState = null;
+
+    function enterApp() {
+      document.getElementById('introScreen').classList.remove('active');
+      document.getElementById('appScreen').classList.add('active');
+      refreshCurrentUser();
+    }
+
+    function refreshCurrentUser() {
+      setMainMessage('');
+      google.script.run
+        .withSuccessHandler(renderCurrentUser)
+        .withFailureHandler(function(error) {
+          document.getElementById('mainTitle').textContent = '접속 확인 실패';
+          document.getElementById('userSummary').textContent = error.message;
+        })
+        .getCurrentUser(getAuthToken());
+    }
+
+    function renderCurrentUser(state) {
+      currentState = state;
+      document.getElementById('mainTitle').textContent = '메인 화면';
+      document.getElementById('userSummary').textContent = state.isRegistered
+        ? '로그인되었습니다.'
+        : '학번과 비밀번호로 로그인해 주세요.';
+      toggle('registerPanel', !state.isRegistered);
+      toggle('mainPanel', state.isRegistered);
+      toggle('infoPanel', false);
+
+      if (!state.isRegistered) {
+        return;
+      }
+
+      var player = state.player;
+      document.getElementById('playerBadge').innerHTML =
+        '<span class="avatar">' + escapeHtml(player.avatarKey || '?') + '</span>' +
+        '<strong>' + escapeHtml(player.displayName) + '</strong>' +
+        '<span class="muted"> · 학번 ' + escapeHtml(player.studentId) + '</span>';
+      document.getElementById('adminButton').style.display = state.isAdmin ? 'block' : 'none';
+    }
+
+    function register() {
+      setRegisterMessage('회원가입 중입니다.', 'ok');
+      google.script.run
+        .withSuccessHandler(function(response) {
+          saveAuthToken(response.authToken);
+          setRegisterMessage('회원가입되었습니다.', 'ok');
+          renderCurrentUser(response.user);
+        })
+        .withFailureHandler(function(error) {
+          setRegisterMessage(error.message, 'error');
+        })
+        .registerPlayer(getAuthFormPayload());
+    }
+
+    function login() {
+      setRegisterMessage('로그인 중입니다.', 'ok');
+      google.script.run
+        .withSuccessHandler(function(response) {
+          saveAuthToken(response.authToken);
+          setRegisterMessage('로그인되었습니다.', 'ok');
+          renderCurrentUser(response.user);
+        })
+        .withFailureHandler(function(error) {
+          setRegisterMessage(error.message, 'error');
+        })
+        .loginPlayer(getAuthFormPayload());
+    }
+
+    function showGameStartMessage() {
+      if (!currentState || !currentState.player) {
+        setMainMessage('먼저 이름을 등록해 주세요.', 'error');
+        return;
+      }
+      setMainMessage('게임 시작 조건을 확인하고 있습니다.', 'ok');
+      google.script.run
+        .withSuccessHandler(function() {
+          goToPage('battle');
+        })
+        .withFailureHandler(function(error) {
+          setMainMessage(error.message, 'error');
+        })
+        .startRun(currentState.player.playerId, getAuthToken());
+    }
+
+    function showLeaderboardMessage() {
+      setMainMessage('리더보드는 이후 단계에서 구현됩니다.', 'ok');
+    }
+
+    function showMyInfo() {
+      if (!currentState || !currentState.playerData) {
+        return;
+      }
+
+      var data = currentState.playerData;
+      var total = Number(data.totalAnswerCount || 0);
+      var correct = Number(data.correctAnswerCount || 0);
+      var rate = total > 0 ? Math.round((correct / total) * 100) + '%' : '-';
+      document.getElementById('infoContent').innerHTML =
+        '<p>최대 도달: ' + escapeHtml(data.maxFloor) + '층-' + escapeHtml(data.maxStage) + '스테이지</p>' +
+        '<p>정답률: ' + rate + '</p>' +
+        '<p>평균 풀이 시간: ' + escapeHtml(data.averageAnswerTimeMs || 0) + 'ms</p>' +
+        '<p>재화: ' + escapeHtml(data.currency || 0) + '</p>';
+      toggle('infoPanel', true);
+    }
+
+    function goToPage(page) {
+      window.top.location.href = WEB_APP_URL + '?page=' + encodeURIComponent(page);
+    }
+
+    function getAuthFormPayload() {
+      return {
+        studentId: document.getElementById('studentId').value,
+        studentName: document.getElementById('studentName').value,
+        password: document.getElementById('password').value,
+      };
+    }
+
+    function getAuthToken() {
+      return sessionStorage.getItem('learningRpgAuthToken') || '';
+    }
+
+    function saveAuthToken(authToken) {
+      sessionStorage.setItem('learningRpgAuthToken', authToken);
+    }
+
+    function toggle(id, show) {
+      document.getElementById(id).classList.toggle('active', show);
+    }
+
+    function setMainMessage(message, type) {
+      var element = document.getElementById('mainMessage');
+      element.textContent = message;
+      element.className = 'message ' + (type || '');
+    }
+
+    function setRegisterMessage(message, type) {
+      var element = document.getElementById('registerMessage');
+      element.textContent = message;
+      element.className = 'message ' + (type || '');
+    }
+
+    function escapeHtml(value) {
+      return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+  </script>
+</body>
+</html>

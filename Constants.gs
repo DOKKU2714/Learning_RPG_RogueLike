@@ -21,7 +21,7 @@ var DB_SHEETS = Object.freeze({
 var DB_COLUMNS = Object.freeze({
   SETTINGS: ['key', 'value', 'type', 'description', 'updatedAt'],
   ADMINS: ['email', 'name', 'role', 'active', 'createdAt'],
-  PLAYERS: ['playerId', 'email', 'displayName', 'avatarType', 'avatarKey', 'createdAt', 'lastLoginAt', 'isActive'],
+  PLAYERS: ['playerId', 'studentId', 'studentName', 'passwordHash', 'passwordSalt', 'email', 'displayName', 'avatarType', 'avatarKey', 'createdAt', 'lastLoginAt', 'isActive'],
   PLAYER_DATA: ['playerId', 'maxFloor', 'maxStage', 'bestClearTimeMs', 'totalAnswerCount', 'correctAnswerCount', 'averageAnswerTimeMs', 'currency', 'baseStatsJson', 'ownedSkillsJson', 'ownedItemsJson', 'updatedAt'],
   RUNS: ['runId', 'playerId', 'status', 'currentFloor', 'currentStage', 'currentHp', 'currentShield', 'statsJson', 'skillsJson', 'itemsJson', 'stageStateJson', 'startedAt', 'updatedAt', 'endedAt', 'clearTimeMs'],
   QUESTIONS: ['questionId', 'type', 'prompt', 'choice1', 'choice2', 'choice3', 'choice4', 'answer', 'answerAliases', 'explanation', 'difficulty', 'creatorId', 'creatorName', 'subject', 'unit', 'tags', 'status', 'reviewComment', 'approvedBy', 'approvedAt', 'createdAt', 'updatedAt', 'correctCount', 'totalCount'],
@@ -62,16 +62,31 @@ var STATUS = Object.freeze({
   ACTIVE: 'active',
   INACTIVE: 'inactive',
   RUN_ACTIVE: 'active',
+  RUN_FINISHED: 'finished',
   RUN_CLEARED: 'cleared',
   RUN_FAILED: 'failed',
+  BATTLE_ACTIVE: 'active',
+  BATTLE_VICTORY: 'victory',
+  BATTLE_DEFEAT: 'defeat',
   QUESTION_DRAFT: 'draft',
+  QUESTION_PENDING: 'pending',
   QUESTION_APPROVED: 'approved',
   QUESTION_REJECTED: 'rejected',
 });
 
 var AVATAR_TYPES = Object.freeze({
-  INITIALS: 'initials',
+  INITIAL: 'initial',
   DEFAULT: 'default',
+});
+
+var QUESTION_TYPES = Object.freeze({
+  MULTIPLE_CHOICE: 'multipleChoice',
+  SHORT_ANSWER: 'shortAnswer',
+});
+
+var ACTION_TYPES = Object.freeze({
+  ATTACK: 'attack',
+  GUARD: 'guard',
 });
 
 var EFFECT_CATEGORIES = Object.freeze({
@@ -126,10 +141,17 @@ var GAME_RULES = Object.freeze({
   MIN_DIFFICULTY: 1,
   MAX_DIFFICULTY: 10,
   DEFAULT_REQUIRED_OTHER_QUESTION_COUNT: 1,
+  BASE_GUARD_SHIELD: 20,
+  BASE_QUESTION_TIME_SEC: 10,
+  QUESTION_TIME_PER_DIFFICULTY_SEC: 2,
+  MIN_ANSWER_EFFICIENCY: 0.5,
+  MAX_ANSWER_EFFICIENCY: 1.25,
+  EXTRA_WRONG_EFFICIENCY_PENALTY: 0.1,
 });
 
 var MASTER_SETTINGS = Object.freeze([
   { key: 'appVersion', value: '0.5', type: 'string', description: 'Current app data version.' },
+  { key: 'gameEnabled', value: 'false', type: 'boolean', description: 'Whether students can start the game.' },
   { key: 'floorCount', value: '5', type: 'number', description: 'Total number of floors.' },
   { key: 'stagesPerFloor', value: '5', type: 'number', description: 'Number of stages per floor.' },
   { key: 'baseQuestionTimeSec', value: '10', type: 'number', description: 'Base question time in seconds.' },

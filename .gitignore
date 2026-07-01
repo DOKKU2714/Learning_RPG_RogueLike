@@ -1,3 +1,4 @@
 .agents/
 .output/
 outputs/
+.tmp_spreadsheet/

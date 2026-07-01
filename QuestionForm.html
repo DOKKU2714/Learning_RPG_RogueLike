@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <base target="_top">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    :root {
+      --bg: #f7f8fb;
+      --panel: #ffffff;
+      --text: #1d2433;
+      --muted: #667085;
+      --line: #d9e0ea;
+      --primary: #2563eb;
+      --primary-dark: #1d4ed8;
+      --danger: #b42318;
+      --ok: #087443;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: Arial, sans-serif;
+      color: var(--text);
+      background: var(--bg);
+    }
+
+    .shell {
+      width: min(1000px, 100%);
+      margin: 0 auto;
+      padding: 24px;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 16px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    label {
+      display: block;
+      margin: 0 0 8px;
+      font-weight: 700;
+    }
+
+    input,
+    select,
+    textarea {
+      width: 100%;
+      min-height: 42px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 10px;
+      font: inherit;
+      background: #ffffff;
+    }
+
+    textarea {
+      min-height: 96px;
+      resize: vertical;
+    }
+
+    button {
+      min-height: 42px;
+      border: 0;
+      border-radius: 6px;
+      padding: 10px 14px;
+      font: inherit;
+      font-weight: 700;
+      color: #ffffff;
+      background: var(--primary);
+      cursor: pointer;
+    }
+
+    button:hover {
+      background: var(--primary-dark);
+    }
+
+    button.secondary {
+      color: var(--text);
+      background: #edf2f7;
+    }
+
+    .muted {
+      color: var(--muted);
+    }
+
+    .message {
+      min-height: 24px;
+      margin-top: 12px;
+      font-weight: 700;
+    }
+
+    .message.error {
+      color: var(--danger);
+    }
+
+    .message.ok {
+      color: var(--ok);
+    }
+
+    .question-item {
+      border-top: 1px solid var(--line);
+      padding: 12px 0;
+    }
+
+    .choice-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .hidden {
+      display: none;
+    }
+
+    .topline {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    @media (max-width: 680px) {
+      .shell {
+        padding: 16px;
+      }
+
+      .grid,
+      .choice-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <section class="panel">
+      <div class="topline">
+        <div>
+          <h1>문제 만들기</h1>
+          <p id="userSummary" class="muted">사용자 확인 중입니다.</p>
+        </div>
+        <button class="secondary" onclick="goHome()">메인으로</button>
+      </div>
+    </section>
+
+    <section id="formPanel" class="panel hidden">
+      <div class="grid">
+        <div>
+          <label for="type">문제 유형</label>
+          <select id="type" onchange="renderTypeFields()">
+            <option value="multipleChoice">객관식</option>
+            <option value="shortAnswer">주관식</option>
+          </select>
+        </div>
+        <div>
+          <label for="subject">과목</label>
+          <input id="subject" placeholder="예: 사회">
+        </div>
+        <div>
+          <label for="unit">단원</label>
+          <input id="unit" placeholder="예: 조선 후기">
+        </div>
+        <div>
+          <label for="tags">태그</label>
+          <input id="tags" placeholder="쉼표로 구분">
+        </div>
+      </div>
+
+      <label for="prompt" style="margin-top: 12px;">문제 내용</label>
+      <textarea id="prompt" placeholder="친구가 풀 문제를 입력하세요."></textarea>
+
+      <div id="choicesArea" style="margin-top: 12px;">
+        <div class="choice-grid">
+          <div>
+            <label for="choice1">선택지 1</label>
+            <input id="choice1">
+          </div>
+          <div>
+            <label for="choice2">선택지 2</label>
+            <input id="choice2">
+          </div>
+          <div>
+            <label for="choice3">선택지 3</label>
+            <input id="choice3">
+          </div>
+          <div>
+            <label for="choice4">선택지 4</label>
+            <input id="choice4">
+          </div>
+        </div>
+      </div>
+
+      <div class="grid" style="margin-top: 12px;">
+        <div>
+          <label for="answer">정답</label>
+          <input id="answer" placeholder="객관식은 정답 번호 또는 정답 텍스트">
+        </div>
+        <div>
+          <label for="answerAliases">복수 인정 답안</label>
+          <input id="answerAliases" placeholder="쉼표 또는 줄바꿈으로 구분">
+        </div>
+      </div>
+
+      <label for="explanation" style="margin-top: 12px;">해설</label>
+      <textarea id="explanation" placeholder="선택 사항"></textarea>
+
+      <button onclick="submitQuestion()">문제 등록</button>
+      <div id="formMessage" class="message"></div>
+    </section>
+
+    <section id="lockedPanel" class="panel hidden">
+      <p>로그인 후 문제를 만들 수 있습니다.</p>
+      <button onclick="goHome()">로그인하러 가기</button>
+      <div id="lockedMessage" class="message"></div>
+    </section>
+
+    <section class="panel">
+      <div class="topline">
+        <h2>내가 만든 문제</h2>
+        <button class="secondary" onclick="loadMyQuestions()">목록 새로고침</button>
+      </div>
+      <p id="questionCount" class="muted"></p>
+      <div id="myQuestions"></div>
+    </section>
+  </main>
+
+  <script>
+    var WEB_APP_URL = '<?= getWebAppUrl_() ?>';
+
+    function init() {
+      google.script.run
+        .withSuccessHandler(function(state) {
+          document.getElementById('userSummary').textContent = state.isRegistered
+            ? state.player.displayName + '님, 최대 10개까지 문제를 만들 수 있습니다.'
+            : '등록된 학생 정보가 없습니다.';
+          document.getElementById('formPanel').classList.toggle('hidden', !state.isRegistered);
+          document.getElementById('lockedPanel').classList.toggle('hidden', state.isRegistered);
+          if (state.isRegistered) {
+            loadMyQuestions();
+          }
+        })
+        .withFailureHandler(showError)
+        .getCurrentUser(getAuthToken());
+    }
+
+    function renderTypeFields() {
+      var type = document.getElementById('type').value;
+      document.getElementById('choicesArea').classList.toggle('hidden', type === 'shortAnswer');
+    }
+
+    function submitQuestion() {
+      var payload = {
+        type: valueOf('type'),
+        prompt: valueOf('prompt'),
+        choices: [valueOf('choice1'), valueOf('choice2'), valueOf('choice3'), valueOf('choice4')],
+        answer: valueOf('answer'),
+        answerAliases: valueOf('answerAliases'),
+        explanation: valueOf('explanation'),
+        subject: valueOf('subject'),
+        unit: valueOf('unit'),
+        tags: valueOf('tags'),
+      };
+
+      setFormMessage('저장 중입니다.', 'ok');
+      google.script.run
+        .withSuccessHandler(function() {
+          setFormMessage('승인 대기 문제로 저장했습니다.', 'ok');
+          clearQuestionFields();
+          loadMyQuestions();
+        })
+        .withFailureHandler(function(error) {
+          setFormMessage(error.message, 'error');
+        })
+        .createQuestion(payload, getAuthToken());
+    }
+
+    function loadMyQuestions() {
+      google.script.run
+        .withSuccessHandler(renderMyQuestions)
+        .withFailureHandler(showError)
+        .getMyQuestions(getAuthToken());
+    }
+
+    function renderMyQuestions(questions) {
+      document.getElementById('questionCount').textContent = questions.length + ' / 10개 생성';
+      var container = document.getElementById('myQuestions');
+      if (!questions.length) {
+        container.innerHTML = '<p class="muted">아직 만든 문제가 없습니다.</p>';
+        return;
+      }
+
+      container.innerHTML = questions.map(function(question) {
+        return '<article class="question-item">' +
+          '<strong>' + escapeHtml(question.prompt) + '</strong>' +
+          '<p class="muted">' + escapeHtml(question.type) + ' · ' + escapeHtml(question.status) + ' · 난이도 ' + escapeHtml(question.difficulty || '-') + '</p>' +
+          '<p>정답: ' + escapeHtml(question.answer) + '</p>' +
+        '</article>';
+      }).join('');
+    }
+
+    function clearQuestionFields() {
+      ['prompt', 'choice1', 'choice2', 'choice3', 'choice4', 'answer', 'answerAliases', 'explanation'].forEach(function(id) {
+        document.getElementById(id).value = '';
+      });
+    }
+
+    function valueOf(id) {
+      return document.getElementById(id).value.trim();
+    }
+
+    function setFormMessage(message, type) {
+      var element = document.getElementById('formMessage');
+      element.textContent = message;
+      element.className = 'message ' + (type || '');
+    }
+
+    function showError(error) {
+      setFormMessage(error.message, 'error');
+      document.getElementById('lockedPanel').classList.remove('hidden');
+      var lockedMessage = document.getElementById('lockedMessage');
+      lockedMessage.textContent = error.message;
+      lockedMessage.className = 'message error';
+    }
+
+    function goHome() {
+      window.top.location.href = WEB_APP_URL;
+    }
+
+    function getAuthToken() {
+      return sessionStorage.getItem('learningRpgAuthToken') || '';
+    }
+
+    function escapeHtml(value) {
+      return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+
+    init();
+  </script>
+</body>
+</html>
