@@ -277,9 +277,11 @@
   }
 
   .thin-hp-bar {
+    position: relative;
     height: 10px;
     border: 1px solid #bfbfbf;
     background: #080808;
+    overflow: hidden;
   }
 
   .thin-hp-bar > span,
@@ -288,6 +290,7 @@
     height: 100%;
     width: 0%;
     background: #bdbdbd;
+    transition: width 420ms ease-out, left 420ms ease-out;
   }
 
   .status-row {
@@ -645,6 +648,20 @@
     background: #b30000;
   }
 
+  .monster-hp-bar > .hp-lag {
+    position: absolute;
+    inset: 0 auto 0 0;
+    background: #f2f2f2;
+    transition: width 760ms ease-out;
+  }
+
+  .monster-hp-bar > .hp-current {
+    position: absolute;
+    inset: 0 auto 0 0;
+    background: #b30000;
+    transition: width 300ms ease-out;
+  }
+
   .monster-status-row {
     justify-content: center;
     min-height: 0;
@@ -698,7 +715,7 @@
   .compact-monster {
     width: min(150px, 24vw);
     max-width: 150px;
-    border-color: rgba(220, 220, 220, 0.72);
+    border: 0;
     background:
       radial-gradient(circle at 50% 34%, #333, #171717 62%, #090909);
   }
@@ -745,7 +762,7 @@
 
   .compact-actions {
     display: grid;
-    grid-template-columns: repeat(2, minmax(72px, 1fr));
+    grid-template-columns: repeat(3, minmax(64px, 1fr));
     gap: 6px;
   }
 
@@ -809,6 +826,7 @@
     overflow: hidden;
   }
 
+  .player-hp-lag,
   .player-hp-fill,
   .player-shield-fill {
     position: absolute;
@@ -816,6 +834,12 @@
     bottom: 0;
     left: 0;
     display: block;
+    transition: width 420ms ease-out, left 420ms ease-out;
+  }
+
+  .player-hp-lag {
+    background: #f2f2f2;
+    transition: width 760ms ease-out, left 760ms ease-out;
   }
 
   .player-hp-fill {
@@ -965,6 +989,45 @@
   .reward-choice-card span {
     color: var(--muted);
     font-size: 13px;
+  }
+
+  .player-status-row {
+    justify-content: center;
+    min-height: 22px;
+    margin-top: 8px;
+  }
+
+  .hover-tooltip {
+    position: fixed;
+    z-index: 80;
+    display: none;
+    max-width: 260px;
+    white-space: pre-line;
+    border: 1px solid rgba(230, 230, 230, 0.75);
+    background: rgba(5, 5, 5, 0.94);
+    color: var(--accent);
+    padding: 8px 10px;
+    font-size: 12px;
+    line-height: 1.45;
+    pointer-events: none;
+  }
+
+  .hover-tooltip.active {
+    display: block;
+  }
+
+  .battle-start-fade {
+    position: fixed;
+    inset: 0;
+    z-index: 90;
+    background: #000;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 700ms ease-out;
+  }
+
+  .battle-start-fade.active {
+    opacity: 1;
   }
 
   @media (max-width: 760px) {

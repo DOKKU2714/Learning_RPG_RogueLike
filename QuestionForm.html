@@ -5,6 +5,46 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <?!= include_('UiStyles'); ?>
+  <style>
+    .question-batch {
+      display: grid;
+      gap: 14px;
+      margin-top: 14px;
+    }
+
+    .question-card-form {
+      border: 1px solid var(--line);
+      background: rgba(15, 15, 15, 0.78);
+      padding: 14px;
+    }
+
+    .question-card-top {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+
+    .type-radio-row {
+      display: flex;
+      gap: 14px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    .type-radio-row label {
+      display: inline-flex;
+      gap: 6px;
+      align-items: center;
+      color: var(--accent);
+    }
+
+    .remove-question {
+      min-height: 32px;
+      padding: 4px 10px;
+    }
+  </style>
 </head>
 <body>
   <main class="question-form-shell fade-in">
@@ -19,68 +59,20 @@
     </section>
 
     <section id="formPanel" class="rpg-panel hidden" style="margin-top:14px;">
-      <div class="form-grid">
-        <div>
-          <label for="type">문제 유형</label>
-          <select id="type" onchange="renderTypeFields()">
-            <option value="multipleChoice">객관식</option>
-            <option value="shortAnswer">주관식</option>
-          </select>
-        </div>
-        <div>
-          <label for="subject">과목</label>
-          <input id="subject" placeholder="예: 사회">
-        </div>
-        <div>
-          <label for="unit">단원</label>
-          <input id="unit" placeholder="예: 조선 전기">
-        </div>
-        <div>
-          <label for="tags">태그</label>
-          <input id="tags" placeholder="쉼표로 구분">
-        </div>
+      <div class="inline-actions" style="justify-content:space-between;">
+        <h2 style="margin:0;">문제 입력</h2>
+        <button class="secondary" onclick="addQuestionForm()">+ 문제 추가</button>
       </div>
-
-      <div style="margin-top:14px;">
-        <label for="prompt">문제 내용</label>
-        <textarea id="prompt" placeholder="친구가 풀 문제를 입력하세요."></textarea>
-      </div>
-
-      <div id="choicesArea" style="margin-top:14px;">
-        <label>객관식 보기 4개</label>
-        <div class="choice-grid">
-          <input id="choice1" placeholder="선택지 1">
-          <input id="choice2" placeholder="선택지 2">
-          <input id="choice3" placeholder="선택지 3">
-          <input id="choice4" placeholder="선택지 4">
-        </div>
-      </div>
-
-      <div class="form-grid" style="margin-top:14px;">
-        <div>
-          <label for="answer">정답</label>
-          <input id="answer" placeholder="객관식은 정답 번호, 주관식은 정답 텍스트">
-        </div>
-        <div>
-          <label for="answerAliases">복수 정답 / 별칭</label>
-          <input id="answerAliases" placeholder="쉼표 또는 줄바꿈으로 구분">
-        </div>
-      </div>
-
-      <div style="margin-top:14px;">
-        <label for="explanation">해설</label>
-        <textarea id="explanation" placeholder="선택 사항"></textarea>
-      </div>
-
+      <div id="questionForms" class="question-batch"></div>
       <div class="inline-actions" style="justify-content:flex-end; margin-top:16px;">
-        <button class="secondary" onclick="clearQuestionFields()">입력 초기화</button>
-        <button onclick="submitQuestion()">저장</button>
+        <button class="secondary" onclick="resetQuestionForms()">전체 초기화</button>
+        <button onclick="submitQuestions()">저장</button>
       </div>
       <div id="formMessage" class="message"></div>
     </section>
 
     <section id="lockedPanel" class="rpg-panel hidden" style="margin-top:14px;">
-      <p>로그인 후 문제를 만들 수 있습니다.</p>
+      <p>로그인해야 문제를 만들 수 있습니다.</p>
       <button onclick="goHome()">로그인하러 가기</button>
       <div id="lockedMessage" class="message"></div>
     </section>
@@ -88,7 +80,7 @@
     <section class="rpg-panel" style="margin-top:14px;">
       <div class="inline-actions" style="justify-content:space-between;">
         <h2 style="margin:0;">내가 만든 문제</h2>
-        <button class="secondary" onclick="loadMyQuestions()">목록 새로고침</button>
+        <button class="secondary" onclick="loadMyQuestions(true)">목록 새로고침</button>
       </div>
       <p id="questionCount" class="muted"></p>
       <div id="myQuestions"></div>
@@ -99,20 +91,25 @@
 
   <script>
     var WEB_APP_URL = '<?= getWebAppUrl_() ?>';
+    var formSeq = 0;
 
     function init() {
-      renderTypeFields();
+      resetQuestionForms();
+      var cachedState = getCachedCurrentState();
+      if (cachedState && cachedState.isRegistered) {
+        renderUserState(cachedState);
+        loadMyQuestions(false);
+        return;
+      }
+
       showLoadingModal('로딩 중...', '문제 작성 화면을 준비하는 중...');
       google.script.run
         .withSuccessHandler(function(state) {
           hideLoadingModal();
-          document.getElementById('userSummary').textContent = state.isRegistered
-            ? state.player.displayName + '님, 문제를 등록할 수 있습니다.'
-            : '로그인 정보가 없습니다.';
-          document.getElementById('formPanel').classList.toggle('hidden', !state.isRegistered);
-          document.getElementById('lockedPanel').classList.toggle('hidden', state.isRegistered);
+          cacheCurrentState(state);
+          renderUserState(state);
           if (state.isRegistered) {
-            loadMyQuestions();
+            loadMyQuestions(false);
           }
         })
         .withFailureHandler(function(error) {
@@ -122,48 +119,148 @@
         .getCurrentUser(getAuthToken());
     }
 
-    function renderTypeFields() {
-      var type = document.getElementById('type').value;
-      document.getElementById('choicesArea').classList.toggle('hidden', type === 'shortAnswer');
+    function renderUserState(state) {
+      document.getElementById('userSummary').textContent = state.isRegistered && state.player
+        ? state.player.displayName + '의 문제를 등록할 수 있습니다.'
+        : '로그인 정보가 없습니다.';
+      document.getElementById('formPanel').classList.toggle('hidden', !state.isRegistered);
+      document.getElementById('lockedPanel').classList.toggle('hidden', state.isRegistered);
     }
 
-    function submitQuestion() {
-      var payload = {
-        type: valueOf('type'),
-        prompt: valueOf('prompt'),
-        choices: [valueOf('choice1'), valueOf('choice2'), valueOf('choice3'), valueOf('choice4')],
-        answer: valueOf('answer'),
-        answerAliases: valueOf('answerAliases'),
-        explanation: valueOf('explanation'),
-        subject: valueOf('subject'),
-        unit: valueOf('unit'),
-        tags: valueOf('tags'),
-      };
+    function addQuestionForm() {
+      formSeq += 1;
+      var id = 'questionForm-' + formSeq;
+      var container = document.getElementById('questionForms');
+      var card = document.createElement('article');
+      card.className = 'question-card-form';
+      card.id = id;
+      card.innerHTML = renderQuestionFormHtml(id, formSeq);
+      container.appendChild(card);
+      updateChoiceVisibility(id);
+    }
 
+    function renderQuestionFormHtml(id, index) {
+      return '' +
+        '<div class="question-card-top">' +
+          '<strong>문제 ' + index + '</strong>' +
+          '<button class="secondary remove-question" onclick="removeQuestionForm(\'' + id + '\')">삭제</button>' +
+        '</div>' +
+        '<div class="type-radio-row">' +
+          '<span class="muted">문제 유형</span>' +
+          '<label><input type="radio" name="' + id + '-type" value="multipleChoice" checked onchange="updateChoiceVisibility(\'' + id + '\')"> 객관식</label>' +
+          '<label><input type="radio" name="' + id + '-type" value="shortAnswer" onchange="updateChoiceVisibility(\'' + id + '\')"> 주관식</label>' +
+        '</div>' +
+        '<div style="margin-top:12px;">' +
+          '<label>문제 내용</label>' +
+          '<textarea data-field="prompt" placeholder="친구가 풀 문제를 입력하세요."></textarea>' +
+        '</div>' +
+        '<div data-area="choices" style="margin-top:12px;">' +
+          '<label>객관식 보기 4개</label>' +
+          '<div class="choice-grid">' +
+            '<input data-field="choice1" placeholder="선택지 1">' +
+            '<input data-field="choice2" placeholder="선택지 2">' +
+            '<input data-field="choice3" placeholder="선택지 3">' +
+            '<input data-field="choice4" placeholder="선택지 4">' +
+          '</div>' +
+        '</div>' +
+        '<div class="form-grid" style="margin-top:12px;">' +
+          '<div><label>정답</label><input data-field="answer" placeholder="객관식은 정답 번호, 주관식은 정답 텍스트"></div>' +
+          '<div><label>복수 정답 / 별칭</label><input data-field="answerAliases" placeholder="쉼표 또는 줄바꿈으로 구분"></div>' +
+          '<div><label>과목</label><input data-field="subject" placeholder="예: 사회"></div>' +
+          '<div><label>단원</label><input data-field="unit" placeholder="예: 조선 전기"></div>' +
+          '<div style="grid-column:1 / -1;"><label>태그</label><input data-field="tags" placeholder="쉼표로 구분"></div>' +
+        '</div>' +
+        '<div style="margin-top:12px;">' +
+          '<label>해설</label>' +
+          '<textarea data-field="explanation" placeholder="선택 사항"></textarea>' +
+        '</div>';
+    }
+
+    function updateChoiceVisibility(id) {
+      var card = document.getElementById(id);
+      if (!card) return;
+      var type = getQuestionType(card);
+      card.querySelector('[data-area="choices"]').classList.toggle('hidden', type === 'shortAnswer');
+    }
+
+    function removeQuestionForm(id) {
+      var forms = document.querySelectorAll('.question-card-form');
+      if (forms.length <= 1) {
+        setFormMessage('최소 1개의 입력란이 필요합니다.', 'error');
+        return;
+      }
+      var card = document.getElementById(id);
+      if (card) card.remove();
+    }
+
+    function resetQuestionForms() {
+      formSeq = 0;
+      document.getElementById('questionForms').innerHTML = '';
+      addQuestionForm();
+      setFormMessage('', '');
+    }
+
+    function submitQuestions() {
+      var payloads = Array.prototype.map.call(document.querySelectorAll('.question-card-form'), readQuestionPayload);
       setFormMessage('저장 중입니다.', 'ok');
       showLoadingModal('저장 중...', '문제를 승인 대기 목록에 추가하는 중...');
       google.script.run
         .withSuccessHandler(function() {
           hideLoadingModal();
           setFormMessage('승인 대기 문제로 저장했습니다.', 'ok');
-          clearQuestionFields();
-          loadMyQuestions();
+          resetQuestionForms();
+          loadMyQuestions(true);
         })
         .withFailureHandler(function(error) {
           hideLoadingModal();
           setFormMessage(error.message, 'error');
         })
-        .createQuestion(payload, getAuthToken());
+        .createQuestions(payloads, getAuthToken());
     }
 
-    function loadMyQuestions() {
+    function readQuestionPayload(card) {
+      return {
+        type: getQuestionType(card),
+        prompt: valueOf(card, 'prompt'),
+        choices: [valueOf(card, 'choice1'), valueOf(card, 'choice2'), valueOf(card, 'choice3'), valueOf(card, 'choice4')],
+        answer: valueOf(card, 'answer'),
+        answerAliases: valueOf(card, 'answerAliases'),
+        explanation: valueOf(card, 'explanation'),
+        subject: valueOf(card, 'subject'),
+        unit: valueOf(card, 'unit'),
+        tags: valueOf(card, 'tags'),
+      };
+    }
+
+    function getQuestionType(card) {
+      var checked = card.querySelector('input[type="radio"]:checked');
+      return checked ? checked.value : 'multipleChoice';
+    }
+
+    function valueOf(card, field) {
+      var input = card.querySelector('[data-field="' + field + '"]');
+      return input ? input.value.trim() : '';
+    }
+
+    function loadMyQuestions(force) {
+      if (!force) {
+        var cached = getCachedMyQuestions();
+        if (cached) {
+          renderMyQuestions(cached);
+          return;
+        }
+      }
       google.script.run
-        .withSuccessHandler(renderMyQuestions)
+        .withSuccessHandler(function(questions) {
+          cacheMyQuestions(questions);
+          renderMyQuestions(questions);
+        })
         .withFailureHandler(showError)
         .getMyQuestions(getAuthToken());
     }
 
     function renderMyQuestions(questions) {
+      questions = questions || [];
       document.getElementById('questionCount').textContent = questions.length + ' / 10개 생성';
       var container = document.getElementById('myQuestions');
       if (!questions.length) {
@@ -178,16 +275,6 @@
           '<p>정답: ' + escapeHtml(question.answer) + '</p>' +
         '</article>';
       }).join('');
-    }
-
-    function clearQuestionFields() {
-      ['prompt', 'choice1', 'choice2', 'choice3', 'choice4', 'answer', 'answerAliases', 'explanation'].forEach(function(id) {
-        document.getElementById(id).value = '';
-      });
-    }
-
-    function valueOf(id) {
-      return document.getElementById(id).value.trim();
     }
 
     function typeLabel(type) {
@@ -207,19 +294,52 @@
     }
 
     function showError(error) {
-      setFormMessage(error.message, 'error');
+      var message = error && error.message ? error.message : String(error);
+      setFormMessage(message, 'error');
       document.getElementById('lockedPanel').classList.remove('hidden');
       var lockedMessage = document.getElementById('lockedMessage');
-      lockedMessage.textContent = error.message;
+      lockedMessage.textContent = message;
       lockedMessage.className = 'message error';
     }
 
     function goHome() {
-      window.top.location.href = WEB_APP_URL;
+      window.top.location.href = WEB_APP_URL + '?skipIntro=1';
     }
 
     function getAuthToken() {
       return sessionStorage.getItem('learningRpgAuthToken') || '';
+    }
+
+    function getCachedCurrentState() {
+      try {
+        return JSON.parse(sessionStorage.getItem('learningRpgCurrentState') || 'null');
+      } catch (error) {
+        return null;
+      }
+    }
+
+    function cacheCurrentState(state) {
+      try {
+        sessionStorage.setItem('learningRpgCurrentState', JSON.stringify(state || null));
+      } catch (error) {
+        // Ignore storage failures.
+      }
+    }
+
+    function getCachedMyQuestions() {
+      try {
+        return JSON.parse(sessionStorage.getItem('learningRpgMyQuestions') || 'null');
+      } catch (error) {
+        return null;
+      }
+    }
+
+    function cacheMyQuestions(questions) {
+      try {
+        sessionStorage.setItem('learningRpgMyQuestions', JSON.stringify(questions || []));
+      } catch (error) {
+        // Ignore storage failures.
+      }
     }
 
     function showLoadingModal(title, text) {

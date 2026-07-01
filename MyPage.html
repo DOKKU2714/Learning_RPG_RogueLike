@@ -78,7 +78,10 @@
           <p class="muted">MY PAGE</p>
           <h1 id="playerName" class="rpg-title">내 정보</h1>
         </div>
-        <button class="secondary" onclick="goHome()">메인으로</button>
+        <div class="inline-actions">
+          <button class="secondary" onclick="refreshMyInfo()">새로고침</button>
+          <button class="secondary" onclick="goHome()">메인으로</button>
+        </div>
       </div>
       <div id="mypageMessage" class="message"></div>
     </section>
@@ -117,6 +120,12 @@
     var WEB_APP_URL = '<?= getWebAppUrl_() ?>';
 
     function init() {
+      var cachedState = getCachedCurrentState();
+      if (cachedState && cachedState.isRegistered && cachedState.player) {
+        loadMyInfo(cachedState.player.playerId);
+        return;
+      }
+
       showLoadingModal('로딩 중...', '내 정보를 불러오는 중...');
       google.script.run
         .withSuccessHandler(function(state) {
@@ -132,10 +141,23 @@
         .getCurrentUser(getAuthToken());
     }
 
+    function refreshMyInfo() {
+      sessionStorage.removeItem('learningRpgMyInfo');
+      init();
+    }
+
     function loadMyInfo(playerId) {
+      var cachedInfo = getCachedMyInfo();
+      if (cachedInfo && cachedInfo.player && cachedInfo.player.playerId === playerId) {
+        renderMyInfo(cachedInfo);
+        return;
+      }
+
+      showLoadingModal('로딩 중...', '내 정보를 불러오는 중...');
       google.script.run
         .withSuccessHandler(function(info) {
           hideLoadingModal();
+          cacheMyInfo(info);
           renderMyInfo(info);
         })
         .withFailureHandler(showError)
@@ -194,8 +216,32 @@
       return sessionStorage.getItem('learningRpgAuthToken') || '';
     }
 
+    function getCachedCurrentState() {
+      try {
+        return JSON.parse(sessionStorage.getItem('learningRpgCurrentState') || 'null');
+      } catch (error) {
+        return null;
+      }
+    }
+
+    function getCachedMyInfo() {
+      try {
+        return JSON.parse(sessionStorage.getItem('learningRpgMyInfo') || 'null');
+      } catch (error) {
+        return null;
+      }
+    }
+
+    function cacheMyInfo(info) {
+      try {
+        sessionStorage.setItem('learningRpgMyInfo', JSON.stringify(info || null));
+      } catch (error) {
+        // Ignore storage failures.
+      }
+    }
+
     function goHome() {
-      window.top.location.href = WEB_APP_URL;
+      window.top.location.href = WEB_APP_URL + '?skipIntro=1';
     }
 
     function setMessage(message, type) {

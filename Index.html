@@ -49,6 +49,7 @@
         <button onclick="goToPage('question')">문제 만들기</button>
         <button class="secondary" onclick="showMyInfo()">내 정보</button>
         <button class="secondary" onclick="showLeaderboardMessage()">리더보드</button>
+        <button class="secondary" onclick="refreshCurrentUser(true)">데이터 새로고침</button>
         <button id="adminButton" class="secondary" onclick="goToPage('admin')" style="display:none;">관리자</button>
       </div>
       <div id="mainMessage" class="message"></div>
@@ -66,6 +67,13 @@
   <script>
     var WEB_APP_URL = '<?= getWebAppUrl_() ?>';
     var currentState = null;
+    var SKIP_INTRO = window.location.search.indexOf('skipIntro=1') !== -1;
+
+    if (SKIP_INTRO) {
+      document.addEventListener('DOMContentLoaded', function() {
+        enterApp();
+      });
+    }
 
     function enterApp() {
       document.getElementById('introScreen').classList.remove('active');
@@ -73,12 +81,20 @@
       refreshCurrentUser();
     }
 
-    function refreshCurrentUser() {
+    function refreshCurrentUser(force) {
       setMainMessage('');
+      if (!force) {
+        var cachedState = getCachedCurrentState();
+        if (cachedState) {
+          renderCurrentUser(cachedState);
+          return;
+        }
+      }
       showLoadingModal('로딩 중...', '사용자 정보를 확인하는 중...');
       google.script.run
         .withSuccessHandler(function(state) {
           hideLoadingModal();
+          saveCurrentState(state);
           renderCurrentUser(state);
         })
         .withFailureHandler(function(error) {
@@ -116,6 +132,7 @@
         .withSuccessHandler(function(response) {
           hideLoadingModal();
           saveAuthToken(response.authToken);
+          saveCurrentState(response.user);
           setRegisterMessage('회원가입되었습니다.', 'ok');
           renderCurrentUser(response.user);
         })
@@ -133,6 +150,7 @@
         .withSuccessHandler(function(response) {
           hideLoadingModal();
           saveAuthToken(response.authToken);
+          saveCurrentState(response.user);
           setRegisterMessage('로그인되었습니다.', 'ok');
           renderCurrentUser(response.user);
         })
@@ -203,6 +221,22 @@
 
     function saveAuthToken(authToken) {
       sessionStorage.setItem('learningRpgAuthToken', authToken);
+    }
+
+    function saveCurrentState(state) {
+      try {
+        sessionStorage.setItem('learningRpgCurrentState', JSON.stringify(state || null));
+      } catch (error) {
+        // Ignore storage failures.
+      }
+    }
+
+    function getCachedCurrentState() {
+      try {
+        return JSON.parse(sessionStorage.getItem('learningRpgCurrentState') || 'null');
+      } catch (error) {
+        return null;
+      }
     }
 
     function toggle(id, show) {

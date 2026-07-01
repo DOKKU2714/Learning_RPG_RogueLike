@@ -18,6 +18,7 @@ function getAvailableSkills(runState, battleState) {
       target: hydrated.target,
       level: hydrated.level,
       baseValue: Number(hydrated.baseValue || 0),
+      cooldown: hydrated.cooldown || '',
       difficultyBonus: Number(hydrated.difficultyBonus || 0),
       description: hydrated.description,
       previewText: buildSkillPreviewText_(hydrated, battleState),

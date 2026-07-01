@@ -39,6 +39,19 @@ function createQuestion(questionPayload, authToken) {
   return toClientObject_(question);
 }
 
+function createQuestions(questionPayloads, authToken) {
+  var payloads = Array.isArray(questionPayloads) ? questionPayloads : [];
+  if (!payloads.length) {
+    throw new Error('저장할 문제가 없습니다.');
+  }
+  if (payloads.length > 10) {
+    throw new Error('한 번에 최대 10개까지 저장할 수 있습니다.');
+  }
+  return payloads.map(function(payload) {
+    return createQuestion(payload, authToken);
+  });
+}
+
 function getMyQuestions(authToken) {
   var player = getCurrentPlayer_(authToken);
   return getQuestionsByCreator_(player.playerId).map(toClientObject_);
