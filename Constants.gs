@@ -23,7 +23,7 @@ var DB_COLUMNS = Object.freeze({
   ADMINS: ['email', 'name', 'role', 'active', 'createdAt'],
   PLAYERS: ['playerId', 'studentId', 'studentName', 'passwordHash', 'passwordSalt', 'email', 'displayName', 'avatarType', 'avatarKey', 'createdAt', 'lastLoginAt', 'isActive'],
   PLAYER_DATA: ['playerId', 'maxFloor', 'maxStage', 'bestClearTimeMs', 'totalAnswerCount', 'correctAnswerCount', 'averageAnswerTimeMs', 'currency', 'baseStatsJson', 'ownedSkillsJson', 'ownedItemsJson', 'updatedAt'],
-  RUNS: ['runId', 'playerId', 'status', 'currentFloor', 'currentStage', 'currentHp', 'currentShield', 'statsJson', 'skillsJson', 'itemsJson', 'stageStateJson', 'startedAt', 'updatedAt', 'endedAt', 'clearTimeMs'],
+  RUNS: ['runId', 'playerId', 'status', 'currentFloor', 'currentStage', 'currentHp', 'currentShield', 'statsJson', 'skillsJson', 'itemsJson', 'stageStateJson', 'startedAt', 'updatedAt', 'endedAt', 'clearTimeMs', 'currency'],
   QUESTIONS: ['questionId', 'type', 'prompt', 'choice1', 'choice2', 'choice3', 'choice4', 'answer', 'answerAliases', 'explanation', 'difficulty', 'creatorId', 'creatorName', 'subject', 'unit', 'tags', 'status', 'reviewComment', 'approvedBy', 'approvedAt', 'createdAt', 'updatedAt', 'correctCount', 'totalCount'],
   ANSWER_LOGS: ['answerLogId', 'questionId', 'playerId', 'creatorId', 'runId', 'battleId', 'floor', 'stage', 'actionType', 'selectedAnswer', 'isCorrect', 'elapsedMs', 'maxTimeMs', 'efficiency', 'finalDifficulty', 'isOtherPlayerQuestion', 'createdAt'],
   STAGES: ['stageId', 'floor', 'stage', 'name', 'baseDifficulty', 'minDifficulty', 'maxDifficulty', 'monsterGroupId', 'bossMonsterId', 'rewardGroupId', 'requiredOtherQuestionCount'],
@@ -87,6 +87,13 @@ var QUESTION_TYPES = Object.freeze({
 var ACTION_TYPES = Object.freeze({
   ATTACK: 'attack',
   GUARD: 'guard',
+});
+
+var REWARD_TYPES = Object.freeze({
+  STAT: 'stat',
+  SKILL: 'skill',
+  SKILL_UPGRADE: 'skillUpgrade',
+  ITEM: 'item',
 });
 
 var EFFECT_CATEGORIES = Object.freeze({
@@ -202,14 +209,18 @@ var MASTER_MONSTER_GROUPS = Object.freeze([
 ]);
 
 var MASTER_REWARDS = Object.freeze([
-  { rewardId: 'reward_skill_power', type: 'effect', targetId: 'buff_power', value: 1, weight: 30, minFloor: 1, maxFloor: 5, description: '힘 버프 보상.' },
-  { rewardId: 'reward_skill_hard', type: 'effect', targetId: 'buff_hard', value: 1, weight: 30, minFloor: 1, maxFloor: 5, description: '단단함 버프 보상.' },
-  { rewardId: 'reward_skill_focus', type: 'effect', targetId: 'buff_focus', value: 1, weight: 20, minFloor: 1, maxFloor: 5, description: '집중 버프 보상.' },
-  { rewardId: 'reward_item_small_heal', type: 'item', targetId: 'item_small_heal', value: 1, weight: 20, minFloor: 1, maxFloor: 5, description: '소형 회복 아이템 보상.' },
+  { rewardId: 'reward_stat_attack_2', type: REWARD_TYPES.STAT, targetId: STAT_KEYS.ATTACK, value: 2, weight: 30, minFloor: 1, maxFloor: 5, description: '공격력 +2' },
+  { rewardId: 'reward_stat_hp_10', type: REWARD_TYPES.STAT, targetId: STAT_KEYS.HP, value: 10, weight: 25, minFloor: 1, maxFloor: 5, description: '최대 체력 +10' },
+  { rewardId: 'reward_stat_defense_2', type: REWARD_TYPES.STAT, targetId: STAT_KEYS.DEFENSE, value: 2, weight: 25, minFloor: 1, maxFloor: 5, description: '방어력 +2' },
+  { rewardId: 'reward_stat_critical_rate_3', type: REWARD_TYPES.STAT, targetId: STAT_KEYS.CRITICAL_RATE, value: 3, weight: 15, minFloor: 1, maxFloor: 5, description: '치명타 확률 +3' },
+  { rewardId: 'reward_skill_basic_slash', type: REWARD_TYPES.SKILL, targetId: 'skill_basic_slash', value: 1, weight: 20, minFloor: 1, maxFloor: 5, description: '스킬 획득: 깊게 베기' },
+  { rewardId: 'reward_skill_guard_focus', type: REWARD_TYPES.SKILL, targetId: 'skill_guard_focus', value: 1, weight: 20, minFloor: 1, maxFloor: 5, description: '스킬 획득: 집중 방어' },
+  { rewardId: 'reward_skill_upgrade_placeholder', type: REWARD_TYPES.SKILL_UPGRADE, targetId: 'skill_basic_slash', value: 1, weight: 1, minFloor: 1, maxFloor: 5, description: '스킬 강화 데이터 자리표시자' },
+  { rewardId: 'reward_item_small_heal', type: REWARD_TYPES.ITEM, targetId: 'item_small_heal', value: 1, weight: 1, minFloor: 1, maxFloor: 5, description: '아이템 보상 데이터 자리표시자' },
 ]);
 
 var MASTER_REWARD_GROUPS = Object.freeze([
-  { rewardGroupId: 'reward_group_default', rewardIds: '["reward_skill_power","reward_skill_hard","reward_skill_focus","reward_item_small_heal"]', currencyMin: 5, currencyMax: 15, description: '기본 스테이지 클리어 보상 그룹.' },
+  { rewardGroupId: 'reward_group_default', rewardIds: '["reward_stat_attack_2","reward_stat_hp_10","reward_stat_defense_2","reward_stat_critical_rate_3","reward_skill_basic_slash","reward_skill_guard_focus","reward_skill_upgrade_placeholder","reward_item_small_heal"]', currencyMin: 5, currencyMax: 15, description: '기본 스테이지 클리어 보상 그룹.' },
 ]);
 
 var MASTER_ITEMS = Object.freeze([

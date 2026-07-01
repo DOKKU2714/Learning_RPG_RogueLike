@@ -54,6 +54,7 @@ function startRun(playerId, authToken) {
     updatedAt: now,
     endedAt: '',
     clearTimeMs: '',
+    currency: 0,
   };
 
   appendRowObject_(DB_SHEETS.RUNS, run);
@@ -78,7 +79,7 @@ function startBattle(runId) {
   var run = requireRun_(runId);
   var stageState = getStageState_(run);
   var stage = loadStage(stageState.stageId || buildStageId_(run.currentFloor, run.currentStage));
-  var monster = createMonsterForStage_(stage);
+  var monsters = createMonstersForStage_(stage);
   var stats = safeJsonParse_(run.statsJson, Object.assign({}, BASE_PLAYER_STATS));
   var battleState = {
     battleId: generateId_('battle'),
@@ -92,6 +93,7 @@ function startBattle(runId) {
       baseDifficulty: Number(stage.baseDifficulty),
       minDifficulty: Number(stage.minDifficulty),
       maxDifficulty: Number(stage.maxDifficulty),
+      rewardGroupId: stage.rewardGroupId,
     },
     player: {
       hp: Number(run.currentHp || stats.hp),
@@ -99,9 +101,11 @@ function startBattle(runId) {
       shield: Number(run.currentShield || 0),
       stats: stats,
     },
-    monster: monster,
+    monsters: monsters,
+    monster: monsters[0],
     pendingAction: null,
     lastMessage: '전투가 시작되었습니다.',
+    lastTurnEvents: [],
   };
 
   stageState.battle = battleState;
@@ -142,6 +146,7 @@ function selectQuestionForAction(playerId, runId, actionType, difficultyBonus, a
 
   var stageState = getStageState_(run);
   var battleState = requireActiveBattle_(stageState);
+  normalizeBattleMonsters_(battleState);
   if (battleState.pendingAction) {
     return buildQuestionView_(battleState.pendingAction.question, battleState.pendingAction);
   }
@@ -212,13 +217,14 @@ function submitActionAnswer(answerPayload) {
   var wrongCountAfterTimeout = Number(payload.wrongCountAfterTimeout || 0);
   var efficiency = calculateEfficiency(isCorrect, remainingMs, maxMs, wrongCountAfterTimeout);
 
+  battleState.lastTurnEvents = [];
   if (pendingAction.actionType === ACTION_TYPES.ATTACK) {
     applyAttack(battleState, efficiency);
   } else {
     applyGuard(battleState, efficiency);
   }
 
-  if (battleState.monster.currentHp <= 0) {
+  if (areAllMonstersDefeated_(battleState)) {
     battleState.status = STATUS.BATTLE_VICTORY;
     battleState.lastMessage = '몬스터를 처치했습니다.';
     logBattleEvent_(run, STATUS.BATTLE_VICTORY, { battleId: battleState.battleId });
@@ -276,11 +282,26 @@ function calculateEfficiency(isCorrect, remainingMs, maxMs, wrongCountAfterTimeo
 }
 
 function applyAttack(battleState, efficiency) {
+  normalizeBattleMonsters_(battleState);
   var attack = Number(battleState.player.stats.attack || BASE_PLAYER_STATS.attack);
   var damage = Math.max(0, Math.round(attack * Number(efficiency || 0)));
-  battleState.monster.currentHp = Math.max(0, Number(battleState.monster.currentHp) - damage);
-  battleState.lastMessage = '공격으로 ' + damage + ' 피해를 주었습니다.';
-  battleState.lastPlayerAction = { type: ACTION_TYPES.ATTACK, value: damage, efficiency: efficiency };
+  var target = getFirstAliveMonster_(battleState);
+  if (!target) {
+    return battleState;
+  }
+  target.currentHp = Math.max(0, Number(target.currentHp) - damage);
+  syncPrimaryMonster_(battleState);
+  battleState.lastMessage = target.name + '에게 ' + damage + ' 피해를 주었습니다.';
+  battleState.lastPlayerAction = { type: ACTION_TYPES.ATTACK, value: damage, efficiency: efficiency, targetMonsterId: target.instanceId || target.monsterId };
+  battleState.lastTurnEvents = battleState.lastTurnEvents || [];
+  battleState.lastTurnEvents.push({
+    actor: 'player',
+    type: ACTION_TYPES.ATTACK,
+    targetMonsterId: target.instanceId || target.monsterId,
+    targetName: target.name,
+    damage: damage,
+    message: battleState.lastMessage,
+  });
   return battleState;
 }
 
@@ -290,23 +311,55 @@ function applyGuard(battleState, efficiency) {
   battleState.player.shield = shield;
   battleState.lastMessage = '수비로 방어막 ' + shield + '을 만들었습니다.';
   battleState.lastPlayerAction = { type: ACTION_TYPES.GUARD, value: shield, efficiency: efficiency };
+  battleState.lastTurnEvents = battleState.lastTurnEvents || [];
+  battleState.lastTurnEvents.push({
+    actor: 'player',
+    type: ACTION_TYPES.GUARD,
+    shield: shield,
+    message: battleState.lastMessage,
+  });
   return battleState;
 }
 
 function applyMonsterTurn(battleState) {
-  var damage = Math.max(0, Math.round(Number(battleState.monster.attack || 0)));
-  var shieldBefore = Number(battleState.player.shield || 0);
-  var shieldDamage = Math.min(shieldBefore, damage);
-  var hpDamage = damage - shieldDamage;
-  battleState.player.shield = Math.max(0, shieldBefore - shieldDamage);
-  battleState.player.hp = Math.max(0, Number(battleState.player.hp || 0) - hpDamage);
-  battleState.lastMonsterAction = { type: ACTION_TYPES.ATTACK, damage: damage, shieldDamage: shieldDamage, hpDamage: hpDamage };
+  normalizeBattleMonsters_(battleState);
+  var events = battleState.lastTurnEvents || [];
+  getAliveMonsters_(battleState).forEach(function(monster) {
+    if (battleState.player.hp <= 0) {
+      return;
+    }
+    var damage = Math.max(0, Math.round(Number(monster.attack || 0)));
+    var shieldBefore = Number(battleState.player.shield || 0);
+    var shieldDamage = Math.min(shieldBefore, damage);
+    var hpDamage = damage - shieldDamage;
+    battleState.player.shield = Math.max(0, shieldBefore - shieldDamage);
+    battleState.player.hp = Math.max(0, Number(battleState.player.hp || 0) - hpDamage);
+    battleState.lastMonsterAction = {
+      type: ACTION_TYPES.ATTACK,
+      monsterId: monster.instanceId || monster.monsterId,
+      monsterName: monster.name,
+      damage: damage,
+      shieldDamage: shieldDamage,
+      hpDamage: hpDamage,
+    };
+    events.push({
+      actor: 'monster',
+      type: ACTION_TYPES.ATTACK,
+      monsterId: monster.instanceId || monster.monsterId,
+      monsterName: monster.name,
+      damage: damage,
+      shieldDamage: shieldDamage,
+      hpDamage: hpDamage,
+      message: monster.name + '의 공격!',
+    });
+  });
+  battleState.lastTurnEvents = events;
 
   if (battleState.player.hp <= 0) {
     battleState.status = STATUS.BATTLE_DEFEAT;
     battleState.lastMessage += ' 몬스터의 공격으로 쓰러졌습니다.';
   } else {
-    battleState.lastMessage += ' 몬스터가 ' + damage + ' 공격을 했습니다.';
+    battleState.lastMessage += ' 몬스터의 턴이 끝났습니다.';
   }
 
   return battleState;
@@ -360,13 +413,18 @@ function updateQuestionStats(questionId, isCorrect) {
 
 function buildBattleView_(run, stageState) {
   var battleState = stageState.battle;
+  if (battleState) {
+    normalizeBattleMonsters_(battleState);
+  }
   return toClientObject_({
     runId: run.runId,
     playerId: run.playerId,
+    currency: Number(run.currency || 0),
     battle: battleState,
     stageState: {
       otherStudentQuestionShown: !!stageState.otherStudentQuestionShown,
       fallbackEvents: stageState.fallbackEvents || [],
+      reward: stageState.reward || null,
     },
   });
 }
@@ -464,9 +522,9 @@ function saveStageState_(runId, stageState, battleState) {
   return updateRowByKey_(DB_SHEETS.RUNS, 'runId', runId, patch);
 }
 
-function createMonsterForStage_(stage) {
+function createMonstersForStage_(stage) {
   if (stage.bossMonsterId) {
-    return buildBattleMonster_(findRowByKey_(DB_SHEETS.MONSTERS, 'monsterId', stage.bossMonsterId));
+    return [buildBattleMonster_(findRowByKey_(DB_SHEETS.MONSTERS, 'monsterId', stage.bossMonsterId), 0)];
   }
 
   var group = findRowByKey_(DB_SHEETS.MONSTER_GROUPS, 'monsterGroupId', stage.monsterGroupId);
@@ -476,16 +534,22 @@ function createMonsterForStage_(stage) {
 
   var monsterIds = safeJsonParse_(group.monsterIds, []);
   var weights = safeJsonParse_(group.weights, []);
-  var selectedMonsterId = pickWeighted_(monsterIds, weights);
-  return buildBattleMonster_(findRowByKey_(DB_SHEETS.MONSTERS, 'monsterId', selectedMonsterId));
+  var monsterCount = Math.min(3, Math.max(1, Math.ceil(Number(stage.floor || 1) / 2)));
+  var monsters = [];
+  for (var i = 0; i < monsterCount; i += 1) {
+    var selectedMonsterId = pickWeighted_(monsterIds, weights);
+    monsters.push(buildBattleMonster_(findRowByKey_(DB_SHEETS.MONSTERS, 'monsterId', selectedMonsterId), i));
+  }
+  return monsters;
 }
 
-function buildBattleMonster_(monster) {
+function buildBattleMonster_(monster, index) {
   if (!monster) {
     throw new Error('몬스터를 찾을 수 없습니다.');
   }
 
   return {
+    instanceId: monster.monsterId + '_' + Number(index || 0),
     monsterId: monster.monsterId,
     name: monster.name,
     type: monster.type,
@@ -494,7 +558,48 @@ function buildBattleMonster_(monster) {
     maxHp: Number(monster.hp),
     attack: Number(monster.attack),
     defense: Number(monster.defense || 0),
+    buffs: [],
+    debuffs: [],
   };
+}
+
+function normalizeBattleMonsters_(battleState) {
+  if (!battleState.monsters || !battleState.monsters.length) {
+    battleState.monsters = battleState.monster ? [battleState.monster] : [];
+  }
+  battleState.monsters = battleState.monsters.slice(0, 3).map(function(monster, index) {
+    if (!monster.instanceId) {
+      monster.instanceId = String(monster.monsterId || 'monster') + '_' + index;
+    }
+    monster.buffs = monster.buffs || [];
+    monster.debuffs = monster.debuffs || [];
+    return monster;
+  });
+  syncPrimaryMonster_(battleState);
+  return battleState.monsters;
+}
+
+function syncPrimaryMonster_(battleState) {
+  battleState.monster = getFirstAliveMonster_(battleState) || battleState.monsters[0] || null;
+  return battleState.monster;
+}
+
+function getAliveMonsters_(battleState) {
+  normalizeBattleMonsters_(battleState);
+  return battleState.monsters.filter(function(monster) {
+    return Number(monster.currentHp || 0) > 0;
+  });
+}
+
+function getFirstAliveMonster_(battleState) {
+  return (battleState.monsters || []).filter(function(monster) {
+    return Number(monster.currentHp || 0) > 0;
+  })[0] || null;
+}
+
+function areAllMonstersDefeated_(battleState) {
+  normalizeBattleMonsters_(battleState);
+  return getAliveMonsters_(battleState).length === 0;
 }
 
 function requireRun_(runId) {

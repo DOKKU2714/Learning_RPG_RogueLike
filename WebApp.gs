@@ -22,3 +22,7 @@ function getRoute_(page) {
 function getWebAppUrl_() {
   return ScriptApp.getService().getUrl();
 }
+
+function include_(filename) {
+  return HtmlService.createHtmlOutputFromFile(filename).getContent();
+}
