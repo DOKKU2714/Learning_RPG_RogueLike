@@ -19,6 +19,7 @@ function getAvailableSkills(runState, battleState) {
       level: hydrated.level,
       baseValue: Number(hydrated.baseValue || 0),
       cooldown: hydrated.cooldown || '',
+      cooldownText: buildSkillCooldownText_(hydrated),
       difficultyBonus: Number(hydrated.difficultyBonus || 0),
       description: hydrated.description,
       previewText: buildSkillPreviewText_(hydrated, battleState),
@@ -110,6 +111,18 @@ function useSkill(runId, skillId, targetId, answerPayload) {
   }
 
   var pendingAction = battleState.pendingAction;
+  if (!pendingAction && payload.questionId) {
+    battleState.player.shield = 0;
+    pendingAction = createPendingActionFromCachedPayload_(
+      battleState,
+      payload,
+      ACTION_TYPES.SKILL,
+      skill.skillId,
+      targetId || payload.targetId || ''
+    );
+    battleState.pendingAction = pendingAction;
+    markCachedQuestionShown_(stageState, pendingAction);
+  }
   if (!payload.questionId) {
     if (pendingAction) {
       return buildQuestionView_(pendingAction.question, pendingAction);
@@ -185,7 +198,9 @@ function useSkill(runId, skillId, targetId, answerPayload) {
     battleState.lastMessage = '몬스터를 처치했습니다.';
     logBattleEvent_(run, STATUS.BATTLE_VICTORY, { battleId: battleState.battleId });
   } else {
+    clearMonsterTurnShields_(battleState);
     applyMonsterTurn(battleState);
+    clearPlayerTurnShield_(battleState);
   }
 
   incrementSkillUseCount_(battleState, skill.skillId);
@@ -390,6 +405,18 @@ function buildSkillPreviewText_(skill, battleState) {
   }
 
   return '효율 적용';
+}
+
+function buildSkillCooldownText_(skill) {
+  if (skill.cooldown !== '' && skill.cooldown !== null && skill.cooldown !== undefined) {
+    return '쿨타임 ' + Number(skill.cooldown || 0) + '턴';
+  }
+
+  var conditions = safeJsonParse_(skill.conditionJson, {});
+  if (conditions.perStageLimit) {
+    return '스테이지 ' + Number(conditions.perStageLimit || 0) + '회';
+  }
+  return '쿨타임 없음';
 }
 
 function buildRunState_(run) {

@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <base target="_top">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <?!= include_('UiStyles'); ?>
+  <style>
+    .leaderboard-shell {
+      width: min(980px, calc(100vw - 24px));
+      margin: 0 auto;
+      padding: 24px 0;
+    }
+
+    .leaderboard-table-wrap {
+      width: 100%;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .leaderboard-table {
+      width: 100%;
+      min-width: 680px;
+      border-collapse: collapse;
+    }
+
+    .leaderboard-table th,
+    .leaderboard-table td {
+      border-bottom: 1px solid rgba(180, 180, 180, 0.24);
+      padding: 11px 10px;
+      text-align: left;
+      white-space: nowrap;
+    }
+
+    .leaderboard-table th {
+      color: var(--muted);
+      font-weight: 400;
+    }
+
+    .leaderboard-rank {
+      width: 72px;
+      color: var(--accent);
+      font-weight: 800;
+    }
+
+    .leaderboard-empty {
+      padding: 18px 0 4px;
+      color: var(--muted);
+    }
+  </style>
+</head>
+<body>
+  <main class="leaderboard-shell fade-in">
+    <section class="rpg-panel">
+      <div style="display:flex; justify-content:space-between; gap:12px; align-items:center; flex-wrap:wrap;">
+        <div>
+          <p class="muted">LEADERBOARD</p>
+          <h1 class="rpg-title">리더보드</h1>
+        </div>
+        <div class="inline-actions">
+          <button class="secondary" onclick="loadLeaderboard()">새로고침</button>
+          <button class="secondary" onclick="goHome()">메인으로</button>
+        </div>
+      </div>
+      <div id="leaderboardMessage" class="message"></div>
+    </section>
+
+    <section class="rpg-panel">
+      <div id="leaderboardContent" class="leaderboard-table-wrap">
+        <p class="leaderboard-empty">리더보드를 불러오는 중...</p>
+      </div>
+    </section>
+  </main>
+
+  <?!= include_('UiLoadingModal'); ?>
+
+  <script>
+    var WEB_APP_URL = '<?= getWebAppUrl_() ?>';
+
+    document.addEventListener('DOMContentLoaded', loadLeaderboard);
+
+    function loadLeaderboard() {
+      setMessage('');
+      showLoadingModal('리더보드 로딩 중...', '학생 순위를 불러오는 중...');
+      google.script.run
+        .withSuccessHandler(function(rows) {
+          hideLoadingModal();
+          renderLeaderboard(rows || []);
+        })
+        .withFailureHandler(function(error) {
+          hideLoadingModal();
+          setMessage(error.message || '리더보드를 불러오지 못했습니다.', 'error');
+          renderLeaderboard([]);
+        })
+        .getLeaderboard();
+    }
+
+    function renderLeaderboard(rows) {
+      var container = document.getElementById('leaderboardContent');
+      if (!rows.length) {
+        container.innerHTML = '<p class="leaderboard-empty">표시할 순위 데이터가 없습니다.</p>';
+        return;
+      }
+
+      container.innerHTML =
+        '<table class="leaderboard-table">' +
+          '<thead><tr>' +
+            '<th>순위</th>' +
+            '<th>이름</th>' +
+            '<th>최대 층-스테이지</th>' +
+            '<th>클리어 시간</th>' +
+            '<th>정답률</th>' +
+          '</tr></thead>' +
+          '<tbody>' + rows.map(function(row) {
+            return '<tr>' +
+              '<td class="leaderboard-rank">' + Number(row.rank || 0) + '</td>' +
+              '<td>' + escapeHtml(row.displayName || '-') + '</td>' +
+              '<td>' + escapeHtml(row.progressText || '-') + '</td>' +
+              '<td>' + escapeHtml(row.clearTimeText || '없음') + '</td>' +
+              '<td>' + escapeHtml(row.accuracyText || '0%') + '</td>' +
+            '</tr>';
+          }).join('') + '</tbody>' +
+        '</table>';
+    }
+
+    function setMessage(message, type) {
+      var element = document.getElementById('leaderboardMessage');
+      element.textContent = message || '';
+      element.className = 'message ' + (type || '');
+    }
+
+    function goHome() {
+      window.top.location.href = WEB_APP_URL + '?page=index&skipIntro=1';
+    }
+
+    function showLoadingModal(title, text) {
+      document.getElementById('loadingTitle').textContent = title || '로딩 중...';
+      document.getElementById('loadingText').textContent = text || '데이터를 불러오는 중...';
+      document.getElementById('loadingModal').classList.add('active');
+    }
+
+    function hideLoadingModal() {
+      document.getElementById('loadingModal').classList.remove('active');
+    }
+
+    function escapeHtml(value) {
+      return String(value || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+  </script>
+</body>
+</html>

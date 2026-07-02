@@ -15,6 +15,7 @@ function getRoute_(page) {
     mypage: { file: 'MyPage', title: 'My Page' },
     admin: { file: 'Admin', title: 'Admin' },
     battle: { file: 'Battle', title: 'Battle' },
+    leaderboard: { file: 'Leaderboard', title: 'Leaderboard' },
   };
 
   return routes[page] || routes.index;

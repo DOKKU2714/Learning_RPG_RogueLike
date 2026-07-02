@@ -26,7 +26,7 @@
         </div>
         <div>
           <label for="studentName">이름</label>
-          <input id="studentName" maxlength="20" placeholder="예: 김도현">
+          <input id="studentName" maxlength="20" placeholder="예: 김디지털">
         </div>
         <div style="grid-column:1 / -1;">
           <label for="password">비밀번호</label>
@@ -35,7 +35,7 @@
       </div>
 
       <div class="vertical-menu">
-        <button onclick="login()">로그인</button>
+        <button id="loginButton" onclick="login()">로그인</button>
         <button class="secondary" onclick="register()">회원가입</button>
         <button class="secondary" onclick="goToPage('admin')">관리자 접속</button>
       </div>
@@ -48,8 +48,8 @@
         <button onclick="showGameStartMessage()">게임 시작</button>
         <button onclick="goToPage('question')">문제 만들기</button>
         <button class="secondary" onclick="showMyInfo()">내 정보</button>
-        <button class="secondary" onclick="showLeaderboardMessage()">리더보드</button>
-        <button class="secondary" onclick="refreshCurrentUser(true)">데이터 새로고침</button>
+        <button class="secondary" onclick="goToPage('leaderboard')">리더보드</button>
+        <button class="secondary" onclick="refreshCurrentUser(true)">새로고침</button>
         <button id="adminButton" class="secondary" onclick="goToPage('admin')" style="display:none;">관리자</button>
       </div>
       <div id="mainMessage" class="message"></div>
@@ -69,9 +69,23 @@
     var currentState = null;
     var SKIP_INTRO = window.location.search.indexOf('skipIntro=1') !== -1;
 
-    if (SKIP_INTRO) {
-      document.addEventListener('DOMContentLoaded', function() {
+    document.addEventListener('DOMContentLoaded', function() {
+      bindLoginEnterKey();
+      if (SKIP_INTRO) {
         enterApp();
+      }
+    });
+
+    function bindLoginEnterKey() {
+      ['studentId', 'studentName', 'password'].forEach(function(id) {
+        var input = document.getElementById(id);
+        if (!input) return;
+        input.addEventListener('keydown', function(event) {
+          if (event.key === 'Enter') {
+            event.preventDefault();
+            login();
+          }
+        });
       });
     }
 
@@ -180,27 +194,11 @@
     }
 
     function showLeaderboardMessage() {
-      setMainMessage('리더보드는 이후 단계에서 연결합니다.', 'ok');
+      goToPage('leaderboard');
     }
 
     function showMyInfo() {
       goToPage('mypage');
-      return;
-      if (!currentState || !currentState.playerData) {
-        setMainMessage('플레이어 정보가 없습니다.', 'error');
-        return;
-      }
-
-      var data = currentState.playerData;
-      var total = Number(data.totalAnswerCount || 0);
-      var correct = Number(data.correctAnswerCount || 0);
-      var rate = total > 0 ? Math.round((correct / total) * 100) + '%' : '-';
-      document.getElementById('infoContent').innerHTML =
-        '<p>최대 도달: ' + escapeHtml(data.maxFloor) + '층 ' + escapeHtml(data.maxStage) + '스테이지</p>' +
-        '<p>정답률: ' + rate + '</p>' +
-        '<p>평균 답변 시간: ' + escapeHtml(data.averageAnswerTimeMs || 0) + 'ms</p>' +
-        '<p>재화: ' + escapeHtml(data.currency || 0) + '</p>';
-      toggle('infoPanel', true);
     }
 
     function goToPage(page) {

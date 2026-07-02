@@ -216,6 +216,18 @@ function submitActionAnswer(answerPayload) {
   var battleState = requireActiveBattle_(stageState);
   normalizeBattleStateEffects_(battleState);
   var pendingAction = battleState.pendingAction;
+  if (!pendingAction && payload.questionId) {
+    battleState.player.shield = 0;
+    pendingAction = createPendingActionFromCachedPayload_(
+      battleState,
+      payload,
+      normalizeActionType_(payload.actionType || ACTION_TYPES.ATTACK),
+      '',
+      ''
+    );
+    battleState.pendingAction = pendingAction;
+    markCachedQuestionShown_(stageState, pendingAction);
+  }
   if (!pendingAction || pendingAction.questionId !== payload.questionId) {
     throw new Error('풀이 중인 문제가 없습니다.');
   }
@@ -247,7 +259,9 @@ function submitActionAnswer(answerPayload) {
     battleState.lastMessage = '몬스터를 처치했습니다.';
     logBattleEvent_(run, STATUS.BATTLE_VICTORY, { battleId: battleState.battleId });
   } else {
+    clearMonsterTurnShields_(battleState);
     applyMonsterTurn(battleState);
+    clearPlayerTurnShield_(battleState);
   }
   tickEffectsAtTurnEnd(battleState);
 
@@ -291,13 +305,17 @@ function calculateFinalQuestionDifficulty(baseDifficulty, activeEffects) {
 }
 
 function calculateEfficiency(isCorrect, remainingMs, maxMs, wrongCountAfterTimeout) {
+  var penaltyCount = Math.max(0, Number(wrongCountAfterTimeout || 0));
+  if (penaltyCount > 0) {
+    return roundTo_(Math.max(0, GAME_RULES.MIN_ANSWER_EFFICIENCY - (GAME_RULES.EXTRA_WRONG_EFFICIENCY_PENALTY * (penaltyCount - 1))), 3);
+  }
+
   if (isCorrect) {
     var ratio = Math.max(0, Math.min(1, Number(remainingMs || 0) / Math.max(1, Number(maxMs || 1))));
     return roundTo_(GAME_RULES.MIN_ANSWER_EFFICIENCY + 0.75 * ratio, 3);
   }
 
-  var penaltyCount = Math.max(0, Number(wrongCountAfterTimeout || 0));
-  return roundTo_(Math.max(0, GAME_RULES.MIN_ANSWER_EFFICIENCY - (GAME_RULES.EXTRA_WRONG_EFFICIENCY_PENALTY * penaltyCount)), 3);
+  return roundTo_(GAME_RULES.MIN_ANSWER_EFFICIENCY, 3);
 }
 
 function applyAttack(battleState, efficiency) {
@@ -436,14 +454,14 @@ function selectMonsterAction(monster, aiRows, battleState) {
     return aiAllowed && bossAllowed && hpBelowAllowed && hpAboveAllowed && turnAllowed;
   });
   if (!candidates.length) {
-    candidates = [{ actionType: ACTION_TYPES.ATTACK, probability: 100, skillId: '', intentIcon: '???', intentTextTemplate: '' }];
+    candidates = [{ actionType: ACTION_TYPES.ATTACK, probability: 100, skillId: '', intentIcon: 'sword', intentTextTemplate: '' }];
   }
 
   var row = pickWeightedAiRow_(candidates);
   var action = {
     actionType: row.actionType || ACTION_TYPES.ATTACK,
     skillId: row.skillId || '',
-    intentIcon: row.intentIcon || '???',
+    intentIcon: row.intentIcon || 'sword',
     intentTextTemplate: row.intentTextTemplate || '',
   };
   action.intentText = buildIntentText(action, monster, battleState);
@@ -457,22 +475,22 @@ function buildIntentText(action, monster, battleState) {
     hp: monster.maxHp,
   }, monster.effects || []);
   if (!action || action.actionType === 'unknown') {
-    return '???';
+    return '행동 대기';
   }
   if (action.actionType === ACTION_TYPES.ATTACK) {
-    return '예상 피해 ' + Math.max(0, Math.round(Number(monsterStats.attack || 0)));
+    return '다음턴 공격 (예상 ' + Math.max(0, Math.round(Number(monsterStats.attack || 0))) + ' 피해)';
   }
   if (action.actionType === ACTION_TYPES.GUARD || action.actionType === 'shield') {
-    return '예상 방어막 ' + calculateMonsterShieldValue_(monster);
+    return '다음턴 방어 (예상 방어막 ' + calculateMonsterShieldValue_(monster) + ')';
   }
   if (action.actionType === ACTION_TYPES.SKILL && action.skillId) {
     var skill = findCachedRowByKey_(DB_SHEETS.SKILLS, 'skillId', action.skillId, 600);
     if (!skill) {
-      return '???';
+      return '행동 대기';
     }
     var label = skill.name || '스킬';
     if (skill.type === SKILL_TYPES.DAMAGE) {
-      return label + ' / 예상 피해 ' + Math.max(0, Math.round(Number(skill.baseValue || 0) + Number(monsterStats.attack || 0)));
+      return '다음턴 ' + label + ' (예상 ' + Math.max(0, Math.round(Number(skill.baseValue || 0) + Number(monsterStats.attack || 0))) + ' 피해)';
     }
     if (skill.type === SKILL_TYPES.DEBUFF) {
       var effectConfig = safeJsonParse_(skill.effectJson, {});
@@ -483,13 +501,13 @@ function buildIntentText(action, monster, battleState) {
       return label + ' / 강화 효과';
     }
     if (skill.type === SKILL_TYPES.SHIELD) {
-      return label + ' / 예상 방어막 ' + Math.max(0, Math.round(Number(skill.baseValue || 0) + Number(monsterStats.defense || 0)));
+      return '다음턴 ' + label + ' (예상 방어막 ' + Math.max(0, Math.round(Number(skill.baseValue || 0) + Number(monsterStats.defense || 0))) + ')';
     }
     if (skill.type === SKILL_TYPES.HEAL) {
       return label + ' / 예상 회복 ' + Math.max(0, Math.round(Number(skill.baseValue || 0)));
     }
   }
-  return action.intentTextTemplate || '???';
+  return action.intentTextTemplate || '행동 대기';
 }
 
 function executeMonsterIntent(battleState, monsterId) {
@@ -533,7 +551,7 @@ function applyMonsterAttackIntent_(battleState, monster, intent) {
     damage: result.damage,
     shieldDamage: result.shieldDamage,
     hpDamage: result.hpDamage,
-    message: monster.name + '??怨듦꺽!',
+    message: monster.name + '의 공격!',
   });
   monster.intent = null;
   return battleState;
@@ -549,7 +567,7 @@ function applyMonsterGuardIntent_(battleState, monster, intent) {
     monsterName: monster.name,
     shield: shield,
     damage: 0,
-    message: monster.name + '??諛⑹뼱?먯꽭瑜?痍⑺뻽?듬땲??',
+    message: monster.name + '이 방어 자세를 취했습니다.',
   });
   monster.intent = null;
   return battleState;
@@ -576,22 +594,22 @@ function applyMonsterSkillIntent_(battleState, monster, intent) {
       damage: result.damage,
       shieldDamage: result.shieldDamage,
       hpDamage: result.hpDamage,
-      message: monster.name + '??' + skill.name + '?ъ슜!',
+      message: monster.name + '이 ' + skill.name + ' 사용!',
     });
   } else if (skill.type === SKILL_TYPES.DEBUFF) {
     applyMonsterSkillEffect_(battleState.player, skill, 'player');
-    battleState.lastTurnEvents.push({ actor: 'monster', type: 'debuff', skillId: skill.skillId, monsterId: monster.instanceId || monster.monsterId, monsterName: monster.name, damage: 0, message: monster.name + '??' + skill.name + '?ъ슜!' });
+    battleState.lastTurnEvents.push({ actor: 'monster', type: 'debuff', skillId: skill.skillId, monsterId: monster.instanceId || monster.monsterId, monsterName: monster.name, damage: 0, message: monster.name + '이 ' + skill.name + ' 사용!' });
   } else if (skill.type === SKILL_TYPES.BUFF) {
     applyMonsterSkillEffect_(monster, skill, 'monster');
-    battleState.lastTurnEvents.push({ actor: 'monster', type: 'buff', skillId: skill.skillId, monsterId: monster.instanceId || monster.monsterId, monsterName: monster.name, damage: 0, message: monster.name + '??' + skill.name + '?ъ슜!' });
+    battleState.lastTurnEvents.push({ actor: 'monster', type: 'buff', skillId: skill.skillId, monsterId: monster.instanceId || monster.monsterId, monsterName: monster.name, damage: 0, message: monster.name + '이 ' + skill.name + ' 사용!' });
   } else if (skill.type === SKILL_TYPES.SHIELD) {
     var shield = Math.max(0, Math.round(Number(skill.baseValue || 0) + Number(monsterStats.defense || 0)));
     monster.shield = Number(monster.shield || 0) + shield;
-    battleState.lastTurnEvents.push({ actor: 'monster', type: ACTION_TYPES.GUARD, skillId: skill.skillId, monsterId: monster.instanceId || monster.monsterId, monsterName: monster.name, shield: shield, damage: 0, message: monster.name + '??' + skill.name + '?ъ슜!' });
+    battleState.lastTurnEvents.push({ actor: 'monster', type: ACTION_TYPES.GUARD, skillId: skill.skillId, monsterId: monster.instanceId || monster.monsterId, monsterName: monster.name, shield: shield, damage: 0, message: monster.name + '이 ' + skill.name + ' 사용!' });
   } else if (skill.type === SKILL_TYPES.HEAL) {
     var heal = Math.max(0, Math.round(Number(skill.baseValue || 0)));
     monster.currentHp = Math.min(Number(monster.maxHp || 1), Number(monster.currentHp || 0) + heal);
-    battleState.lastTurnEvents.push({ actor: 'monster', type: 'heal', skillId: skill.skillId, monsterId: monster.instanceId || monster.monsterId, monsterName: monster.name, heal: heal, damage: 0, message: monster.name + '??' + skill.name + '?ъ슜!' });
+    battleState.lastTurnEvents.push({ actor: 'monster', type: 'heal', skillId: skill.skillId, monsterId: monster.instanceId || monster.monsterId, monsterName: monster.name, heal: heal, damage: 0, message: monster.name + '이 ' + skill.name + ' 사용!' });
   }
   monster.intent = null;
   return battleState;
@@ -625,6 +643,23 @@ function dealDamageToMonster_(battleState, monster, damage) {
   monster.currentHp = Math.max(0, Number(monster.currentHp || 0) - hpDamage);
   syncPrimaryMonster_(battleState);
   return { damage: totalDamage, shieldDamage: shieldDamage, hpDamage: hpDamage };
+}
+
+function clearPlayerTurnShield_(battleState) {
+  if (!battleState || !battleState.player) {
+    return battleState;
+  }
+  battleState.player.shield = 0;
+  return battleState;
+}
+
+function clearMonsterTurnShields_(battleState) {
+  normalizeBattleMonsters_(battleState);
+  (battleState.monsters || []).forEach(function(monster) {
+    monster.shield = 0;
+  });
+  syncPrimaryMonster_(battleState);
+  return battleState;
 }
 
 function calculateMonsterShieldValue_(monster) {
@@ -725,6 +760,7 @@ function buildBattleView_(run, stageState) {
     currency: Number(run.currency || 0),
     battle: battleState,
     availableSkills: battleState ? getAvailableSkills(runState, battleState) : [],
+    questionCache: battleState ? buildBattleQuestionCache_(run, stageState, battleState) : [],
     stageState: {
       otherStudentQuestionShown: !!stageState.otherStudentQuestionShown,
       fallbackEvents: stageState.fallbackEvents || [],
@@ -744,6 +780,128 @@ function buildQuestionView_(question, pendingAction) {
     isOtherPlayerQuestion: pendingAction ? pendingAction.isOtherPlayerQuestion : false,
     fallbackReason: pendingAction ? pendingAction.fallbackReason : '',
   });
+}
+
+function preloadBattleQuestions(runId, authToken) {
+  var player = getCurrentPlayer_(authToken);
+  var run = requireRun_(runId);
+  if (run.playerId !== player.playerId || run.status !== STATUS.RUN_ACTIVE) {
+    throw new Error('진행 중인 런을 찾을 수 없습니다.');
+  }
+
+  var stageState = getStageState_(run);
+  var battleState = requireActiveBattle_(stageState);
+  normalizeBattleStateEffects_(battleState);
+  normalizeBattleMonsters_(battleState);
+  return buildBattleQuestionCache_(run, stageState, battleState);
+}
+
+function buildBattleQuestionCache_(run, stageState, battleState) {
+  try {
+    var activeEffects = getActiveEffectsForQuestion_(battleState);
+    var selectedQuestions = selectQuestionCacheRows_(run.playerId, battleState.stage, stageState.otherStudentQuestionShown);
+    return selectedQuestions.map(function(question) {
+      var baseDifficulty = applyBossDifficultyBonus(battleState.stage, Number(question.difficulty || battleState.stage.baseDifficulty));
+      var finalDifficulty = calculateFinalQuestionDifficulty(baseDifficulty, activeEffects);
+      var maxMs = calculateFinalQuestionTimeLimit(finalDifficulty, activeEffects);
+      return {
+        question: sanitizeQuestionForBattleCache_(question),
+        maxMs: maxMs,
+        finalDifficulty: finalDifficulty,
+        isOtherPlayerQuestion: question.creatorId !== run.playerId,
+        fallbackReason: '',
+      };
+    });
+  } catch (error) {
+    return [];
+  }
+}
+
+function selectQuestionCacheRows_(playerId, stage, otherStudentQuestionShown) {
+  var limit = 8;
+  var minDifficulty = Number(stage.minDifficulty || GAME_RULES.MIN_DIFFICULTY);
+  var maxDifficulty = Number(stage.maxDifficulty || GAME_RULES.MAX_DIFFICULTY);
+  var approvedQuestions = readTableCached_(DB_SHEETS.QUESTIONS, 120).filter(function(question) {
+    return question.status === STATUS.QUESTION_APPROVED;
+  });
+  var rangedQuestions = approvedQuestions.filter(function(question) {
+    var difficulty = Number(question.difficulty || 0);
+    return difficulty >= minDifficulty && difficulty <= maxDifficulty;
+  });
+  var rangedOtherQuestions = rangedQuestions.filter(function(question) {
+    return question.creatorId !== playerId;
+  });
+  var selected = [];
+  var selectedIds = {};
+
+  function pushQuestion(question) {
+    if (!question || selectedIds[question.questionId]) {
+      return;
+    }
+    selectedIds[question.questionId] = true;
+    selected.push(question);
+  }
+
+  function pushRandomFrom(pool) {
+    var candidates = pool.slice();
+    while (selected.length < limit && candidates.length > 0) {
+      var picked = pickRandom_(candidates);
+      pushQuestion(picked);
+      candidates = candidates.filter(function(candidate) {
+        return candidate.questionId !== picked.questionId;
+      });
+    }
+  }
+
+  if (!otherStudentQuestionShown && rangedOtherQuestions.length > 0) {
+    pushQuestion(pickRandom_(rangedOtherQuestions));
+  }
+  pushRandomFrom(rangedOtherQuestions);
+  pushRandomFrom(rangedQuestions);
+  pushRandomFrom(approvedQuestions.filter(function(question) {
+    return question.creatorId !== playerId;
+  }));
+  pushRandomFrom(approvedQuestions);
+  return selected;
+}
+
+function sanitizeQuestionForBattleCache_(question) {
+  var sanitized = sanitizeQuestionForClient_(question);
+  sanitized.answer = question.answer;
+  sanitized.answerAliases = question.answerAliases || '[]';
+  return sanitized;
+}
+
+function createPendingActionFromCachedPayload_(battleState, payload, actionType, skillId, targetId) {
+  var question = findRowByKey_(DB_SHEETS.QUESTIONS, 'questionId', payload.questionId);
+  if (!question) {
+    throw new Error('문제를 찾을 수 없습니다.');
+  }
+
+  var activeEffects = getActiveEffectsForQuestion_(battleState);
+  var skill = skillId ? findCachedRowByKey_(DB_SHEETS.SKILLS, 'skillId', skillId, 600) : null;
+  var difficultyBonus = skill ? Number(skill.difficultyBonus || 0) : 0;
+  var baseDifficulty = applyBossDifficultyBonus(battleState.stage, Number(question.difficulty || battleState.stage.baseDifficulty) + difficultyBonus);
+  var finalDifficulty = calculateFinalQuestionDifficulty(baseDifficulty, activeEffects);
+  return {
+    actionType: actionType,
+    skillId: skillId || payload.skillId || '',
+    targetId: targetId || payload.targetId || '',
+    questionId: question.questionId,
+    question: sanitizeQuestionForClient_(question),
+    issuedAt: new Date().getTime() - Math.max(0, Number(payload.elapsedMs || 0)),
+    maxMs: calculateFinalQuestionTimeLimit(finalDifficulty, activeEffects),
+    finalDifficulty: finalDifficulty,
+    isOtherPlayerQuestion: !!payload.isOtherPlayerQuestion,
+    fallbackReason: payload.fallbackReason || '',
+    fromCache: true,
+  };
+}
+
+function markCachedQuestionShown_(stageState, pendingAction) {
+  if (pendingAction && pendingAction.isOtherPlayerQuestion) {
+    stageState.otherStudentQuestionShown = true;
+  }
 }
 
 function pickQuestion_(playerId, stage, otherStudentQuestionShown, preferredQuestionType) {

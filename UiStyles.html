@@ -309,7 +309,20 @@
     border: 1px solid var(--line);
     color: var(--accent);
     background: #111;
-    font-size: 13px;
+    font-size: 15px;
+    line-height: 1;
+  }
+
+  .status-icon.buff {
+    border-color: #43c46f;
+    color: #7ee29a;
+    box-shadow: 0 0 10px rgba(67, 196, 111, 0.2);
+  }
+
+  .status-icon.debuff {
+    border-color: #d94b4b;
+    color: #ff8b8b;
+    box-shadow: 0 0 10px rgba(217, 75, 75, 0.2);
   }
 
   .monster-area {
@@ -475,6 +488,11 @@
 
   .question-choice.selected {
     border-color: var(--accent);
+  }
+
+  .question-choice.disabled-choice {
+    opacity: 0.7;
+    cursor: default;
   }
 
   .question-choice.answer-correct {
@@ -662,6 +680,13 @@
     transition: width 300ms ease-out;
   }
 
+  .monster-hp-bar > .monster-shield-fill {
+    position: absolute;
+    inset: 0 auto 0 0;
+    background: #f3f3f3;
+    transition: width 420ms ease-out, left 420ms ease-out;
+  }
+
   .monster-status-row {
     justify-content: center;
     min-height: 0;
@@ -676,11 +701,19 @@
   }
 
   .monster-status-row .buff {
-    border-color: #d8d8d8;
+    border-color: #43c46f;
+    color: #7ee29a;
+  }
+
+  .monster-status-row .shield-status {
+    border-color: #43c46f;
+    color: #b8f7ff;
+    box-shadow: 0 0 10px rgba(67, 196, 111, 0.32);
   }
 
   .monster-status-row .debuff {
-    border-color: #8d2f2f;
+    border-color: #d94b4b;
+    color: #ff8b8b;
   }
 
   .monster-intent {
@@ -779,6 +812,18 @@
     margin-top: 2px;
   }
 
+  .action-panel.skill-select-mode > button {
+    display: none;
+  }
+
+  .action-panel.skill-select-mode .skill-panel {
+    display: grid;
+  }
+
+  .disabled-actions {
+    opacity: 0.72;
+  }
+
   .skill-button {
     display: grid;
     gap: 2px;
@@ -803,11 +848,22 @@
     text-align: center;
   }
 
+  .skill-cancel-button {
+    grid-column: 1 / -1;
+  }
+
   .player-compact-panel {
     position: relative;
     min-height: 112px;
     display: grid;
     align-items: center;
+    border: 1px solid transparent;
+    transition: border-color 240ms ease, box-shadow 240ms ease;
+  }
+
+  .player-compact-panel.player-shielded {
+    border-color: rgba(255, 255, 255, 0.62);
+    box-shadow: 0 0 18px rgba(255, 255, 255, 0.18);
   }
 
   .player-hp-row {
@@ -898,11 +954,11 @@
 
   .floating-damage {
     position: absolute;
-    font-weight: 700;
-    font-size: 22px;
-    text-shadow: 0 2px 4px #000;
+    font-weight: 900;
+    font-size: 34px;
+    text-shadow: 0 2px 0 #000, 0 0 10px rgba(255,255,255,0.58), 0 0 16px rgba(0,0,0,0.9);
     transform: translate(-50%, 0);
-    animation: floatDamage 1050ms ease-out forwards;
+    animation: floatDamage 1800ms ease-out forwards;
   }
 
   .damage-white {
@@ -915,12 +971,33 @@
 
   .effect-float {
     color: #f2f2f2;
-    font-size: 16px;
+    font-size: 18px;
     letter-spacing: 0.04em;
   }
 
   .monster-hit {
     animation: monsterHit 420ms ease-out;
+  }
+
+  .incoming-slash {
+    position: relative;
+  }
+
+  .incoming-slash::after {
+    content: "";
+    position: absolute;
+    left: -12%;
+    top: 8%;
+    width: 124%;
+    height: 84%;
+    background: linear-gradient(135deg, transparent 42%, rgba(255,255,255,0.95) 48%, rgba(255,255,255,0.3) 54%, transparent 62%);
+    filter: drop-shadow(0 0 10px rgba(255,255,255,0.8));
+    pointer-events: none;
+    animation: slashCut 300ms ease-out forwards;
+  }
+
+  .monster-lunge {
+    animation: monsterLunge 360ms ease-out;
   }
 
   .monster-effect {
@@ -935,6 +1012,40 @@
     animation: redFlash 420ms ease-out;
   }
 
+  .screen-damage-flash.damage-flash-red {
+    animation: redFlash 520ms ease-out;
+  }
+
+  .player-shield-block {
+    animation: playerShieldBlock 520ms ease-out;
+  }
+
+  .player-shield-block .screen-damage-flash {
+    animation: whiteFlash 520ms ease-out;
+  }
+
+  .screen-damage-flash.damage-flash-white {
+    animation: whiteFlash 520ms ease-out;
+  }
+
+  .shield-effect {
+    position: absolute;
+    width: 56px;
+    height: 64px;
+    display: grid;
+    place-items: center;
+    transform: translate(-50%, -50%);
+    color: #eaf7ff;
+    font-size: 12px;
+    font-weight: 800;
+    text-shadow: 0 1px 3px #000;
+    background: linear-gradient(180deg, rgba(213,241,255,0.98), rgba(82,169,255,0.28));
+    clip-path: polygon(50% 0%, 88% 14%, 82% 68%, 50% 100%, 18% 68%, 12% 14%);
+    border: 1px solid rgba(169,219,255,0.9);
+    box-shadow: 0 0 28px rgba(105,190,255,0.62), inset 0 0 16px rgba(255,255,255,0.42);
+    animation: shieldFade 1800ms ease-out forwards;
+  }
+
   @keyframes monsterHit {
     0% { filter: brightness(1); transform: translateX(0); }
     18% { filter: brightness(3); transform: translateX(-7px); }
@@ -942,6 +1053,17 @@
     54% { transform: translateX(-4px); }
     72% { transform: translateX(3px); }
     100% { filter: brightness(1); transform: translateX(0); }
+  }
+
+  @keyframes slashCut {
+    0% { opacity: 0; transform: translate(-18px, 18px) scale(0.92); }
+    35% { opacity: 1; }
+    100% { opacity: 0; transform: translate(18px, -18px) scale(1.06); }
+  }
+
+  @keyframes monsterLunge {
+    0%, 100% { transform: translateY(0) scale(1); }
+    44% { transform: translateY(18px) scale(1.08); filter: brightness(1.25); }
   }
 
   @keyframes monsterEffect {
@@ -965,9 +1087,29 @@
     100% { opacity: 0; }
   }
 
+  @keyframes whiteFlash {
+    0% { opacity: 0; background: rgba(255,255,255,0.44); }
+    22% { opacity: 1; background: rgba(255,255,255,0.52); }
+    100% { opacity: 0; background: rgba(255,255,255,0.18); }
+  }
+
+  @keyframes playerShieldBlock {
+    0%, 100% { transform: translate(0, 0); }
+    26% { transform: translate(4px, 0); }
+    54% { transform: translate(-3px, 0); }
+    78% { transform: translate(2px, 0); }
+  }
+
+  @keyframes shieldFade {
+    0% { opacity: 0; transform: translate(-50%, -50%) scale(0.72); }
+    18% { opacity: 1; transform: translate(-50%, -58%) scale(1); }
+    100% { opacity: 0; transform: translate(-50%, -84%) scale(1.16); }
+  }
+
   @keyframes floatDamage {
     0% { opacity: 0; transform: translate(-50%, 8px); }
-    16% { opacity: 1; }
+    12% { opacity: 1; }
+    72% { opacity: 1; }
     100% { opacity: 0; transform: translate(-50%, -52px); }
   }
 
@@ -1014,6 +1156,15 @@
 
   .hover-tooltip.active {
     display: block;
+  }
+
+  .stat-hover-tooltip {
+    z-index: 81;
+    max-width: 190px;
+    font-size: 12px;
+    color: #d8f0ff;
+    border-color: rgba(137, 194, 255, 0.72);
+    background: rgba(10, 18, 26, 0.95);
   }
 
   .battle-start-fade {
