@@ -176,7 +176,7 @@
       document.getElementById('playerName').textContent = player.displayName || player.studentName || '내 정보';
       document.getElementById('correctRate').textContent = formatRate(summary.correctRate);
       document.getElementById('averageTime').textContent = formatTime(summary.averageAnswerTimeMs);
-      document.getElementById('maxProgress').textContent = Number(summary.maxFloor || 1) + '층 ' + Number(summary.maxStage || 1) + '스테이지';
+      document.getElementById('maxProgress').textContent = formatDisplayStage(summary.maxFloor, summary.maxStage);
       document.getElementById('totalAnswers').textContent = Number(summary.totalAnswerCount || 0) + '문제';
       renderQuestions(info.questionStats || []);
     }
@@ -210,6 +210,18 @@
     function formatTime(ms) {
       var value = Number(ms || 0);
       return value > 0 ? (value / 1000).toFixed(1) + '초' : '-';
+    }
+
+    function formatDisplayStage(progressFloor, stage) {
+      var floorNames = {
+        1: '5층 옥상',
+        2: '4층 1학년 교실층',
+        3: '3층 3학년 교실층',
+        4: '2층 2학년 교실층',
+        5: '1층 특별실/현관',
+      };
+      var floor = Number(progressFloor || 1);
+      return (floorNames[floor] || (floor + '층')) + ' ' + Number(stage || 1) + '스테이지';
     }
 
     function getAuthToken() {

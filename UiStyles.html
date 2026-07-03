@@ -1028,6 +1028,143 @@
     animation: whiteFlash 520ms ease-out;
   }
 
+  .stage-intro-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 92;
+    display: grid;
+    place-items: center;
+    background: #000;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 900ms ease;
+  }
+
+  .stage-intro-overlay.active {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .stage-intro-overlay.fade-away {
+    opacity: 0;
+  }
+
+  .stage-intro-title {
+    display: grid;
+    gap: 14px;
+    justify-items: center;
+    color: #e8e8e8;
+    text-align: center;
+    opacity: 0;
+    transform: translateY(10px);
+    transition: opacity 900ms ease, transform 900ms ease;
+    text-shadow: 0 2px 8px rgba(0, 0, 0, 0.86);
+  }
+
+  .stage-intro-overlay.title-visible .stage-intro-title {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  .stage-intro-title div {
+    font-size: clamp(24px, 5.6vw, 54px);
+    letter-spacing: 0;
+  }
+
+  .stage-intro-title strong {
+    font-size: clamp(38px, 9vw, 86px);
+    font-weight: 800;
+    color: #f2f2f2;
+    letter-spacing: 0;
+  }
+
+  .stage-entrance-playing .monster-layer,
+  .stage-entrance-playing .battle-hud {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 900ms ease;
+  }
+
+  .stage-entrance-playing.stage-entrance-monsters .monster-layer,
+  .stage-entrance-playing.stage-entrance-monsters .battle-hud {
+    opacity: 1;
+  }
+
+  .stage-entrance-playing.stage-entrance-monsters .monster-slot {
+    animation: monsterEntrance 980ms ease-out both;
+  }
+
+  .battle-defeat-fade {
+    animation: battleDefeatFade 900ms ease-in forwards;
+  }
+
+  .defeat-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 80;
+    display: grid;
+    place-items: center;
+    background: #000;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 700ms ease;
+  }
+
+  .defeat-overlay.active {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .defeat-content {
+    width: min(560px, calc(100vw - 32px));
+    display: grid;
+    justify-items: center;
+    gap: 18px;
+    text-align: center;
+  }
+
+  .defeat-content h1 {
+    margin: 0;
+    color: #b40000;
+    font-size: clamp(44px, 10vw, 92px);
+    letter-spacing: 0;
+    text-shadow: 0 0 18px rgba(170, 0, 0, 0.62), 0 2px 0 #260000;
+  }
+
+  .defeat-result {
+    width: 100%;
+    display: grid;
+    gap: 8px;
+    opacity: 0;
+    transform: translateY(12px);
+    transition: opacity 520ms ease, transform 520ms ease;
+  }
+
+  .defeat-result.active {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  .defeat-result-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 18px;
+    border-bottom: 1px solid rgba(160, 160, 160, 0.32);
+    padding: 7px 0;
+    color: #cfcfcf;
+    font-size: 15px;
+  }
+
+  .defeat-result-row strong {
+    color: #f0f0f0;
+    font-weight: 700;
+  }
+
+  .defeat-last-message {
+    margin: 12px 0 0;
+    color: #a8a8a8;
+  }
+
   .shield-effect {
     position: absolute;
     width: 56px;
@@ -1053,6 +1190,29 @@
     54% { transform: translateX(-4px); }
     72% { transform: translateX(3px); }
     100% { filter: brightness(1); transform: translateX(0); }
+  }
+
+  @keyframes monsterEntrance {
+    0% {
+      opacity: 0;
+      filter: blur(8px) brightness(0.45);
+      transform: translateY(18px) scale(0.92);
+    }
+    65% {
+      opacity: 1;
+      filter: blur(1px) brightness(1.18);
+      transform: translateY(0) scale(1.02);
+    }
+    100% {
+      opacity: 1;
+      filter: blur(0) brightness(1);
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  @keyframes battleDefeatFade {
+    0% { filter: brightness(1); opacity: 1; }
+    100% { filter: brightness(0); opacity: 0; }
   }
 
   @keyframes slashCut {

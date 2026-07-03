@@ -22,7 +22,7 @@ function getLeaderboard() {
       rank: 0,
       playerId: playerData.playerId,
       displayName: displayName,
-      progressText: maxFloor + '층-' + maxStage + '스테이지',
+      progressText: formatDisplayProgressText_(maxFloor, maxStage),
       maxFloor: maxFloor,
       maxStage: maxStage,
       progressScore: calculateProgressScore(playerData),
@@ -55,6 +55,18 @@ function calculateAccuracyRate(playerData) {
   }
   var correct = Number((playerData && playerData.correctAnswerCount) || 0);
   return Math.max(0, Math.min(100, (correct / total) * 100));
+}
+
+function formatDisplayProgressText_(progressFloor, stage) {
+  var floorNames = {
+    1: '5층 옥상',
+    2: '4층 1학년 교실층',
+    3: '3층 3학년 교실층',
+    4: '2층 2학년 교실층',
+    5: '1층 특별실/현관',
+  };
+  var floor = Number(progressFloor || 1);
+  return (floorNames[floor] || (floor + '층')) + ' ' + Number(stage || 1) + '스테이지';
 }
 
 function formatClearTime(clearTimeMs) {

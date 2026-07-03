@@ -52,6 +52,21 @@
     </section>
   </main>
 
+  <div id="stageIntroOverlay" class="stage-intro-overlay" aria-hidden="true">
+    <section class="stage-intro-title">
+      <div id="stageIntroFloor">5층 , 스테이지 1</div>
+      <strong id="stageIntroArea">옥상</strong>
+    </section>
+  </div>
+
+  <div id="defeatOverlay" class="defeat-overlay" aria-hidden="true">
+    <section class="defeat-content">
+      <h1>탈출 실패</h1>
+      <div id="defeatResult" class="defeat-result"></div>
+      <button id="defeatHomeButton" class="secondary hidden" onclick="goHome()">메인으로</button>
+    </section>
+  </div>
+
   <div id="questionModal" class="question-modal-overlay" aria-hidden="true">
     <section class="question-modal" role="dialog" aria-modal="true" aria-labelledby="questionTitle">
       <div class="modal-topline">
@@ -127,6 +142,8 @@
     var skillPanelOpen = false;
     var battleQuestionCache = [];
     var BATTLE_STEP_DELAY_MS = 400;
+    var defeatSequenceStarted = false;
+    var stageIntroPlaying = false;
 
     var dummyView = {
       runId: 'dummy-run',
@@ -181,9 +198,14 @@
           currentView = normalizeBattleView(view);
           battleQuestionCache = (currentView.questionCache || []).slice();
           renderBattle(currentView);
-          finishBattleStartFade();
           if (currentView.battle.status === 'victory') {
+            finishBattleStartFade();
             openRewardAfterVictory();
+          } else if (currentView.battle.status === 'defeat') {
+            finishBattleStartFade();
+            showDefeatSequence();
+          } else {
+            playStageEntranceIntro();
           }
         })
         .withFailureHandler(function(error) {
@@ -191,8 +213,8 @@
           isDummyMode = true;
           currentView = normalizeBattleView(dummyView);
           renderBattle(currentView);
-          finishBattleStartFade();
           pushLog(error.message || '데모 UI로 전투 화면을 표시합니다.');
+          playStageEntranceIntro();
         })
         .getBattleView(getAuthToken());
     }
@@ -217,6 +239,86 @@
       window.setTimeout(function() {
         fade.classList.remove('active');
       }, 80);
+    }
+
+    function playStageEntranceIntro() {
+      if (!currentView || !currentView.battle || currentView.battle.status !== 'active') {
+        finishBattleStartFade();
+        return;
+      }
+
+      stageIntroPlaying = true;
+      setBattleInputLocked(true);
+      setPlayerTurn(false);
+      var shell = document.getElementById('battleShell');
+      var overlay = document.getElementById('stageIntroOverlay');
+      var title = getStageEntranceTitle(currentView.battle.stage || {});
+      document.getElementById('stageIntroFloor').textContent = title.floorLine;
+      document.getElementById('stageIntroArea').textContent = title.areaLine;
+
+      if (shell) {
+        shell.classList.add('stage-entrance-playing');
+        shell.classList.remove('stage-entrance-monsters');
+      }
+      if (overlay) {
+        overlay.classList.remove('fade-away', 'title-visible');
+        overlay.classList.add('active');
+        overlay.setAttribute('aria-hidden', 'false');
+      }
+      finishBattleStartFade();
+
+      window.setTimeout(function() {
+        if (overlay) overlay.classList.add('title-visible');
+      }, 180);
+
+      window.setTimeout(function() {
+        if (overlay) overlay.classList.add('fade-away');
+      }, 1700);
+
+      window.setTimeout(function() {
+        if (overlay) {
+          overlay.classList.remove('active', 'title-visible', 'fade-away');
+          overlay.setAttribute('aria-hidden', 'true');
+        }
+      }, 2700);
+
+      window.setTimeout(function() {
+        pushLog('몬스터가 출현했다!');
+        if (shell) shell.classList.add('stage-entrance-monsters');
+      }, 3400);
+
+      window.setTimeout(function() {
+        pushLog('전투 시작!');
+      }, 4300);
+
+      window.setTimeout(function() {
+        stageIntroPlaying = false;
+        if (shell) {
+          shell.classList.remove('stage-entrance-playing', 'stage-entrance-monsters');
+        }
+        setBattleInputLocked(false);
+        setPlayerTurn(true);
+      }, 5000);
+    }
+
+    function getStageEntranceTitle(stage) {
+      var parts = getDisplayFloorParts(stage.floor);
+      return {
+        floorLine: parts.floorLabel + ' , 스테이지 ' + Number(stage.stage || 1),
+        areaLine: parts.areaLabel,
+      };
+    }
+
+    function getDisplayFloorParts(progressFloor) {
+      var floor = Number(progressFloor || 1);
+      var displays = {
+        1: { floorLabel: '5층', areaLabel: '옥상' },
+        2: { floorLabel: '4층', areaLabel: '1학년 교실층' },
+        3: { floorLabel: '3층', areaLabel: '3학년 교실층' },
+        4: { floorLabel: '2층', areaLabel: '2학년 교실층' },
+        5: { floorLabel: '1층', areaLabel: '특별실/현관' },
+      };
+      return displays[floor] || { floorLabel: floor + '층', areaLabel: '' };
     }
 
     function bindHoverTooltips() {
@@ -963,6 +1065,7 @@
       if (currentView.battle.status === 'defeat') {
         setPlayerTurn(false);
         pushLog('쓰러졌습니다.');
+        showDefeatSequence();
         return;
       }
       setPlayerTurn(true);
@@ -1061,15 +1164,15 @@
           hideLoadingModal();
           document.getElementById('rewardModal').classList.remove('active');
           if (response.cleared) {
-            pushLog('5층 5스테이지 클리어! 게임이 완료되었습니다.');
+            pushLog('1층 특별실/현관 5스테이지 클리어! 탈출에 성공했습니다.');
             setPlayerTurn(false);
             return;
           }
           currentView = normalizeBattleView(response);
           battleQuestionCache = (currentView.questionCache || []).slice();
-          setPlayerTurn(true);
           renderBattle(currentView);
-          pushLog('보상을 선택했습니다. 다음 스테이지를 시작합니다.');
+          pushLog('보상을 선택했습니다. 다음 스테이지로 이동합니다.');
+          playStageEntranceIntro();
         })
         .withFailureHandler(function(error) {
           hideLoadingModal();
@@ -1328,6 +1431,64 @@
 
     function formatSecond(ms) {
       return (Math.max(0, Number(ms || 0)) / 1000).toFixed(1) + '초';
+    }
+
+    function formatDisplayStage(progressFloor, stage) {
+      var parts = getDisplayFloorParts(progressFloor);
+      return parts.floorLabel + ' ' + parts.areaLabel + ' ' + Number(stage || 1) + '스테이지';
+    }
+
+    function showDefeatSequence() {
+      if (defeatSequenceStarted) return;
+      defeatSequenceStarted = true;
+      setBattleInputLocked(true);
+      setPlayerTurn(false);
+      closeQuestionModal();
+
+      var shell = document.getElementById('battleShell');
+      var overlay = document.getElementById('defeatOverlay');
+      var result = document.getElementById('defeatResult');
+      var homeButton = document.getElementById('defeatHomeButton');
+      if (!overlay || !result || !homeButton) return;
+
+      if (shell) {
+        shell.classList.add('battle-defeat-fade');
+      }
+      result.classList.remove('active');
+      homeButton.classList.add('hidden');
+      result.innerHTML = buildDefeatResultHtml();
+
+      window.setTimeout(function() {
+        overlay.classList.add('active');
+        overlay.setAttribute('aria-hidden', 'false');
+      }, 700);
+
+      window.setTimeout(function() {
+        result.classList.add('active');
+      }, 1700);
+
+      window.setTimeout(function() {
+        homeButton.classList.remove('hidden');
+      }, 2400);
+    }
+
+    function buildDefeatResultHtml() {
+      var battle = currentView && currentView.battle ? currentView.battle : {};
+      var stage = battle.stage || {};
+      var monsters = battle.monsters || [];
+      var defeatedCount = monsters.filter(function(monster) {
+        return Number(monster.currentHp || 0) <= 0;
+      }).length;
+      var aliveCount = monsters.length - defeatedCount;
+      var player = battle.player || {};
+      var lastMessage = battle.lastMessage || '전투가 종료되었습니다.';
+      return '' +
+        '<div class="defeat-result-row"><span>도달 지점</span><strong>' + escapeHtml(formatDisplayStage(stage.floor, stage.stage)) + '</strong></div>' +
+        '<div class="defeat-result-row"><span>진행 턴</span><strong>' + escapeHtml(battle.turn || 1) + '턴</strong></div>' +
+        '<div class="defeat-result-row"><span>플레이어 HP</span><strong>' + escapeHtml(player.hp || 0) + ' / ' + escapeHtml(player.maxHp || '-') + '</strong></div>' +
+        '<div class="defeat-result-row"><span>처치한 몬스터</span><strong>' + defeatedCount + ' / ' + monsters.length + '</strong></div>' +
+        '<div class="defeat-result-row"><span>남은 몬스터</span><strong>' + aliveCount + '</strong></div>' +
+        '<p class="defeat-last-message">' + escapeHtml(lastMessage) + '</p>';
     }
 
     function delay(ms) {
