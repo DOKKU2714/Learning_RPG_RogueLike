@@ -38,6 +38,15 @@
       gap: 6px;
       align-items: center;
       color: var(--accent);
+      font-size: 14px;
+      line-height: 1.2;
+      margin: 0;
+    }
+
+    .type-radio-row input[type="radio"] {
+      width: 14px;
+      height: 14px;
+      margin: 0;
     }
 
     .remove-question {
@@ -165,7 +174,7 @@
         '</div>' +
         '<div class="form-grid" style="margin-top:12px;">' +
           '<div><label>정답</label><input data-field="answer" placeholder="객관식은 정답 번호, 주관식은 정답 텍스트"></div>' +
-          '<div><label>복수 정답 / 별칭</label><input data-field="answerAliases" placeholder="쉼표 또는 줄바꿈으로 구분"></div>' +
+          '<div data-area="aliases"><label>복수 정답 / 별칭</label><input data-field="answerAliases" placeholder="쉼표 또는 줄바꿈으로 구분"></div>' +
           '<div><label>과목</label><input data-field="subject" placeholder="예: 사회"></div>' +
           '<div><label>단원</label><input data-field="unit" placeholder="예: 조선 전기"></div>' +
           '<div style="grid-column:1 / -1;"><label>태그</label><input data-field="tags" placeholder="쉼표로 구분"></div>' +
@@ -181,6 +190,14 @@
       if (!card) return;
       var type = getQuestionType(card);
       card.querySelector('[data-area="choices"]').classList.toggle('hidden', type === 'shortAnswer');
+      var aliases = card.querySelector('[data-area="aliases"]');
+      if (aliases) {
+        aliases.classList.toggle('hidden', type === 'multipleChoice');
+        if (type === 'multipleChoice') {
+          var aliasesInput = aliases.querySelector('[data-field="answerAliases"]');
+          if (aliasesInput) aliasesInput.value = '';
+        }
+      }
     }
 
     function removeQuestionForm(id) {
@@ -219,12 +236,13 @@
     }
 
     function readQuestionPayload(card) {
+      var type = getQuestionType(card);
       return {
-        type: getQuestionType(card),
+        type: type,
         prompt: valueOf(card, 'prompt'),
         choices: [valueOf(card, 'choice1'), valueOf(card, 'choice2'), valueOf(card, 'choice3'), valueOf(card, 'choice4')],
         answer: valueOf(card, 'answer'),
-        answerAliases: valueOf(card, 'answerAliases'),
+        answerAliases: type === 'multipleChoice' ? '' : valueOf(card, 'answerAliases'),
         explanation: valueOf(card, 'explanation'),
         subject: valueOf(card, 'subject'),
         unit: valueOf(card, 'unit'),

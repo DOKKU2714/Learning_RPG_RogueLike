@@ -151,6 +151,7 @@ function normalizeQuestionPayload_(payload) {
     normalizedPayload.choice2 = String(choices[1]).trim();
     normalizedPayload.choice3 = String(choices[2]).trim();
     normalizedPayload.choice4 = String(choices[3]).trim();
+    normalizedPayload.answerAliases = [];
   }
 
   return normalizedPayload;

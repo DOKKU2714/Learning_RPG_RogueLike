@@ -9,22 +9,31 @@
 <body>
   <section id="introScreen" class="intro-screen screen active" onclick="enterApp()">
     <div>
-      <div id="introLogo" class="intro-logo">LEARNING<br>ROGUELIKE</div>
+      <div id="introLogo" class="intro-logo intro-logo-image">
+        <img
+          id="introLogoImage"
+          src="<?= getAssetUrl_('Resources/Intro_logo.png') ?>"
+          alt="Learning Roguelike"
+          onload="markIntroLogoLoaded()"
+          onerror="handleIntroLogoError(this)"
+        >
+        <span id="introLogoFallback">LEARNING<br>ROGUELIKE</span>
+      </div>
       <p class="blink-text">아무 곳이나 클릭하세요</p>
     </div>
   </section>
 
   <main id="appScreen" class="menu-shell screen fade-in">
     <section id="registerPanel" class="rpg-panel screen">
-      <h1 class="rpg-title">로그인 / 회원가입</h1>
+      <h1 id="authTitle" class="rpg-title">로그인</h1>
       <p id="userSummary" class="muted" style="text-align:center;">학번, 이름, 비밀번호를 입력하세요.</p>
 
       <div class="form-grid" style="margin-top:18px;">
-        <div>
+        <div id="studentIdField">
           <label for="studentId">학번</label>
           <input id="studentId" maxlength="30" autocomplete="username" placeholder="예: 202601">
         </div>
-        <div>
+        <div id="studentNameField">
           <label for="studentName">이름</label>
           <input id="studentName" maxlength="20" placeholder="예: 김디지털">
         </div>
@@ -32,11 +41,17 @@
           <label for="password">비밀번호</label>
           <input id="password" type="password" maxlength="40" autocomplete="current-password" placeholder="4자 이상">
         </div>
+        <div id="avatarField" style="grid-column:1 / -1;">
+          <label for="avatarFile">프로필 사진</label>
+          <input id="avatarFile" type="file" accept="image/png,image/jpeg,image/webp">
+        </div>
       </div>
 
       <div class="vertical-menu">
         <button id="loginButton" onclick="login()">로그인</button>
-        <button class="secondary" onclick="register()">회원가입</button>
+        <button id="showRegisterButton" class="secondary" onclick="showRegisterForm()">회원가입</button>
+        <button id="registerButton" onclick="register()">회원가입 완료</button>
+        <button id="backToLoginButton" class="secondary" onclick="showLoginForm()">뒤로</button>
         <button class="secondary" onclick="goToPage('admin')">관리자 접속</button>
       </div>
       <div id="registerMessage" class="message"></div>
@@ -66,15 +81,62 @@
 
   <script>
     var WEB_APP_URL = '<?= getWebAppUrl_() ?>';
+    var ASSET_BASE_URL = '<?= getAssetBaseUrl_() ?>';
     var currentState = null;
+    var authMode = 'login';
     var SKIP_INTRO = window.location.search.indexOf('skipIntro=1') !== -1;
 
     document.addEventListener('DOMContentLoaded', function() {
       bindLoginEnterKey();
+      showLoginForm();
       if (SKIP_INTRO) {
         enterApp();
       }
     });
+
+    function markIntroLogoLoaded() {
+      var logo = document.getElementById('introLogo');
+      if (!logo) return;
+      logo.classList.add('logo-loaded');
+    }
+
+    function getIntroLogoCandidates() {
+      if (!ASSET_BASE_URL) return [];
+      return [
+        'Resources/Intro_logo.png',
+        'Resources/intro_logo.png',
+        'resources/Intro_logo.png',
+        'resources/intro_logo.png',
+        'Resource/Intro_logo.png',
+        'Resource/intro_logo.png',
+        'resource/Intro_logo.png',
+        'resource/intro_logo.png',
+      ].map(function(path) {
+        return ASSET_BASE_URL + '/' + path;
+      });
+    }
+
+    function handleIntroLogoError(image) {
+      if (image && image.dataset) {
+        var candidates = getIntroLogoCandidates();
+        var index = Number(image.dataset.fallbackIndex || 0);
+        while (index < candidates.length && image.src === candidates[index]) {
+          index += 1;
+        }
+        if (index < candidates.length) {
+          image.dataset.fallbackIndex = String(index + 1);
+          image.src = candidates[index];
+          return;
+        }
+      }
+      var logo = document.getElementById('introLogo');
+      if (logo) {
+        logo.classList.remove('logo-loaded');
+      }
+      if (image) {
+        image.style.display = 'none';
+      }
+    }
 
     function bindLoginEnterKey() {
       ['studentId', 'studentName', 'password'].forEach(function(id) {
@@ -83,7 +145,11 @@
         input.addEventListener('keydown', function(event) {
           if (event.key === 'Enter') {
             event.preventDefault();
-            login();
+            if (authMode === 'register') {
+              register();
+            } else {
+              login();
+            }
           }
         });
       });
@@ -128,6 +194,7 @@
 
       if (!state.isRegistered) {
         document.getElementById('userSummary').textContent = '학번, 이름, 비밀번호를 입력하세요.';
+        showLoginForm();
         return;
       }
 
@@ -139,22 +206,54 @@
       document.getElementById('adminButton').style.display = state.isAdmin ? 'block' : 'none';
     }
 
+    function showLoginForm() {
+      authMode = 'login';
+      document.getElementById('authTitle').textContent = '로그인';
+      document.getElementById('userSummary').textContent = '학번과 비밀번호를 입력하세요.';
+      document.getElementById('studentIdField').style.gridColumn = '1 / -1';
+      document.getElementById('studentNameField').classList.add('hidden');
+      document.getElementById('avatarField').classList.add('hidden');
+      document.getElementById('loginButton').classList.remove('hidden');
+      document.getElementById('showRegisterButton').classList.remove('hidden');
+      document.getElementById('registerButton').classList.add('hidden');
+      document.getElementById('backToLoginButton').classList.add('hidden');
+      setRegisterMessage('', '');
+    }
+
+    function showRegisterForm() {
+      authMode = 'register';
+      document.getElementById('authTitle').textContent = '회원가입';
+      document.getElementById('userSummary').textContent = '학번, 이름, 비밀번호와 프로필 사진을 입력하세요.';
+      document.getElementById('studentIdField').style.gridColumn = '';
+      document.getElementById('studentNameField').classList.remove('hidden');
+      document.getElementById('avatarField').classList.remove('hidden');
+      document.getElementById('loginButton').classList.add('hidden');
+      document.getElementById('showRegisterButton').classList.add('hidden');
+      document.getElementById('registerButton').classList.remove('hidden');
+      document.getElementById('backToLoginButton').classList.remove('hidden');
+      setRegisterMessage('', '');
+    }
+
     function register() {
       setRegisterMessage('회원가입 중입니다.', 'ok');
-      showLoadingModal('회원가입 중...', '플레이어 데이터를 만드는 중...');
-      google.script.run
-        .withSuccessHandler(function(response) {
-          hideLoadingModal();
-          saveAuthToken(response.authToken);
-          saveCurrentState(response.user);
-          setRegisterMessage('회원가입되었습니다.', 'ok');
-          renderCurrentUser(response.user);
-        })
-        .withFailureHandler(function(error) {
-          hideLoadingModal();
-          setRegisterMessage(error.message, 'error');
-        })
-        .registerPlayer(getAuthFormPayload());
+      buildSignupPayload(function(payload) {
+        showLoadingModal('회원가입 중...', '플레이어 데이터를 만드는 중...');
+        google.script.run
+          .withSuccessHandler(function(response) {
+            hideLoadingModal();
+            saveAuthToken(response.authToken);
+            saveCurrentState(response.user);
+            setRegisterMessage('회원가입되었습니다.', 'ok');
+            renderCurrentUser(response.user);
+          })
+          .withFailureHandler(function(error) {
+            hideLoadingModal();
+            setRegisterMessage(error.message, 'error');
+          })
+          .registerPlayer(payload);
+      }, function(message) {
+        setRegisterMessage(message, 'error');
+      });
     }
 
     function login() {
@@ -180,17 +279,31 @@
         setMainMessage('먼저 로그인해 주세요.', 'error');
         return;
       }
+      var startedAt = Date.now();
       showLoadingModal('전투를 준비하는 중...', '게임 시작 조건을 확인하는 중...');
       google.script.run
         .withSuccessHandler(function() {
-          hideLoadingModal();
-          goToPage('battle');
+          transitionToBattlePage(startedAt);
         })
         .withFailureHandler(function(error) {
           hideLoadingModal();
           setMainMessage(error.message, 'error');
         })
         .startRun(currentState.player.playerId, getAuthToken());
+    }
+
+    function transitionToBattlePage(startedAt) {
+      var elapsed = Date.now() - Number(startedAt || Date.now());
+      var waitMs = Math.max(0, 650 - elapsed);
+      window.setTimeout(function() {
+        var modal = document.getElementById('loadingModal');
+        document.getElementById('loadingTitle').textContent = '전투 화면으로 이동 중...';
+        document.getElementById('loadingText').textContent = '잠시 후 전투가 시작됩니다.';
+        modal.classList.add('page-transition');
+        window.setTimeout(function() {
+          goToPage('battle');
+        }, 720);
+      }, waitMs);
     }
 
     function showLeaderboardMessage() {
@@ -211,6 +324,50 @@
         studentName: document.getElementById('studentName').value,
         password: document.getElementById('password').value,
       };
+    }
+
+    function buildSignupPayload(onSuccess, onFailure) {
+      var payload = getAuthFormPayload();
+      var input = document.getElementById('avatarFile');
+      var file = input && input.files && input.files[0];
+      if (!file) {
+        onSuccess(payload);
+        return;
+      }
+      if (!/^image\/(png|jpeg|webp)$/.test(file.type)) {
+        onFailure('지원하지 않는 이미지 형식입니다.');
+        return;
+      }
+      resizeImageFile(file, 240, function(dataUrl) {
+        payload.avatarDataUrl = dataUrl;
+        onSuccess(payload);
+      }, onFailure);
+    }
+
+    function resizeImageFile(file, maxSize, onSuccess, onFailure) {
+      var reader = new FileReader();
+      reader.onerror = function() {
+        onFailure('프로필 사진을 읽지 못했습니다.');
+      };
+      reader.onload = function(event) {
+        var image = new Image();
+        image.onerror = function() {
+          onFailure('프로필 사진을 불러오지 못했습니다.');
+        };
+        image.onload = function() {
+          var scale = Math.min(1, maxSize / Math.max(image.width, image.height));
+          var width = Math.max(1, Math.round(image.width * scale));
+          var height = Math.max(1, Math.round(image.height * scale));
+          var canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          var context = canvas.getContext('2d');
+          context.drawImage(image, 0, 0, width, height);
+          onSuccess(canvas.toDataURL('image/jpeg', 0.78));
+        };
+        image.src = event.target.result;
+      };
+      reader.readAsDataURL(file);
     }
 
     function getAuthToken() {
@@ -254,13 +411,14 @@
     }
 
     function showLoadingModal(title, text) {
+      document.getElementById('loadingModal').classList.remove('page-transition');
       document.getElementById('loadingTitle').textContent = title || '로딩 중...';
       document.getElementById('loadingText').textContent = text || '데이터를 불러오는 중...';
       document.getElementById('loadingModal').classList.add('active');
     }
 
     function hideLoadingModal() {
-      document.getElementById('loadingModal').classList.remove('active');
+      document.getElementById('loadingModal').classList.remove('active', 'page-transition');
     }
 
     function escapeHtml(value) {

@@ -1,4 +1,6 @@
 <style>
+  @import url("https://cdn.jsdelivr.net/npm/galmuri@latest/dist/galmuri.css");
+
   :root {
     --bg: #141414;
     --bg-soft: #1c1c1c;
@@ -13,6 +15,7 @@
     --ok: #5f9b6e;
     --warn: #bda76a;
     --shadow: rgba(0, 0, 0, 0.58);
+    --font-pixel: "Galmuri11", "DungGeunMo", "NeoDunggeunmo", "Apple SD Gothic Neo", "Malgun Gothic", monospace;
   }
 
   * {
@@ -28,7 +31,9 @@
     margin: 0;
     color: var(--text);
     background: var(--bg);
-    font-family: Georgia, "Times New Roman", "Noto Serif KR", serif;
+    font-family: var(--font-pixel);
+    font-size: 15px;
+    line-height: 1.55;
     letter-spacing: 0;
   }
 
@@ -218,6 +223,31 @@
     font-weight: 700;
   }
 
+  .intro-logo.intro-logo-image {
+    position: relative;
+    overflow: hidden;
+    background: #050505;
+  }
+
+  .intro-logo img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
+  }
+
+  .intro-logo #introLogoFallback {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    white-space: normal;
+  }
+
+  .intro-logo.logo-loaded #introLogoFallback {
+    display: none;
+  }
+
   .blink-text {
     animation: slowBlink 2.4s ease-in-out infinite;
     color: var(--muted);
@@ -302,15 +332,20 @@
   }
 
   .status-icon {
-    width: 26px;
+    min-width: 26px;
     height: 26px;
+    padding: 0 4px;
     display: inline-grid;
     place-items: center;
-    border: 1px solid var(--line);
+    border: 2px solid var(--line);
     color: var(--accent);
     background: #111;
-    font-size: 15px;
+    font-family: var(--font-pixel);
+    font-size: 10px;
+    font-weight: 900;
     line-height: 1;
+    letter-spacing: 0.04em;
+    box-shadow: inset -2px -2px 0 rgba(0, 0, 0, 0.55);
   }
 
   .status-icon.buff {
@@ -422,6 +457,7 @@
     padding: 20px;
     background: rgba(0, 0, 0, 0.76);
     z-index: 20;
+    transition: background 650ms ease, opacity 650ms ease;
   }
 
   .question-modal-overlay.active,
@@ -436,6 +472,16 @@
     background: #1a1a1a;
     box-shadow: 0 22px 80px rgba(0,0,0,0.7), inset 0 0 0 1px #080808;
     padding: 18px;
+    transition: opacity 520ms ease, transform 520ms ease;
+  }
+
+  .loading-overlay.page-transition {
+    background: #000;
+  }
+
+  .loading-overlay.page-transition .loading-box {
+    opacity: 0;
+    transform: translateY(12px) scale(0.98);
   }
 
   .modal-topline {
@@ -484,6 +530,15 @@
     padding: 10px;
     margin-bottom: 8px;
     cursor: pointer;
+    font-size: 15px;
+  }
+
+  .question-choice input[type="radio"] {
+    width: 14px;
+    height: 14px;
+    margin: 0 8px 0 0;
+    vertical-align: -2px;
+    accent-color: var(--accent);
   }
 
   .question-choice.selected {
@@ -611,9 +666,14 @@
   }
 
   .battle-background-fallback {
-    background:
-      radial-gradient(circle at 50% 38%, rgba(120, 120, 120, 0.16), transparent 28%),
-      linear-gradient(to bottom, #181818 0%, #101010 58%, #050505 100%);
+    background: #050505;
+    background-position: center;
+    background-repeat: no-repeat;
+    background-size: cover;
+  }
+
+  .battle-background-fallback.has-battle-image {
+    background-color: #050505;
   }
 
   .battle-scene::after {
@@ -629,7 +689,7 @@
   .monster-layer {
     position: absolute;
     left: 50%;
-    top: 15vh;
+    top: 27vh;
     z-index: 2;
     width: min(760px, 92vw);
     display: flex;
@@ -641,21 +701,40 @@
 
   .monster-slot {
     position: relative;
-    width: min(190px, 28vw);
+    width: min(170px, 28vw);
+    height: 280px;
     min-width: 92px;
-    display: grid;
-    justify-items: center;
-    gap: 4px;
+    display: flex;
+    justify-content: center;
+    align-items: flex-end;
   }
 
   .monster-hp-text {
-    font-size: 12px;
-    color: #e8e8e8;
-    text-shadow: 0 1px 3px #000;
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 2px;
+    z-index: 3;
+    font-size: 13px;
+    font-weight: 900;
+    color: #fff;
+    text-align: center;
+    -webkit-text-stroke: 0.6px #111;
+    text-shadow:
+      -1px -1px 0 #000,
+      1px -1px 0 #000,
+      -1px 1px 0 #000,
+      1px 1px 0 #000,
+      0 0 8px rgba(0, 0, 0, 0.95);
   }
 
   .monster-hp-bar {
-    width: 100%;
+    position: absolute;
+    left: 50%;
+    top: 18px;
+    z-index: 3;
+    width: 160px;
+    transform: translateX(-50%);
     height: 7px;
     border-color: #ddd;
     background: #120000;
@@ -688,16 +767,26 @@
   }
 
   .monster-status-row {
-    justify-content: center;
+    position: absolute;
+    top: 30px;
+    right: 50%;
+    z-index: 4;
+    justify-content: flex-end;
+    flex-direction: row-reverse;
     min-height: 0;
-    margin: 2px 0 0;
+    width: 160px;
+    margin: 0;
     flex-wrap: wrap;
+    gap: 4px;
+    pointer-events: auto;
+    transform: translateX(50%);
   }
 
   .monster-status-row .status-icon {
-    width: 20px;
+    min-width: 22px;
     height: 20px;
-    font-size: 11px;
+    padding: 0 3px;
+    font-size: 8px;
   }
 
   .monster-status-row .buff {
@@ -717,40 +806,128 @@
   }
 
   .monster-intent {
-    display: grid;
-    justify-items: center;
-    gap: 2px;
-    margin: 4px auto 6px;
-    max-width: 140px;
+    position: absolute;
+    left: 50%;
+    top: 42px;
+    z-index: 4;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    margin: 0;
+    width: max-content;
+    max-width: none;
     color: #efefef;
     text-align: center;
+    transform: translateX(-50%);
+    border: 1px solid rgba(235, 235, 235, 0.62);
+    background: rgba(0, 0, 0, 0.78);
+    box-shadow: inset -2px -2px 0 rgba(0, 0, 0, 0.62);
+    padding: 3px 6px;
   }
 
   .monster-intent-icon {
-    min-width: 34px;
-    border: 1px solid rgba(235, 235, 235, 0.72);
-    background: rgba(0, 0, 0, 0.72);
-    padding: 2px 5px;
+    flex: 0 0 auto;
+    min-width: 0;
+    border: 0;
+    background: transparent;
+    padding: 0;
+    font-family: var(--font-pixel);
+    font-weight: 900;
     font-size: 10px;
     letter-spacing: 0.04em;
+    box-shadow: none;
   }
 
   .monster-intent-text {
-    width: 100%;
-    color: var(--muted);
+    flex: 0 1 auto;
+    width: auto;
+    min-width: 0;
+    max-width: none;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: #f2f2f2;
     font-size: 11px;
     line-height: 1.25;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    overflow: visible;
+    text-overflow: clip;
     white-space: nowrap;
+    text-shadow: 0 1px 3px #000;
   }
 
   .compact-monster {
+    position: relative;
     width: min(150px, 24vw);
     max-width: 150px;
+    aspect-ratio: 1 / 1.05;
     border: 0;
+    outline: 0;
+    background: transparent;
+    box-shadow: none;
+    color: inherit;
+    text-align: initial;
+  }
+
+  .monster-image-sprite {
+    position: relative;
+    overflow: visible;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .monster-sprite-placeholder.monster-image-sprite {
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .monster-image-sprite .monster-art {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
+    filter: drop-shadow(0 18px 16px rgba(0, 0, 0, 0.7));
+  }
+
+  .monster-image-sprite span {
+    position: absolute;
+    left: 50%;
+    right: auto;
+    bottom: -20px;
+    display: block;
+    width: max-content;
+    max-width: 170px;
+    padding: 0;
+    background: transparent;
+    color: #f4f4f4;
+    font-size: 10px;
+    text-align: center;
+    text-shadow: 0 2px 0 #000, 0 0 8px rgba(0, 0, 0, 0.9);
+    transform: translateX(-50%);
+  }
+
+  .monster-image-sprite.monster-image-missing {
     background:
       radial-gradient(circle at 50% 34%, #333, #171717 62%, #090909);
+  }
+
+  .monster-count-1 {
+    width: 280px;
+    height: 325px;
+  }
+
+  .monster-count-1 .compact-monster {
+    width: 255px;
+    max-width: 255px;
+  }
+
+  .monster-state-attack .monster-art {
+    filter: drop-shadow(0 18px 16px rgba(0, 0, 0, 0.7)) brightness(1.16);
+  }
+
+  .monster-state-hit .monster-art {
+    filter: drop-shadow(0 18px 16px rgba(0, 0, 0, 0.7)) brightness(1.6) saturate(0.85);
   }
 
   .monster-slot-2 .compact-monster,
@@ -769,21 +946,36 @@
     gap: 8px;
     align-items: stretch;
     transform: translateX(-50%);
+    transition: grid-template-columns 420ms ease, gap 420ms ease, width 420ms ease;
   }
 
   .battle-log-compact,
   .compact-actions,
   .player-compact-panel {
+    min-width: 0;
+    max-height: 240px;
     border: 1px solid rgba(180, 180, 180, 0.68);
     background: rgba(10, 10, 10, 0.78);
     box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.78);
     padding: 8px;
+    overflow: hidden;
+    transition:
+      opacity 320ms ease,
+      transform 420ms ease,
+      max-height 420ms ease,
+      min-height 420ms ease,
+      padding 420ms ease,
+      background 420ms ease,
+      border-color 420ms ease,
+      box-shadow 420ms ease;
   }
 
   .battle-log-compact {
+    position: relative;
     min-height: 112px;
     display: flex;
     align-items: stretch;
+    cursor: pointer;
   }
 
   .battle-log-compact .battle-log {
@@ -791,6 +983,88 @@
     width: 100%;
     font-size: 14px;
     line-height: 1.45;
+    white-space: pre-wrap;
+    transition: color 320ms ease, font-size 420ms ease, line-height 420ms ease, text-shadow 420ms ease;
+  }
+
+  .battle-hud.cinematic-mode {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 0.001fr) minmax(0, 0.001fr);
+    gap: 0;
+  }
+
+  .battle-hud.cinematic-mode .compact-actions,
+  .battle-hud.cinematic-mode .player-compact-panel,
+  .battle-hud.enemy-turn-mode .compact-actions {
+    opacity: 0;
+    transform: translateY(14px) scale(0.96);
+    pointer-events: none;
+    min-width: 0;
+    max-height: 0;
+    min-height: 0;
+    padding-left: 0;
+    padding-right: 0;
+    border-color: transparent;
+  }
+
+  .battle-hud.enemy-turn-mode {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 0.001fr) minmax(260px, 0.48fr);
+    gap: 8px;
+  }
+
+  .battle-hud.narration-mode .battle-log-compact {
+    min-height: 112px;
+    padding: 14px 18px 12px 26px;
+    align-items: center;
+    border-width: 2px;
+    background: rgba(5, 5, 5, 0.9);
+    transform: translateY(-4px);
+  }
+
+  .battle-hud.enemy-turn-mode .player-compact-panel {
+    min-height: 112px;
+    padding: 12px;
+    border-color: rgba(220, 220, 220, 0.72);
+    background: rgba(5, 5, 5, 0.9);
+    box-shadow: inset 0 0 0 1px #000, 0 0 18px rgba(0, 0, 0, 0.38);
+    transform: translateY(-4px);
+  }
+
+  .battle-hud.narration-mode .battle-log {
+    color: #f4f4f4;
+    font-size: 18px;
+    line-height: 1.5;
+    text-shadow: 0 2px 0 #000;
+  }
+
+  .battle-hud.narration-mode .battle-log::after {
+    content: "";
+    display: inline-block;
+    width: 9px;
+    height: 1em;
+    margin-left: 4px;
+    vertical-align: -0.12em;
+    background: var(--accent);
+    animation: battleCursorBlink 920ms steps(1, end) infinite;
+  }
+
+  .battle-hud.enemy-turn-mode .player-hp-row {
+    gap: 10px;
+    font-size: 16px;
+  }
+
+  .battle-hud.enemy-turn-mode .player-hp-track {
+    height: 16px;
+  }
+
+  .battle-hud.enemy-turn-mode #playerHpText {
+    font-size: 16px;
+  }
+
+  .sparkle-dot {
+    display: inline-block;
+    color: #fff;
+    text-shadow: 0 0 8px rgba(255, 255, 255, 0.86), 0 0 18px rgba(255, 255, 255, 0.48);
+    animation: sparkleDotBlink 880ms steps(1, end) infinite;
   }
 
   .compact-actions {
@@ -858,7 +1132,15 @@
     display: grid;
     align-items: center;
     border: 1px solid transparent;
-    transition: border-color 240ms ease, box-shadow 240ms ease;
+    transition:
+      opacity 320ms ease,
+      transform 420ms ease,
+      max-height 420ms ease,
+      min-height 420ms ease,
+      padding 420ms ease,
+      background 420ms ease,
+      border-color 420ms ease,
+      box-shadow 420ms ease;
   }
 
   .player-compact-panel.player-shielded {
@@ -979,21 +1261,57 @@
     animation: monsterHit 420ms ease-out;
   }
 
-  .incoming-slash {
-    position: relative;
+  .monster-hit-red::before,
+  .monster-hit-white::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    pointer-events: none;
+    mix-blend-mode: screen;
+    animation: monsterRedFlash 420ms ease-out forwards;
   }
 
+  .monster-hit-red::before {
+    background:
+      linear-gradient(90deg, transparent, rgba(255, 36, 36, 0.42), transparent),
+      rgba(255, 0, 0, 0.26);
+  }
+
+  .monster-hit-white::before {
+    background:
+      linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.58), transparent),
+      rgba(255, 255, 255, 0.32);
+    animation: monsterRedFlash 420ms ease-out forwards;
+  }
+
+  .incoming-slash {
+    position: relative;
+    overflow: hidden;
+  }
+
+  .incoming-slash::before,
   .incoming-slash::after {
     content: "";
     position: absolute;
-    left: -12%;
-    top: 8%;
-    width: 124%;
-    height: 84%;
-    background: linear-gradient(135deg, transparent 42%, rgba(255,255,255,0.95) 48%, rgba(255,255,255,0.3) 54%, transparent 62%);
-    filter: drop-shadow(0 0 10px rgba(255,255,255,0.8));
+    left: -28%;
+    top: 44%;
+    width: 156%;
+    height: 18px;
+    background:
+      linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.98) 28%, rgba(255, 226, 173, 0.96) 50%, rgba(255, 60, 60, 0.28) 72%, transparent 100%);
+    border-radius: 999px;
+    filter: drop-shadow(0 0 8px rgba(255,255,255,0.9)) drop-shadow(0 0 12px rgba(255,54,54,0.58));
     pointer-events: none;
-    animation: slashCut 300ms ease-out forwards;
+    transform-origin: center;
+    animation: slashCut 360ms cubic-bezier(0.15, 0.8, 0.2, 1) forwards;
+  }
+
+  .incoming-slash::before {
+    height: 7px;
+    top: 36%;
+    opacity: 0.72;
+    animation-name: slashTrail;
   }
 
   .monster-lunge {
@@ -1037,7 +1355,7 @@
     background: #000;
     opacity: 0;
     pointer-events: none;
-    transition: opacity 900ms ease;
+    transition: opacity 1200ms ease;
   }
 
   .stage-intro-overlay.active {
@@ -1085,9 +1403,11 @@
     transition: opacity 900ms ease;
   }
 
+  .stage-entrance-playing.stage-entrance-dialogue .battle-hud,
   .stage-entrance-playing.stage-entrance-monsters .monster-layer,
   .stage-entrance-playing.stage-entrance-monsters .battle-hud {
     opacity: 1;
+    pointer-events: auto;
   }
 
   .stage-entrance-playing.stage-entrance-monsters .monster-slot {
@@ -1160,6 +1480,29 @@
     font-weight: 700;
   }
 
+  .player-ghost-photo {
+    position: relative;
+    overflow: hidden;
+  }
+
+  .player-ghost-photo img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    filter: grayscale(0.25) contrast(1.05);
+  }
+
+  .player-ghost-photo span {
+    position: absolute;
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+    padding: 4px 6px;
+    background: rgba(0, 0, 0, 0.72);
+    color: var(--text);
+    text-shadow: 0 1px 3px #000;
+  }
+
   .defeat-last-message {
     margin: 12px 0 0;
     color: #a8a8a8;
@@ -1185,11 +1528,18 @@
 
   @keyframes monsterHit {
     0% { filter: brightness(1); transform: translateX(0); }
-    18% { filter: brightness(3); transform: translateX(-7px); }
-    36% { transform: translateX(7px); }
-    54% { transform: translateX(-4px); }
-    72% { transform: translateX(3px); }
-    100% { filter: brightness(1); transform: translateX(0); }
+    12% { filter: brightness(2.8) saturate(1.8) hue-rotate(-18deg); transform: translateX(-10px) rotate(-1deg); }
+    26% { transform: translateX(9px) rotate(1deg); }
+    44% { filter: brightness(1.8) saturate(1.4); transform: translateX(-6px) rotate(-0.6deg); }
+    66% { transform: translateX(4px) rotate(0.3deg); }
+    100% { filter: brightness(1); transform: translateX(0) rotate(0); }
+  }
+
+  @keyframes monsterRedFlash {
+    0% { opacity: 0; transform: translateX(-12%) skewX(-16deg); }
+    18% { opacity: 1; }
+    54% { opacity: 0.38; }
+    100% { opacity: 0; transform: translateX(12%) skewX(-16deg); }
   }
 
   @keyframes monsterEntrance {
@@ -1216,9 +1566,26 @@
   }
 
   @keyframes slashCut {
-    0% { opacity: 0; transform: translate(-18px, 18px) scale(0.92); }
-    35% { opacity: 1; }
-    100% { opacity: 0; transform: translate(18px, -18px) scale(1.06); }
+    0% { opacity: 0; transform: translate(-44px, 36px) rotate(-28deg) scaleX(0.58); }
+    22% { opacity: 1; }
+    100% { opacity: 0; transform: translate(44px, -36px) rotate(-28deg) scaleX(1.08); }
+  }
+
+  @keyframes slashTrail {
+    0% { opacity: 0; transform: translate(-54px, 46px) rotate(-28deg) scaleX(0.4); }
+    30% { opacity: 0.78; }
+    100% { opacity: 0; transform: translate(36px, -30px) rotate(-28deg) scaleX(1); }
+  }
+
+  @keyframes battleCursorBlink {
+    0%, 49% { opacity: 1; }
+    50%, 100% { opacity: 0; }
+  }
+
+  @keyframes sparkleDotBlink {
+    0%, 38% { opacity: 1; transform: translateY(0) scale(1); }
+    39%, 72% { opacity: 0.28; transform: translateY(-1px) scale(0.86); }
+    73%, 100% { opacity: 1; transform: translateY(0) scale(1); }
   }
 
   @keyframes monsterLunge {
@@ -1293,6 +1660,12 @@
     font-size: 13px;
   }
 
+  .reward-choice-card small {
+    color: #d6d6d6;
+    font-size: 12px;
+    line-height: 1.45;
+  }
+
   .player-status-row {
     justify-content: center;
     min-height: 22px;
@@ -1334,7 +1707,7 @@
     background: #000;
     opacity: 0;
     pointer-events: none;
-    transition: opacity 700ms ease-out;
+    transition: opacity 1200ms ease-out;
   }
 
   .battle-start-fade.active {
@@ -1343,16 +1716,26 @@
 
   @media (max-width: 760px) {
     .monster-layer {
-      top: 12vh;
+      top: 27vh;
       gap: 8px;
     }
 
     .monster-slot {
       width: 30vw;
+      height: 44vw;
     }
 
     .compact-monster {
       width: 26vw;
+    }
+
+    .monster-count-1 {
+      width: min(58vw, 250px);
+      height: min(68vw, 330px);
+    }
+
+    .monster-count-1 .compact-monster {
+      width: min(40vw, 195px);
     }
 
     .battle-hud {
@@ -1363,6 +1746,16 @@
     .battle-log-compact,
     .player-compact-panel {
       min-height: 68px;
+    }
+
+    .battle-hud.narration-mode .battle-log-compact {
+      min-height: 112px;
+      padding: 14px 18px 12px 26px;
+    }
+
+    .battle-hud.narration-mode .battle-log {
+      font-size: 18px;
+      line-height: 1.5;
     }
 
     .compact-actions {

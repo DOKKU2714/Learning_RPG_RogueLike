@@ -79,10 +79,12 @@ function startBattle(runId) {
   var run = requireRun_(runId);
   var stageState = getStageState_(run);
   var stage = loadStage(stageState.stageId || buildStageId_(run.currentFloor, run.currentStage));
-  var monsters = createMonstersForStage_(stage);
+  var battleId = generateId_('battle');
+  var playerGhostSelection = selectPlayerGhostForBattle_(run, stage, stageState, battleId);
+  var monsters = createMonstersForStage_(stage, playerGhostSelection.monster);
   var stats = safeJsonParse_(run.statsJson, Object.assign({}, BASE_PLAYER_STATS));
   var battleState = {
-    battleId: generateId_('battle'),
+    battleId: battleId,
     status: STATUS.BATTLE_ACTIVE,
     turn: 1,
     stage: {
@@ -93,6 +95,7 @@ function startBattle(runId) {
       baseDifficulty: Number(stage.baseDifficulty),
       minDifficulty: Number(stage.minDifficulty),
       maxDifficulty: Number(stage.maxDifficulty),
+      monsterGroupId: stage.monsterGroupId || '',
       bossMonsterId: stage.bossMonsterId || '',
       bossConfig: {
         shortQuestionChance: stage.bossMonsterId ? 15 : 0,
@@ -108,6 +111,8 @@ function startBattle(runId) {
     },
     monsters: monsters,
     monster: monsters[0],
+    playerGhost: playerGhostSelection.context,
+    forcedQuestionCreatorId: playerGhostSelection.questionCreatorId || '',
     pendingAction: null,
     lastMessage: '전투가 시작되었습니다.',
     lastTurnEvents: [],
@@ -118,7 +123,8 @@ function startBattle(runId) {
   stageState.battle = battleState;
   stageState.stageId = stage.stageId;
   stageState.otherStudentQuestionShown = !!stageState.otherStudentQuestionShown;
-  saveRunState(runId, battleState);
+  stageState.playerGhost = playerGhostSelection.context;
+  saveStageState_(runId, stageState, battleState);
   return toClientObject_(getRunWithStageState_(runId));
 }
 
@@ -165,7 +171,7 @@ function selectQuestionForAction(playerId, runId, actionType, difficultyBonus, a
   battleState.player.shield = 0;
   var activeEffects = getActiveEffectsForQuestion_(battleState);
   var preferredQuestionType = shouldUseShortQuestionInBoss(battleState.stage.bossConfig) ? QUESTION_TYPES.SHORT_ANSWER : '';
-  var questionResult = pickQuestion_(playerId, battleState.stage, stageState.otherStudentQuestionShown, preferredQuestionType);
+  var questionResult = pickQuestion_(playerId, battleState.stage, stageState.otherStudentQuestionShown, preferredQuestionType, getForcedQuestionCreatorId_(battleState));
   var baseDifficulty = applyBossDifficultyBonus(battleState.stage, Number(questionResult.question.difficulty || battleState.stage.baseDifficulty) + Number(difficultyBonus || 0));
   var finalDifficulty = calculateFinalQuestionDifficulty(baseDifficulty, activeEffects);
   var maxMs = calculateFinalQuestionTimeLimit(finalDifficulty, activeEffects);
@@ -223,7 +229,8 @@ function submitActionAnswer(answerPayload) {
       payload,
       normalizeActionType_(payload.actionType || ACTION_TYPES.ATTACK),
       '',
-      ''
+      '',
+      player.playerId
     );
     battleState.pendingAction = pendingAction;
     markCachedQuestionShown_(stageState, pendingAction);
@@ -312,7 +319,10 @@ function calculateEfficiency(isCorrect, remainingMs, maxMs, wrongCountAfterTimeo
 
   if (isCorrect) {
     var ratio = Math.max(0, Math.min(1, Number(remainingMs || 0) / Math.max(1, Number(maxMs || 1))));
-    return roundTo_(GAME_RULES.MIN_ANSWER_EFFICIENCY + 0.75 * ratio, 3);
+    if (ratio >= 0.5) {
+      return roundTo_(1 + ((ratio - 0.5) * 0.5), 3);
+    }
+    return roundTo_(GAME_RULES.MIN_ANSWER_EFFICIENCY + ratio, 3);
   }
 
   return roundTo_(GAME_RULES.MIN_ANSWER_EFFICIENCY, 3);
@@ -435,7 +445,7 @@ function applyMonsterTurn(battleState) {
 function decideMonsterIntents(battleState) {
   normalizeBattleStateEffects_(battleState);
   normalizeBattleMonsters_(battleState);
-  var aiRows = readTableCached_(DB_SHEETS.MONSTER_AI, 600);
+  var aiRows = readTableCached_(DB_SHEETS.MONSTER_AI, 600).concat(getPlayerGhostAiRows_());
   getAliveMonsters_(battleState).forEach(function(monster) {
     monster.intent = selectMonsterAction(monster, aiRows, battleState);
   });
@@ -752,6 +762,11 @@ function buildBattleView_(run, stageState) {
   if (battleState) {
     normalizeBattleStateEffects_(battleState);
     normalizeBattleMonsters_(battleState);
+    if (battleState.legacyMonsterMigrated) {
+      delete battleState.legacyMonsterMigrated;
+      stageState.battle = battleState;
+      saveStageState_(run.runId, stageState, battleState);
+    }
   }
   var runState = buildRunState_(run);
   return toClientObject_({
@@ -765,6 +780,7 @@ function buildBattleView_(run, stageState) {
       otherStudentQuestionShown: !!stageState.otherStudentQuestionShown,
       fallbackEvents: stageState.fallbackEvents || [],
       reward: stageState.reward || null,
+      playerGhost: stageState.playerGhost || null,
     },
   });
 }
@@ -799,7 +815,7 @@ function preloadBattleQuestions(runId, authToken) {
 function buildBattleQuestionCache_(run, stageState, battleState) {
   try {
     var activeEffects = getActiveEffectsForQuestion_(battleState);
-    var selectedQuestions = selectQuestionCacheRows_(run.playerId, battleState.stage, stageState.otherStudentQuestionShown);
+    var selectedQuestions = selectQuestionCacheRows_(run.playerId, battleState.stage, stageState.otherStudentQuestionShown, getForcedQuestionCreatorId_(battleState));
     return selectedQuestions.map(function(question) {
       var baseDifficulty = applyBossDifficultyBonus(battleState.stage, Number(question.difficulty || battleState.stage.baseDifficulty));
       var finalDifficulty = calculateFinalQuestionDifficulty(baseDifficulty, activeEffects);
@@ -817,19 +833,22 @@ function buildBattleQuestionCache_(run, stageState, battleState) {
   }
 }
 
-function selectQuestionCacheRows_(playerId, stage, otherStudentQuestionShown) {
+function selectQuestionCacheRows_(playerId, stage, otherStudentQuestionShown, forcedCreatorId) {
   var limit = 8;
   var minDifficulty = Number(stage.minDifficulty || GAME_RULES.MIN_DIFFICULTY);
   var maxDifficulty = Number(stage.maxDifficulty || GAME_RULES.MAX_DIFFICULTY);
   var approvedQuestions = readTableCached_(DB_SHEETS.QUESTIONS, 120).filter(function(question) {
     return question.status === STATUS.QUESTION_APPROVED;
   });
-  var rangedQuestions = approvedQuestions.filter(function(question) {
+  var allowedQuestions = approvedQuestions.filter(function(question) {
+    if (question.creatorId === playerId) {
+      return false;
+    }
+    return !forcedCreatorId || question.creatorId === forcedCreatorId;
+  });
+  var rangedQuestions = allowedQuestions.filter(function(question) {
     var difficulty = Number(question.difficulty || 0);
     return difficulty >= minDifficulty && difficulty <= maxDifficulty;
-  });
-  var rangedOtherQuestions = rangedQuestions.filter(function(question) {
-    return question.creatorId !== playerId;
   });
   var selected = [];
   var selectedIds = {};
@@ -853,15 +872,11 @@ function selectQuestionCacheRows_(playerId, stage, otherStudentQuestionShown) {
     }
   }
 
-  if (!otherStudentQuestionShown && rangedOtherQuestions.length > 0) {
-    pushQuestion(pickRandom_(rangedOtherQuestions));
+  if (!otherStudentQuestionShown && rangedQuestions.length > 0) {
+    pushQuestion(pickRandom_(rangedQuestions));
   }
-  pushRandomFrom(rangedOtherQuestions);
   pushRandomFrom(rangedQuestions);
-  pushRandomFrom(approvedQuestions.filter(function(question) {
-    return question.creatorId !== playerId;
-  }));
-  pushRandomFrom(approvedQuestions);
+  pushRandomFrom(allowedQuestions);
   return selected;
 }
 
@@ -872,12 +887,13 @@ function sanitizeQuestionForBattleCache_(question) {
   return sanitized;
 }
 
-function createPendingActionFromCachedPayload_(battleState, payload, actionType, skillId, targetId) {
+function createPendingActionFromCachedPayload_(battleState, payload, actionType, skillId, targetId, playerId) {
   var question = findRowByKey_(DB_SHEETS.QUESTIONS, 'questionId', payload.questionId);
   if (!question) {
     throw new Error('문제를 찾을 수 없습니다.');
   }
 
+  validateQuestionAllowedForBattle_(question, playerId, battleState);
   var activeEffects = getActiveEffectsForQuestion_(battleState);
   var skill = skillId ? findCachedRowByKey_(DB_SHEETS.SKILLS, 'skillId', skillId, 600) : null;
   var difficultyBonus = skill ? Number(skill.difficultyBonus || 0) : 0;
@@ -892,10 +908,34 @@ function createPendingActionFromCachedPayload_(battleState, payload, actionType,
     issuedAt: new Date().getTime() - Math.max(0, Number(payload.elapsedMs || 0)),
     maxMs: calculateFinalQuestionTimeLimit(finalDifficulty, activeEffects),
     finalDifficulty: finalDifficulty,
-    isOtherPlayerQuestion: !!payload.isOtherPlayerQuestion,
+    isOtherPlayerQuestion: question.creatorId !== playerId,
     fallbackReason: payload.fallbackReason || '',
     fromCache: true,
   };
+}
+
+function getForcedQuestionCreatorId_(battleState) {
+  if (!battleState) {
+    return '';
+  }
+  if (battleState.forcedQuestionCreatorId) {
+    return battleState.forcedQuestionCreatorId;
+  }
+  var playerGhost = battleState.playerGhost || {};
+  return playerGhost.sourcePlayerId || '';
+}
+
+function validateQuestionAllowedForBattle_(question, playerId, battleState) {
+  if (!question) {
+    throw new Error('Question is required.');
+  }
+  if (question.creatorId === playerId) {
+    throw new Error('Your own questions cannot appear in battle.');
+  }
+  var forcedCreatorId = getForcedQuestionCreatorId_(battleState);
+  if (forcedCreatorId && question.creatorId !== forcedCreatorId) {
+    throw new Error('Only the player monster creator questions can appear in this battle.');
+  }
 }
 
 function markCachedQuestionShown_(stageState, pendingAction) {
@@ -904,7 +944,7 @@ function markCachedQuestionShown_(stageState, pendingAction) {
   }
 }
 
-function pickQuestion_(playerId, stage, otherStudentQuestionShown, preferredQuestionType) {
+function pickQuestion_(playerId, stage, otherStudentQuestionShown, preferredQuestionType, forcedCreatorId) {
   var minDifficulty = Number(stage.minDifficulty || GAME_RULES.MIN_DIFFICULTY);
   var maxDifficulty = Number(stage.maxDifficulty || GAME_RULES.MAX_DIFFICULTY);
   var approvedQuestions = readTableCached_(DB_SHEETS.QUESTIONS, 120).filter(function(question) {
@@ -913,38 +953,25 @@ function pickQuestion_(playerId, stage, otherStudentQuestionShown, preferredQues
   var preferredQuestions = preferredQuestionType ? approvedQuestions.filter(function(question) {
     return question.type === preferredQuestionType;
   }) : [];
-  var questionPool = preferredQuestions.length ? preferredQuestions : approvedQuestions;
+  var questionPool = (preferredQuestions.length ? preferredQuestions : approvedQuestions).filter(function(question) {
+    if (question.creatorId === playerId) {
+      return false;
+    }
+    return !forcedCreatorId || question.creatorId === forcedCreatorId;
+  });
   var rangedQuestions = questionPool.filter(function(question) {
     var difficulty = Number(question.difficulty || 0);
     return difficulty >= minDifficulty && difficulty <= maxDifficulty;
   });
-  var rangedOtherQuestions = rangedQuestions.filter(function(question) {
-    return question.creatorId !== playerId;
-  });
 
-  if (!otherStudentQuestionShown && rangedOtherQuestions.length > 0) {
-    return questionPickResult_(pickRandom_(rangedOtherQuestions), true, '');
-  }
-  if (rangedOtherQuestions.length > 0) {
-    return questionPickResult_(pickRandom_(rangedOtherQuestions), true, '');
-  }
   if (rangedQuestions.length > 0) {
-    var rangedFallback = pickRandom_(rangedQuestions);
-    return questionPickResult_(rangedFallback, rangedFallback.creatorId !== playerId, 'difficultyRangeNoOtherQuestion');
-  }
-
-  var approvedOtherQuestions = questionPool.filter(function(question) {
-    return question.creatorId !== playerId;
-  });
-  if (approvedOtherQuestions.length > 0) {
-    return questionPickResult_(pickRandom_(approvedOtherQuestions), true, 'noQuestionInDifficultyRange');
+    return questionPickResult_(pickRandom_(rangedQuestions), true, '');
   }
   if (questionPool.length > 0) {
-    var approvedFallback = pickRandom_(questionPool);
-    return questionPickResult_(approvedFallback, approvedFallback.creatorId !== playerId, 'approvedQuestionFallback');
+    return questionPickResult_(pickRandom_(questionPool), true, 'noQuestionInDifficultyRange');
   }
 
-  throw new Error('승인된 문제가 없습니다. 선생님이 문제를 승인한 뒤 시작해 주세요.');
+  throw new Error('No approved question is available from another player.');
 }
 
 function questionPickResult_(question, isOtherPlayerQuestion, fallbackReason) {
@@ -986,14 +1013,187 @@ function saveStageState_(runId, stageState, battleState) {
   if (battleState.status === STATUS.BATTLE_DEFEAT) {
     patch.status = STATUS.RUN_FAILED;
     patch.endedAt = new Date();
+    createPlayerGhostForDefeat_(runId, battleState);
   }
 
   return updateRowByKey_(DB_SHEETS.RUNS, 'runId', runId, patch);
 }
 
-function createMonstersForStage_(stage) {
+function createPlayerGhostForDefeat_(runId, battleState) {
+  ensurePlayerGhostSheet_();
+  if (findRowByKey_(DB_SHEETS.PLAYER_GHOSTS, 'sourceRunId', runId)) {
+    return null;
+  }
+
+  var run = requireRun_(runId);
+  var player = findRowByKey_(DB_SHEETS.PLAYERS, 'playerId', run.playerId) || {};
+  var ghost = {
+    ghostId: generateId_('ghost'),
+    sourceRunId: runId,
+    sourcePlayerId: run.playerId,
+    sourceDisplayName: player.displayName || player.studentName || run.playerId,
+    sourceAvatarType: player.avatarType || AVATAR_TYPES.INITIAL,
+    sourceAvatarKey: player.avatarKey || '',
+    floor: battleState && battleState.stage ? Number(battleState.stage.floor || run.currentFloor || 1) : Number(run.currentFloor || 1),
+    stage: battleState && battleState.stage ? Number(battleState.stage.stage || run.currentStage || 1) : Number(run.currentStage || 1),
+    status: STATUS.GHOST_ACTIVE,
+    spawnedRunId: '',
+    spawnedPlayerId: '',
+    spawnedBattleId: '',
+    spawnedAt: '',
+    createdAt: new Date(),
+  };
+  appendRowObject_(DB_SHEETS.PLAYER_GHOSTS, ghost);
+  return ghost;
+}
+
+function selectPlayerGhostForBattle_(run, stage, stageState, battleId) {
+  var emptySelection = { monster: null, context: null, questionCreatorId: '' };
+  if (!stage || !run || !run.playerId) {
+    return emptySelection;
+  }
+  var stageId = stage.stageId || buildStageId_(stage.floor, stage.stage);
+  if (stageState.playerGhostRollStageId === stageId) {
+    return emptySelection;
+  }
+
+  stageState.playerGhostRollStageId = stageId;
+  stageState.playerGhostRollDone = true;
+
+  var lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(3000);
+  } catch (error) {
+    return emptySelection;
+  }
+
+  try {
+    ensurePlayerGhostSheet_();
+    var approvedQuestionCreators = getApprovedQuestionCreatorMap_();
+    var activeGhosts = readTable_(DB_SHEETS.PLAYER_GHOSTS).filter(function(ghost) {
+      return ghost.status === STATUS.GHOST_ACTIVE &&
+        ghost.sourcePlayerId &&
+        ghost.sourcePlayerId !== run.playerId &&
+        !!approvedQuestionCreators[ghost.sourcePlayerId];
+    });
+    if (!activeGhosts.length) {
+      return emptySelection;
+    }
+
+    var sameFloorGhosts = activeGhosts.filter(function(ghost) {
+      return Number(ghost.floor || 0) === Number(stage.floor || 0);
+    });
+    var selectedGhost = sameFloorGhosts.length ? pickRandom_(sameFloorGhosts) : null;
+    var spawnReason = selectedGhost ? 'sameFloor' : '';
+
+    if (!selectedGhost && Math.random() * 100 < GAME_RULES.PLAYER_GHOST_OFF_FLOOR_CHANCE) {
+      selectedGhost = pickRandom_(activeGhosts);
+      spawnReason = 'offFloorChance';
+    }
+    if (!selectedGhost) {
+      return emptySelection;
+    }
+
+    var consumed = updateRowByKey_(DB_SHEETS.PLAYER_GHOSTS, 'ghostId', selectedGhost.ghostId, {
+      status: STATUS.GHOST_CONSUMED,
+      spawnedRunId: run.runId,
+      spawnedPlayerId: run.playerId,
+      spawnedBattleId: battleId,
+      spawnedAt: new Date(),
+    });
+    if (!consumed || consumed.status !== STATUS.GHOST_CONSUMED) {
+      return emptySelection;
+    }
+
+    selectedGhost = Object.assign({}, selectedGhost, consumed);
+    var monster = buildPlayerGhostMonster_(selectedGhost, stage);
+    var context = {
+      ghostId: selectedGhost.ghostId,
+      sourceRunId: selectedGhost.sourceRunId,
+      sourcePlayerId: selectedGhost.sourcePlayerId,
+      sourceDisplayName: selectedGhost.sourceDisplayName,
+      floor: Number(selectedGhost.floor || 0),
+      stage: Number(selectedGhost.stage || 0),
+      spawnReason: spawnReason,
+    };
+    return {
+      monster: monster,
+      context: context,
+      questionCreatorId: selectedGhost.sourcePlayerId,
+    };
+  } finally {
+    try {
+      lock.releaseLock();
+    } catch (error) {
+      // Lock release is best-effort.
+    }
+  }
+}
+
+function ensurePlayerGhostSheet_() {
+  ensureSheet_(DB_SHEETS.PLAYER_GHOSTS, DB_COLUMNS.PLAYER_GHOSTS);
+}
+
+function getApprovedQuestionCreatorMap_() {
+  return readTableCached_(DB_SHEETS.QUESTIONS, 120).reduce(function(map, question) {
+    if (question.status === STATUS.QUESTION_APPROVED && question.creatorId) {
+      map[question.creatorId] = true;
+    }
+    return map;
+  }, {});
+}
+
+function buildPlayerGhostMonster_(ghost, stage) {
+  var floor = Number(stage.floor || ghost.floor || 1);
+  var config = PLAYER_GHOST_FLOOR_CONFIGS[floor] || PLAYER_GHOST_FLOOR_CONFIGS[1];
+  var name = String(ghost.sourceDisplayName || 'Player Ghost') + ' Echo';
+  return {
+    instanceId: 'player_ghost_' + ghost.ghostId,
+    monsterId: 'player_ghost_' + ghost.sourcePlayerId,
+    name: name,
+    type: 'playerGhost',
+    avatarType: ghost.sourceAvatarType || AVATAR_TYPES.INITIAL,
+    avatarKey: ghost.sourceAvatarKey || '',
+    currentHp: Number(config.hp || 1),
+    maxHp: Number(config.hp || 1),
+    attack: Number(config.attack || 1),
+    defense: Number(config.defense || 0),
+    aiId: config.aiId || 'ai_player_ghost_floor_1',
+    skillIds: safeJsonParse_(config.skillIds, []),
+    ghostPlayerId: ghost.sourcePlayerId,
+    questionCreatorId: ghost.sourcePlayerId,
+    shield: 0,
+    intent: null,
+    effects: [],
+    buffs: [],
+    debuffs: [],
+  };
+}
+
+function getPlayerGhostAiRows_() {
+  return [
+    { aiId: 'ai_player_ghost_floor_1', actionType: ACTION_TYPES.ATTACK, conditionJson: '{}', probability: 100, skillId: '', intentIcon: 'sword', intentTextTemplate: 'Attack next.' },
+    { aiId: 'ai_player_ghost_floor_2', actionType: ACTION_TYPES.ATTACK, conditionJson: '{}', probability: 70, skillId: '', intentIcon: 'sword', intentTextTemplate: 'Attack next.' },
+    { aiId: 'ai_player_ghost_floor_2', actionType: ACTION_TYPES.GUARD, conditionJson: '{"afterTurn":2}', probability: 30, skillId: '', intentIcon: 'shield', intentTextTemplate: 'Guard next.' },
+    { aiId: 'ai_player_ghost_floor_3', actionType: ACTION_TYPES.ATTACK, conditionJson: '{}', probability: 55, skillId: '', intentIcon: 'sword', intentTextTemplate: 'Attack next.' },
+    { aiId: 'ai_player_ghost_floor_3', actionType: 'skill', conditionJson: '{"afterTurn":2}', probability: 45, skillId: 'skill_bleeding_mark', intentIcon: 'drop', intentTextTemplate: 'Use a debuff next.' },
+    { aiId: 'ai_player_ghost_floor_4', actionType: ACTION_TYPES.ATTACK, conditionJson: '{}', probability: 45, skillId: '', intentIcon: 'sword', intentTextTemplate: 'Attack next.' },
+    { aiId: 'ai_player_ghost_floor_4', actionType: ACTION_TYPES.GUARD, conditionJson: '{"afterTurn":2}', probability: 25, skillId: '', intentIcon: 'shield', intentTextTemplate: 'Guard next.' },
+    { aiId: 'ai_player_ghost_floor_4', actionType: 'skill', conditionJson: '{"afterTurn":2}', probability: 30, skillId: 'skill_bleeding_mark', intentIcon: 'drop', intentTextTemplate: 'Use a debuff next.' },
+    { aiId: 'ai_player_ghost_floor_5', actionType: ACTION_TYPES.ATTACK, conditionJson: '{}', probability: 40, skillId: '', intentIcon: 'sword', intentTextTemplate: 'Attack next.' },
+    { aiId: 'ai_player_ghost_floor_5', actionType: ACTION_TYPES.GUARD, conditionJson: '{"hpBelowPercent":55}', probability: 25, skillId: '', intentIcon: 'shield', intentTextTemplate: 'Guard next.' },
+    { aiId: 'ai_player_ghost_floor_5', actionType: 'skill', conditionJson: '{"afterTurn":2}', probability: 35, skillId: 'skill_bleeding_mark', intentIcon: 'drop', intentTextTemplate: 'Use a debuff next.' },
+  ];
+}
+
+function createMonstersForStage_(stage, playerGhostMonster) {
+  var monsters = [];
+  if (playerGhostMonster) {
+    monsters.push(playerGhostMonster);
+  }
   if (stage.bossMonsterId) {
-    return [buildBattleMonster_(findCachedRowByKey_(DB_SHEETS.MONSTERS, 'monsterId', stage.bossMonsterId, 600), 0)];
+    monsters.push(buildBattleMonster_(findCachedRowByKey_(DB_SHEETS.MONSTERS, 'monsterId', stage.bossMonsterId, 600), monsters.length));
+    return monsters.slice(0, 3);
   }
 
   var group = findCachedRowByKey_(DB_SHEETS.MONSTER_GROUPS, 'monsterGroupId', stage.monsterGroupId, 600);
@@ -1003,11 +1203,20 @@ function createMonstersForStage_(stage) {
 
   var monsterIds = safeJsonParse_(group.monsterIds, []);
   var weights = safeJsonParse_(group.weights, []);
+  var monsterOptions = monsterIds.map(function(monsterId, index) {
+    var monster = findCachedRowByKey_(DB_SHEETS.MONSTERS, 'monsterId', monsterId, 600);
+    return monster ? { monster: monster, weight: Number(weights[index] || 0) } : null;
+  }).filter(function(option) {
+    return !!option;
+  });
+  if (!monsterOptions.length) {
+    throw new Error('몬스터 그룹에 사용 가능한 몬스터가 없습니다: ' + stage.monsterGroupId);
+  }
+
   var monsterCount = Math.min(3, Math.max(1, Math.ceil(Number(stage.floor || 1) / 2)));
-  var monsters = [];
-  for (var i = 0; i < monsterCount; i += 1) {
-    var selectedMonsterId = pickWeighted_(monsterIds, weights);
-    monsters.push(buildBattleMonster_(findCachedRowByKey_(DB_SHEETS.MONSTERS, 'monsterId', selectedMonsterId, 600), i));
+  for (var i = monsters.length; i < monsterCount; i += 1) {
+    var selectedOption = pickWeighted_(monsterOptions, monsterOptions.map(function(option) { return option.weight; }));
+    monsters.push(buildBattleMonster_(selectedOption.monster, i));
   }
   return monsters;
 }
@@ -1022,7 +1231,6 @@ function buildBattleMonster_(monster, index) {
     monsterId: monster.monsterId,
     name: monster.name,
     type: monster.type,
-    imageKey: monster.imageKey,
     currentHp: Number(monster.hp),
     maxHp: Number(monster.hp),
     attack: Number(monster.attack),
@@ -1042,6 +1250,7 @@ function normalizeBattleMonsters_(battleState) {
     battleState.monsters = battleState.monster ? [battleState.monster] : [];
   }
   battleState.monsters = battleState.monsters.slice(0, 3).map(function(monster, index) {
+    monster = migrateLegacyBattleMonster_(battleState, monster, index);
     if (!monster.instanceId) {
       monster.instanceId = String(monster.monsterId || 'monster') + '_' + index;
     }
@@ -1055,6 +1264,66 @@ function normalizeBattleMonsters_(battleState) {
   });
   syncPrimaryMonster_(battleState);
   return battleState.monsters;
+}
+
+function migrateLegacyBattleMonster_(battleState, monster, index) {
+  if (!monster || monster.monsterId !== 'monster_training_dummy') {
+    return monster || {};
+  }
+
+  var replacement = findReplacementMonsterForLegacy_(battleState);
+  if (!replacement) {
+    monster.monsterId = 'monster_shadow_problem';
+    monster.name = monster.name === '훈련 더미' ? '그림자 문제' : monster.name;
+    battleState.legacyMonsterMigrated = true;
+    return monster;
+  }
+
+  var hpRatio = Number(monster.maxHp || 0) > 0
+    ? Math.max(0, Number(monster.currentHp || 0)) / Number(monster.maxHp || 1)
+    : 1;
+  var migrated = buildBattleMonster_(replacement, index);
+  migrated.currentHp = Number(monster.currentHp || 0) <= 0 ? 0 : Math.max(1, Math.round(Number(migrated.maxHp || 1) * hpRatio));
+  migrated.shield = Number(monster.shield || 0);
+  migrated.intent = monster.intent || migrated.intent;
+  migrated.effects = monster.effects || migrated.effects;
+  migrated.buffs = monster.buffs || migrated.buffs;
+  migrated.debuffs = monster.debuffs || migrated.debuffs;
+  battleState.legacyMonsterMigrated = true;
+  return migrated;
+}
+
+function findReplacementMonsterForLegacy_(battleState) {
+  var stage = battleState.stage || {};
+  var groupId = stage.monsterGroupId || '';
+  if (!groupId && stage.stageId) {
+    try {
+      var stageRow = loadStage(stage.stageId);
+      groupId = stageRow.monsterGroupId || '';
+      stage.monsterGroupId = groupId;
+    } catch (error) {
+      groupId = '';
+    }
+  }
+
+  if (groupId) {
+    var group = findCachedRowByKey_(DB_SHEETS.MONSTER_GROUPS, 'monsterGroupId', groupId, 600);
+    var monsterIds = safeJsonParse_(group && group.monsterIds, []).filter(function(monsterId) {
+      return monsterId && monsterId !== 'monster_training_dummy';
+    });
+    for (var i = 0; i < monsterIds.length; i += 1) {
+      var groupedMonster = findCachedRowByKey_(DB_SHEETS.MONSTERS, 'monsterId', monsterIds[i], 600);
+      if (groupedMonster) {
+        return groupedMonster;
+      }
+    }
+  }
+
+  return findCachedRowByKey_(DB_SHEETS.MONSTERS, 'monsterId', 'monster_shadow_problem', 600) ||
+    readTableCached_(DB_SHEETS.MONSTERS, 600).filter(function(row) {
+      return row.monsterId && row.monsterId !== 'monster_training_dummy';
+    })[0] ||
+    null;
 }
 
 function syncPrimaryMonster_(battleState) {

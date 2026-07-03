@@ -118,7 +118,8 @@ function useSkill(runId, skillId, targetId, answerPayload) {
       payload,
       ACTION_TYPES.SKILL,
       skill.skillId,
-      targetId || payload.targetId || ''
+      targetId || payload.targetId || '',
+      player.playerId
     );
     battleState.pendingAction = pendingAction;
     markCachedQuestionShown_(stageState, pendingAction);
@@ -130,7 +131,7 @@ function useSkill(runId, skillId, targetId, answerPayload) {
 
     var activeEffects = getActiveEffectsForQuestion_(battleState);
     var preferredQuestionType = shouldUseShortQuestionInBoss(battleState.stage.bossConfig) ? QUESTION_TYPES.SHORT_ANSWER : '';
-    var questionResult = pickQuestion_(run.playerId, battleState.stage, stageState.otherStudentQuestionShown, preferredQuestionType);
+    var questionResult = pickQuestion_(run.playerId, battleState.stage, stageState.otherStudentQuestionShown, preferredQuestionType, getForcedQuestionCreatorId_(battleState));
     var baseDifficulty = applyBossDifficultyBonus(battleState.stage, Number(questionResult.question.difficulty || battleState.stage.baseDifficulty) + Number(skill.difficultyBonus || 0));
     var finalDifficulty = calculateFinalQuestionDifficulty(baseDifficulty, activeEffects);
     var maxMs = calculateFinalQuestionTimeLimit(finalDifficulty, activeEffects);

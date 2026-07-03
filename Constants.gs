@@ -4,6 +4,7 @@ var DB_SHEETS = Object.freeze({
   PLAYERS: 'Players',
   PLAYER_DATA: 'PlayerData',
   RUNS: 'Runs',
+  PLAYER_GHOSTS: 'PlayerGhosts',
   QUESTIONS: 'Questions',
   ANSWER_LOGS: 'AnswerLogs',
   STAGES: 'Stages',
@@ -24,16 +25,17 @@ var DB_COLUMNS = Object.freeze({
   PLAYERS: ['playerId', 'studentId', 'studentName', 'passwordHash', 'passwordSalt', 'email', 'displayName', 'avatarType', 'avatarKey', 'createdAt', 'lastLoginAt', 'isActive'],
   PLAYER_DATA: ['playerId', 'maxFloor', 'maxStage', 'bestClearTimeMs', 'totalAnswerCount', 'correctAnswerCount', 'averageAnswerTimeMs', 'currency', 'baseStatsJson', 'ownedSkillsJson', 'ownedItemsJson', 'updatedAt'],
   RUNS: ['runId', 'playerId', 'status', 'currentFloor', 'currentStage', 'currentHp', 'currentShield', 'statsJson', 'skillsJson', 'itemsJson', 'stageStateJson', 'startedAt', 'updatedAt', 'endedAt', 'clearTimeMs', 'currency'],
+  PLAYER_GHOSTS: ['ghostId', 'sourceRunId', 'sourcePlayerId', 'sourceDisplayName', 'sourceAvatarType', 'sourceAvatarKey', 'floor', 'stage', 'status', 'spawnedRunId', 'spawnedPlayerId', 'spawnedBattleId', 'spawnedAt', 'createdAt'],
   QUESTIONS: ['questionId', 'type', 'prompt', 'choice1', 'choice2', 'choice3', 'choice4', 'answer', 'answerAliases', 'explanation', 'difficulty', 'creatorId', 'creatorName', 'subject', 'unit', 'tags', 'status', 'reviewComment', 'approvedBy', 'approvedAt', 'createdAt', 'updatedAt', 'correctCount', 'totalCount'],
   ANSWER_LOGS: ['answerLogId', 'questionId', 'playerId', 'creatorId', 'runId', 'battleId', 'floor', 'stage', 'actionType', 'selectedAnswer', 'isCorrect', 'elapsedMs', 'maxTimeMs', 'efficiency', 'finalDifficulty', 'isOtherPlayerQuestion', 'createdAt'],
   STAGES: ['stageId', 'floor', 'stage', 'name', 'baseDifficulty', 'minDifficulty', 'maxDifficulty', 'monsterGroupId', 'bossMonsterId', 'rewardGroupId', 'requiredOtherQuestionCount'],
   MONSTER_GROUPS: ['monsterGroupId', 'name', 'monsterIds', 'weights'],
-  MONSTERS: ['monsterId', 'name', 'type', 'imageKey', 'hp', 'attack', 'hpRegen', 'evasion', 'criticalRate', 'criticalDamage', 'defense', 'aiId', 'skillIds', 'description'],
+  MONSTERS: ['monsterId', 'name', 'type', 'hp', 'attack', 'hpRegen', 'evasion', 'criticalRate', 'criticalDamage', 'defense', 'aiId', 'skillIds', 'description'],
   MONSTER_AI: ['aiId', 'patternName', 'actionType', 'conditionJson', 'probability', 'skillId', 'intentIcon', 'intentTextTemplate'],
   SKILLS: ['skillId', 'name', 'type', 'target', 'baseValue', 'hitCount', 'cooldown', 'conditionJson', 'difficultyBonus', 'effectJson', 'upgradeJson', 'description'],
   EFFECTS: ['effectId', 'name', 'category', 'statKey', 'effectType', 'value', 'durationType', 'durationTurns', 'stackable', 'maxStacks', 'triggerTiming', 'description'],
   ITEMS: ['itemId', 'name', 'type', 'target', 'effectJson', 'triggerTiming', 'description'],
-  REWARDS: ['rewardId', 'type', 'targetId', 'value', 'weight', 'minFloor', 'maxFloor', 'description'],
+  REWARDS: ['rewardId', 'type', 'targetId', 'value', 'weight', 'minFloor', 'maxFloor', 'description', 'detailDescription'],
   REWARD_GROUPS: ['rewardGroupId', 'rewardIds', 'currencyMin', 'currencyMax', 'description'],
   BATTLE_LOGS: ['battleLogId', 'runId', 'playerId', 'floor', 'stage', 'result', 'summaryJson', 'createdAt'],
 });
@@ -44,6 +46,7 @@ var DB_SCHEMA = Object.freeze([
   { sheetName: DB_SHEETS.PLAYERS, headers: DB_COLUMNS.PLAYERS },
   { sheetName: DB_SHEETS.PLAYER_DATA, headers: DB_COLUMNS.PLAYER_DATA },
   { sheetName: DB_SHEETS.RUNS, headers: DB_COLUMNS.RUNS },
+  { sheetName: DB_SHEETS.PLAYER_GHOSTS, headers: DB_COLUMNS.PLAYER_GHOSTS },
   { sheetName: DB_SHEETS.QUESTIONS, headers: DB_COLUMNS.QUESTIONS },
   { sheetName: DB_SHEETS.ANSWER_LOGS, headers: DB_COLUMNS.ANSWER_LOGS },
   { sheetName: DB_SHEETS.STAGES, headers: DB_COLUMNS.STAGES },
@@ -68,6 +71,8 @@ var STATUS = Object.freeze({
   BATTLE_ACTIVE: 'active',
   BATTLE_VICTORY: 'victory',
   BATTLE_DEFEAT: 'defeat',
+  GHOST_ACTIVE: 'active',
+  GHOST_CONSUMED: 'consumed',
   QUESTION_DRAFT: 'draft',
   QUESTION_PENDING: 'pending',
   QUESTION_APPROVED: 'approved',
@@ -77,6 +82,7 @@ var STATUS = Object.freeze({
 var AVATAR_TYPES = Object.freeze({
   INITIAL: 'initial',
   DEFAULT: 'default',
+  PHOTO: 'photo',
 });
 
 var QUESTION_TYPES = Object.freeze({
@@ -163,6 +169,15 @@ var GAME_RULES = Object.freeze({
   MIN_ANSWER_EFFICIENCY: 0.5,
   MAX_ANSWER_EFFICIENCY: 1.25,
   EXTRA_WRONG_EFFICIENCY_PENALTY: 0.1,
+  PLAYER_GHOST_OFF_FLOOR_CHANCE: 10,
+});
+
+var PLAYER_GHOST_FLOOR_CONFIGS = Object.freeze({
+  1: { hp: 55, attack: 9, defense: 1, aiId: 'ai_player_ghost_floor_1', skillIds: '[]' },
+  2: { hp: 75, attack: 12, defense: 2, aiId: 'ai_player_ghost_floor_2', skillIds: '["skill_bleeding_mark"]' },
+  3: { hp: 100, attack: 16, defense: 3, aiId: 'ai_player_ghost_floor_3', skillIds: '["skill_bleeding_mark"]' },
+  4: { hp: 130, attack: 21, defense: 4, aiId: 'ai_player_ghost_floor_4', skillIds: '["skill_bleeding_mark","skill_guard_focus"]' },
+  5: { hp: 165, attack: 27, defense: 5, aiId: 'ai_player_ghost_floor_5', skillIds: '["skill_bleeding_mark","skill_guard_focus"]' },
 });
 
 var MASTER_SETTINGS = Object.freeze([
@@ -273,32 +288,31 @@ var MASTER_MONSTER_AI = Object.freeze([
 ]);
 
 var MASTER_MONSTERS = Object.freeze([
-  { monsterId: 'monster_training_dummy', name: '훈련 더미', type: 'normal', imageKey: 'training_dummy', hp: 30, attack: 6, hpRegen: 0, evasion: 0, criticalRate: 0, criticalDamage: 150, defense: 0, aiId: 'ai_basic_attack', skillIds: '[]', description: '초반 기본 전투 대상.' },
-  { monsterId: 'monster_shadow_problem', name: '그림자 문제', type: 'normal', imageKey: 'shadow_problem', hp: 45, attack: 8, hpRegen: 0, evasion: 3, criticalRate: 3, criticalDamage: 150, defense: 1, aiId: 'ai_basic_attack', skillIds: '[]', description: '민첩한 기본 전투 대상.' },
-  { monsterId: 'boss_floor_1', name: '1층 보스', type: 'boss', imageKey: 'boss_floor_1', hp: 90, attack: 12, hpRegen: 0, evasion: 2, criticalRate: 5, criticalDamage: 150, defense: 2, aiId: 'ai_basic_attack', skillIds: '[]', description: '1층 마지막 스테이지 보스.' },
-  { monsterId: 'boss_floor_2', name: '2층 보스', type: 'boss', imageKey: 'boss_floor_2', hp: 130, attack: 16, hpRegen: 1, evasion: 3, criticalRate: 5, criticalDamage: 150, defense: 3, aiId: 'ai_basic_attack', skillIds: '[]', description: '2층 마지막 스테이지 보스.' },
-  { monsterId: 'boss_floor_3', name: '3층 보스', type: 'boss', imageKey: 'boss_floor_3', hp: 170, attack: 20, hpRegen: 2, evasion: 4, criticalRate: 6, criticalDamage: 150, defense: 4, aiId: 'ai_basic_attack', skillIds: '[]', description: '3층 마지막 스테이지 보스.' },
-  { monsterId: 'boss_floor_4', name: '4층 보스', type: 'boss', imageKey: 'boss_floor_4', hp: 220, attack: 25, hpRegen: 3, evasion: 5, criticalRate: 7, criticalDamage: 150, defense: 5, aiId: 'ai_basic_attack', skillIds: '[]', description: '4층 마지막 스테이지 보스.' },
-  { monsterId: 'boss_floor_5', name: '5층 보스', type: 'finalBoss', imageKey: 'boss_floor_5', hp: 300, attack: 32, hpRegen: 5, evasion: 6, criticalRate: 8, criticalDamage: 150, defense: 7, aiId: 'ai_basic_attack', skillIds: '[]', description: '5층 최종 보스.' },
+  { monsterId: 'monster_shadow_problem', name: '그림자 문제', type: 'normal', hp: 45, attack: 8, hpRegen: 0, evasion: 3, criticalRate: 3, criticalDamage: 150, defense: 1, aiId: 'ai_basic_attack', skillIds: '[]', description: '민첩한 기본 전투 대상.' },
+  { monsterId: 'boss_floor_1', name: '1층 보스', type: 'boss', hp: 90, attack: 12, hpRegen: 0, evasion: 2, criticalRate: 5, criticalDamage: 150, defense: 2, aiId: 'ai_basic_attack', skillIds: '[]', description: '1층 마지막 스테이지 보스.' },
+  { monsterId: 'boss_floor_2', name: '2층 보스', type: 'boss', hp: 130, attack: 16, hpRegen: 1, evasion: 3, criticalRate: 5, criticalDamage: 150, defense: 3, aiId: 'ai_basic_attack', skillIds: '[]', description: '2층 마지막 스테이지 보스.' },
+  { monsterId: 'boss_floor_3', name: '3층 보스', type: 'boss', hp: 170, attack: 20, hpRegen: 2, evasion: 4, criticalRate: 6, criticalDamage: 150, defense: 4, aiId: 'ai_basic_attack', skillIds: '[]', description: '3층 마지막 스테이지 보스.' },
+  { monsterId: 'boss_floor_4', name: '4층 보스', type: 'boss', hp: 220, attack: 25, hpRegen: 3, evasion: 5, criticalRate: 7, criticalDamage: 150, defense: 5, aiId: 'ai_basic_attack', skillIds: '[]', description: '4층 마지막 스테이지 보스.' },
+  { monsterId: 'boss_floor_5', name: '5층 보스', type: 'finalBoss', hp: 300, attack: 32, hpRegen: 5, evasion: 6, criticalRate: 8, criticalDamage: 150, defense: 7, aiId: 'ai_basic_attack', skillIds: '[]', description: '5층 최종 보스.' },
 ]);
 
 var MASTER_MONSTER_GROUPS = Object.freeze([
-  { monsterGroupId: 'group_floor_1', name: '1층 일반 몬스터', monsterIds: '["monster_training_dummy","monster_shadow_problem"]', weights: '[70,30]' },
-  { monsterGroupId: 'group_floor_2', name: '2층 일반 몬스터', monsterIds: '["monster_training_dummy","monster_shadow_problem"]', weights: '[50,50]' },
-  { monsterGroupId: 'group_floor_3', name: '3층 일반 몬스터', monsterIds: '["monster_training_dummy","monster_shadow_problem"]', weights: '[40,60]' },
-  { monsterGroupId: 'group_floor_4', name: '4층 일반 몬스터', monsterIds: '["monster_training_dummy","monster_shadow_problem"]', weights: '[30,70]' },
-  { monsterGroupId: 'group_floor_5', name: '5층 일반 몬스터', monsterIds: '["monster_training_dummy","monster_shadow_problem"]', weights: '[20,80]' },
+  { monsterGroupId: 'group_floor_1', name: '1층 일반 몬스터', monsterIds: '["monster_shadow_problem"]', weights: '[100]' },
+  { monsterGroupId: 'group_floor_2', name: '2층 일반 몬스터', monsterIds: '["monster_shadow_problem"]', weights: '[100]' },
+  { monsterGroupId: 'group_floor_3', name: '3층 일반 몬스터', monsterIds: '["monster_shadow_problem"]', weights: '[100]' },
+  { monsterGroupId: 'group_floor_4', name: '4층 일반 몬스터', monsterIds: '["monster_shadow_problem"]', weights: '[100]' },
+  { monsterGroupId: 'group_floor_5', name: '5층 일반 몬스터', monsterIds: '["monster_shadow_problem"]', weights: '[100]' },
 ]);
 
 var MASTER_REWARDS = Object.freeze([
-  { rewardId: 'reward_stat_attack_2', type: REWARD_TYPES.STAT, targetId: STAT_KEYS.ATTACK, value: 2, weight: 30, minFloor: 1, maxFloor: 5, description: '공격력 +2' },
-  { rewardId: 'reward_stat_hp_10', type: REWARD_TYPES.STAT, targetId: STAT_KEYS.HP, value: 10, weight: 25, minFloor: 1, maxFloor: 5, description: '최대 체력 +10' },
-  { rewardId: 'reward_stat_defense_2', type: REWARD_TYPES.STAT, targetId: STAT_KEYS.DEFENSE, value: 2, weight: 25, minFloor: 1, maxFloor: 5, description: '방어력 +2' },
-  { rewardId: 'reward_stat_critical_rate_3', type: REWARD_TYPES.STAT, targetId: STAT_KEYS.CRITICAL_RATE, value: 3, weight: 15, minFloor: 1, maxFloor: 5, description: '치명타 확률 +3' },
-  { rewardId: 'reward_skill_basic_slash', type: REWARD_TYPES.SKILL, targetId: 'skill_basic_slash', value: 1, weight: 20, minFloor: 1, maxFloor: 5, description: '스킬 획득: 깊게 베기' },
-  { rewardId: 'reward_skill_guard_focus', type: REWARD_TYPES.SKILL, targetId: 'skill_guard_focus', value: 1, weight: 20, minFloor: 1, maxFloor: 5, description: '스킬 획득: 집중 방어' },
-  { rewardId: 'reward_skill_upgrade_placeholder', type: REWARD_TYPES.SKILL_UPGRADE, targetId: 'skill_basic_slash', value: 1, weight: 1, minFloor: 1, maxFloor: 5, description: '스킬 강화 데이터 자리표시자' },
-  { rewardId: 'reward_item_small_heal', type: REWARD_TYPES.ITEM, targetId: 'item_small_heal', value: 1, weight: 1, minFloor: 1, maxFloor: 5, description: '아이템 보상 데이터 자리표시자' },
+  { rewardId: 'reward_stat_attack_2', type: REWARD_TYPES.STAT, targetId: STAT_KEYS.ATTACK, value: 2, weight: 30, minFloor: 1, maxFloor: 5, description: '공격력 +2', detailDescription: '기본 공격과 공격형 스킬 피해가 증가합니다.' },
+  { rewardId: 'reward_stat_hp_10', type: REWARD_TYPES.STAT, targetId: STAT_KEYS.HP, value: 10, weight: 25, minFloor: 1, maxFloor: 5, description: '최대 체력 +10', detailDescription: '최대 체력이 증가하고 현재 체력도 함께 회복됩니다.' },
+  { rewardId: 'reward_stat_defense_2', type: REWARD_TYPES.STAT, targetId: STAT_KEYS.DEFENSE, value: 2, weight: 25, minFloor: 1, maxFloor: 5, description: '방어력 +2', detailDescription: '수비 행동으로 얻는 방어막 수치가 증가합니다.' },
+  { rewardId: 'reward_stat_critical_rate_3', type: REWARD_TYPES.STAT, targetId: STAT_KEYS.CRITICAL_RATE, value: 3, weight: 15, minFloor: 1, maxFloor: 5, description: '치명타 확률 +3', detailDescription: '공격 시 치명타가 발생할 확률이 증가합니다.' },
+  { rewardId: 'reward_skill_basic_slash', type: REWARD_TYPES.SKILL, targetId: 'skill_basic_slash', value: 1, weight: 20, minFloor: 1, maxFloor: 5, description: '스킬 획득: 깊게 베기', detailDescription: '강한 피해를 주는 공격 스킬을 획득합니다. 이미 보유 중이면 강화 보상으로 바뀝니다.' },
+  { rewardId: 'reward_skill_guard_focus', type: REWARD_TYPES.SKILL, targetId: 'skill_guard_focus', value: 1, weight: 20, minFloor: 1, maxFloor: 5, description: '스킬 획득: 집중 방어', detailDescription: '큰 방어막을 얻는 방어 스킬을 획득합니다. 이미 보유 중이면 강화 보상으로 바뀝니다.' },
+  { rewardId: 'reward_skill_upgrade_placeholder', type: REWARD_TYPES.SKILL_UPGRADE, targetId: 'skill_basic_slash', value: 1, weight: 1, minFloor: 1, maxFloor: 5, description: '스킬 강화 데이터 자리표시자', detailDescription: '대상 스킬의 레벨을 올립니다.' },
+  { rewardId: 'reward_item_small_heal', type: REWARD_TYPES.ITEM, targetId: 'item_small_heal', value: 1, weight: 1, minFloor: 1, maxFloor: 5, description: '아이템 보상 데이터 자리표시자', detailDescription: '사용 가능한 회복 아이템을 획득합니다.' },
 ]);
 
 var MASTER_REWARD_GROUPS = Object.freeze([

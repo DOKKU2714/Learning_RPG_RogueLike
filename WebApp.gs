@@ -25,6 +25,16 @@ function getWebAppUrl_() {
   return ScriptApp.getService().getUrl();
 }
 
+function getAssetBaseUrl_() {
+  return String((typeof CONFIG !== 'undefined' && CONFIG.ASSET_BASE_URL) || '').replace(/\/+$/, '');
+}
+
+function getAssetUrl_(path) {
+  var baseUrl = getAssetBaseUrl_();
+  var normalizedPath = String(path || '').replace(/^\/+/, '');
+  return baseUrl && normalizedPath ? baseUrl + '/' + normalizedPath : '';
+}
+
 function include_(filename) {
   return HtmlService.createHtmlOutputFromFile(filename).getContent();
 }

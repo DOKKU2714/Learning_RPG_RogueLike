@@ -35,7 +35,7 @@ function generateRewardChoices(runId, stageId, authToken) {
         updatedAt: new Date(),
       });
     }
-    return buildRewardChoiceView_(runId, currentStageId, rewardGroupId, rewardState);
+    return buildRewardChoiceView_(runId, currentStageId, rewardGroupId, rewardState, safeJsonParse_(run.skillsJson, []));
   }
 
   var choices = pickRewardChoices_(rewardGroupId, Number(stage.floor || run.currentFloor), safeJsonParse_(run.skillsJson, []));
@@ -57,7 +57,7 @@ function generateRewardChoices(runId, stageId, authToken) {
     updatedAt: new Date(),
   });
 
-  return buildRewardChoiceView_(runId, currentStageId, rewardGroupId, rewardState);
+  return buildRewardChoiceView_(runId, currentStageId, rewardGroupId, rewardState, safeJsonParse_(run.skillsJson, []));
 }
 
 function selectReward(runId, rewardId, authToken) {
@@ -329,7 +329,8 @@ function pickRewardChoices_(rewardGroupId, floor, ownedSkills) {
     var floorAllowed = Number(reward.minFloor || 1) <= floor && Number(reward.maxFloor || GAME_RULES.FLOOR_COUNT) >= floor;
     var typeAllowed = reward.type === REWARD_TYPES.STAT || reward.type === REWARD_TYPES.SKILL || reward.type === REWARD_TYPES.SKILL_UPGRADE || reward.type === REWARD_TYPES.ITEM;
     var statAllowed = reward.type !== REWARD_TYPES.STAT || ALLOWED_REWARD_STAT_KEYS_.indexOf(reward.targetId) !== -1;
-    return idAllowed && floorAllowed && typeAllowed && statAllowed;
+    var skillUpgradeAllowed = reward.type !== REWARD_TYPES.SKILL_UPGRADE || hasOwnedSkill_(ownedSkills, reward.targetId);
+    return idAllowed && floorAllowed && typeAllowed && statAllowed && skillUpgradeAllowed;
   });
 
   var candidates = rewards.slice();
@@ -346,18 +347,32 @@ function pickRewardChoices_(rewardGroupId, floor, ownedSkills) {
     throw new Error('조건에 맞는 보상이 없습니다.');
   }
   return choices.map(function(choice) {
-    return adaptOwnedSkillReward_(choice, ownedSkills);
+    return adaptRewardForChoice_(choice, ownedSkills);
   });
 }
 
-function adaptOwnedSkillReward_(reward, ownedSkills) {
-  if (reward.type !== REWARD_TYPES.SKILL || !hasOwnedSkill_(ownedSkills, reward.targetId)) {
-    return reward;
+function adaptRewardForChoice_(reward, ownedSkills) {
+  if (reward.type === REWARD_TYPES.SKILL && hasOwnedSkill_(ownedSkills, reward.targetId)) {
+    return buildSkillUpgradeRewardView_(reward);
   }
+  if (reward.type === REWARD_TYPES.SKILL_UPGRADE) {
+    return buildSkillUpgradeRewardView_(reward);
+  }
+  return reward;
+}
+
+function buildSkillUpgradeRewardView_(reward) {
+  var skillName = getRewardSkillName_(reward.targetId);
   return Object.assign({}, reward, {
     type: REWARD_TYPES.SKILL_UPGRADE,
-    description: '스킬 강화: ' + String(reward.description || reward.targetId).replace(/^스킬 획득:\s*/, ''),
+    description: '스킬 강화: ' + skillName,
+    detailDescription: '이미 보유한 ' + skillName + '의 레벨이 ' + Math.max(1, Number(reward.value || 1)) + ' 증가합니다.',
   });
+}
+
+function getRewardSkillName_(skillId) {
+  var skill = findCachedRowByKey_(DB_SHEETS.SKILLS, 'skillId', skillId, 600);
+  return skill && skill.name ? skill.name : String(skillId || '스킬');
 }
 
 function hasOwnedSkill_(skills, skillId) {
@@ -391,16 +406,23 @@ function sanitizeRewardForClient_(reward) {
     targetId: reward.targetId,
     value: Number(reward.value || 0),
     description: reward.description,
+    detailDescription: reward.detailDescription || '',
   };
 }
 
-function buildRewardChoiceView_(runId, stageId, rewardGroupId, rewardState) {
+function buildRewardChoiceView_(runId, stageId, rewardGroupId, rewardState, ownedSkills) {
+  var skills = normalizeOwnedSkills_(ownedSkills || []);
+  var choices = (rewardState.choices || []).filter(function(reward) {
+    return reward.type !== REWARD_TYPES.SKILL_UPGRADE || hasOwnedSkill_(skills, reward.targetId);
+  }).map(function(reward) {
+    return sanitizeRewardForClient_(adaptRewardForChoice_(reward, skills));
+  });
   return {
     runId: runId,
     stageId: stageId,
     rewardGroupId: rewardGroupId,
     currencyAmount: Number(rewardState.currencyAmount || 0),
-    choices: rewardState.choices || [],
+    choices: choices,
   };
 }
 

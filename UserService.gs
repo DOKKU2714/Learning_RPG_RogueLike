@@ -19,6 +19,7 @@ function registerPlayer(signupPayload) {
   var studentId = normalizeStudentId_(payload.studentId);
   var studentName = normalizeStudentName_(payload.studentName);
   var password = normalizePassword_(payload.password);
+  var avatarDataUrl = normalizeAvatarDataUrl_(payload.avatarDataUrl);
 
   if (findPlayerByStudentId_(studentId)) {
     throw new Error('이미 등록된 학번입니다. 로그인해 주세요.');
@@ -35,8 +36,8 @@ function registerPlayer(signupPayload) {
     passwordSalt: passwordSalt,
     email: '',
     displayName: displayName,
-    avatarType: AVATAR_TYPES.INITIAL,
-    avatarKey: studentName.charAt(0) || '?',
+    avatarType: avatarDataUrl ? AVATAR_TYPES.PHOTO : AVATAR_TYPES.INITIAL,
+    avatarKey: avatarDataUrl || studentName.charAt(0) || '?',
     createdAt: now,
     lastLoginAt: now,
     isActive: true,
@@ -254,6 +255,20 @@ function normalizePassword_(password) {
     throw new Error('비밀번호는 40자 이하로 입력해 주세요.');
   }
   return normalizedPassword;
+}
+
+function normalizeAvatarDataUrl_(avatarDataUrl) {
+  var value = String(avatarDataUrl || '').trim();
+  if (!value) {
+    return '';
+  }
+  if (value.length > 60000) {
+    throw new Error('Uploaded profile image is too large.');
+  }
+  if (!/^data:image\/(png|jpeg|jpg|webp);base64,[A-Za-z0-9+/=]+$/.test(value)) {
+    throw new Error('Unsupported profile image format.');
+  }
+  return value;
 }
 
 function hashPassword_(password, salt) {
