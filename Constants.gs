@@ -32,10 +32,10 @@ var DB_COLUMNS = Object.freeze({
   MONSTER_GROUPS: ['monsterGroupId', 'name', 'monsterIds', 'weights'],
   MONSTERS: ['monsterId', 'name', 'type', 'hp', 'attack', 'hpRegen', 'evasion', 'criticalRate', 'criticalDamage', 'defense', 'aiId', 'skillIds', 'description'],
   MONSTER_AI: ['aiId', 'patternName', 'actionType', 'conditionJson', 'probability', 'skillId', 'intentIcon', 'intentTextTemplate'],
-  SKILLS: ['skillId', 'name', 'type', 'target', 'baseValue', 'hitCount', 'cooldown', 'conditionJson', 'difficultyBonus', 'effectJson', 'upgradeJson', 'description'],
+  SKILLS: ['skillId', 'name', 'type', 'target', 'baseValue', 'hitCount', 'cooldown', 'conditionJson', 'difficultyBonus', 'effectJson', 'upgradeJson', 'description', 'actionPointCost', 'rarity', 'tags'],
   EFFECTS: ['effectId', 'name', 'category', 'statKey', 'effectType', 'value', 'durationType', 'durationTurns', 'stackable', 'maxStacks', 'triggerTiming', 'description'],
-  ITEMS: ['itemId', 'name', 'type', 'target', 'effectJson', 'triggerTiming', 'description'],
-  REWARDS: ['rewardId', 'type', 'targetId', 'value', 'weight', 'minFloor', 'maxFloor', 'description', 'detailDescription'],
+  ITEMS: ['itemId', 'name', 'type', 'target', 'effectJson', 'triggerTiming', 'description', 'rarity'],
+  REWARDS: ['rewardId', 'type', 'targetId', 'value', 'weight', 'minFloor', 'maxFloor', 'description', 'detailDescription', 'rarity'],
   REWARD_GROUPS: ['rewardGroupId', 'rewardIds', 'currencyMin', 'currencyMax', 'description'],
   BATTLE_LOGS: ['battleLogId', 'runId', 'playerId', 'floor', 'stage', 'result', 'summaryJson', 'createdAt'],
 });
@@ -111,6 +111,24 @@ var REWARD_TYPES = Object.freeze({
   ITEM: 'item',
 });
 
+var RARITIES = Object.freeze({
+  COMMON: 'common',
+  UNCOMMON: 'uncommon',
+  RARE: 'rare',
+  EPIC: 'epic',
+  LEGENDARY: 'legendary',
+  UNIQUE: 'unique',
+});
+
+var RARITY_LABELS = Object.freeze({
+  common: '일반',
+  uncommon: '드문',
+  rare: '희귀',
+  epic: '영웅',
+  legendary: '전설',
+  unique: '고유',
+});
+
 var EFFECT_CATEGORIES = Object.freeze({
   BUFF: 'buff',
   DEBUFF: 'debuff',
@@ -164,6 +182,7 @@ var GAME_RULES = Object.freeze({
   MAX_DIFFICULTY: 10,
   DEFAULT_REQUIRED_OTHER_QUESTION_COUNT: 1,
   BASE_GUARD_SHIELD: 10,
+  DEFAULT_MAX_ACTION_POINT: 3,
   BASE_QUESTION_TIME_SEC: 10,
   QUESTION_TIME_PER_DIFFICULTY_SEC: 2,
   MIN_ANSWER_EFFICIENCY: 0.5,
@@ -224,6 +243,9 @@ var MASTER_SKILLS = Object.freeze([
     effectJson: '{}',
     upgradeJson: '{"damage":4,"chance":0,"effect":0,"buffValue":0,"debuffChance":0}',
     description: '적 하나에게 큰 피해를 준다.',
+    actionPointCost: 1,
+    rarity: RARITIES.RARE,
+    tags: '["attack","slash","singleTarget"]',
   },
   {
     skillId: 'skill_guard_focus',
@@ -238,6 +260,9 @@ var MASTER_SKILLS = Object.freeze([
     effectJson: '{"effectId":"buff_hard","chance":100}',
     upgradeJson: '{"damage":0,"chance":0,"effect":0,"buffValue":1,"debuffChance":0}',
     description: '방어막을 만들고 단단함을 얻는다.',
+    actionPointCost: 1,
+    rarity: RARITIES.UNCOMMON,
+    tags: '["shield","defense","buff"]',
   },
   {
     skillId: 'skill_first_aid',
@@ -252,6 +277,9 @@ var MASTER_SKILLS = Object.freeze([
     effectJson: '{}',
     upgradeJson: '{"damage":0,"chance":0,"effect":3,"buffValue":0,"debuffChance":0}',
     description: '체력을 회복한다. 체력이 낮을 때만 사용할 수 있다.',
+    actionPointCost: 1,
+    rarity: RARITIES.UNCOMMON,
+    tags: '["heal","recovery"]',
   },
   {
     skillId: 'skill_power_shout',
@@ -266,6 +294,9 @@ var MASTER_SKILLS = Object.freeze([
     effectJson: '{"effectId":"buff_power","chance":100}',
     upgradeJson: '{"damage":0,"chance":0,"effect":0,"buffValue":1,"debuffChance":0}',
     description: '힘 버프를 얻는다.',
+    actionPointCost: 1,
+    rarity: RARITIES.RARE,
+    tags: '["buff","attack"]',
   },
   {
     skillId: 'skill_bleeding_mark',
@@ -280,6 +311,9 @@ var MASTER_SKILLS = Object.freeze([
     effectJson: '{"effectId":"debuff_bleed","chance":100}',
     upgradeJson: '{"damage":0,"chance":0,"effect":0,"buffValue":0,"debuffChance":10}',
     description: '적에게 출혈을 건다.',
+    actionPointCost: 1,
+    rarity: RARITIES.RARE,
+    tags: '["debuff","bleed"]',
   },
 ]);
 
@@ -305,14 +339,14 @@ var MASTER_MONSTER_GROUPS = Object.freeze([
 ]);
 
 var MASTER_REWARDS = Object.freeze([
-  { rewardId: 'reward_stat_attack_2', type: REWARD_TYPES.STAT, targetId: STAT_KEYS.ATTACK, value: 2, weight: 30, minFloor: 1, maxFloor: 5, description: '공격력 +2', detailDescription: '기본 공격과 공격형 스킬 피해가 증가합니다.' },
-  { rewardId: 'reward_stat_hp_10', type: REWARD_TYPES.STAT, targetId: STAT_KEYS.HP, value: 10, weight: 25, minFloor: 1, maxFloor: 5, description: '최대 체력 +10', detailDescription: '최대 체력이 증가하고 현재 체력도 함께 회복됩니다.' },
-  { rewardId: 'reward_stat_defense_2', type: REWARD_TYPES.STAT, targetId: STAT_KEYS.DEFENSE, value: 2, weight: 25, minFloor: 1, maxFloor: 5, description: '방어력 +2', detailDescription: '수비 행동으로 얻는 방어막 수치가 증가합니다.' },
-  { rewardId: 'reward_stat_critical_rate_3', type: REWARD_TYPES.STAT, targetId: STAT_KEYS.CRITICAL_RATE, value: 3, weight: 15, minFloor: 1, maxFloor: 5, description: '치명타 확률 +3', detailDescription: '공격 시 치명타가 발생할 확률이 증가합니다.' },
-  { rewardId: 'reward_skill_basic_slash', type: REWARD_TYPES.SKILL, targetId: 'skill_basic_slash', value: 1, weight: 20, minFloor: 1, maxFloor: 5, description: '스킬 획득: 깊게 베기', detailDescription: '강한 피해를 주는 공격 스킬을 획득합니다. 이미 보유 중이면 강화 보상으로 바뀝니다.' },
-  { rewardId: 'reward_skill_guard_focus', type: REWARD_TYPES.SKILL, targetId: 'skill_guard_focus', value: 1, weight: 20, minFloor: 1, maxFloor: 5, description: '스킬 획득: 집중 방어', detailDescription: '큰 방어막을 얻는 방어 스킬을 획득합니다. 이미 보유 중이면 강화 보상으로 바뀝니다.' },
-  { rewardId: 'reward_skill_upgrade_placeholder', type: REWARD_TYPES.SKILL_UPGRADE, targetId: 'skill_basic_slash', value: 1, weight: 1, minFloor: 1, maxFloor: 5, description: '스킬 강화 데이터 자리표시자', detailDescription: '대상 스킬의 레벨을 올립니다.' },
-  { rewardId: 'reward_item_small_heal', type: REWARD_TYPES.ITEM, targetId: 'item_small_heal', value: 1, weight: 1, minFloor: 1, maxFloor: 5, description: '아이템 보상 데이터 자리표시자', detailDescription: '사용 가능한 회복 아이템을 획득합니다.' },
+  { rewardId: 'reward_stat_attack_2', type: REWARD_TYPES.STAT, targetId: STAT_KEYS.ATTACK, value: 2, weight: 30, minFloor: 1, maxFloor: 5, description: '공격력 +2', detailDescription: '기본 공격과 공격형 스킬 피해가 증가합니다.', rarity: RARITIES.COMMON },
+  { rewardId: 'reward_stat_hp_10', type: REWARD_TYPES.STAT, targetId: STAT_KEYS.HP, value: 10, weight: 25, minFloor: 1, maxFloor: 5, description: '최대 체력 +10', detailDescription: '최대 체력이 증가하고 현재 체력도 함께 회복됩니다.', rarity: RARITIES.COMMON },
+  { rewardId: 'reward_stat_defense_2', type: REWARD_TYPES.STAT, targetId: STAT_KEYS.DEFENSE, value: 2, weight: 25, minFloor: 1, maxFloor: 5, description: '방어력 +2', detailDescription: '수비 행동으로 얻는 방어막 수치가 증가합니다.', rarity: RARITIES.COMMON },
+  { rewardId: 'reward_stat_critical_rate_3', type: REWARD_TYPES.STAT, targetId: STAT_KEYS.CRITICAL_RATE, value: 3, weight: 15, minFloor: 1, maxFloor: 5, description: '치명타 확률 +3', detailDescription: '공격 시 치명타가 발생할 확률이 증가합니다.', rarity: RARITIES.UNCOMMON },
+  { rewardId: 'reward_skill_basic_slash', type: REWARD_TYPES.SKILL, targetId: 'skill_basic_slash', value: 1, weight: 20, minFloor: 1, maxFloor: 5, description: '스킬 획득: 깊게 베기', detailDescription: '강한 피해를 주는 공격 스킬을 획득합니다. 이미 보유 중이면 강화 보상으로 바뀝니다.', rarity: '' },
+  { rewardId: 'reward_skill_guard_focus', type: REWARD_TYPES.SKILL, targetId: 'skill_guard_focus', value: 1, weight: 20, minFloor: 1, maxFloor: 5, description: '스킬 획득: 집중 방어', detailDescription: '큰 방어막을 얻는 방어 스킬을 획득합니다. 이미 보유 중이면 강화 보상으로 바뀝니다.', rarity: '' },
+  { rewardId: 'reward_skill_upgrade_placeholder', type: REWARD_TYPES.SKILL_UPGRADE, targetId: 'skill_basic_slash', value: 1, weight: 1, minFloor: 1, maxFloor: 5, description: '스킬 강화 데이터 자리표시자', detailDescription: '대상 스킬의 레벨을 올립니다.', rarity: '' },
+  { rewardId: 'reward_item_small_heal', type: REWARD_TYPES.ITEM, targetId: 'item_small_heal', value: 1, weight: 1, minFloor: 1, maxFloor: 5, description: '아이템 보상 데이터 자리표시자', detailDescription: '사용 가능한 회복 아이템을 획득합니다.', rarity: '' },
 ]);
 
 var MASTER_REWARD_GROUPS = Object.freeze([
@@ -320,5 +354,5 @@ var MASTER_REWARD_GROUPS = Object.freeze([
 ]);
 
 var MASTER_ITEMS = Object.freeze([
-  { itemId: 'item_small_heal', name: '작은 회복약', type: 'consumable', target: 'self', effectJson: '{"statKey":"hp","effectType":"flat","value":20}', triggerTiming: 'manual', description: '체력을 20 회복한다.' },
+  { itemId: 'item_small_heal', name: '작은 회복약', type: 'consumable', target: 'self', effectJson: '{"statKey":"hp","effectType":"flat","value":20}', triggerTiming: 'manual', description: '체력을 20 회복한다.', rarity: RARITIES.COMMON },
 ]);

@@ -12,9 +12,19 @@
       <video id="battleBackgroundVideo" class="battle-background-video" muted loop playsinline></video>
       <div class="battle-background-fallback"></div>
       <div id="screenDamageFlash" class="screen-damage-flash" aria-hidden="true"></div>
+      <div id="turnBanner" class="turn-banner" aria-hidden="true"></div>
 
       <div id="monsterLayer" class="monster-layer" aria-label="몬스터 목록"></div>
       <div id="floatingLayer" class="floating-layer" aria-hidden="true"></div>
+
+      <button id="battleMenuButton" class="battle-menu-button" type="button" onclick="toggleBattleMenu()">메뉴</button>
+      <div id="battleMenuPanel" class="battle-menu-panel hidden" aria-hidden="true">
+        <button class="secondary" type="button" disabled>아이템 확인</button>
+        <button class="secondary" type="button" onclick="showBattleStats()">스텟 확인</button>
+        <button class="danger" type="button" onclick="surrenderBattle()">전투 포기</button>
+        <button class="secondary" type="button" onclick="closeBattleMenu()">닫기</button>
+        <div id="battleStatsPanel" class="battle-stats-panel hidden"></div>
+      </div>
 
       <div class="battle-debug-controls">
         <button class="secondary" onclick="goHome()">메인</button>
@@ -30,9 +40,11 @@
       </div>
 
       <div id="actionPanel" class="action-panel compact-actions">
+        <div id="actionPanelApGauge" class="action-point-gauge action-panel-ap-gauge"></div>
         <button id="attackActionButton" onclick="chooseAction('attack')">공격</button>
         <button id="guardActionButton" onclick="chooseAction('guard')">수비</button>
         <button id="skillToggleButton" type="button" onclick="toggleSkillPanel()">스킬</button>
+        <button id="passTurnButton" type="button" onclick="passTurn()">턴 종료</button>
         <div id="skillPanel" class="skill-panel hidden"></div>
       </div>
 
@@ -43,10 +55,10 @@
             <span id="playerHpLagFill" class="player-hp-lag"></span>
             <span id="playerHpFill" class="player-hp-fill"></span>
             <span id="playerShieldFill" class="player-shield-fill"></span>
+            <div id="playerStatusRow" class="status-row player-status-row"></div>
           </div>
           <span id="playerHpText">30 / 30</span>
         </div>
-        <div id="playerStatusRow" class="status-row player-status-row"></div>
         <div id="playerDamageAnchor" class="player-damage-anchor"></div>
       </div>
     </section>
@@ -109,19 +121,26 @@
         <button id="questionSubmitButton" onclick="submitQuestionAnswer()">확인</button>
       </div>
       <div id="questionMessage" class="message"></div>
+      <div id="questionResultHold" class="question-result-hold hidden" aria-hidden="true">
+        <span id="questionResultHoldFill"></span>
+      </div>
     </section>
   </div>
 
   <div id="rewardModal" class="question-modal-overlay" aria-hidden="true">
     <section class="question-modal reward-modal" role="dialog" aria-modal="true" aria-labelledby="rewardTitle">
-      <div class="modal-topline">
-        <div>
-          <p class="muted" style="margin-bottom:4px;">스테이지 클리어</p>
-          <h2 id="rewardTitle" style="margin:0;">보상 선택</h2>
+      <div class="reward-clear-header">
+        <h2 id="rewardTitle">스테이지 클리어!</h2>
+        <p>보상 고르기</p>
+        <div class="inline-actions" style="justify-content:center;">
+          <div id="rewardCurrencyBadge" class="creator-badge">재화 +0</div>
+          <div id="rewardRegenBadge" class="creator-badge reward-regen-badge">체력 +0</div>
         </div>
-        <div id="rewardCurrencyBadge" class="creator-badge">재화 +0</div>
       </div>
       <div id="rewardChoices" class="reward-choice-grid"></div>
+      <div class="reward-confirm-row">
+        <button id="rewardConfirmButton" type="button" onclick="confirmRewardChoice()" disabled>확인</button>
+      </div>
       <div id="rewardMessage" class="message"></div>
     </section>
   </div>
@@ -142,7 +161,14 @@
     var skillPanelOpen = false;
     var battleQuestionCache = [];
     var BATTLE_STEP_DELAY_MS = 800;
+    var ATTACK_EFFECT_DELAY_MS = 650;
+    var HIT_STATE_HOLD_MS = 850;
+    var DEATH_STATE_HOLD_MS = 2200;
     var MESSAGE_HOLD_MS = 800;
+    var TURN_END_DELAY_MS = 800;
+    var QUESTION_RESULT_HOLD_MS = 3000;
+    var QUESTION_RESULT_SKIP_ENABLE_MS = 1000;
+    var QUESTION_ACTION_START_DELAY_MS = 1000;
     var defeatSequenceStarted = false;
     var stageIntroPlaying = false;
     var battleLogTypingTimer = null;
@@ -154,6 +180,18 @@
     var stageNarrationActive = false;
     var stageNarrationComplete = null;
     var activeAutoDelayResolver = null;
+    var questionResultHoldTimerId = null;
+    var questionResultSkipTimerId = null;
+    var pendingQuestionTurnView = null;
+    var pendingQuestionTurnError = null;
+    var questionResultProceedRequested = false;
+    var pendingTurnResolutionActive = false;
+    var pendingTurnResolutionLoading = false;
+    var pendingServerTurnView = null;
+    var pendingQuestionTurnIsOptimistic = false;
+    var selectedRewardId = '';
+    var rewardSelectionApplying = false;
+    var passTurnLogPending = false;
 
     var dummyView = {
       runId: 'dummy-run',
@@ -165,7 +203,7 @@
         lastMessage: '전투 시작!',
         lastTurnEvents: [],
         stage: { stageId: 'floor_1_stage_1', name: '1층 1스테이지', floor: 1, stage: 1, baseDifficulty: 1, rewardGroupId: 'reward_group_default' },
-        player: { hp: 30, maxHp: 30, shield: 0, stats: { attack: 8, defense: 3 }, buffs: [], debuffs: [] },
+        player: { hp: 30, maxHp: 30, shield: 0, baseMaxActionPoint: 3, maxActionPoint: 3, currentActionPoint: 3, stats: { attack: 8, defense: 3 }, buffs: [], debuffs: [] },
         monsters: [
           { instanceId: 'dummy_1', monsterId: 'dummy_1', name: '옥상 그림자', currentHp: 24, maxHp: 24, shield: 0, attack: 5, buffs: [], debuffs: [] },
           { instanceId: 'dummy_2', monsterId: 'dummy_2', name: '그림자 문제', currentHp: 18, maxHp: 18, shield: 0, attack: 4, buffs: [], debuffs: [] },
@@ -174,8 +212,8 @@
       },
       stageState: { otherStudentQuestionShown: false, fallbackEvents: [] },
       availableSkills: [
-        { skillId: 'skill_basic_slash', name: '깊게 베기', type: 'damage', target: 'enemy', level: 1, available: true, unavailableReason: '', description: '큰 피해를 준다.', previewText: '피해 18 x 효율', cooldownText: '스테이지 3회' },
-        { skillId: 'skill_guard_focus', name: '집중 방어', type: 'shield', target: 'self', level: 1, available: true, unavailableReason: '', description: '방어막을 만든다.', previewText: '방어막 28 x 효율', cooldownText: '스테이지 2회' },
+        { skillId: 'skill_basic_slash', name: '깊게 베기', type: 'damage', target: 'enemy', level: 1, actionPointCost: 1, available: true, unavailableReason: '', description: '큰 피해를 준다.', previewText: '피해 18 x 효율', cooldownText: '스테이지 3회' },
+        { skillId: 'skill_guard_focus', name: '집중 방어', type: 'shield', target: 'self', level: 1, actionPointCost: 1, available: true, unavailableReason: '', description: '방어막을 만든다.', previewText: '방어막 28 x 효율', cooldownText: '스테이지 2회' },
       ],
     };
 
@@ -273,10 +311,15 @@
       }
       if (overlay) {
         overlay.classList.remove('fade-away', 'title-visible');
+        overlay.classList.add('instant-black');
         overlay.classList.add('active');
         overlay.setAttribute('aria-hidden', 'false');
       }
       finishBattleStartFade();
+
+      window.setTimeout(function() {
+        if (overlay) overlay.classList.remove('instant-black');
+      }, 80);
 
       window.setTimeout(function() {
         if (overlay) overlay.classList.add('title-visible');
@@ -315,7 +358,9 @@
         lines.push(
           { text: '눈을 떠보니 학교 옥상이다 .', sparkleDot: true },
           { text: '일단 여기서 나가야겠다.' },
-          { text: '눈앞에 무언가 나타났다!' }
+          { text: '앞에 뭔가 이상한 형체가 보인다.' },
+          { text: '뭔가 이상한게 내게 다가온다!' },
+          { text: '전투가 시작됩니다.' }
         );
       }
       if (hasPlayerGhostEncounter()) {
@@ -460,8 +505,17 @@
       battle.monster = getFirstAliveMonster(battle) || battle.monsters[0] || null;
       battle.player.maxHp = Number(battle.player.maxHp || battle.player.stats.hp || 1);
       battle.player.shield = Number(battle.player.shield || 0);
+      normalizeClientActionPoints(battle.player);
       view.questionCache = view.questionCache || [];
       return view;
+    }
+
+    function normalizeClientActionPoints(player) {
+      if (!player) return player;
+      player.baseMaxActionPoint = Math.max(0, Number(player.baseMaxActionPoint || 3));
+      player.maxActionPoint = Math.max(0, Number(player.maxActionPoint || player.baseMaxActionPoint || 3));
+      player.currentActionPoint = Math.max(0, Math.min(player.maxActionPoint, Number(player.currentActionPoint !== undefined && player.currentActionPoint !== '' ? player.currentActionPoint : player.maxActionPoint)));
+      return player;
     }
 
     function renderBattle(view) {
@@ -474,6 +528,7 @@
       renderActionTooltips(battle.player);
       pushLog(battle.lastMessage || '전투 시작!');
       setPlayerTurn(isPlayerTurn && battle.status === 'active');
+      updateBattleInputLockState();
     }
 
     function renderSkills(skills) {
@@ -483,15 +538,21 @@
         return;
       }
       panel.innerHTML = skills.map(function(skill) {
-        var disabled = skill.available ? '' : ' disabled';
-        var reason = skill.unavailableReason || skill.description || '';
+        var apCost = getSkillActionPointCost(skill);
+        var hasAp = hasClientActionPoint(apCost);
+        var disabled = skill.available && hasAp ? '' : ' disabled';
+        var reason = !hasAp ? '행동력이 부족합니다.' : (skill.unavailableReason || skill.description || '');
         var cooldown = skill.cooldownText || (skill.cooldown ? '쿨타임 ' + skill.cooldown + '턴' : '쿨타임 없음');
         var description = skill.description || '';
-        var tooltip = skill.name + '\n' + cooldown + '\n' + (skill.previewText || '') + '\n' + (reason || description);
-        return '<button class="skill-button" data-skill-id="' + escapeHtml(skill.skillId) + '" data-tooltip="' + escapeHtml(tooltip) + '"' + disabled + '>' +
+        var rarity = getRewardRarityLabel(skill.rarity || 'common');
+        var tags = normalizeSkillTags(skill.tags);
+        var tagText = tags.length ? '태그 ' + tags.join(', ') : '태그 없음';
+        var tooltip = skill.name + '\n등급 ' + rarity + '\n행동력 ' + apCost + '\n' + cooldown + '\n' + tagText + '\n' + (skill.previewText || '') + '\n' + (reason || description);
+        return '<button class="skill-button rarity-' + escapeHtml(normalizeRewardRarity(skill.rarity)) + '" data-skill-id="' + escapeHtml(skill.skillId) + '" data-tooltip="' + escapeHtml(tooltip) + '"' + disabled + '>' +
           '<span>' + escapeHtml(skill.name) + '</span>' +
-          '<small>Lv.' + escapeHtml(skill.level || 1) + ' / ' + escapeHtml(cooldown) + '</small>' +
+          '<small>Lv.' + escapeHtml(skill.level || 1) + ' / ' + escapeHtml(rarity) + ' / AP ' + escapeHtml(apCost) + ' / ' + escapeHtml(cooldown) + '</small>' +
           '<small class="skill-preview">' + escapeHtml(skill.previewText || '') + '</small>' +
+          (tags.length ? '<small class="skill-tags">' + escapeHtml(tags.join(' · ')) + '</small>' : '') +
           '<small class="skill-description">' + escapeHtml(description) + '</small>' +
         '</button>';
       }).join('') + '<button class="secondary skill-cancel-button" type="button" onclick="closeSkillPanel()">취소</button>';
@@ -501,6 +562,27 @@
           chooseSkill(button.getAttribute('data-skill-id'));
         });
       });
+    }
+
+    function normalizeSkillTags(tags) {
+      if (Array.isArray(tags)) {
+        return tags.map(function(tag) {
+          return String(tag || '').trim();
+        }).filter(Boolean);
+      }
+      var value = String(tags || '').trim();
+      if (!value) return [];
+      try {
+        var parsed = JSON.parse(value);
+        if (Array.isArray(parsed)) {
+          return normalizeSkillTags(parsed);
+        }
+      } catch (error) {
+        // Plain comma-separated tags are also accepted.
+      }
+      return value.split(',').map(function(tag) {
+        return tag.trim();
+      }).filter(Boolean);
     }
 
     function renderActionTooltips(player) {
@@ -531,6 +613,9 @@
 
     function renderMonsters(monsters) {
       var layer = document.getElementById('monsterLayer');
+      monsters = (monsters || []).filter(function(monster) {
+        return Number(monster.currentHp || 0) > 0;
+      });
       layer.innerHTML = monsters.map(function(monster, index) {
         var hp = Number(monster.currentHp || 0);
         var maxHp = Math.max(1, Number(monster.maxHp || 1));
@@ -602,6 +687,31 @@
       return ASSET_BASE_URL + '/Resources/Monsters/' + encodeURIComponent(assetMonsterId) + '/' + state + '.png';
     }
 
+    function getActionIntentIconUrl(intent) {
+      if (!ASSET_BASE_URL) return '';
+      var key = String(intent && (intent.intentIcon || intent.actionType || '') || '').toLowerCase();
+      var fileName = 'Action_Attack.png';
+      if (key === 'shield' || key === 'guard' || key === 'block') {
+        fileName = 'Action_Block.png';
+      } else if (key === 'buff' || key === 'heal') {
+        fileName = 'Action_Buff.png';
+      } else if (key === 'drop' || key === 'debuff') {
+        fileName = 'Action_Debuff.png';
+      }
+      return ASSET_BASE_URL + '/Resources/Actions/' + fileName;
+    }
+
+    function getRewardIconUrl(type) {
+      if (!ASSET_BASE_URL) return '';
+      var files = {
+        stat: 'Reward_Stat.png',
+        skill: 'Reward_Skill.png',
+        skillUpgrade: 'Reward_Skill_Upgrade.png',
+        item: 'Reward_Item.png',
+      };
+      return ASSET_BASE_URL + '/Resources/Reward/' + (files[type] || 'Reward_Stat.png');
+    }
+
     function cssUrlEscape(value) {
       return String(value || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
     }
@@ -618,7 +728,7 @@
       }
       var idleUrl = getMonsterImageUrl(monster, 'Idle');
       if (idleUrl) {
-        return '<div class="' + className + ' monster-image-sprite" data-monster-key="' + escapeHtml(monster.monsterId || 'placeholder') + '" data-idle-src="' + escapeHtml(idleUrl) + '" data-attack-src="' + escapeHtml(getMonsterImageUrl(monster, 'Attack')) + '" data-hit-src="' + escapeHtml(getMonsterImageUrl(monster, 'Hit')) + '">' +
+        return '<div class="' + className + ' monster-image-sprite" data-monster-key="' + escapeHtml(monster.monsterId || 'placeholder') + '" data-idle-src="' + escapeHtml(idleUrl) + '" data-attack-src="' + escapeHtml(getMonsterImageUrl(monster, 'Attack')) + '" data-hit-src="' + escapeHtml(getMonsterImageUrl(monster, 'Hit')) + '" data-death-src="' + escapeHtml(getMonsterImageUrl(monster, 'Death')) + '">' +
           '<img class="monster-art" src="' + escapeHtml(idleUrl) + '" alt="' + escapeHtml(name) + '" onerror="handleMonsterImageError(this);">' +
           '<span>' + escapeHtml(name) + '</span>' +
         '</div>';
@@ -634,7 +744,7 @@
       if (!target) return;
       var idleSrc = target.dataset.idleSrc || '';
       var failedSrc = image.getAttribute('src') || '';
-      target.classList.remove('monster-state-attack', 'monster-state-hit');
+      target.classList.remove('monster-state-attack', 'monster-state-hit', 'monster-state-death');
       if (idleSrc && failedSrc !== idleSrc) {
         image.src = idleSrc;
         return;
@@ -645,10 +755,14 @@
 
     function renderMonsterIntent(intent) {
       var view = intent || { intentIcon: 'sword', intentText: '행동 대기' };
-      var icon = view.intentIcon || 'sword';
-      var text = view.intentText || view.intentTextTemplate || '행동 대기';
-      return '<div class="monster-intent" title="' + escapeHtml(text) + '">' +
-        '<span class="monster-intent-text">' + escapeHtml(text) + '</span>' +
+      var text = String(view.intentText || view.intentTextTemplate || '행동 대기').replace(/예상\s*/g, '');
+      var valueMatch = text.match(/(\d+)/);
+      var valueBadge = valueMatch ? '<em class="monster-intent-value">' + escapeHtml(valueMatch[1]) + '</em>' : '';
+      var iconUrl = getActionIntentIconUrl(view);
+      var iconHtml = iconUrl ? '<img class="monster-intent-icon" src="' + escapeHtml(iconUrl) + '" alt="" onerror="this.remove();">' : '<span class="monster-intent-icon-fallback">' + escapeHtml(intentIconLabel(view.intentIcon || view.actionType || 'sword')) + '</span>';
+      return '<div class="monster-intent" data-tooltip="' + escapeHtml(text) + '" aria-label="' + escapeHtml(text) + '">' +
+        iconHtml +
+        valueBadge +
       '</div>';
     }
 
@@ -665,7 +779,8 @@
       if (!statuses.length) return '';
       return '<div class="status-row monster-status-row">' + statuses.map(function(status) {
         var statTooltip = status.statTooltip ? ' data-stat-tooltip="' + escapeHtml(status.statTooltip) + '"' : '';
-        return '<span class="status-icon ' + escapeHtml(status.type) + '" data-tooltip="' + escapeHtml(status.tooltip) + '"' + statTooltip + '>' + escapeHtml(status.label) + '</span>';
+        var turns = status.remainingTurns ? '<em class="status-turns">' + escapeHtml(status.remainingTurns) + '</em>' : '';
+        return '<span class="status-icon ' + escapeHtml(status.type) + '" data-tooltip="' + escapeHtml(status.tooltip) + '"' + statTooltip + '>' + escapeHtml(status.label) + turns + '</span>';
       }).join('') + '</div>';
     }
 
@@ -677,6 +792,7 @@
         label: status.icon || icon,
         tooltip: tooltip.main,
         statTooltip: tooltip.stat,
+        remainingTurns: status.remainingTurns || '',
       };
     }
 
@@ -783,6 +899,7 @@
     }
 
     function renderPlayerHud(player) {
+      normalizeClientActionPoints(player);
       var hp = Math.max(0, Number(player.hp || 0));
       var maxHp = Math.max(1, Number(player.maxHp || 1));
       var shield = Math.max(0, Number(player.shield || 0));
@@ -794,7 +911,106 @@
       document.getElementById('playerShieldFill').style.width = Math.round((shield / visualMax) * 100) + '%';
       document.getElementById('playerHpText').textContent = shield > 0 ? hp + ' + ' + shield + ' / ' + maxHp : hp + ' / ' + maxHp;
       document.querySelector('.player-compact-panel').classList.toggle('player-shielded', shield > 0);
+      renderActionPointGauges(player);
       renderPlayerStatuses(player);
+    }
+
+    function renderActionPointGauges(player) {
+      var current = Math.max(0, Number(player && player.currentActionPoint || 0));
+      var max = Math.max(0, Number(player && player.maxActionPoint || player && player.baseMaxActionPoint || 3));
+      var icons = '';
+      for (var i = 0; i < max; i += 1) {
+        icons += '<span class="ap-dot">' + (i < current ? '●' : '○') + '</span>';
+      }
+      var html = '<span class="ap-label">행동력</span><span class="ap-icons">' + icons + '</span><strong>' + current + ' / ' + max + '</strong>';
+      ['actionPanelApGauge'].forEach(function(id) {
+        var element = document.getElementById(id);
+        if (element) element.innerHTML = html;
+      });
+    }
+
+    function getCurrentActionPoint() {
+      var player = currentView && currentView.battle ? currentView.battle.player : null;
+      normalizeClientActionPoints(player);
+      return Number(player && player.currentActionPoint || 0);
+    }
+
+    function getSkillActionPointCost(skill) {
+      return Math.max(0, Math.min(3, Number(skill && skill.actionPointCost !== undefined && skill.actionPointCost !== '' ? skill.actionPointCost : 1)));
+    }
+
+    function hasClientActionPoint(cost) {
+      return getCurrentActionPoint() >= Number(cost || 0);
+    }
+
+    function toggleBattleMenu() {
+      var panel = document.getElementById('battleMenuPanel');
+      var willOpen = panel.classList.contains('hidden');
+      panel.classList.toggle('hidden', !willOpen);
+      panel.setAttribute('aria-hidden', willOpen ? 'false' : 'true');
+      if (!willOpen) {
+        document.getElementById('battleStatsPanel').classList.add('hidden');
+      }
+    }
+
+    function closeBattleMenu() {
+      var panel = document.getElementById('battleMenuPanel');
+      panel.classList.add('hidden');
+      panel.setAttribute('aria-hidden', 'true');
+      document.getElementById('battleStatsPanel').classList.add('hidden');
+    }
+
+    function showBattleStats() {
+      var panel = document.getElementById('battleStatsPanel');
+      var player = currentView && currentView.battle ? currentView.battle.player || {} : {};
+      var stats = player.stats || {};
+      var rows = [
+        ['HP', (player.hp || 0) + ' / ' + (player.maxHp || stats.hp || '-')],
+        ['방어막', player.shield || 0],
+        ['행동력', (player.currentActionPoint || 0) + ' / ' + (player.maxActionPoint || player.baseMaxActionPoint || 3)],
+        ['공격력', stats.attack || 0],
+        ['방어력', stats.defense || 0],
+        ['회피', (stats.evasion || 0) + '%'],
+        ['치명 확률', (stats.criticalRate || 0) + '%'],
+        ['치명 피해', (stats.criticalDamage || 0) + '%'],
+        ['재화', currentView ? Number(currentView.currency || 0) : 0],
+      ];
+      panel.innerHTML = '<strong>현재 스텟</strong>' + rows.map(function(row) {
+        return '<div class="battle-stat-row"><span>' + escapeHtml(row[0]) + '</span><b>' + escapeHtml(row[1]) + '</b></div>';
+      }).join('');
+      panel.classList.remove('hidden');
+    }
+
+    function surrenderBattle() {
+      closeBattleMenu();
+      if (!currentView || !currentView.battle || currentView.battle.status !== 'active') {
+        return;
+      }
+      setBattleInputLocked(true);
+      setPlayerTurn(false);
+      if (isDummyMode || currentView.runId === 'dummy-run') {
+        currentView.battle.player.hp = 0;
+        currentView.battle.status = 'defeat';
+        currentView.battle.lastMessage = '전투를 포기했습니다.';
+        renderBattle(currentView);
+        showDefeatSequence();
+        return;
+      }
+      showLoadingModal('전투 포기 중...', '이번 전투를 패배로 처리하는 중...');
+      google.script.run
+        .withSuccessHandler(function(view) {
+          hideLoadingModal();
+          currentView = normalizeBattleView(view);
+          renderBattle(currentView);
+          showDefeatSequence();
+        })
+        .withFailureHandler(function(error) {
+          hideLoadingModal();
+          setBattleInputLocked(false);
+          setPlayerTurn(true);
+          pushLog(error.message || '전투 포기에 실패했습니다.');
+        })
+        .surrenderBattle(currentView.runId, getAuthToken());
     }
 
     function renderPlayerStatuses(player) {
@@ -804,7 +1020,8 @@
         .concat((player.debuffs || []).map(function(status) { return buildStatusView(status, 'debuff'); }));
       row.innerHTML = statuses.map(function(status) {
         var statTooltip = status.statTooltip ? ' data-stat-tooltip="' + escapeHtml(status.statTooltip) + '"' : '';
-        return '<span class="status-icon ' + escapeHtml(status.type) + '" data-tooltip="' + escapeHtml(status.tooltip) + '"' + statTooltip + '>' + escapeHtml(status.label) + '</span>';
+        var turns = status.remainingTurns ? '<em class="status-turns">' + escapeHtml(status.remainingTurns) + '</em>' : '';
+        return '<span class="status-icon ' + escapeHtml(status.type) + '" data-tooltip="' + escapeHtml(status.tooltip) + '"' + statTooltip + '>' + escapeHtml(status.label) + turns + '</span>';
       }).join('');
     }
 
@@ -812,7 +1029,8 @@
       isPlayerTurn = !!active;
       document.getElementById('actionPanel').classList.toggle('disabled-actions', !active || isAnimatingTurn);
       updateBattleHudMode();
-      if (active && !isAnimatingTurn) {
+      updateBattleInputLockState();
+      if (active && !isAnimatingTurn && !passTurnLogPending) {
         pushLog('내 턴입니다. 행동을 선택하세요.', { instant: true });
       }
     }
@@ -834,6 +1052,11 @@
     function chooseAction(actionType) {
       if (!isPlayerTurn || isAnimatingTurn) {
         pushLog('지금은 행동할 수 없습니다.');
+        return;
+      }
+      if (handlePendingTurnResolutionBeforeAction()) return;
+      if (!hasClientActionPoint(1)) {
+        pushLog('행동력이 부족합니다.');
         return;
       }
       closeSkillPanel();
@@ -864,7 +1087,16 @@
         pushLog('지금은 행동할 수 없습니다.');
         return;
       }
+      if (handlePendingTurnResolutionBeforeAction()) return;
+      passTurnLogPending = true;
+      pushLog('턴을 종료합니다.', { instant: true });
       closeSkillPanel();
+      var selectedSkill = findAvailableSkill(skillId);
+      var actionPointCost = getSkillActionPointCost(selectedSkill);
+      if (!hasClientActionPoint(actionPointCost)) {
+        pushLog('행동력이 부족합니다.');
+        return;
+      }
       var target = getFirstAliveMonster(currentView.battle);
       var targetId = target ? (target.instanceId || target.monsterId) : '';
       if (isDummyMode || !currentView || currentView.runId === 'dummy-run') {
@@ -887,6 +1119,59 @@
           pushLog(error.message);
         })
         .useSkill(currentView.runId, skillId, targetId, { authToken: getAuthToken() });
+    }
+
+    function passTurn() {
+      if (!isPlayerTurn || isAnimatingTurn) {
+        pushLog('지금은 턴을 종료할 수 없습니다.');
+        return;
+      }
+      if (handlePendingTurnResolutionBeforeAction()) return;
+      closeSkillPanel();
+      setBattleInputLocked(true);
+      setPlayerTurn(false);
+      if (isDummyMode || !currentView || currentView.runId === 'dummy-run') {
+        var nextView = buildDummyPassTurnView();
+        playTurnSequence(nextView);
+        return;
+      }
+      google.script.run
+        .withSuccessHandler(function(view) {
+          hideLoadingModal();
+          playTurnSequence(normalizeBattleView(view));
+        })
+        .withFailureHandler(function(error) {
+          hideLoadingModal();
+          setBattleInputLocked(false);
+          setPlayerTurn(true);
+          passTurnLogPending = false;
+          pushLog(error.message || '턴 종료에 실패했습니다.');
+        })
+        .passPlayerTurn(currentView.runId, getAuthToken());
+    }
+
+    function handlePendingTurnResolutionBeforeAction() {
+      if (!pendingTurnResolutionActive) return false;
+      if (pendingQuestionTurnError) {
+        pushLog(pendingQuestionTurnError.message || '전투 결과 처리 중 오류가 발생했습니다.');
+        pendingQuestionTurnError = null;
+        pendingTurnResolutionActive = false;
+        pendingTurnResolutionLoading = false;
+        setBattleInputLocked(false);
+        return true;
+      }
+      if (pendingQuestionTurnView) {
+        continueAfterQuestionResult();
+        return true;
+      }
+      if (pendingServerTurnView) {
+        applyPendingServerTurnSync();
+        return false;
+      }
+      pendingTurnResolutionLoading = true;
+      setBattleInputLocked(true);
+      showLoadingModal('전투 결과 계산 중...', '이전 행동 결과를 마무리하는 중...');
+      return true;
     }
 
     function takeCachedQuestionView(actionType, skillId, targetId) {
@@ -933,12 +1218,14 @@
     }
 
     function openQuestionModal(questionView, dummy) {
+      resetQuestionResultHold();
       currentQuestionView = questionView;
       currentQuestionView.isDummy = !!dummy;
       questionStartedAt = Date.now();
       wrongCountAfterTimeout = 0;
       clearInterval(questionTimerId);
       document.getElementById('questionSubmitButton').disabled = false;
+      document.getElementById('questionSubmitButton').textContent = '확인';
       setQuestionInputsDisabled(false);
 
       var question = questionView.question;
@@ -1014,16 +1301,13 @@
 
     function calculateTimedEfficiency(remainingMs, maxMs) {
       var ratio = Math.max(0, Math.min(1, Number(remainingMs || 0) / Math.max(1, Number(maxMs || 1))));
-      if (ratio >= 0.5) {
-        return 1 + ((ratio - 0.5) * 0.5);
-      }
-      return 0.5 + ratio;
+      return 0.5 + (0.75 * ratio);
     }
 
     function updateQuestionEfficiencyMeter(efficiency) {
       var normalizedEfficiency = Math.max(0, Number(efficiency || 0));
       document.getElementById('questionEfficiencyText').textContent = Math.round(normalizedEfficiency * 100) + '%';
-      document.getElementById('questionEfficiencyFill').style.width = Math.round(Math.min(1, normalizedEfficiency / 1.25) * 100) + '%';
+      document.getElementById('questionEfficiencyFill').style.width = Math.round(Math.max(0, Math.min(1, (normalizedEfficiency - 0.5) / 0.75)) * 100) + '%';
     }
 
     function calculateWrongEfficiency(wrongCount) {
@@ -1033,6 +1317,10 @@
 
     function submitQuestionAnswer() {
       if (!currentQuestionView) return;
+      if (currentQuestionView.resultHolding) {
+        requestQuestionResultProceed();
+        return;
+      }
       var answer = getSelectedAnswer(currentQuestionView.question);
       if (!answer.selectedAnswer && !answer.selectedAnswerText) {
         document.getElementById('questionMessage').textContent = '답을 선택하거나 입력하세요.';
@@ -1063,24 +1351,40 @@
       markSelectedAnswerResult(true);
       document.getElementById('questionMessage').textContent = '정답입니다.';
       document.getElementById('questionMessage').className = 'message ok';
+      startQuestionResultHold();
+      var actionTypeForSubmit = currentQuestionView.actionType;
+      var skillIdForSubmit = currentQuestionView.skillId || '';
+      var targetIdForSubmit = currentQuestionView.targetId || '';
 
       if (currentQuestionView.isDummy) {
         var dummyActionType = currentQuestionView.actionType;
         window.setTimeout(function() {
-          closeQuestionModal();
-          setBattleInputLocked(false);
-          playTurnSequence(buildDummyNextView(dummyActionType));
+          receiveQuestionTurnView(buildDummyNextView(dummyActionType));
         }, 450);
         return;
       }
 
       var runner = google.script.run
         .withSuccessHandler(function(view) {
-          closeQuestionModal();
-          playTurnSequence(normalizeBattleView(view));
+          receiveQuestionTurnView(normalizeBattleView(view));
         })
         .withFailureHandler(function(error) {
+          pendingQuestionTurnError = error;
+          if (!currentQuestionView) {
+            hideLoadingModal();
+            resetQuestionResultHold();
+            setBattleInputLocked(false);
+            pushLog(error.message || '전투 결과 처리 중 오류가 발생했습니다.');
+            return;
+          }
+          if (currentQuestionView && currentQuestionView.resultHolding && !questionResultProceedRequested) {
+            requestQuestionResultProceed();
+            return;
+          }
+          hideLoadingModal();
+          resetQuestionResultHold();
           document.getElementById('questionSubmitButton').disabled = false;
+          document.getElementById('questionSubmitButton').textContent = '확인';
           setQuestionInputsDisabled(false);
           setBattleInputLocked(false);
           document.getElementById('questionMessage').textContent = error.message;
@@ -1106,12 +1410,185 @@
       };
 
       window.setTimeout(function() {
-        if (currentQuestionView && currentQuestionView.actionType === 'skill') {
-          runner.useSkill(currentView.runId, currentQuestionView.skillId, currentQuestionView.targetId, answerPayload);
+        if (actionTypeForSubmit === 'skill') {
+          runner.useSkill(currentView.runId, skillIdForSubmit, targetIdForSubmit, answerPayload);
         } else {
           runner.submitActionAnswer(answerPayload);
         }
-      }, 350);
+      }, 0);
+    }
+
+    function startQuestionResultHold() {
+      resetQuestionResultHold(false);
+      if (!currentQuestionView) return;
+      currentQuestionView.resultHolding = true;
+      pendingQuestionTurnView = null;
+      pendingQuestionTurnError = null;
+      pendingServerTurnView = null;
+      pendingQuestionTurnIsOptimistic = false;
+      questionResultProceedRequested = false;
+      pendingTurnResolutionActive = true;
+      pendingTurnResolutionLoading = false;
+      var hold = document.getElementById('questionResultHold');
+      var fill = document.getElementById('questionResultHoldFill');
+      var button = document.getElementById('questionSubmitButton');
+      if (hold && fill) {
+        hold.classList.remove('hidden');
+        hold.setAttribute('aria-hidden', 'false');
+        fill.style.transition = 'none';
+        fill.style.width = '100%';
+        void fill.offsetWidth;
+        fill.style.transition = 'width ' + QUESTION_RESULT_HOLD_MS + 'ms linear';
+        fill.style.width = '0%';
+      }
+      if (button) {
+        button.disabled = true;
+        button.textContent = '결과 확인 중...';
+      }
+      questionResultSkipTimerId = window.setTimeout(function() {
+        if (!currentQuestionView || !currentQuestionView.resultHolding) return;
+        var submitButton = document.getElementById('questionSubmitButton');
+        if (submitButton) {
+          submitButton.disabled = false;
+          submitButton.textContent = '바로 진행';
+        }
+      }, QUESTION_RESULT_SKIP_ENABLE_MS);
+      questionResultHoldTimerId = window.setTimeout(requestQuestionResultProceed, QUESTION_RESULT_HOLD_MS);
+    }
+
+    function receiveQuestionTurnView(view) {
+      var normalizedView = normalizeBattleView(view);
+      if (currentQuestionView && currentQuestionView.resultHolding && !questionResultProceedRequested) {
+        pendingQuestionTurnView = normalizedView;
+        pendingQuestionTurnIsOptimistic = false;
+        return;
+      }
+      if (pendingQuestionTurnIsOptimistic || (pendingTurnResolutionActive && !currentQuestionView)) {
+        pendingServerTurnView = normalizedView;
+        if (pendingTurnResolutionLoading || (!isAnimatingTurn && !currentQuestionView)) {
+          applyPendingServerTurnSync();
+        }
+        return;
+      }
+      pendingQuestionTurnView = normalizedView;
+      pendingQuestionTurnIsOptimistic = false;
+      if (questionResultProceedRequested || pendingTurnResolutionLoading) {
+        continueAfterQuestionResult();
+      }
+    }
+
+    function requestQuestionResultProceed() {
+      if (!pendingTurnResolutionActive && (!currentQuestionView || !currentQuestionView.resultHolding)) return;
+      questionResultProceedRequested = true;
+      var button = document.getElementById('questionSubmitButton');
+      if (button) {
+        button.disabled = true;
+        button.textContent = '진행 중...';
+      }
+      if (pendingQuestionTurnError) {
+        hideLoadingModal();
+        resetQuestionResultHold();
+        setBattleInputLocked(false);
+        setQuestionInputsDisabled(false);
+        if (button) {
+          button.disabled = false;
+          button.textContent = '확인';
+        }
+        document.getElementById('questionMessage').textContent = pendingQuestionTurnError.message;
+        document.getElementById('questionMessage').className = 'message error';
+        pendingQuestionTurnError = null;
+        return;
+      }
+      if (pendingQuestionTurnView) {
+        continueAfterQuestionResult();
+        return;
+      }
+      pendingQuestionTurnView = buildOptimisticNextViewFromQuestion();
+      pendingQuestionTurnIsOptimistic = true;
+      if (pendingQuestionTurnView) {
+        continueAfterQuestionResult();
+        return;
+      }
+      resetQuestionResultHold(false);
+      closeQuestionModal(false);
+      setBattleInputLocked(false);
+      pushLog('전투 결과를 정리하는 중입니다.', { instant: true });
+    }
+
+    function continueAfterQuestionResult() {
+      var nextView = pendingQuestionTurnView;
+      if (!nextView) return;
+      hideLoadingModal();
+      resetQuestionResultHold(false);
+      closeQuestionModal(false);
+      setBattleInputLocked(true);
+      pendingQuestionTurnView = null;
+      pendingQuestionTurnError = null;
+      if (!pendingQuestionTurnIsOptimistic) {
+        pendingTurnResolutionActive = false;
+      }
+      pendingTurnResolutionLoading = false;
+      pendingQuestionTurnIsOptimistic = false;
+      window.setTimeout(function() {
+        playTurnSequence(nextView);
+      }, QUESTION_ACTION_START_DELAY_MS);
+    }
+
+    function applyPendingServerTurnSync() {
+      if (!pendingServerTurnView) return false;
+      hideLoadingModal();
+      currentView = normalizeBattleView(pendingServerTurnView);
+      battleQuestionCache = (currentView.questionCache || battleQuestionCache || []).slice();
+      pendingServerTurnView = null;
+      pendingQuestionTurnView = null;
+      pendingQuestionTurnError = null;
+      pendingQuestionTurnIsOptimistic = false;
+      pendingTurnResolutionActive = false;
+      pendingTurnResolutionLoading = false;
+      if (!isAnimatingTurn && !currentQuestionView) {
+        renderBattle(currentView);
+        if (currentView.battle.status === 'victory') {
+          openRewardAfterVictory();
+        } else if (currentView.battle.status === 'defeat') {
+          showDefeatSequence();
+        } else {
+          setPlayerTurn(true);
+        }
+      }
+      return true;
+    }
+
+    function resetQuestionResultHold(clearPending) {
+      if (questionResultHoldTimerId) {
+        window.clearTimeout(questionResultHoldTimerId);
+        questionResultHoldTimerId = null;
+      }
+      if (questionResultSkipTimerId) {
+        window.clearTimeout(questionResultSkipTimerId);
+        questionResultSkipTimerId = null;
+      }
+      var hold = document.getElementById('questionResultHold');
+      var fill = document.getElementById('questionResultHoldFill');
+      if (hold) {
+        hold.classList.add('hidden');
+        hold.setAttribute('aria-hidden', 'true');
+      }
+      if (fill) {
+        fill.style.transition = 'none';
+        fill.style.width = '100%';
+      }
+      if (currentQuestionView) {
+        currentQuestionView.resultHolding = false;
+      }
+      questionResultProceedRequested = false;
+      if (clearPending !== false) {
+        pendingQuestionTurnView = null;
+        pendingQuestionTurnError = null;
+        pendingServerTurnView = null;
+        pendingQuestionTurnIsOptimistic = false;
+        pendingTurnResolutionActive = false;
+        pendingTurnResolutionLoading = false;
+      }
     }
 
     function hasClientAnswer(question) {
@@ -1163,13 +1640,23 @@
     }
 
     function setBattleInputLocked(locked) {
-      ['attackActionButton', 'guardActionButton', 'skillToggleButton'].forEach(function(id) {
+      ['attackActionButton', 'guardActionButton', 'skillToggleButton', 'passTurnButton'].forEach(function(id) {
         var button = document.getElementById(id);
         if (button) button.disabled = !!locked;
       });
       Array.prototype.forEach.call(document.querySelectorAll('.skill-button, .skill-cancel-button'), function(button) {
         button.disabled = !!locked;
       });
+    }
+
+    function shouldLockBattleInput() {
+      if (!isPlayerTurn || isAnimatingTurn || stageIntroPlaying) return true;
+      if (currentQuestionView) return true;
+      return false;
+    }
+
+    function updateBattleInputLockState() {
+      setBattleInputLocked(shouldLockBattleInput());
     }
 
     function safeJsonParseClient(value, fallback) {
@@ -1198,7 +1685,7 @@
           await holdBattleMessage();
           if (event.target === 'monster') {
             await animatePlayerAttack(event.targetMonsterId);
-            await skippableAutoDelay(BATTLE_STEP_DELAY_MS);
+            await skippableAutoDelay(ATTACK_EFFECT_DELAY_MS);
             animateMonsterHit(event.targetMonsterId, event.damage, event.hpDamage, event.shieldDamage);
           } else if (event.target === 'player') {
             animatePlayerHit(event.damage, event.hpDamage || event.damage, event.shieldDamage);
@@ -1221,6 +1708,7 @@
 
       var monsterEvents = events.filter(function(event) { return event.actor === 'monster'; });
       if (monsterEvents.length) {
+        showTurnBanner('상대 턴');
         pushLog('몬스터 턴 시작');
         await holdBattleMessage();
         for (var j = 0; j < monsterEvents.length; j += 1) {
@@ -1230,34 +1718,54 @@
           if (monsterEvent.type === 'guard') {
             applyMonsterShieldDelta(monsterEvent.monsterId, monsterEvent.shield || 0);
             animateMonsterShield(monsterEvent.monsterId);
+            await skippableAutoDelay(BATTLE_STEP_DELAY_MS);
           } else if (Number(monsterEvent.damage || monsterEvent.shieldDamage || monsterEvent.hpDamage || 0) > 0) {
             await animateMonsterAttack(monsterEvent.monsterId);
-            await skippableAutoDelay(BATTLE_STEP_DELAY_MS);
+            await skippableAutoDelay(ATTACK_EFFECT_DELAY_MS);
             animatePlayerHit(monsterEvent.damage || 0, monsterEvent.hpDamage || 0, monsterEvent.shieldDamage || 0);
           }
           await skippableAutoDelay(BATTLE_STEP_DELAY_MS);
         }
         pushLog('몬스터 턴 종료');
         await holdBattleMessage();
+        await skippableAutoDelay(TURN_END_DELAY_MS);
       }
 
       currentView = normalizeBattleView(nextView);
       battleQuestionCache = (currentView.questionCache || battleQuestionCache || []).slice();
       renderBattle(currentView);
+      if (pendingServerTurnView && applyPendingServerTurnSync()) {
+        renderBattle(currentView);
+      }
       isAnimatingTurn = false;
       setBattleInputLocked(false);
+      if (pendingTurnResolutionActive && !pendingServerTurnView && currentView.battle.status === 'victory') {
+        pendingTurnResolutionLoading = true;
+        setBattleInputLocked(true);
+        showLoadingModal('전투 결과 저장 중...', '보상을 준비하는 중...');
+        return;
+      }
       if (currentView.battle.status === 'victory') {
+        passTurnLogPending = false;
         pushLog('스테이지 클리어!, 보상을 준비중입니다...');
         openRewardAfterVictory();
         return;
       }
       if (currentView.battle.status === 'defeat') {
+        passTurnLogPending = false;
         setPlayerTurn(false);
         pushLog('쓰러졌습니다.');
         showDefeatSequence();
         return;
       }
+      if (monsterEvents.length) {
+        showTurnBanner('내 턴');
+      }
       setPlayerTurn(true);
+      if (passTurnLogPending) {
+        passTurnLogPending = false;
+        pushLog('턴을 종료하였습니다.', { instant: true });
+      }
     }
 
     function buildDummyNextView(actionType) {
@@ -1297,6 +1805,129 @@
       return nextView;
     }
 
+    function buildDummyPassTurnView() {
+      var nextView = JSON.parse(JSON.stringify(currentView));
+      var battle = nextView.battle;
+      battle.lastTurnEvents = [];
+      battle.player.currentActionPoint = 0;
+      battle.monsters.forEach(function(monster) {
+        if (Number(monster.currentHp || 0) <= 0 || battle.player.hp <= 0) return;
+        var damage = Number(monster.attack || 0);
+        var shieldDamage = Math.min(Number(battle.player.shield || 0), damage);
+        var hpDamage = damage - shieldDamage;
+        battle.player.shield = Math.max(0, Number(battle.player.shield || 0) - shieldDamage);
+        battle.player.hp = Math.max(0, Number(battle.player.hp || 0) - hpDamage);
+        battle.lastTurnEvents.push({ actor: 'monster', type: 'attack', monsterId: monster.instanceId, monsterName: monster.name, damage: damage, shieldDamage: shieldDamage, hpDamage: hpDamage, message: monster.name + '의 공격!' });
+      });
+      battle.player.shield = 0;
+      battle.status = battle.player.hp <= 0 ? 'defeat' : 'active';
+      battle.turn = Number(battle.turn || 1) + 1;
+      battle.player.currentActionPoint = battle.status === 'active' ? Number(battle.player.maxActionPoint || 3) : 0;
+      battle.lastMessage = battle.status === 'defeat' ? '몬스터의 공격으로 쓰러졌습니다.' : '턴을 종료하였습니다.';
+      return nextView;
+    }
+
+    function buildOptimisticNextViewFromQuestion() {
+      if (!currentView || !currentQuestionView) return null;
+      var nextView = JSON.parse(JSON.stringify(currentView));
+      var battle = nextView.battle || {};
+      var questionView = currentQuestionView;
+      var maxMs = Number(questionView.maxMs || 10000);
+      var elapsedMs = Math.max(0, Date.now() - questionStartedAt);
+      var remainingMs = Math.max(0, maxMs - elapsedMs);
+      var efficiency = questionView.efficiencyLocked ? Number(questionView.lockedEfficiency || 0.5) : calculateTimedEfficiency(remainingMs, maxMs);
+      battle.lastTurnEvents = [];
+      battle.pendingAction = null;
+      normalizeClientActionPoints(battle.player);
+      var actionCost = Number(questionView.actionPointCost || (questionView.actionType === 'skill' ? getSkillActionPointCost(findAvailableSkill(questionView.skillId)) : 1));
+      battle.player.currentActionPoint = Math.max(0, Number(battle.player.currentActionPoint || 0) - actionCost);
+
+      if (questionView.actionType === 'guard') {
+        var defense = Number(battle.player && battle.player.stats && battle.player.stats.defense || 0);
+        var shield = Math.max(0, Math.round((10 + defense) * efficiency));
+        battle.player.shield = shield;
+        battle.lastTurnEvents.push({ actor: 'player', type: 'guard', shield: shield, message: '수비로 방어막 ' + shield + '을 만들었습니다.' });
+      } else if (questionView.actionType === 'skill') {
+        applyOptimisticSkillAction(battle, questionView, efficiency);
+      } else {
+        var attack = Number(battle.player && battle.player.stats && battle.player.stats.attack || 10);
+        var damage = Math.max(0, Math.round(attack * efficiency));
+        applyOptimisticMonsterDamage(battle, questionView.targetId, damage, 'attack');
+      }
+
+      if (!getFirstAliveMonster(battle)) {
+        battle.status = 'victory';
+        battle.lastMessage = '몬스터를 처치했습니다.';
+        nextView.battle = battle;
+        return normalizeBattleView(nextView);
+      }
+
+      battle.status = Number(battle.player.hp || 0) <= 0 ? 'defeat' : 'active';
+      battle.lastMessage = battle.status === 'defeat' ? '쓰러졌습니다.' : '내 턴입니다. 행동을 선택하세요.';
+      nextView.battle = battle;
+      return normalizeBattleView(nextView);
+    }
+
+    function applyOptimisticSkillAction(battle, questionView, efficiency) {
+      var skill = findAvailableSkill(questionView.skillId) || {};
+      var type = skill.type || 'damage';
+      var value = Number(skill.baseValue || 0);
+      if (type === 'shield') {
+        var shield = Math.max(0, Math.round((value + Number(battle.player && battle.player.stats && battle.player.stats.defense || 0)) * efficiency));
+        battle.player.shield = Number(battle.player.shield || 0) + shield;
+        battle.lastTurnEvents.push({ actor: 'player', type: 'guard', skillId: skill.skillId, shield: shield, message: skill.name + '으로 방어막 ' + shield + '을 만들었습니다.' });
+        return;
+      }
+      if (type === 'heal') {
+        var heal = Math.max(0, Math.round(value * efficiency));
+        battle.player.hp = Math.min(Number(battle.player.maxHp || battle.player.stats && battle.player.stats.hp || 1), Number(battle.player.hp || 0) + heal);
+        battle.lastTurnEvents.push({ actor: 'player', type: 'heal', skillId: skill.skillId, heal: heal, message: skill.name + '으로 체력을 회복했습니다.' });
+        return;
+      }
+      var attack = Number(battle.player && battle.player.stats && battle.player.stats.attack || 0);
+      var damageBase = type === 'damage' ? (value + attack) : (value || attack);
+      var damage = Math.max(0, Math.round(damageBase * efficiency));
+      applyOptimisticMonsterDamage(battle, questionView.targetId, damage, 'skill', skill);
+    }
+
+    function applyOptimisticMonsterDamage(battle, targetId, damage, actionType, skill) {
+      var target = findOptimisticTargetMonster(battle, targetId);
+      if (!target) return;
+      var totalDamage = Math.max(0, Math.round(Number(damage || 0)));
+      var shieldDamage = Math.min(Number(target.shield || 0), totalDamage);
+      var hpDamage = totalDamage - shieldDamage;
+      target.shield = Math.max(0, Number(target.shield || 0) - shieldDamage);
+      target.currentHp = Math.max(0, Number(target.currentHp || 0) - hpDamage);
+      battle.lastTurnEvents.push({
+        actor: 'player',
+        type: actionType || 'attack',
+        skillId: skill && skill.skillId || '',
+        targetMonsterId: target.instanceId || target.monsterId,
+        targetName: target.name,
+        damage: totalDamage,
+        shieldDamage: shieldDamage,
+        hpDamage: hpDamage,
+        message: skill && skill.name ? skill.name + '! ' + target.name + '에게 ' + totalDamage + ' 피해!' : target.name + '에게 ' + totalDamage + ' 피해를 주었습니다.',
+      });
+    }
+
+    function findOptimisticTargetMonster(battle, targetId) {
+      var monsters = battle.monsters || [];
+      return monsters.filter(function(monster) {
+        return Number(monster.currentHp || 0) > 0 && ((monster.instanceId || monster.monsterId) === targetId || monster.monsterId === targetId);
+      })[0] || getFirstAliveMonster(battle);
+    }
+
+    function applyOptimisticPlayerDamage(battle, damage) {
+      var totalDamage = Math.max(0, Math.round(Number(damage || 0)));
+      var shieldBefore = Number(battle.player.shield || 0);
+      var shieldDamage = Math.min(shieldBefore, totalDamage);
+      var hpDamage = totalDamage - shieldDamage;
+      battle.player.shield = Math.max(0, shieldBefore - shieldDamage);
+      battle.player.hp = Math.max(0, Number(battle.player.hp || 0) - hpDamage);
+      return { damage: totalDamage, shieldDamage: shieldDamage, hpDamage: hpDamage };
+    }
+
     function openRewardAfterVictory() {
       if (isDummyMode || currentView.runId === 'dummy-run') {
         renderRewardChoices({
@@ -1306,6 +1937,9 @@
             { rewardId: 'dummy_hp', type: 'stat', targetId: 'hp', value: 10, description: '최대 체력 +10', detailDescription: '최대 체력이 증가하고 현재 체력도 함께 회복됩니다.' },
             { rewardId: 'dummy_skill', type: 'skill', targetId: 'skill_basic_slash', value: 1, description: '스킬 획득: 깊게 베기', detailDescription: '강한 피해를 주는 공격 스킬을 획득합니다.' },
           ],
+          regenAmount: 5,
+          currentHpAfterRegen: 35,
+          maxHpAfterRegen: 100,
         });
         return;
       }
@@ -1320,23 +1954,70 @@
     }
 
     function renderRewardChoices(rewardView) {
+      selectedRewardId = '';
+      rewardSelectionApplying = false;
       document.getElementById('rewardCurrencyBadge').textContent = '재화 +' + Number(rewardView.currencyAmount || 0);
+      var regenAmount = Number(rewardView.regenAmount || 0);
+      document.getElementById('rewardRegenBadge').textContent = '체력 +' + regenAmount;
+      document.getElementById('rewardRegenBadge').classList.toggle('hidden', regenAmount <= 0);
+      animateStageClearRegen(rewardView);
       var rewardContainer = document.getElementById('rewardChoices');
       rewardContainer.innerHTML = rewardView.choices.map(function(reward) {
-        return '<button class="reward-choice-card" data-reward-id="' + escapeHtml(reward.rewardId) + '">' +
-          '<strong>' + escapeHtml(reward.description || reward.rewardId) + '</strong>' +
-          '<span>' + escapeHtml(formatRewardMeta(reward)) + '</span>' +
-          '<small>' + escapeHtml(reward.detailDescription || reward.description || '') + '</small>' +
+        var iconUrl = getRewardIconUrl(reward.type);
+        var rarity = normalizeRewardRarity(reward.rarity);
+        return '<button class="reward-choice-card rarity-' + escapeHtml(rarity) + '" data-reward-id="' + escapeHtml(reward.rewardId) + '">' +
+          '<span class="reward-choice-heading">' + escapeHtml(reward.displayTitle || getRewardDisplayTitle(reward.type)) + '</span>' +
+          '<span class="reward-rarity-badge">' + escapeHtml(reward.rarityLabel || getRewardRarityLabel(rarity)) + '</span>' +
+          '<span class="reward-choice-icon-wrap">' +
+            '<img class="reward-choice-icon" src="' + escapeHtml(iconUrl) + '" alt="" onerror="this.remove();">' +
+          '</span>' +
+          '<span class="reward-choice-body">' +
+            '<strong>' + escapeHtml(reward.description || reward.rewardId) + '</strong>' +
+            '<span>' + escapeHtml(formatRewardMeta(reward)) + '</span>' +
+            '<small>' + escapeHtml(reward.detailDescription || reward.description || '') + '</small>' +
+          '</span>' +
         '</button>';
       }).join('');
       Array.prototype.forEach.call(rewardContainer.querySelectorAll('.reward-choice-card'), function(button) {
         button.addEventListener('click', function() {
-          selectRewardChoice(button.getAttribute('data-reward-id'));
+          selectRewardCandidate(button.getAttribute('data-reward-id'));
         });
       });
-      document.getElementById('rewardMessage').textContent = '';
-      document.getElementById('rewardModal').classList.add('active');
-      document.getElementById('rewardModal').setAttribute('aria-hidden', 'false');
+      fitRewardCardText();
+      var confirmButton = document.getElementById('rewardConfirmButton');
+      if (confirmButton) {
+        confirmButton.disabled = true;
+        confirmButton.textContent = '확인';
+      }
+      var rewardModal = document.getElementById('rewardModal');
+      document.getElementById('rewardMessage').textContent = '보상 하나를 선택하세요.';
+      document.getElementById('rewardMessage').className = 'message';
+      rewardModal.classList.remove('reward-applying');
+      rewardModal.classList.add('active');
+      rewardModal.classList.add('stage-clear-reward-overlay');
+      rewardModal.setAttribute('aria-hidden', 'false');
+    }
+
+    function fitRewardCardText() {
+      Array.prototype.forEach.call(document.querySelectorAll('.reward-choice-heading, .reward-choice-body strong'), function(element) {
+        var baseSize = Number(window.getComputedStyle(element).fontSize.replace('px', '')) || 20;
+        var minSize = element.classList.contains('reward-choice-heading') ? 20 : 13;
+        element.style.fontSize = baseSize + 'px';
+        var size = baseSize;
+        while (element.scrollWidth > element.clientWidth && size > minSize) {
+          size -= 1;
+          element.style.fontSize = size + 'px';
+        }
+      });
+    }
+
+    function animateStageClearRegen(rewardView) {
+      var regenAmount = Number(rewardView && rewardView.regenAmount || 0);
+      if (regenAmount <= 0 || !currentView || !currentView.battle || !currentView.battle.player) return;
+      currentView.battle.player.hp = Number(rewardView.currentHpAfterRegen || currentView.battle.player.hp || 0);
+      currentView.battle.player.maxHp = Number(rewardView.maxHpAfterRegen || currentView.battle.player.maxHp || currentView.battle.player.stats.hp || 1);
+      renderPlayerHud(currentView.battle.player);
+      spawnFloatingText(document.getElementById('playerHpText') || document.getElementById('playerDamageAnchor'), '+' + regenAmount, 'heal-green');
     }
 
     function formatRewardMeta(reward) {
@@ -1355,6 +2036,48 @@
         return typeLabel + (value ? ' / x' + value : '');
       }
       return typeLabel;
+    }
+
+    function getRewardDisplayTitle(type) {
+      var labels = {
+        stat: '스텟 증가',
+        skill: '스킬 획득',
+        skillUpgrade: '스킬 강화',
+        item: '아이템 획득',
+      };
+      return labels[type] || '보상';
+    }
+
+    function normalizeRewardRarity(rarity) {
+      var value = String(rarity || '').trim();
+      var lower = value.toLowerCase();
+      var aliases = {
+        common: 'common',
+        uncommon: 'uncommon',
+        rare: 'rare',
+        epic: 'epic',
+        legendary: 'legendary',
+        unique: 'unique',
+        '일반': 'common',
+        '드문': 'uncommon',
+        '희귀': 'rare',
+        '영웅': 'epic',
+        '전설': 'legendary',
+        '고유': 'unique',
+      };
+      return aliases[value] || aliases[lower] || 'common';
+    }
+
+    function getRewardRarityLabel(rarity) {
+      var labels = {
+        common: '일반',
+        uncommon: '드문',
+        rare: '희귀',
+        epic: '영웅',
+        legendary: '전설',
+        unique: '고유',
+      };
+      return labels[normalizeRewardRarity(rarity)] || '일반';
     }
 
     function getRewardTypeLabel(type) {
@@ -1381,34 +2104,88 @@
       return labels[targetId] || String(targetId || '');
     }
 
-    function selectRewardChoice(rewardId) {
-      if (isDummyMode || currentView.runId === 'dummy-run') {
-        document.getElementById('rewardModal').classList.remove('active');
-        pushLog('데모 보상을 선택했습니다.');
+    function selectRewardCandidate(rewardId) {
+      if (rewardSelectionApplying) return;
+      selectedRewardId = rewardId || '';
+      Array.prototype.forEach.call(document.querySelectorAll('.reward-choice-card'), function(card) {
+        card.classList.toggle('selected', card.getAttribute('data-reward-id') === selectedRewardId);
+      });
+      var confirmButton = document.getElementById('rewardConfirmButton');
+      if (confirmButton) {
+        confirmButton.disabled = !selectedRewardId;
+      }
+      document.getElementById('rewardMessage').textContent = '';
+      document.getElementById('rewardMessage').className = 'message';
+    }
+
+    function confirmRewardChoice() {
+      if (!selectedRewardId || rewardSelectionApplying) {
+        document.getElementById('rewardMessage').textContent = '먼저 보상을 선택하세요.';
+        document.getElementById('rewardMessage').className = 'message error';
         return;
       }
-      showLoadingModal('보상 적용 중...', '다음 스테이지를 준비하는 중...');
-      google.script.run
-        .withSuccessHandler(function(response) {
-          hideLoadingModal();
-          document.getElementById('rewardModal').classList.remove('active');
-          if (response.cleared) {
-            pushLog('1층 특별실/현관 5스테이지 클리어! 탈출에 성공했습니다.');
-            setPlayerTurn(false);
-            return;
-          }
-          currentView = normalizeBattleView(response);
-          battleQuestionCache = (currentView.questionCache || []).slice();
-          renderBattle(currentView);
-          pushLog('보상을 선택했습니다. 다음 스테이지로 이동합니다.');
-          playStageEntranceIntro();
-        })
-        .withFailureHandler(function(error) {
-          hideLoadingModal();
-          document.getElementById('rewardMessage').textContent = error.message;
-          document.getElementById('rewardMessage').className = 'message error';
-        })
-        .selectReward(currentView.runId, rewardId, getAuthToken());
+      selectRewardChoice(selectedRewardId);
+    }
+
+    function selectRewardChoice(rewardId) {
+      rewardSelectionApplying = true;
+      var rewardModal = document.getElementById('rewardModal');
+      var confirmButton = document.getElementById('rewardConfirmButton');
+      if (confirmButton) {
+        confirmButton.disabled = true;
+        confirmButton.textContent = '적용 중...';
+      }
+      Array.prototype.forEach.call(document.querySelectorAll('.reward-choice-card'), function(card) {
+        card.disabled = true;
+      });
+      rewardModal.classList.add('reward-applying');
+      document.getElementById('rewardMessage').textContent = '보상을 적용하는 중...';
+      document.getElementById('rewardMessage').className = 'message ok';
+      if (isDummyMode || currentView.runId === 'dummy-run') {
+        window.setTimeout(function() {
+          rewardModal.classList.remove('active');
+          rewardModal.classList.remove('stage-clear-reward-overlay');
+          rewardModal.classList.remove('reward-applying');
+          rewardSelectionApplying = false;
+          pushLog('데모 보상을 선택했습니다.');
+        }, 260);
+        return;
+      }
+      window.setTimeout(function() {
+        showLoadingModal('보상 적용 중...', '다음 스테이지를 준비하는 중...');
+        google.script.run
+          .withSuccessHandler(function(response) {
+            hideLoadingModal();
+            rewardSelectionApplying = false;
+            rewardModal.classList.remove('active');
+            rewardModal.classList.remove('stage-clear-reward-overlay');
+            rewardModal.classList.remove('reward-applying');
+            if (response.cleared) {
+              pushLog('1층 특별실/현관 5스테이지 클리어! 탈출에 성공했습니다.');
+              setPlayerTurn(false);
+              return;
+            }
+            currentView = normalizeBattleView(response);
+            battleQuestionCache = (currentView.questionCache || []).slice();
+            renderBattle(currentView);
+            playStageEntranceIntro();
+          })
+          .withFailureHandler(function(error) {
+            hideLoadingModal();
+            rewardSelectionApplying = false;
+            rewardModal.classList.remove('reward-applying');
+            if (confirmButton) {
+              confirmButton.disabled = false;
+              confirmButton.textContent = '확인';
+            }
+            Array.prototype.forEach.call(document.querySelectorAll('.reward-choice-card'), function(card) {
+              card.disabled = false;
+            });
+            document.getElementById('rewardMessage').textContent = error.message;
+            document.getElementById('rewardMessage').className = 'message error';
+          })
+          .selectReward(currentView.runId, rewardId, getAuthToken());
+      }, 260);
     }
 
     async function animatePlayerAttack(monsterId) {
@@ -1417,7 +2194,7 @@
       target.classList.remove('incoming-slash');
       void target.offsetWidth;
       target.classList.add('incoming-slash');
-      await skippableAutoDelay(BATTLE_STEP_DELAY_MS);
+      await skippableAutoDelay(ATTACK_EFFECT_DELAY_MS);
     }
 
     async function animateMonsterAttack(monsterId) {
@@ -1427,7 +2204,7 @@
       setMonsterSpriteState(target, 'attack');
       void target.offsetWidth;
       target.classList.add('monster-lunge');
-      await skippableAutoDelay(BATTLE_STEP_DELAY_MS);
+      await skippableAutoDelay(ATTACK_EFFECT_DELAY_MS);
       resetMonsterSpriteState(target);
     }
 
@@ -1438,6 +2215,9 @@
       var visibleShieldDamage = Number(shieldDamage || 0);
       applyMonsterDamageDelta(monsterId, visibleHpDamage, shieldDamage || 0);
       if (visibleHpDamage <= 0 && visibleShieldDamage <= 0) return;
+      if (visibleHpDamage <= 0 && visibleShieldDamage > 0) {
+        spawnShieldBlockIcon(target);
+      }
       target.classList.remove('monster-hit', 'monster-hit-red', 'monster-hit-white');
       setMonsterSpriteState(target, 'hit');
       void target.offsetWidth;
@@ -1445,24 +2225,56 @@
       target.classList.add(visibleHpDamage > 0 ? 'monster-hit-red' : 'monster-hit-white');
       var hpAnchor = target.closest('.monster-slot');
       spawnFloatingDamage(hpAnchor && hpAnchor.querySelector('.monster-hp-text') || target, visibleHpDamage > 0 ? visibleHpDamage : visibleShieldDamage, 'damage-white');
-      var hitDuration = Math.min(900, Math.max(650, BATTLE_STEP_DELAY_MS));
+      var hitDuration = Math.max(HIT_STATE_HOLD_MS, ATTACK_EFFECT_DELAY_MS);
       window.setTimeout(function() {
-        target.classList.remove('monster-hit', 'monster-hit-red', 'monster-hit-white');
-        resetMonsterSpriteState(target);
+        if (isMonsterDefeatedInDom(monsterId)) {
+          animateMonsterDeath(monsterId);
+        } else {
+          target.classList.remove('monster-hit', 'monster-hit-red', 'monster-hit-white');
+          resetMonsterSpriteState(target);
+        }
       }, hitDuration);
+    }
+
+    function isMonsterDefeatedInDom(monsterId) {
+      var slot = document.querySelector('[data-monster-id="' + cssEscape(monsterId) + '"]');
+      var text = slot && slot.querySelector('.monster-hp-text');
+      var match = text && text.textContent.match(/(\d+)/);
+      return !!match && Number(match[1] || 0) <= 0;
+    }
+
+    function animateMonsterDeath(monsterId) {
+      var slot = document.querySelector('[data-monster-id="' + cssEscape(monsterId) + '"]');
+      if (!slot || slot.classList.contains('monster-defeated')) return;
+      var target = slot.querySelector('.compact-monster');
+      if (target) {
+        setMonsterSpriteState(target, 'death');
+        target.classList.remove('monster-hit', 'monster-hit-red', 'monster-hit-white');
+      }
+      slot.classList.add('monster-defeated');
+      window.setTimeout(function() {
+        if (slot.parentNode) slot.parentNode.removeChild(slot);
+      }, DEATH_STATE_HOLD_MS);
     }
 
     function setMonsterSpriteState(target, state) {
       if (!target) return;
       var image = target.querySelector('.monster-art');
       if (!image) return;
-      var attr = state === 'attack' ? 'attackSrc' : (state === 'hit' ? 'hitSrc' : 'idleSrc');
-      var src = target.dataset[attr] || target.dataset.idleSrc || '';
+      var attr = state === 'attack' ? 'attackSrc' : (state === 'hit' ? 'hitSrc' : (state === 'death' ? 'deathSrc' : 'idleSrc'));
+      var src = target.dataset[attr] || (state === 'death' ? target.dataset.hitSrc : '') || target.dataset.idleSrc || '';
       if (!src) return;
       target.classList.remove('monster-image-missing');
+      if (state === 'death') {
+        image.onerror = function() {
+          image.onerror = null;
+          image.src = target.dataset.hitSrc || target.dataset.idleSrc || image.src;
+        };
+      }
       image.src = src;
       target.classList.toggle('monster-state-attack', state === 'attack');
       target.classList.toggle('monster-state-hit', state === 'hit');
+      target.classList.toggle('monster-state-death', state === 'death');
     }
 
     function resetMonsterSpriteState(target) {
@@ -1471,7 +2283,7 @@
       if (image && target.dataset.idleSrc) {
         image.src = target.dataset.idleSrc;
       }
-      target.classList.remove('monster-state-attack', 'monster-state-hit');
+      target.classList.remove('monster-state-attack', 'monster-state-hit', 'monster-state-death');
     }
 
     function animateMonsterEffect(monsterId, label) {
@@ -1490,6 +2302,7 @@
       if (visibleHpDamage <= 0) {
         if (Number(shieldDamage || 0) > 0) {
           animatePlayerShieldBlock();
+          spawnShieldBlockIcon();
         }
         return;
       }
@@ -1523,6 +2336,20 @@
       }, 560);
     }
 
+    function showTurnBanner(text) {
+      var banner = document.getElementById('turnBanner');
+      if (!banner) return;
+      banner.textContent = text || '';
+      banner.classList.remove('active');
+      void banner.offsetWidth;
+      banner.classList.add('active');
+      banner.setAttribute('aria-hidden', 'false');
+      window.setTimeout(function() {
+        banner.classList.remove('active');
+        banner.setAttribute('aria-hidden', 'true');
+      }, 1200);
+    }
+
     function animatePlayerShield(shield) {
       var player = currentView && currentView.battle ? currentView.battle.player : {};
       renderPlayerHud({
@@ -1539,6 +2366,27 @@
     function animateMonsterShield(monsterId) {
       var target = document.querySelector('[data-monster-id="' + cssEscape(monsterId) + '"] .compact-monster');
       if (target) spawnShieldEffect(target);
+    }
+
+    function spawnShieldBlockIcon(anchor) {
+      var layer = document.getElementById('floatingLayer');
+      if (!layer) return;
+      var layerRect = layer.getBoundingClientRect();
+      var element = document.createElement('div');
+      element.className = 'shield-block-icon';
+      element.innerHTML = '<span>DEF</span>';
+      if (anchor) {
+        var rect = anchor.getBoundingClientRect();
+        element.style.left = (rect.left + (rect.width / 2) - layerRect.left) + 'px';
+        element.style.top = (rect.top + (rect.height / 2) - layerRect.top) + 'px';
+      } else {
+        element.style.left = '50%';
+        element.style.top = '48%';
+      }
+      layer.appendChild(element);
+      window.setTimeout(function() {
+        if (element.parentNode) element.parentNode.removeChild(element);
+      }, 900);
     }
 
     function applyMonsterDamageDelta(monsterId, hpDamage, shieldDamage) {
@@ -1665,8 +2513,9 @@
       })[0] || null;
     }
 
-    function closeQuestionModal() {
+    function closeQuestionModal(clearPending) {
       clearInterval(questionTimerId);
+      resetQuestionResultHold(clearPending);
       currentQuestionView = null;
       document.getElementById('questionModal').classList.remove('active');
       document.getElementById('questionModal').setAttribute('aria-hidden', 'true');

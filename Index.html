@@ -58,6 +58,9 @@
     </section>
 
     <section id="mainPanel" class="rpg-panel screen">
+      <div class="main-menu-logo" aria-hidden="true">
+        <img src="<?= getAssetUrl_('Resources/Intro_logo.png') ?>" alt="" onerror="this.style.display='none'">
+      </div>
       <div id="playerBadge" style="text-align:center;"></div>
       <div class="vertical-menu">
         <button onclick="showGameStartMessage()">게임 시작</button>

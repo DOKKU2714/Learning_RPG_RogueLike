@@ -21,6 +21,10 @@ function getAvailableSkills(runState, battleState) {
       cooldown: hydrated.cooldown || '',
       cooldownText: buildSkillCooldownText_(hydrated),
       difficultyBonus: Number(hydrated.difficultyBonus || 0),
+      actionPointCost: Number(hydrated.actionPointCost || 1),
+      rarity: hydrated.rarity,
+      rarityLabel: getRarityLabel_(hydrated.rarity),
+      tags: hydrated.tags,
       description: hydrated.description,
       previewText: buildSkillPreviewText_(hydrated, battleState),
       available: !reason,
@@ -42,6 +46,7 @@ function getSkillUnavailableReason(skill, runState, battleState) {
   var player = battleState.player;
   var target = getSkillTarget_(battleState, skill, skill.targetId || conditions.targetId || '');
   var effectiveStats = calculateEffectiveStats(player.stats || {}, player.effects || []);
+  normalizePlayerActionPoints_(battleState, false);
 
   if (hasControlEffect_(player, 'debuff_stun')) {
     return '기절 상태입니다.';
@@ -82,6 +87,10 @@ function getSkillUnavailableReason(skill, runState, battleState) {
   if (conditions.requiredEffect && !hasEffect_(player, conditions.requiredEffect)) {
     return '필요 효과가 없습니다: ' + conditions.requiredEffect;
   }
+  var actionPointCost = getActionPointCostForAction_(ACTION_TYPES.SKILL, skill);
+  if (!hasEnoughActionPoint_(battleState, actionPointCost)) {
+    return '행동력이 부족합니다.';
+  }
 
   return '';
 }
@@ -98,6 +107,7 @@ function useSkill(runId, skillId, targetId, answerPayload) {
   var battleState = requireActiveBattle_(stageState);
   normalizeBattleStateEffects_(battleState);
   normalizeBattleMonsters_(battleState);
+  normalizePlayerActionPoints_(battleState, false);
 
   var runState = buildRunState_(run);
   var skill = getOwnedSkillForRun_(runState, skillId);
@@ -112,7 +122,6 @@ function useSkill(runId, skillId, targetId, answerPayload) {
 
   var pendingAction = battleState.pendingAction;
   if (!pendingAction && payload.questionId) {
-    battleState.player.shield = 0;
     pendingAction = createPendingActionFromCachedPayload_(
       battleState,
       payload,
@@ -121,6 +130,7 @@ function useSkill(runId, skillId, targetId, answerPayload) {
       targetId || payload.targetId || '',
       player.playerId
     );
+    pendingAction.actionPointCost = getActionPointCostForAction_(ACTION_TYPES.SKILL, skill);
     battleState.pendingAction = pendingAction;
     markCachedQuestionShown_(stageState, pendingAction);
   }
@@ -139,6 +149,7 @@ function useSkill(runId, skillId, targetId, answerPayload) {
       actionType: ACTION_TYPES.SKILL,
       skillId: skill.skillId,
       targetId: targetId || '',
+      actionPointCost: getActionPointCostForAction_(ACTION_TYPES.SKILL, skill),
       questionId: questionResult.question.questionId,
       question: sanitizeQuestionForClient_(questionResult.question),
       issuedAt: new Date().getTime(),
@@ -189,6 +200,7 @@ function useSkill(runId, skillId, targetId, answerPayload) {
   var efficiency = calculateEfficiency(isCorrect, remainingMs, maxMs, Number(payload.wrongCountAfterTimeout || 0));
 
   battleState.lastTurnEvents = [];
+  consumeActionPoint_(battleState, Number(pendingAction.actionPointCost || getActionPointCostForAction_(ACTION_TYPES.SKILL, skill)));
   tickEffectsAtTurnStart(battleState);
   if (battleState.player.hp > 0) {
     applySkillEffect(battleState, Object.assign({}, skill, { targetId: pendingAction.targetId }), efficiency);
@@ -198,19 +210,10 @@ function useSkill(runId, skillId, targetId, answerPayload) {
     battleState.status = STATUS.BATTLE_VICTORY;
     battleState.lastMessage = '몬스터를 처치했습니다.';
     logBattleEvent_(run, STATUS.BATTLE_VICTORY, { battleId: battleState.battleId });
-  } else {
-    clearMonsterTurnShields_(battleState);
-    applyMonsterTurn(battleState);
-    clearPlayerTurnShield_(battleState);
   }
 
   incrementSkillUseCount_(battleState, skill.skillId);
-  tickEffectsAtTurnEnd(battleState);
   battleState.pendingAction = null;
-  battleState.turn += 1;
-  if (battleState.status === STATUS.BATTLE_ACTIVE) {
-    decideMonsterIntents(battleState);
-  }
   stageState.battle = battleState;
 
   logAnswer({
@@ -448,12 +451,51 @@ function getOwnedSkillForRun_(runState, skillId) {
 }
 
 function hydrateSkill_(skill, level) {
+  var rarity = normalizeRarity_(skill.rarity || RARITIES.COMMON);
   return Object.assign({}, skill, {
     level: Math.max(1, Number(level || skill.level || 1)),
     baseValue: Number(skill.baseValue || 0),
     hitCount: Number(skill.hitCount || 1),
     difficultyBonus: Number(skill.difficultyBonus || 0),
+    actionPointCost: Math.max(0, Math.min(3, Number(skill.actionPointCost !== undefined && skill.actionPointCost !== '' ? skill.actionPointCost : 1))),
+    rarity: rarity,
+    tags: normalizeSkillTags_(skill.tags),
   });
+}
+
+function normalizeSkillTags_(tagsValue) {
+  if (Array.isArray(tagsValue)) {
+    return tagsValue.map(function(tag) {
+      return String(tag || '').trim();
+    }).filter(Boolean);
+  }
+
+  var value = String(tagsValue || '').trim();
+  if (!value) {
+    return [];
+  }
+
+  var parsed = safeJsonParse_(value, null);
+  if (Array.isArray(parsed)) {
+    return normalizeSkillTags_(parsed);
+  }
+
+  return value.split(',').map(function(tag) {
+    return tag.trim();
+  }).filter(Boolean);
+}
+
+function hasSkillTag_(skill, tag) {
+  var targetTag = String(tag || '').trim();
+  if (!targetTag) {
+    return false;
+  }
+  return normalizeSkillTags_(skill && skill.tags).indexOf(targetTag) !== -1;
+}
+
+function getSkillTagList(skillId) {
+  var row = findCachedRowByKey_(DB_SHEETS.SKILLS, 'skillId', skillId, 600);
+  return row ? normalizeSkillTags_(row.tags) : [];
 }
 
 function normalizeOwnedSkills_(skills) {
@@ -501,6 +543,7 @@ function getSkillTarget_(battleState, skill, explicitTargetId) {
 
 function applySkillLinkedEffect_(target, skill, source) {
   var config = safeJsonParse_(skill.effectJson, {});
+  applyActionPointEffectConfig_(target, config);
   if (!config.effectId) {
     return null;
   }

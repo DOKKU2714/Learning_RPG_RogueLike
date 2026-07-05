@@ -25,6 +25,10 @@ function generateRewardChoices(runId, stageId, authToken) {
   var stage = loadStage(currentStageId);
   var rewardGroupId = stage.rewardGroupId;
   var rewardState = stageState.reward || {};
+  var regenResult = grantStageClearRegenForRun_(run, stageState);
+  run = regenResult.run;
+  stageState = regenResult.stageState;
+  rewardState = stageState.reward || {};
   if (rewardState.stageId === currentStageId && rewardState.choices && rewardState.choices.length) {
     if (!rewardState.currencyGranted) {
       rewardState.currencyAmount = grantCurrencyForRun_(run, stageState, rewardGroupId).amount;
@@ -49,6 +53,10 @@ function generateRewardChoices(runId, stageId, authToken) {
     selectedRewardId: '',
     currencyGranted: true,
     currencyAmount: currencyResult.amount,
+    stageClearRegenApplied: !!rewardState.stageClearRegenApplied,
+    regenAmount: Number(rewardState.regenAmount || 0),
+    currentHpAfterRegen: Number(rewardState.currentHpAfterRegen || run.currentHp || 0),
+    maxHpAfterRegen: Number(rewardState.maxHpAfterRegen || safeJsonParse_(run.statsJson, BASE_PLAYER_STATS).hp || BASE_PLAYER_STATS.hp),
     createdAt: new Date().toISOString(),
   };
   stageState.reward = rewardState;
@@ -145,6 +153,38 @@ function grantCurrency(runId, rewardGroupId, authToken) {
   requireRewardRunOwner_(run, authToken);
   var stageState = getStageState_(run);
   return grantCurrencyForRun_(run, stageState, rewardGroupId);
+}
+
+function grantStageClearRegenForRun_(run, stageState) {
+  var runId = run.runId;
+  var rewardState = stageState.reward || {};
+  if (rewardState.stageClearRegenApplied) {
+    return { run: run, stageState: stageState, amount: Number(rewardState.regenAmount || 0) };
+  }
+
+  var stats = safeJsonParse_(run.statsJson, Object.assign({}, BASE_PLAYER_STATS));
+  var maxHp = Math.max(1, Number(stats.hp || BASE_PLAYER_STATS.hp));
+  var currentHp = Math.max(0, Number(run.currentHp || 0));
+  var regen = Math.max(0, Math.round(Number(stats.hpRegen || 0)));
+  var amount = Math.max(0, Math.min(regen, maxHp - currentHp));
+  var nextHp = currentHp + amount;
+  rewardState.stageClearRegenApplied = true;
+  rewardState.regenAmount = amount;
+  rewardState.currentHpAfterRegen = nextHp;
+  rewardState.maxHpAfterRegen = maxHp;
+  stageState.reward = rewardState;
+
+  updateRowByKey_(DB_SHEETS.RUNS, 'runId', runId, {
+    currentHp: nextHp,
+    stageStateJson: safeJsonStringify_(stageState),
+    updatedAt: new Date(),
+  });
+
+  return {
+    run: requireRun_(runId),
+    stageState: getStageState_(requireRun_(runId)),
+    amount: amount,
+  };
 }
 
 function grantCurrencyForRun_(run, stageState, rewardGroupId) {
@@ -347,7 +387,7 @@ function pickRewardChoices_(rewardGroupId, floor, ownedSkills) {
     throw new Error('조건에 맞는 보상이 없습니다.');
   }
   return choices.map(function(choice) {
-    return adaptRewardForChoice_(choice, ownedSkills);
+    return attachRewardRarity_(adaptRewardForChoice_(choice, ownedSkills));
   });
 }
 
@@ -400,6 +440,7 @@ function pickWeightedReward_(rewards) {
 }
 
 function sanitizeRewardForClient_(reward) {
+  var rarity = resolveRewardRarity_(reward);
   return {
     rewardId: reward.rewardId,
     type: reward.type,
@@ -407,6 +448,9 @@ function sanitizeRewardForClient_(reward) {
     value: Number(reward.value || 0),
     description: reward.description,
     detailDescription: reward.detailDescription || '',
+    displayTitle: getRewardDisplayTitle_(reward),
+    rarity: rarity,
+    rarityLabel: getRarityLabel_(rarity),
   };
 }
 
@@ -415,15 +459,93 @@ function buildRewardChoiceView_(runId, stageId, rewardGroupId, rewardState, owne
   var choices = (rewardState.choices || []).filter(function(reward) {
     return reward.type !== REWARD_TYPES.SKILL_UPGRADE || hasOwnedSkill_(skills, reward.targetId);
   }).map(function(reward) {
-    return sanitizeRewardForClient_(adaptRewardForChoice_(reward, skills));
+    return sanitizeRewardForClient_(attachRewardRarity_(adaptRewardForChoice_(reward, skills)));
   });
   return {
     runId: runId,
     stageId: stageId,
     rewardGroupId: rewardGroupId,
     currencyAmount: Number(rewardState.currencyAmount || 0),
+    regenAmount: Number(rewardState.regenAmount || 0),
+    currentHpAfterRegen: Number(rewardState.currentHpAfterRegen || 0),
+    maxHpAfterRegen: Number(rewardState.maxHpAfterRegen || 0),
     choices: choices,
   };
+}
+
+function attachRewardRarity_(reward) {
+  var rarity = resolveRewardRarity_(reward);
+  return Object.assign({}, reward, {
+    rarity: rarity,
+    rarityLabel: getRarityLabel_(rarity),
+  });
+}
+
+function resolveRewardRarity_(reward) {
+  var ownRarity = normalizeRarity_(reward && reward.rarity);
+  if (!reward) {
+    return RARITIES.COMMON;
+  }
+
+  if (reward.type === REWARD_TYPES.SKILL || reward.type === REWARD_TYPES.SKILL_UPGRADE) {
+    var skill = findCachedRowByKey_(DB_SHEETS.SKILLS, 'skillId', reward.targetId, 600);
+    return normalizeRarity_(skill && skill.rarity) || ownRarity || RARITIES.COMMON;
+  }
+
+  if (reward.type === REWARD_TYPES.ITEM) {
+    var item = findCachedRowByKey_(DB_SHEETS.ITEMS, 'itemId', reward.targetId, 600);
+    return normalizeRarity_(item && item.rarity) || ownRarity || RARITIES.COMMON;
+  }
+
+  return ownRarity || RARITIES.COMMON;
+}
+
+function normalizeRarity_(rarity) {
+  var value = String(rarity || '').trim();
+  if (!value) {
+    return '';
+  }
+
+  var lower = value.toLowerCase();
+  var aliases = {};
+  aliases[RARITIES.COMMON] = RARITIES.COMMON;
+  aliases[RARITIES.UNCOMMON] = RARITIES.UNCOMMON;
+  aliases[RARITIES.RARE] = RARITIES.RARE;
+  aliases[RARITIES.EPIC] = RARITIES.EPIC;
+  aliases[RARITIES.LEGENDARY] = RARITIES.LEGENDARY;
+  aliases[RARITIES.UNIQUE] = RARITIES.UNIQUE;
+  aliases['일반'] = RARITIES.COMMON;
+  aliases['드문'] = RARITIES.UNCOMMON;
+  aliases['희귀'] = RARITIES.RARE;
+  aliases['영웅'] = RARITIES.EPIC;
+  aliases['전설'] = RARITIES.LEGENDARY;
+  aliases['고유'] = RARITIES.UNIQUE;
+
+  return aliases[value] || aliases[lower] || '';
+}
+
+function getRarityLabel_(rarity) {
+  var normalized = normalizeRarity_(rarity) || RARITIES.COMMON;
+  return RARITY_LABELS[normalized] || RARITY_LABELS.common;
+}
+
+function getRewardDisplayTitle_(reward) {
+  if (!reward) {
+    return '보상';
+  }
+  if (reward.type === REWARD_TYPES.STAT) {
+    return '스텟 증가';
+  }
+  if (reward.type === REWARD_TYPES.SKILL) {
+    return '스킬 획득';
+  }
+  if (reward.type === REWARD_TYPES.SKILL_UPGRADE) {
+    return '스킬 강화';
+  }
+  if (reward.type === REWARD_TYPES.ITEM) {
+    return '아이템 획득';
+  }
+  return '보상';
 }
 
 function randomInt_(min, max) {

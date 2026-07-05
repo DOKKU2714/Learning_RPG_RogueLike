@@ -75,6 +75,80 @@ function loadStage(stageId) {
   return stage;
 }
 
+function normalizePlayerActionPoints_(battleState, resetForTurn) {
+  if (!battleState || !battleState.player) {
+    return null;
+  }
+  var player = battleState.player;
+  player.baseMaxActionPoint = Math.max(0, Number(player.baseMaxActionPoint || GAME_RULES.DEFAULT_MAX_ACTION_POINT));
+  var maxDelta = Number(player.actionPointMaxDelta || 0);
+  var maxActionPoint = Math.max(0, player.baseMaxActionPoint + maxDelta);
+  player.maxActionPoint = maxActionPoint;
+  if (resetForTurn || player.currentActionPoint === undefined || player.currentActionPoint === null || player.currentActionPoint === '') {
+    var nextDelta = Number(player.nextTurnActionPointDelta || 0);
+    player.currentActionPoint = Math.max(0, Math.min(maxActionPoint, maxActionPoint + nextDelta));
+    player.nextTurnActionPointDelta = 0;
+  } else {
+    player.currentActionPoint = Math.max(0, Math.min(maxActionPoint, Number(player.currentActionPoint || 0)));
+  }
+  return player;
+}
+
+function getActionPointCostForAction_(actionType, skill) {
+  if (actionType === ACTION_TYPES.SKILL) {
+    return Math.max(0, Math.min(3, Number(skill && skill.actionPointCost !== undefined && skill.actionPointCost !== '' ? skill.actionPointCost : 1)));
+  }
+  return 1;
+}
+
+function hasEnoughActionPoint_(battleState, cost) {
+  var player = normalizePlayerActionPoints_(battleState, false);
+  return Number(player.currentActionPoint || 0) >= Number(cost || 0);
+}
+
+function consumeActionPoint_(battleState, cost) {
+  var player = normalizePlayerActionPoints_(battleState, false);
+  var actionCost = Math.max(0, Number(cost || 0));
+  if (Number(player.currentActionPoint || 0) < actionCost) {
+    throw new Error('행동력이 부족합니다.');
+  }
+  player.currentActionPoint = Math.max(0, Number(player.currentActionPoint || 0) - actionCost);
+  return player.currentActionPoint;
+}
+
+function applyActionPointEffectConfig_(target, config) {
+  if (!target || !config) {
+    return target;
+  }
+  if (target.currentHp !== undefined) {
+    return target;
+  }
+  normalizePlayerActionPointFields_(target);
+  var maxDelta = Number(config.maxActionPointAdd || 0) - Number(config.maxActionPointSub || 0);
+  if (maxDelta) {
+    target.actionPointMaxDelta = Number(target.actionPointMaxDelta || 0) + maxDelta;
+  }
+  var currentDelta = Number(config.currentActionPointAdd || 0) - Number(config.currentActionPointSub || 0);
+  if (currentDelta) {
+    target.currentActionPoint = Number(target.currentActionPoint || 0) + currentDelta;
+  }
+  var nextDelta = Number(config.nextTurnActionPointAdd || 0) - Number(config.nextTurnActionPointSub || 0);
+  if (nextDelta) {
+    target.nextTurnActionPointDelta = Number(target.nextTurnActionPointDelta || 0) + nextDelta;
+  }
+  normalizePlayerActionPointFields_(target);
+  return target;
+}
+
+function normalizePlayerActionPointFields_(player) {
+  player.baseMaxActionPoint = Math.max(0, Number(player.baseMaxActionPoint || GAME_RULES.DEFAULT_MAX_ACTION_POINT));
+  player.actionPointMaxDelta = Number(player.actionPointMaxDelta || 0);
+  player.nextTurnActionPointDelta = Number(player.nextTurnActionPointDelta || 0);
+  player.maxActionPoint = Math.max(0, player.baseMaxActionPoint + player.actionPointMaxDelta);
+  player.currentActionPoint = Math.max(0, Math.min(player.maxActionPoint, Number(player.currentActionPoint !== undefined && player.currentActionPoint !== '' ? player.currentActionPoint : player.maxActionPoint)));
+  return player;
+}
+
 function startBattle(runId) {
   var run = requireRun_(runId);
   var stageState = getStageState_(run);
@@ -106,6 +180,11 @@ function startBattle(runId) {
       hp: Number(run.currentHp || stats.hp),
       maxHp: Number(stats.hp),
       shield: Number(run.currentShield || 0),
+      baseMaxActionPoint: GAME_RULES.DEFAULT_MAX_ACTION_POINT,
+      maxActionPoint: GAME_RULES.DEFAULT_MAX_ACTION_POINT,
+      currentActionPoint: GAME_RULES.DEFAULT_MAX_ACTION_POINT,
+      actionPointMaxDelta: 0,
+      nextTurnActionPointDelta: 0,
       stats: stats,
       effects: [],
     },
@@ -145,6 +224,72 @@ function getBattleView(authToken) {
   return buildBattleView_(run, stageState);
 }
 
+function surrenderBattle(runId, authToken) {
+  var player = getCurrentPlayer_(authToken);
+  var run = requireRun_(runId);
+  if (run.playerId !== player.playerId || run.status !== STATUS.RUN_ACTIVE) {
+    throw new Error('진행 중인 전투를 찾을 수 없습니다.');
+  }
+
+  var stageState = getStageState_(run);
+  var battleState = requireActiveBattle_(stageState);
+  normalizeBattleStateEffects_(battleState);
+  normalizeBattleMonsters_(battleState);
+  battleState.player.hp = 0;
+  battleState.player.shield = 0;
+  battleState.status = STATUS.BATTLE_DEFEAT;
+  battleState.lastMessage = '전투를 포기했습니다.';
+  battleState.lastTurnEvents = [{
+    actor: 'player',
+    type: 'surrender',
+    message: battleState.lastMessage,
+  }];
+  stageState.battle = battleState;
+  saveStageState_(runId, stageState, battleState);
+
+  var updatedRun = requireRun_(runId);
+  return buildBattleView_(updatedRun, getStageState_(updatedRun));
+}
+
+function passPlayerTurn(runId, authToken) {
+  var player = getCurrentPlayer_(authToken);
+  var run = requireRun_(runId);
+  if (run.playerId !== player.playerId || run.status !== STATUS.RUN_ACTIVE) {
+    throw new Error('진행 중인 전투를 찾을 수 없습니다.');
+  }
+
+  var stageState = getStageState_(run);
+  var battleState = requireActiveBattle_(stageState);
+  normalizeBattleStateEffects_(battleState);
+  normalizeBattleMonsters_(battleState);
+  normalizePlayerActionPoints_(battleState, false);
+  battleState.pendingAction = null;
+  battleState.player.currentActionPoint = 0;
+  battleState.lastTurnEvents = [];
+
+  if (battleState.player.hp > 0 && battleState.status === STATUS.BATTLE_ACTIVE) {
+    clearMonsterTurnShields_(battleState);
+    applyMonsterTurn(battleState);
+    clearPlayerTurnShield_(battleState);
+    tickEffectsAtTurnEnd(battleState);
+  }
+
+  battleState.turn = Number(battleState.turn || 1) + 1;
+  if (battleState.player.hp <= 0) {
+    battleState.status = STATUS.BATTLE_DEFEAT;
+    battleState.lastMessage = '몬스터의 공격으로 쓰러졌습니다.';
+  }
+  if (battleState.status === STATUS.BATTLE_ACTIVE) {
+    decideMonsterIntents(battleState);
+    normalizePlayerActionPoints_(battleState, true);
+    battleState.lastMessage = '내 턴입니다. 행동을 선택하세요.';
+  }
+
+  stageState.battle = battleState;
+  saveStageState_(run.runId, stageState, battleState);
+  return buildBattleView_(requireRun_(run.runId), getStageState_(requireRun_(run.runId)));
+}
+
 function selectQuestionForAction(playerId, runId, actionType, difficultyBonus, authToken) {
   var player = getCurrentPlayer_(authToken);
   if (player.playerId !== playerId) {
@@ -161,14 +306,18 @@ function selectQuestionForAction(playerId, runId, actionType, difficultyBonus, a
   var battleState = requireActiveBattle_(stageState);
   normalizeBattleStateEffects_(battleState);
   normalizeBattleMonsters_(battleState);
+  normalizePlayerActionPoints_(battleState, false);
   if (hasEffect_(battleState.player, 'debuff_stun') || hasEffect_(battleState.player, 'debuff_freeze')) {
     throw new Error('행동할 수 없는 상태입니다.');
+  }
+  var actionCost = getActionPointCostForAction_(normalizedAction, null);
+  if (!hasEnoughActionPoint_(battleState, actionCost)) {
+    throw new Error('행동력이 부족합니다.');
   }
   if (battleState.pendingAction) {
     return buildQuestionView_(battleState.pendingAction.question, battleState.pendingAction);
   }
 
-  battleState.player.shield = 0;
   var activeEffects = getActiveEffectsForQuestion_(battleState);
   var preferredQuestionType = shouldUseShortQuestionInBoss(battleState.stage.bossConfig) ? QUESTION_TYPES.SHORT_ANSWER : '';
   var questionResult = pickQuestion_(playerId, battleState.stage, stageState.otherStudentQuestionShown, preferredQuestionType, getForcedQuestionCreatorId_(battleState));
@@ -177,6 +326,7 @@ function selectQuestionForAction(playerId, runId, actionType, difficultyBonus, a
   var maxMs = calculateFinalQuestionTimeLimit(finalDifficulty, activeEffects);
   var pendingAction = {
     actionType: normalizedAction,
+    actionPointCost: actionCost,
     questionId: questionResult.question.questionId,
     question: sanitizeQuestionForClient_(questionResult.question),
     issuedAt: new Date().getTime(),
@@ -252,6 +402,7 @@ function submitActionAnswer(answerPayload) {
   var efficiency = calculateEfficiency(isCorrect, remainingMs, maxMs, wrongCountAfterTimeout);
 
   battleState.lastTurnEvents = [];
+  consumeActionPoint_(battleState, Number(pendingAction.actionPointCost || getActionPointCostForAction_(pendingAction.actionType, null)));
   tickEffectsAtTurnStart(battleState);
   if (battleState.player.hp > 0) {
     if (pendingAction.actionType === ACTION_TYPES.ATTACK) {
@@ -265,18 +416,9 @@ function submitActionAnswer(answerPayload) {
     battleState.status = STATUS.BATTLE_VICTORY;
     battleState.lastMessage = '몬스터를 처치했습니다.';
     logBattleEvent_(run, STATUS.BATTLE_VICTORY, { battleId: battleState.battleId });
-  } else {
-    clearMonsterTurnShields_(battleState);
-    applyMonsterTurn(battleState);
-    clearPlayerTurnShield_(battleState);
   }
-  tickEffectsAtTurnEnd(battleState);
 
   battleState.pendingAction = null;
-  battleState.turn += 1;
-  if (battleState.status === STATUS.BATTLE_ACTIVE) {
-    decideMonsterIntents(battleState);
-  }
   stageState.battle = battleState;
 
   logAnswer({
@@ -319,10 +461,7 @@ function calculateEfficiency(isCorrect, remainingMs, maxMs, wrongCountAfterTimeo
 
   if (isCorrect) {
     var ratio = Math.max(0, Math.min(1, Number(remainingMs || 0) / Math.max(1, Number(maxMs || 1))));
-    if (ratio >= 0.5) {
-      return roundTo_(1 + ((ratio - 0.5) * 0.5), 3);
-    }
-    return roundTo_(GAME_RULES.MIN_ANSWER_EFFICIENCY + ratio, 3);
+    return roundTo_(GAME_RULES.MIN_ANSWER_EFFICIENCY + (0.75 * ratio), 3);
   }
 
   return roundTo_(GAME_RULES.MIN_ANSWER_EFFICIENCY, 3);
@@ -488,10 +627,10 @@ function buildIntentText(action, monster, battleState) {
     return '행동 대기';
   }
   if (action.actionType === ACTION_TYPES.ATTACK) {
-    return '다음턴 공격 (예상 ' + Math.max(0, Math.round(Number(monsterStats.attack || 0))) + ' 피해)';
+    return '다음턴 공격 (' + Math.max(0, Math.round(Number(monsterStats.attack || 0))) + ' 피해)';
   }
   if (action.actionType === ACTION_TYPES.GUARD || action.actionType === 'shield') {
-    return '다음턴 방어 (예상 방어막 ' + calculateMonsterShieldValue_(monster) + ')';
+    return '다음턴 방어 (방어막 ' + calculateMonsterShieldValue_(monster) + ')';
   }
   if (action.actionType === ACTION_TYPES.SKILL && action.skillId) {
     var skill = findCachedRowByKey_(DB_SHEETS.SKILLS, 'skillId', action.skillId, 600);
@@ -500,7 +639,7 @@ function buildIntentText(action, monster, battleState) {
     }
     var label = skill.name || '스킬';
     if (skill.type === SKILL_TYPES.DAMAGE) {
-      return '다음턴 ' + label + ' (예상 ' + Math.max(0, Math.round(Number(skill.baseValue || 0) + Number(monsterStats.attack || 0))) + ' 피해)';
+      return '다음턴 ' + label + ' (' + Math.max(0, Math.round(Number(skill.baseValue || 0) + Number(monsterStats.attack || 0))) + ' 피해)';
     }
     if (skill.type === SKILL_TYPES.DEBUFF) {
       var effectConfig = safeJsonParse_(skill.effectJson, {});
@@ -511,10 +650,10 @@ function buildIntentText(action, monster, battleState) {
       return label + ' / 강화 효과';
     }
     if (skill.type === SKILL_TYPES.SHIELD) {
-      return '다음턴 ' + label + ' (예상 방어막 ' + Math.max(0, Math.round(Number(skill.baseValue || 0) + Number(monsterStats.defense || 0))) + ')';
+      return '다음턴 ' + label + ' (방어막 ' + Math.max(0, Math.round(Number(skill.baseValue || 0) + Number(monsterStats.defense || 0))) + ')';
     }
     if (skill.type === SKILL_TYPES.HEAL) {
-      return label + ' / 예상 회복 ' + Math.max(0, Math.round(Number(skill.baseValue || 0)));
+      return label + ' / 회복 ' + Math.max(0, Math.round(Number(skill.baseValue || 0)));
     }
   }
   return action.intentTextTemplate || '행동 대기';
@@ -627,6 +766,7 @@ function applyMonsterSkillIntent_(battleState, monster, intent) {
 
 function applyMonsterSkillEffect_(target, skill, source) {
   var config = safeJsonParse_(skill.effectJson, {});
+  applyActionPointEffectConfig_(target, config);
   if (!config.effectId || Math.random() * 100 > Number(config.chance || 100)) {
     return null;
   }
@@ -762,6 +902,7 @@ function buildBattleView_(run, stageState) {
   if (battleState) {
     normalizeBattleStateEffects_(battleState);
     normalizeBattleMonsters_(battleState);
+    normalizePlayerActionPoints_(battleState, false);
     if (battleState.legacyMonsterMigrated) {
       delete battleState.legacyMonsterMigrated;
       stageState.battle = battleState;
@@ -790,6 +931,7 @@ function buildQuestionView_(question, pendingAction) {
     actionType: pendingAction ? pendingAction.actionType : '',
     skillId: pendingAction ? pendingAction.skillId || '' : '',
     targetId: pendingAction ? pendingAction.targetId || '' : '',
+    actionPointCost: pendingAction ? Number(pendingAction.actionPointCost || getActionPointCostForAction_(pendingAction.actionType, null)) : '',
     question: question,
     maxMs: pendingAction ? pendingAction.maxMs : '',
     finalDifficulty: pendingAction ? pendingAction.finalDifficulty : '',
@@ -897,12 +1039,14 @@ function createPendingActionFromCachedPayload_(battleState, payload, actionType,
   var activeEffects = getActiveEffectsForQuestion_(battleState);
   var skill = skillId ? findCachedRowByKey_(DB_SHEETS.SKILLS, 'skillId', skillId, 600) : null;
   var difficultyBonus = skill ? Number(skill.difficultyBonus || 0) : 0;
+  var actionPointCost = getActionPointCostForAction_(actionType, skill);
   var baseDifficulty = applyBossDifficultyBonus(battleState.stage, Number(question.difficulty || battleState.stage.baseDifficulty) + difficultyBonus);
   var finalDifficulty = calculateFinalQuestionDifficulty(baseDifficulty, activeEffects);
   return {
     actionType: actionType,
     skillId: skillId || payload.skillId || '',
     targetId: targetId || payload.targetId || '',
+    actionPointCost: actionPointCost,
     questionId: question.questionId,
     question: sanitizeQuestionForClient_(question),
     issuedAt: new Date().getTime() - Math.max(0, Number(payload.elapsedMs || 0)),
