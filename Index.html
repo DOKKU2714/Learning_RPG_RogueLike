@@ -88,6 +88,7 @@
     var currentState = null;
     var authMode = 'login';
     var SKIP_INTRO = window.location.search.indexOf('skipIntro=1') !== -1;
+    var currentUserRequestTimer = null;
 
     document.addEventListener('DOMContentLoaded', function() {
       bindLoginEnterKey();
@@ -161,6 +162,8 @@
     function enterApp() {
       document.getElementById('introScreen').classList.remove('active');
       document.getElementById('appScreen').classList.add('active');
+      document.getElementById('registerPanel').classList.add('active');
+      showLoginForm();
       refreshCurrentUser();
     }
 
@@ -173,14 +176,31 @@
           return;
         }
       }
+      if (typeof google === 'undefined' || !google.script || !google.script.run) {
+        document.getElementById('appScreen').classList.add('active');
+        document.getElementById('registerPanel').classList.add('active');
+        showLoginForm();
+        setRegisterMessage('앱 실행 환경을 불러오지 못했습니다. 배포 URL로 다시 접속해 주세요.', 'error');
+        return;
+      }
       showLoadingModal('로딩 중...', '사용자 정보를 확인하는 중...');
+      clearCurrentUserRequestTimer();
+      currentUserRequestTimer = window.setTimeout(function() {
+        hideLoadingModal();
+        document.getElementById('appScreen').classList.add('active');
+        document.getElementById('registerPanel').classList.add('active');
+        showLoginForm();
+        setRegisterMessage('사용자 정보 확인이 지연되고 있습니다. 새로고침 후 다시 시도해 주세요.', 'error');
+      }, 9000);
       google.script.run
         .withSuccessHandler(function(state) {
+          clearCurrentUserRequestTimer();
           hideLoadingModal();
           saveCurrentState(state);
           renderCurrentUser(state);
         })
         .withFailureHandler(function(error) {
+          clearCurrentUserRequestTimer();
           hideLoadingModal();
           document.getElementById('appScreen').classList.add('active');
           document.getElementById('registerPanel').classList.add('active');
@@ -189,7 +209,18 @@
         .getCurrentUser(getAuthToken());
     }
 
+    function clearCurrentUserRequestTimer() {
+      if (currentUserRequestTimer) {
+        window.clearTimeout(currentUserRequestTimer);
+        currentUserRequestTimer = null;
+      }
+    }
+
     function renderCurrentUser(state) {
+      state = state || { isRegistered: false };
+      if (state.isRegistered && !state.player) {
+        state.isRegistered = false;
+      }
       currentState = state;
       toggle('registerPanel', !state.isRegistered);
       toggle('mainPanel', state.isRegistered);

@@ -43,6 +43,7 @@ function getSkillUnavailableReason(skill, runState, battleState) {
   }
 
   var conditions = safeJsonParse_(skill.conditionJson, {});
+  var skillRule = getSkillExecutionRule_(skill);
   var player = battleState.player;
   var target = getSkillTarget_(battleState, skill, skill.targetId || conditions.targetId || '');
   var effectiveStats = calculateEffectiveStats(player.stats || {}, player.effects || []);
@@ -87,6 +88,11 @@ function getSkillUnavailableReason(skill, runState, battleState) {
   if (conditions.requiredEffect && !hasEffect_(player, conditions.requiredEffect)) {
     return '필요 효과가 없습니다: ' + conditions.requiredEffect;
   }
+  var ruleReason = checkSkillConditions_(skillRule, skill, battleState, target);
+  if (ruleReason) {
+    return ruleReason;
+  }
+
   var actionPointCost = getActionPointCostForAction_(ACTION_TYPES.SKILL, skill);
   if (!hasEnoughActionPoint_(battleState, actionPointCost)) {
     return '행동력이 부족합니다.';
@@ -142,7 +148,7 @@ function useSkill(runId, skillId, targetId, answerPayload) {
     var activeEffects = getActiveEffectsForQuestion_(battleState);
     var preferredQuestionType = shouldUseShortQuestionInBoss(battleState.stage.bossConfig) ? QUESTION_TYPES.SHORT_ANSWER : '';
     var questionResult = pickQuestion_(run.playerId, battleState.stage, stageState.otherStudentQuestionShown, preferredQuestionType, getForcedQuestionCreatorId_(battleState));
-    var baseDifficulty = applyBossDifficultyBonus(battleState.stage, Number(questionResult.question.difficulty || battleState.stage.baseDifficulty) + Number(skill.difficultyBonus || 0));
+    var baseDifficulty = applyBossDifficultyBonus(battleState.stage, Number(questionResult.question.difficulty || battleState.stage.baseDifficulty) + Number(skill.difficultyBonus || 0) + getSkillRuleQuestionDifficultyBonus_(skill));
     var finalDifficulty = calculateFinalQuestionDifficulty(baseDifficulty, activeEffects);
     var maxMs = calculateFinalQuestionTimeLimit(finalDifficulty, activeEffects);
     pendingAction = {
@@ -202,8 +208,10 @@ function useSkill(runId, skillId, targetId, answerPayload) {
   battleState.lastTurnEvents = [];
   consumeActionPoint_(battleState, Number(pendingAction.actionPointCost || getActionPointCostForAction_(ACTION_TYPES.SKILL, skill)));
   tickEffectsAtTurnStart(battleState);
-  if (battleState.player.hp > 0) {
-    applySkillEffect(battleState, Object.assign({}, skill, { targetId: pendingAction.targetId }), efficiency);
+  processSkillTriggers_(battleState, isCorrect ? 'onCorrect' : 'onWrong', { isCorrect: isCorrect, efficiency: efficiency });
+  var blockedByPenalty = processSkillFailPenaltyAfterAnswer_(battleState, skill, isCorrect);
+  if (!blockedByPenalty && battleState.player.hp > 0 && battleState.status === STATUS.BATTLE_ACTIVE) {
+    applySkillEffect(battleState, Object.assign({}, skill, { targetId: pendingAction.targetId }), efficiency, isCorrect);
   }
 
   if (areAllMonstersDefeated_(battleState)) {
@@ -212,6 +220,10 @@ function useSkill(runId, skillId, targetId, answerPayload) {
     logBattleEvent_(run, STATUS.BATTLE_VICTORY, { battleId: battleState.battleId });
   }
 
+  if (!shouldUseSkillRuleEngine_(getSkillExecutionRule_(skill))) {
+    trackSkillTagsForUse_(battleState, skill);
+  }
+  setSkillCooldownAfterUse_(battleState, skill);
   incrementSkillUseCount_(battleState, skill.skillId);
   battleState.pendingAction = null;
   stageState.battle = battleState;
@@ -239,7 +251,12 @@ function useSkill(runId, skillId, targetId, answerPayload) {
   return buildBattleView_(requireRun_(run.runId), getStageState_(requireRun_(run.runId)));
 }
 
-function applySkillEffect(battleState, skill, efficiency) {
+function applySkillEffect(battleState, skill, efficiency, isCorrect) {
+  var skillRule = getSkillExecutionRule_(skill);
+  if (shouldUseSkillRuleEngine_(skillRule)) {
+    return executeSkillByRule_(battleState, skill, skillRule, efficiency, isCorrect);
+  }
+
   normalizeBattleStateEffects_(battleState);
   var effectiveStats = calculateEffectiveStats(battleState.player.stats || {}, battleState.player.effects || []);
   var target = getSkillTarget_(battleState, skill, skill.targetId || '');
@@ -294,6 +311,865 @@ function applySkillEffect(battleState, skill, efficiency) {
   return battleState;
 }
 
+function getSkillExecutionRule_(skill) {
+  var rule = safeJsonParse_(skill && skill.effectJson, {});
+  if (!rule || typeof rule !== 'object' || Array.isArray(rule)) {
+    return {};
+  }
+  return rule;
+}
+
+function getSkillRuleQuestionDifficultyBonus_(skill) {
+  var rule = getSkillExecutionRule_(skill);
+  return Number(rule && rule.failPenalty && rule.failPenalty.increaseQuestionDifficulty || 0);
+}
+
+function shouldUseSkillRuleEngine_(rule) {
+  if (!rule || typeof rule !== 'object') {
+    return false;
+  }
+  return getSkillRuleEngineKeys_().some(function(key) {
+    return Object.prototype.hasOwnProperty.call(rule, key);
+  });
+}
+
+function getSkillRuleEngineKeys_() {
+  return [
+    'targetMode',
+    'hitCount',
+    'damageFormula',
+    'shieldFormula',
+    'selfDamage',
+    'applyEffects',
+    'efficiencyBonus',
+    'requireCondition',
+    'onUse',
+    'onDamaged',
+    'onBlock',
+    'onCorrect',
+    'onWrong',
+    'onTurnStart',
+    'onTurnEnd',
+    'cooldownModify',
+    'actionPointModify',
+    'failPenalty',
+    'tagBonus',
+    'scaleByEfficiency',
+    'randomMin',
+    'randomMax',
+    'extraDamageFormula',
+    'healFormula',
+  ];
+}
+
+function getSupportedSkillRuleKeys_() {
+  return getSkillRuleEngineKeys_().concat(['effectId', 'chance']);
+}
+
+function warnSkillRule_(battleState, skill, message, data) {
+  var warning = {
+    skillId: skill && skill.skillId || '',
+    message: String(message || 'Unsupported skill rule'),
+    data: data || {},
+    createdAt: new Date().toISOString(),
+  };
+  if (battleState) {
+    battleState.skillRuleWarnings = battleState.skillRuleWarnings || [];
+    battleState.skillRuleWarnings.push(warning);
+    if (battleState.skillRuleWarnings.length > 50) {
+      battleState.skillRuleWarnings = battleState.skillRuleWarnings.slice(-50);
+    }
+  }
+  try {
+    console.warn('[SkillRuleWarning] ' + warning.skillId + ': ' + warning.message, warning.data);
+  } catch (error) {}
+}
+
+function validateSkillRuleKeys_(battleState, skill, rule) {
+  if (!rule || typeof rule !== 'object') {
+    return;
+  }
+  var supported = getSupportedSkillRuleKeys_();
+  Object.keys(rule).forEach(function(key) {
+    if (supported.indexOf(key) === -1) {
+      warnSkillRule_(battleState, skill, 'Unsupported effectJson key: ' + key, { key: key });
+    }
+  });
+  validateSkillEfficiencyBonusRule_(battleState, skill, rule.efficiencyBonus);
+}
+
+function validateSkillEfficiencyBonusRule_(battleState, skill, efficiencyBonus) {
+  if (!efficiencyBonus || typeof efficiencyBonus !== 'object') {
+    return;
+  }
+  var supported = ['threshold', 'damageMultiplier', 'damageAdd', 'shieldMultiplier', 'shieldAdd', 'healMultiplier', 'healAdd', 'applyEffects'];
+  Object.keys(efficiencyBonus).forEach(function(key) {
+    if (supported.indexOf(key) === -1) {
+      warnSkillRule_(battleState, skill, 'Unsupported efficiencyBonus key: ' + key, { key: key });
+    }
+  });
+}
+
+function executeSkillByRule_(battleState, skill, rule, efficiency, isCorrect) {
+  validateSkillRuleKeys_(battleState, skill, rule);
+  normalizeBattleStateEffects_(battleState);
+  normalizeBattleMonsters_(battleState);
+  normalizePlayerActionPoints_(battleState, false);
+  battleState.lastTurnEvents = battleState.lastTurnEvents || [];
+  if (rule.requireCondition && rule.requireCondition.requireEfficiencyAtLeast && Number(efficiency || 0) < Number(rule.requireCondition.requireEfficiencyAtLeast)) {
+    battleState.lastTurnEvents.push({ actor: 'player', type: ACTION_TYPES.SKILL, skillId: skill.skillId, message: skill.name + ' failed efficiency condition.' });
+    battleState.lastMessage = skill.name + ' failed efficiency condition.';
+    return battleState;
+  }
+
+  var context = buildSkillFormulaContext_(battleState, skill, null, efficiency);
+  applySkillActionPointModify_(battleState, skill, rule.actionPointModify, context);
+  registerSkillTriggers_(battleState, skill, rule);
+
+  var targets = selectSkillTargets_(rule, battleState, skill, skill.targetId || '');
+  var hitCount = Math.max(1, Math.round(evaluateSkillFormulaValue_(rule.hitCount, context, Math.max(1, Number(skill.hitCount || 1)), battleState, skill)));
+  if (rule.targetMode === 'randomEnemies') {
+    targets = [];
+    for (var randomHit = 0; randomHit < hitCount; randomHit += 1) {
+      var randomTarget = selectRandomAliveEnemy_(battleState);
+      if (randomTarget) {
+        targets.push(randomTarget);
+      }
+    }
+  }
+  if (!targets.length && rule.targetMode !== 'self') {
+    warnSkillRule_(battleState, skill, 'No valid skill target.', { targetMode: rule.targetMode || skill.target });
+  }
+
+  applySkillRuleShield_(battleState, skill, rule, context, efficiency);
+  applySkillRuleHeal_(battleState, skill, rule, context);
+  applySkillRuleSelfDamage_(battleState, skill, rule, context);
+
+  var damageEvents = 0;
+  targets.forEach(function(target) {
+    if (!target || target.currentHp === undefined) {
+      return;
+    }
+    for (var i = 0; i < (rule.targetMode === 'randomEnemies' ? 1 : hitCount); i += 1) {
+      var targetContext = buildSkillFormulaContext_(battleState, skill, target, efficiency);
+      var damage = calculateSkillRuleDamage_(battleState, skill, rule, targetContext, efficiency);
+      if (damage <= 0) {
+        continue;
+      }
+      damage = applyFrozenBonusIfNeeded_(target, damage);
+      var damageResult = dealDamageToMonster_(battleState, target, damage);
+      damageEvents += 1;
+      battleState.lastTurnEvents.push({
+        actor: 'player',
+        type: ACTION_TYPES.SKILL,
+        skillId: skill.skillId,
+        targetMonsterId: target.instanceId || target.monsterId,
+        damage: damageResult.damage,
+        shieldDamage: damageResult.shieldDamage,
+        hpDamage: damageResult.hpDamage,
+        message: skill.name + ' dealt ' + damageResult.damage + ' damage.',
+      });
+    }
+  });
+
+  applySkillRuleEffects_(battleState, skill, rule, targets, context);
+  if (rule.efficiencyBonus && Number(efficiency || 0) >= Number(rule.efficiencyBonus.threshold || 0) && Array.isArray(rule.efficiencyBonus.applyEffects)) {
+    applySkillRuleEffects_(battleState, skill, { applyEffects: rule.efficiencyBonus.applyEffects }, targets, context);
+  }
+  processImmediateSkillRuleActions_(battleState, skill, rule.onUse, targets, context);
+  if (isCorrect === true) {
+    processImmediateSkillRuleActions_(battleState, skill, rule.onCorrect, targets, context);
+  } else if (isCorrect === false) {
+    processImmediateSkillRuleActions_(battleState, skill, rule.onWrong, targets, context);
+  }
+  applyCooldownModify_(battleState, skill, rule.cooldownModify);
+  trackSkillTagsForUse_(battleState, skill);
+  syncPrimaryMonster_(battleState);
+  battleState.lastMessage = skill.name + ' used.';
+  if (!damageEvents && !rule.shieldFormula && !rule.healFormula && !(rule.applyEffects || []).length) {
+    battleState.lastTurnEvents.push({ actor: 'player', type: skill.type || ACTION_TYPES.SKILL, skillId: skill.skillId, message: skill.name + ' effect activated.' });
+  }
+  return battleState;
+}
+
+function buildSkillRulePreviewText_(skill, battleState, rule) {
+  var context = buildSkillFormulaContext_(battleState, skill, getFirstAliveMonster_(battleState), 1);
+  var parts = [];
+  if (rule.damageFormula) {
+    parts.push('Damage ' + Math.max(0, Math.round(evaluateSkillFormula_(rule.damageFormula, context, battleState, skill))));
+  }
+  if (rule.shieldFormula) {
+    parts.push('Shield ' + Math.max(0, Math.round(evaluateSkillFormula_(rule.shieldFormula, context, battleState, skill))));
+  }
+  if (rule.healFormula) {
+    parts.push('Heal ' + Math.max(0, Math.round(evaluateSkillFormula_(rule.healFormula, context, battleState, skill))));
+  }
+  if (Array.isArray(rule.applyEffects) && rule.applyEffects.length) {
+    parts.push('Effects ' + rule.applyEffects.length);
+  } else if (rule.effectId) {
+    parts.push('Effect ' + rule.effectId);
+  }
+  if (rule.efficiencyBonus && rule.efficiencyBonus.threshold) {
+    parts.push('Bonus at ' + Math.round(Number(rule.efficiencyBonus.threshold || 0) * 100) + '%');
+  }
+  return parts.length ? parts.join(' / ') : 'Rule skill';
+}
+
+function calculateSkillRuleDamage_(battleState, skill, rule, context, efficiency) {
+  var hasDamageFormula = rule.damageFormula !== undefined && rule.damageFormula !== null && rule.damageFormula !== '';
+  var damage = hasDamageFormula ? evaluateSkillFormula_(rule.damageFormula, context, battleState, skill) : 0;
+  if (rule.randomMin !== undefined || rule.randomMax !== undefined) {
+    damage += randomSkillInt_(Number(rule.randomMin || 0), Number(rule.randomMax || rule.randomMin || 0));
+  }
+  if (rule.extraDamageFormula) {
+    damage += evaluateSkillFormula_(rule.extraDamageFormula, context, battleState, skill);
+  }
+  if (rule.tagBonus) {
+    damage = applySkillTagBonusToValue_(battleState, skill, rule.tagBonus, damage);
+  }
+  if (rule.scaleByEfficiency !== false) {
+    damage *= Number(efficiency || 0);
+  }
+  if (rule.efficiencyBonus && Number(efficiency || 0) >= Number(rule.efficiencyBonus.threshold || 0)) {
+    damage *= Number(rule.efficiencyBonus.damageMultiplier || 1);
+    damage += Number(rule.efficiencyBonus.damageAdd || 0);
+  }
+  return Math.max(0, Math.round(damage));
+}
+
+function applySkillRuleShield_(battleState, skill, rule, context, efficiency) {
+  if (rule.shieldFormula === undefined || rule.shieldFormula === null || rule.shieldFormula === '') {
+    return;
+  }
+  var shield = evaluateSkillFormula_(rule.shieldFormula, context, battleState, skill);
+  if (rule.scaleByEfficiency !== false) {
+    shield *= Number(efficiency || 0);
+  }
+  if (rule.efficiencyBonus && Number(efficiency || 0) >= Number(rule.efficiencyBonus.threshold || 0)) {
+    shield *= Number(rule.efficiencyBonus.shieldMultiplier || 1);
+    shield += Number(rule.efficiencyBonus.shieldAdd || 0);
+  }
+  shield = Math.max(0, Math.round(shield));
+  battleState.player.shield = Number(battleState.player.shield || 0) + shield;
+  battleState.lastTurnEvents.push({ actor: 'player', type: ACTION_TYPES.GUARD, skillId: skill.skillId, shield: shield, message: skill.name + ' gained shield ' + shield + '.' });
+}
+
+function applySkillRuleHeal_(battleState, skill, rule, context) {
+  if (rule.healFormula === undefined || rule.healFormula === null || rule.healFormula === '') {
+    return;
+  }
+  var heal = evaluateSkillFormula_(rule.healFormula, context, battleState, skill);
+  if (rule.scaleByEfficiency !== false) {
+    heal *= Number(context.efficiency || 0);
+  }
+  if (rule.efficiencyBonus && Number(context.efficiency || 0) >= Number(rule.efficiencyBonus.threshold || 0)) {
+    heal *= Number(rule.efficiencyBonus.healMultiplier || 1);
+    heal += Number(rule.efficiencyBonus.healAdd || 0);
+  }
+  heal = Math.max(0, Math.round(heal));
+  battleState.player.hp = Math.min(Number(battleState.player.maxHp || battleState.player.stats.hp || 1), Number(battleState.player.hp || 0) + heal);
+  battleState.lastTurnEvents.push({ actor: 'player', type: 'heal', skillId: skill.skillId, heal: heal, message: skill.name + ' healed ' + heal + '.' });
+}
+
+function applySkillRuleSelfDamage_(battleState, skill, rule, context) {
+  var selfDamage = Number(rule.selfDamage || 0);
+  if (rule.failPenalty && rule.failPenalty.selfDamageOnUse) {
+    selfDamage += Number(rule.failPenalty.selfDamageOnUse || 0);
+  }
+  if (selfDamage <= 0) {
+    return;
+  }
+  var damage = Math.max(0, Math.round(evaluateSkillFormulaValue_(selfDamage, context, selfDamage, battleState, skill)));
+  battleState.player.hp = Math.max(0, Number(battleState.player.hp || 0) - damage);
+  battleState.lastTurnEvents.push({ actor: 'player', type: 'selfDamage', skillId: skill.skillId, damage: damage, hpDamage: damage, message: skill.name + ' caused ' + damage + ' self damage.' });
+}
+
+function selectSkillTargets_(rule, battleState, skill, explicitTargetId) {
+  var mode = rule.targetMode || (skill.target === 'self' ? 'self' : 'singleEnemy');
+  if (mode === 'self') {
+    return [battleState.player];
+  }
+  if (mode === 'singleEnemy') {
+    var target = getSkillTarget_(battleState, skill, explicitTargetId);
+    return target ? [target] : [];
+  }
+  if (mode === 'allEnemies') {
+    return getAliveMonsters_(battleState);
+  }
+  if (mode === 'randomEnemy' || mode === 'randomEnemies') {
+    var randomTarget = selectRandomAliveEnemy_(battleState);
+    return randomTarget ? [randomTarget] : [];
+  }
+  if (mode === 'enemyWithShield') {
+    var shielded = getAliveMonsters_(battleState).filter(function(monster) {
+      return Number(monster.shield || 0) > 0;
+    })[0];
+    return shielded ? [shielded] : [];
+  }
+  warnSkillRule_(battleState, skill, 'Unsupported targetMode: ' + mode, { targetMode: mode });
+  var fallback = getSkillTarget_(battleState, skill, explicitTargetId);
+  return fallback ? [fallback] : [];
+}
+
+function selectRandomAliveEnemy_(battleState) {
+  var alive = getAliveMonsters_(battleState);
+  if (!alive.length) {
+    return null;
+  }
+  return alive[Math.floor(Math.random() * alive.length)];
+}
+
+function checkSkillConditions_(rule, skill, battleState, target) {
+  if (!rule || typeof rule !== 'object') {
+    return '';
+  }
+  var condition = rule.requireCondition || {};
+  validateSkillRequireCondition_(battleState, skill, condition);
+  if (condition.oncePerBattle) {
+    condition.perBattleLimit = 1;
+  }
+  if (condition.afterTurn && Number(battleState.turn || 1) < Number(condition.afterTurn)) {
+    return 'Turn ' + condition.afterTurn + ' required.';
+  }
+  if (condition.perBattleLimit && getSkillUseCount_(battleState, skill.skillId) >= Number(condition.perBattleLimit)) {
+    return 'Battle use limit reached.';
+  }
+  if (condition.perStageLimit && getSkillUseCount_(battleState, skill.skillId) >= Number(condition.perStageLimit)) {
+    return 'Stage use limit reached.';
+  }
+  if (condition.requireShield && Number(battleState.player.shield || 0) <= 0) {
+    return 'Shield required.';
+  }
+  if (condition.requireEnemyShield) {
+    var hasShieldedEnemy = getAliveMonsters_(battleState).some(function(monster) {
+      return Number(monster.shield || 0) > 0;
+    });
+    if (!hasShieldedEnemy) {
+      return 'Enemy shield required.';
+    }
+  }
+  if (condition.requireTag && !hasSkillTag_(skill, condition.requireTag)) {
+    return 'Skill tag required: ' + condition.requireTag;
+  }
+  if (condition.requireHpBelowPercent && getHpPercent_(battleState.player) >= Number(condition.requireHpBelowPercent)) {
+    return 'HP must be below ' + condition.requireHpBelowPercent + '%.';
+  }
+  if (condition.requireHpAbovePercent && getHpPercent_(battleState.player) <= Number(condition.requireHpAbovePercent)) {
+    return 'HP must be above ' + condition.requireHpAbovePercent + '%.';
+  }
+  battleState.skillCooldowns = battleState.skillCooldowns || {};
+  if (Number(battleState.skillCooldowns[skill.skillId] || 0) > 0) {
+    return 'Cooldown ' + Number(battleState.skillCooldowns[skill.skillId] || 0) + ' turn(s) remaining.';
+  }
+
+  return '';
+}
+
+function validateSkillRequireCondition_(battleState, skill, condition) {
+  if (!condition || typeof condition !== 'object') {
+    return;
+  }
+  var supported = ['afterTurn', 'perStageLimit', 'perBattleLimit', 'requireShield', 'requireEnemyShield', 'requireTag', 'requireEfficiencyAtLeast', 'requireHpBelowPercent', 'requireHpAbovePercent', 'oncePerBattle', 'notUpgradable'];
+  Object.keys(condition).forEach(function(key) {
+    if (supported.indexOf(key) === -1) {
+      warnSkillRule_(battleState, skill, 'Unsupported requireCondition key: ' + key, { key: key });
+    }
+  });
+}
+
+function buildSkillFormulaContext_(battleState, skill, target, efficiency) {
+  var effectiveStats = calculateEffectiveStats(battleState.player.stats || {}, battleState.player.effects || []);
+  var level = Math.max(1, Number(skill.level || 1));
+  var upgradeLevel = Math.max(0, level - 1);
+  var tagCounts = battleState.usedSkillCountByTagThisBattle || {};
+  var turnTagCounts = battleState.usedSkillCountByTagThisTurn || {};
+  return {
+    n: upgradeLevel,
+    upgrade: upgradeLevel,
+    level: level,
+    skillLevel: level,
+    attack: Number(effectiveStats.attack || 0),
+    defense: Number(effectiveStats.defense || 0),
+    hp: Number(battleState.player.hp || 0),
+    maxHp: Number(battleState.player.maxHp || battleState.player.stats && battleState.player.stats.hp || 1),
+    shield: Number(battleState.player.shield || 0),
+    enemyHp: Number(target && target.currentHp || 0),
+    enemyShield: Number(target && target.shield || 0),
+    efficiency: Number(efficiency || 0),
+    usedStrikeSkillCountThisBattle: Number(tagCounts.strike || tagCounts['타격'] || 0),
+    usedStrikeSkillCountThisTurn: Number(turnTagCounts.strike || turnTagCounts['타격'] || 0),
+  };
+}
+
+function evaluateSkillFormulaValue_(value, context, fallback, battleState, skill) {
+  if (value === undefined || value === null || value === '') {
+    return Number(fallback || 0);
+  }
+  if (typeof value === 'number') {
+    return value;
+  }
+  return evaluateSkillFormula_(String(value), context, battleState, skill);
+}
+
+function evaluateSkillFormula_(formula, context, battleState, skill) {
+  var source = String(formula || '').replace(/\s+/g, '');
+  if (!source) {
+    return 0;
+  }
+  if (!/^[0-9A-Za-z_.+\-*/()%dD]+$/.test(source)) {
+    warnSkillRule_(battleState, skill, 'Unsafe formula rejected.', { formula: formula });
+    return 0;
+  }
+  source = source.replace(/(\d+)[dD](\d+)/g, function(match, countText, sidesText) {
+    var count = Math.max(1, Math.min(100, Number(countText || 1)));
+    var sides = Math.max(1, Math.min(100000, Number(sidesText || 1)));
+    var total = 0;
+    for (var i = 0; i < count; i += 1) {
+      total += randomSkillInt_(1, sides);
+    }
+    return String(total);
+  });
+
+  var parser = createSkillFormulaParser_(source, context || {}, battleState, skill);
+  var result = parser.parseExpression();
+  if (parser.hasRemaining()) {
+    warnSkillRule_(battleState, skill, 'Formula parse stopped before end.', { formula: formula, at: parser.index });
+  }
+  if (!isFinite(result)) {
+    warnSkillRule_(battleState, skill, 'Formula returned non-finite value.', { formula: formula });
+    return 0;
+  }
+  return Number(result || 0);
+}
+
+function randomSkillInt_(min, max) {
+  var low = Math.round(Math.min(Number(min || 0), Number(max || min || 0)));
+  var high = Math.round(Math.max(Number(min || 0), Number(max || min || 0)));
+  return Math.floor(Math.random() * (high - low + 1)) + low;
+}
+
+function createSkillFormulaParser_(source, context, battleState, skill) {
+  return {
+    source: source,
+    index: 0,
+    hasRemaining: function() {
+      return this.index < this.source.length;
+    },
+    peek: function() {
+      return this.source.charAt(this.index);
+    },
+    take: function() {
+      return this.source.charAt(this.index++);
+    },
+    parseExpression: function() {
+      var value = this.parseTerm();
+      while (this.hasRemaining()) {
+        var op = this.peek();
+        if (op !== '+' && op !== '-') break;
+        this.take();
+        var rhs = this.parseTerm();
+        value = op === '+' ? value + rhs : value - rhs;
+      }
+      return value;
+    },
+    parseTerm: function() {
+      var value = this.parseFactor();
+      while (this.hasRemaining()) {
+        var op = this.peek();
+        if (op !== '*' && op !== '/' && op !== '%') break;
+        this.take();
+        var rhs = this.parseFactor();
+        if (op === '*') value *= rhs;
+        if (op === '/') value = rhs === 0 ? 0 : value / rhs;
+        if (op === '%') value = rhs === 0 ? 0 : value % rhs;
+      }
+      return value;
+    },
+    parseFactor: function() {
+      var op = this.peek();
+      if (op === '+') {
+        this.take();
+        return this.parseFactor();
+      }
+      if (op === '-') {
+        this.take();
+        return -this.parseFactor();
+      }
+      if (op === '(') {
+        this.take();
+        var nested = this.parseExpression();
+        if (this.peek() === ')') {
+          this.take();
+        }
+        return nested;
+      }
+      return this.parseAtom();
+    },
+    parseAtom: function() {
+      var start = this.index;
+      while (this.hasRemaining() && /[0-9.]/.test(this.peek())) {
+        this.take();
+      }
+      if (this.index > start) {
+        return Number(this.source.slice(start, this.index) || 0);
+      }
+      start = this.index;
+      while (this.hasRemaining() && /[A-Za-z_.]/.test(this.peek())) {
+        this.take();
+      }
+      if (this.index > start) {
+        var name = this.source.slice(start, this.index);
+        if (Object.prototype.hasOwnProperty.call(context, name)) {
+          return Number(context[name] || 0);
+        }
+        warnSkillRule_(battleState, skill, 'Unknown formula variable: ' + name, { variable: name });
+        return 0;
+      }
+      warnSkillRule_(battleState, skill, 'Unexpected formula token: ' + this.peek(), { formula: this.source, at: this.index });
+      this.take();
+      return 0;
+    },
+  };
+}
+
+function applySkillRuleEffects_(battleState, skill, rule, targets, context) {
+  var effects = [];
+  if (Array.isArray(rule.applyEffects)) {
+    effects = effects.concat(rule.applyEffects);
+  }
+  if (rule.effectId) {
+    effects.push({ target: skill.target === 'self' ? 'self' : 'enemy', effectId: rule.effectId, chance: rule.chance });
+  }
+  effects.forEach(function(effectRule) {
+    applySkillEffectRule_(battleState, skill, effectRule, targets, context);
+  });
+}
+
+function applySkillEffectRule_(battleState, skill, effectRule, targets, context) {
+  if (!effectRule || !effectRule.effectId) {
+    warnSkillRule_(battleState, skill, 'applyEffects entry missing effectId.', { effectRule: effectRule });
+    return;
+  }
+  var supportedEffectKeys = ['target', 'effectId', 'value', 'valueFormula', 'durationType', 'durationTurns', 'stackable', 'maxStacks', 'chance', 'requireEfficiencyAtLeast', 'requireCondition'];
+  Object.keys(effectRule).forEach(function(key) {
+    if (supportedEffectKeys.indexOf(key) === -1) {
+      warnSkillRule_(battleState, skill, 'Unsupported applyEffects key: ' + key, { key: key });
+    }
+  });
+  var requiredEfficiency = effectRule.requireEfficiencyAtLeast || (effectRule.requireCondition && effectRule.requireCondition.requireEfficiencyAtLeast);
+  if (requiredEfficiency && Number(context.efficiency || 0) < Number(requiredEfficiency)) {
+    return;
+  }
+  var chance = effectRule.chance === undefined ? 100 : Number(effectRule.chance || 0);
+  if (Math.random() * 100 > chance) {
+    return;
+  }
+  var effect = findCachedRowByKey_(DB_SHEETS.EFFECTS, 'effectId', effectRule.effectId, 600);
+  if (!effect) {
+    warnSkillRule_(battleState, skill, 'Effect not found: ' + effectRule.effectId, { effectId: effectRule.effectId });
+    return;
+  }
+  var applied = Object.assign({}, effect);
+  if (effectRule.value !== undefined) {
+    applied.value = Number(effectRule.value || 0);
+  }
+  if (effectRule.valueFormula) {
+    applied.value = evaluateSkillFormula_(effectRule.valueFormula, context, battleState, skill);
+  }
+  if (effectRule.durationType) applied.durationType = effectRule.durationType;
+  if (effectRule.durationTurns !== undefined) applied.durationTurns = Number(effectRule.durationTurns || 0);
+  if (effectRule.stackable !== undefined) applied.stackable = effectRule.stackable;
+  if (effectRule.maxStacks !== undefined) applied.maxStacks = Number(effectRule.maxStacks || 1);
+
+  getTargetsForEffectRule_(battleState, effectRule, targets).forEach(function(target) {
+    applyEffect(target, applied, { source: effectRule.target || 'rule', skillId: skill.skillId });
+  });
+}
+
+function getTargetsForEffectRule_(battleState, effectRule, targets) {
+  var target = effectRule.target || 'enemy';
+  if (target === 'self') {
+    return [battleState.player];
+  }
+  if (target === 'allEnemies') {
+    return getAliveMonsters_(battleState);
+  }
+  return (targets || []).filter(function(candidate) {
+    return candidate && candidate.currentHp !== undefined;
+  });
+}
+
+function applySkillActionPointModify_(battleState, skill, apRule, context) {
+  if (!apRule) {
+    return;
+  }
+  if (typeof apRule !== 'object') {
+    warnSkillRule_(battleState, skill, 'actionPointModify must be an object.', { actionPointModify: apRule });
+    return;
+  }
+  var supportedKeys = ['currentActionPointAdd', 'currentActionPointSub', 'maxActionPointAdd', 'maxActionPointSub', 'nextTurnActionPointAdd', 'nextTurnActionPointSub'];
+  Object.keys(apRule).forEach(function(key) {
+    if (supportedKeys.indexOf(key) === -1) {
+      warnSkillRule_(battleState, skill, 'Unsupported actionPointModify key: ' + key, { key: key });
+    }
+  });
+  var config = {};
+  supportedKeys.forEach(function(key) {
+    if (apRule[key] !== undefined) {
+      config[key] = evaluateSkillFormulaValue_(apRule[key], context, Number(apRule[key] || 0), battleState, skill);
+    }
+  });
+  applyActionPointEffectConfig_(battleState.player, config);
+}
+
+function registerSkillTriggers_(battleState, skill, rule) {
+  var triggerKeys = ['onDamaged', 'onBlock', 'onCorrect', 'onWrong', 'onTurnStart', 'onTurnEnd'];
+  triggerKeys.forEach(function(key) {
+    if (!rule[key]) {
+      return;
+    }
+    validateSkillTriggerRule_(battleState, skill, key, rule[key]);
+    battleState.activeTriggers = battleState.activeTriggers || [];
+    battleState.activeTriggers.push({
+      timing: key,
+      rule: rule[key],
+      sourceSkillId: skill.skillId,
+      sourceSkillName: skill.name,
+      durationType: rule[key].durationType || 'battle',
+      remainingTurns: Number(rule[key].durationTurns || 0),
+      createdAtTurn: Number(battleState.turn || 1),
+    });
+  });
+  if (rule.failPenalty && (rule.failPenalty.loseBattleOnDamageTaken || rule.failPenalty.loseBattleOnWrongAnswer)) {
+    battleState.activeTriggers = battleState.activeTriggers || [];
+    battleState.activeTriggers.push({
+      timing: 'failPenalty',
+      rule: rule.failPenalty,
+      sourceSkillId: skill.skillId,
+      sourceSkillName: skill.name,
+      durationType: 'battle',
+      remainingTurns: 0,
+      createdAtTurn: Number(battleState.turn || 1),
+    });
+  }
+}
+
+function validateSkillTriggerRule_(battleState, skill, key, triggerRule) {
+  if (!triggerRule || typeof triggerRule !== 'object') {
+    warnSkillRule_(battleState, skill, key + ' must be an object.', { value: triggerRule });
+    return;
+  }
+  var supported = ['durationType', 'durationTurns', 'reflectBlockedDamage', 'damageFormula', 'applyEffects', 'actionPointModify'];
+  Object.keys(triggerRule).forEach(function(ruleKey) {
+    if (supported.indexOf(ruleKey) === -1) {
+      warnSkillRule_(battleState, skill, 'Unsupported ' + key + ' key: ' + ruleKey, { key: ruleKey });
+    }
+  });
+}
+
+function processImmediateSkillRuleActions_(battleState, skill, actionRule, targets, context) {
+  if (!actionRule) {
+    return;
+  }
+  if (actionRule.damageFormula) {
+    var target = (targets || []).filter(function(candidate) {
+      return candidate && candidate.currentHp !== undefined;
+    })[0] || getFirstAliveMonster_(battleState);
+    if (target) {
+      var targetContext = buildSkillFormulaContext_(battleState, skill, target, context.efficiency || 1);
+      var damage = Math.max(0, Math.round(evaluateSkillFormula_(actionRule.damageFormula, targetContext, battleState, skill)));
+      if (damage > 0) {
+        var result = dealDamageToMonster_(battleState, target, damage);
+        battleState.lastTurnEvents = battleState.lastTurnEvents || [];
+        battleState.lastTurnEvents.push({ actor: 'effect', type: 'ruleDamage', target: 'monster', targetMonsterId: target.instanceId || target.monsterId, damage: result.damage, shieldDamage: result.shieldDamage, hpDamage: result.hpDamage, message: skill.name + ' triggered ' + result.damage + ' damage.' });
+      }
+    }
+  }
+  if (actionRule.actionPointModify) {
+    applySkillActionPointModify_(battleState, skill, actionRule.actionPointModify, context);
+  }
+  if (actionRule.applyEffects) {
+    applySkillRuleEffects_(battleState, skill, { applyEffects: actionRule.applyEffects }, targets, context);
+  }
+}
+
+function processSkillFailPenaltyAfterAnswer_(battleState, skill, isCorrect) {
+  var rule = getSkillExecutionRule_(skill);
+  var failPenalty = rule.failPenalty || {};
+  validateSkillFailPenaltyRule_(battleState, skill, failPenalty);
+  if (!isCorrect && failPenalty.loseBattleOnWrongAnswer) {
+    markBattleDefeatBySkillRule_(battleState, skill, 'Wrong answer penalty.');
+    return true;
+  }
+  if (!isCorrect && failPenalty.reduceActionPoint) {
+    applyActionPointEffectConfig_(battleState.player, { currentActionPointSub: Number(failPenalty.reduceActionPoint || 0) });
+  }
+  return false;
+}
+
+function validateSkillFailPenaltyRule_(battleState, skill, failPenalty) {
+  if (!failPenalty || typeof failPenalty !== 'object') {
+    return;
+  }
+  var supported = ['loseBattleOnWrongAnswer', 'loseBattleOnDamageTaken', 'selfDamageOnUse', 'increaseQuestionDifficulty', 'reduceActionPoint'];
+  Object.keys(failPenalty).forEach(function(key) {
+    if (supported.indexOf(key) === -1) {
+      warnSkillRule_(battleState, skill, 'Unsupported failPenalty key: ' + key, { key: key });
+    }
+  });
+}
+
+function markBattleDefeatBySkillRule_(battleState, skill, reason) {
+  battleState.player.hp = 0;
+  battleState.status = STATUS.BATTLE_DEFEAT || 'defeat';
+  battleState.lastMessage = reason || 'Skill penalty defeat.';
+  battleState.lastTurnEvents = battleState.lastTurnEvents || [];
+  battleState.lastTurnEvents.push({ actor: 'effect', type: 'defeat', skillId: skill && skill.skillId || '', target: 'player', message: battleState.lastMessage });
+}
+
+function processSkillTriggers_(battleState, timing, payload) {
+  if (!battleState || !battleState.activeTriggers || !battleState.activeTriggers.length) {
+    return;
+  }
+  var triggers = battleState.activeTriggers.slice();
+  triggers.forEach(function(trigger) {
+    if (trigger.timing !== timing && trigger.timing !== 'failPenalty') {
+      return;
+    }
+    processSingleSkillTrigger_(battleState, trigger, timing, payload || {});
+  });
+}
+
+function processSingleSkillTrigger_(battleState, trigger, timing, payload) {
+  var rule = trigger.rule || {};
+  var sourceSkill = { skillId: trigger.sourceSkillId || '', name: trigger.sourceSkillName || trigger.sourceSkillId || 'trigger' };
+  var context = buildSkillFormulaContext_(battleState, sourceSkill, payload.target || null, payload.efficiency || 1);
+  context.blockedDamage = Number(payload.shieldDamage || 0);
+  context.damageTaken = Number(payload.hpDamage || 0);
+
+  if (trigger.timing === 'failPenalty') {
+    if (timing === 'onDamaged' && rule.loseBattleOnDamageTaken && Number(payload.hpDamage || 0) > 0) {
+      markBattleDefeatBySkillRule_(battleState, sourceSkill, 'Damage taken penalty.');
+    }
+    return;
+  }
+  if (rule.reflectBlockedDamage && Number(payload.shieldDamage || 0) > 0) {
+    var target = getFirstAliveMonster_(battleState);
+    if (target) {
+      var result = dealDamageToMonster_(battleState, target, Number(payload.shieldDamage || 0));
+      battleState.lastTurnEvents = battleState.lastTurnEvents || [];
+      battleState.lastTurnEvents.push({ actor: 'effect', type: 'reflect', target: 'monster', targetMonsterId: target.instanceId || target.monsterId, damage: result.damage, hpDamage: result.hpDamage, shieldDamage: result.shieldDamage, message: sourceSkill.name + ' reflected ' + result.damage + ' damage.' });
+    }
+  }
+  if (rule.damageFormula) {
+    var damage = Math.max(0, Math.round(evaluateSkillFormula_(rule.damageFormula, context, battleState, sourceSkill)));
+    var damageTarget = getFirstAliveMonster_(battleState);
+    if (damageTarget && damage > 0) {
+      dealDamageToMonster_(battleState, damageTarget, damage);
+    }
+  }
+  if (rule.applyEffects) {
+    applySkillRuleEffects_(battleState, sourceSkill, { applyEffects: rule.applyEffects }, [getFirstAliveMonster_(battleState)], context);
+  }
+  if (rule.actionPointModify) {
+    applySkillActionPointModify_(battleState, sourceSkill, rule.actionPointModify, context);
+  }
+}
+
+function applyCooldownModify_(battleState, skill, cooldownRule) {
+  if (!cooldownRule) {
+    return;
+  }
+  if (typeof cooldownRule !== 'object') {
+    warnSkillRule_(battleState, skill, 'cooldownModify must be an object.', { cooldownModify: cooldownRule });
+    return;
+  }
+  var supportedKeys = ['target', 'amount', 'skillId', 'targetSkillId', 'tag'];
+  Object.keys(cooldownRule).forEach(function(key) {
+    if (supportedKeys.indexOf(key) === -1) {
+      warnSkillRule_(battleState, skill, 'Unsupported cooldownModify key: ' + key, { key: key });
+    }
+  });
+  battleState.skillCooldowns = battleState.skillCooldowns || {};
+  var amount = Number(cooldownRule.amount || 0);
+  var targetSkillId = cooldownRule.skillId || cooldownRule.targetSkillId || '';
+  if (cooldownRule.target === 'randomOwnSkill') {
+    var ids = Object.keys(battleState.skillCooldowns).filter(function(skillId) {
+      return Number(battleState.skillCooldowns[skillId] || 0) > 0 && skillId !== skill.skillId;
+    });
+    targetSkillId = ids.length ? ids[Math.floor(Math.random() * ids.length)] : '';
+  }
+  if (!targetSkillId) {
+    warnSkillRule_(battleState, skill, 'cooldownModify had no target skill.', { cooldownModify: cooldownRule });
+    return;
+  }
+  battleState.skillCooldowns[targetSkillId] = Math.max(0, Number(battleState.skillCooldowns[targetSkillId] || 0) + amount);
+}
+
+function applySkillTagBonusToValue_(battleState, skill, tagBonus, value) {
+  if (!tagBonus) {
+    return value;
+  }
+  var tag = tagBonus.tag || tagBonus.requireTag || '';
+  if (tag && !hasSkillTag_(skill, tag)) {
+    return value;
+  }
+  var next = Number(value || 0);
+  if (tagBonus.damageMultiplier) {
+    next *= Number(tagBonus.damageMultiplier || 1);
+  }
+  if (tagBonus.percent) {
+    next *= 1 + (Number(tagBonus.percent || 0) / 100);
+  }
+  if (tagBonus.add) {
+    next += Number(tagBonus.add || 0);
+  }
+  return next;
+}
+
+function trackSkillTagsForUse_(battleState, skill) {
+  var tags = normalizeSkillTags_(skill.tags);
+  battleState.usedSkillTagsThisBattle = battleState.usedSkillTagsThisBattle || [];
+  battleState.usedSkillTagsThisTurn = battleState.usedSkillTagsThisTurn || [];
+  battleState.usedSkillCountByTagThisBattle = battleState.usedSkillCountByTagThisBattle || {};
+  battleState.usedSkillCountByTagThisTurn = battleState.usedSkillCountByTagThisTurn || {};
+  tags.forEach(function(tag) {
+    if (battleState.usedSkillTagsThisBattle.indexOf(tag) === -1) battleState.usedSkillTagsThisBattle.push(tag);
+    if (battleState.usedSkillTagsThisTurn.indexOf(tag) === -1) battleState.usedSkillTagsThisTurn.push(tag);
+    battleState.usedSkillCountByTagThisBattle[tag] = Number(battleState.usedSkillCountByTagThisBattle[tag] || 0) + 1;
+    battleState.usedSkillCountByTagThisTurn[tag] = Number(battleState.usedSkillCountByTagThisTurn[tag] || 0) + 1;
+  });
+}
+
+function setSkillCooldownAfterUse_(battleState, skill) {
+  var cooldown = Number(skill && skill.cooldown || 0);
+  if (cooldown <= 0) {
+    return;
+  }
+  battleState.skillCooldowns = battleState.skillCooldowns || {};
+  battleState.skillCooldowns[skill.skillId] = Math.max(0, cooldown);
+}
+
+function decrementSkillCooldowns_(battleState) {
+  battleState.skillCooldowns = battleState.skillCooldowns || {};
+  Object.keys(battleState.skillCooldowns).forEach(function(skillId) {
+    battleState.skillCooldowns[skillId] = Math.max(0, Number(battleState.skillCooldowns[skillId] || 0) - 1);
+  });
+  return battleState.skillCooldowns;
+}
+
+function cleanupSkillTriggersForTurn_(battleState) {
+  battleState.activeTriggers = (battleState.activeTriggers || []).map(function(trigger) {
+    if (trigger.durationType === 'turn') {
+      trigger.remainingTurns = Number(trigger.remainingTurns || 1) - 1;
+    }
+    return trigger;
+  }).filter(function(trigger) {
+    return trigger.durationType !== 'turn' || Number(trigger.remainingTurns || 0) > 0;
+  });
+  return battleState.activeTriggers;
+}
+
 function applyEffect(target, effect, source) {
   target.effects = target.effects || [];
   var effectInstance = buildEffectInstance_(effect, source || {});
@@ -317,6 +1193,7 @@ function applyEffect(target, effect, source) {
 
 function tickEffectsAtTurnStart(battleState) {
   normalizeBattleStateEffects_(battleState);
+  processSkillTriggers_(battleState, 'onTurnStart', {});
   applyTimedEffectDamage_(battleState.player, TRIGGER_TIMINGS.TURN_START, battleState, 'player');
   applyTimedEffectDamage_(battleState.player, TRIGGER_TIMINGS.ON_ACTION, battleState, 'player');
   getAliveMonsters_(battleState).forEach(function(monster) {
@@ -327,6 +1204,8 @@ function tickEffectsAtTurnStart(battleState) {
 
 function tickEffectsAtTurnEnd(battleState) {
   normalizeBattleStateEffects_(battleState);
+  processSkillTriggers_(battleState, 'onTurnEnd', {});
+  cleanupSkillTriggersForTurn_(battleState);
   applyTimedEffectDamage_(battleState.player, TRIGGER_TIMINGS.TURN_END, battleState, 'player');
   getAliveMonsters_(battleState).forEach(function(monster) {
     applyTimedEffectDamage_(monster, TRIGGER_TIMINGS.TURN_END, battleState, 'monster');
@@ -376,6 +1255,11 @@ function getSkillUpgradeValue(skill, key) {
 }
 
 function buildSkillPreviewText_(skill, battleState) {
+  var rule = getSkillExecutionRule_(skill);
+  if (shouldUseSkillRuleEngine_(rule)) {
+    return buildSkillRulePreviewText_(skill, battleState, rule);
+  }
+
   var effectiveStats = calculateEffectiveStats((battleState.player && battleState.player.stats) || {}, (battleState.player && battleState.player.effects) || []);
   var baseValue = Number(skill.baseValue || 0);
   var hitCount = Math.max(1, Number(skill.hitCount || 1));

@@ -282,6 +282,9 @@ function passPlayerTurn(runId, authToken) {
   if (battleState.status === STATUS.BATTLE_ACTIVE) {
     decideMonsterIntents(battleState);
     normalizePlayerActionPoints_(battleState, true);
+    decrementSkillCooldowns_(battleState);
+    battleState.usedSkillTagsThisTurn = [];
+    battleState.usedSkillCountByTagThisTurn = {};
     battleState.lastMessage = '내 턴입니다. 행동을 선택하세요.';
   }
 
@@ -461,7 +464,10 @@ function calculateEfficiency(isCorrect, remainingMs, maxMs, wrongCountAfterTimeo
 
   if (isCorrect) {
     var ratio = Math.max(0, Math.min(1, Number(remainingMs || 0) / Math.max(1, Number(maxMs || 1))));
-    return roundTo_(GAME_RULES.MIN_ANSWER_EFFICIENCY + (0.75 * ratio), 3);
+    if (ratio >= 0.5) {
+      return roundTo_(1 + ((ratio - 0.5) * 0.5), 3);
+    }
+    return roundTo_(GAME_RULES.MIN_ANSWER_EFFICIENCY + ratio, 3);
   }
 
   return roundTo_(GAME_RULES.MIN_ANSWER_EFFICIENCY, 3);
@@ -781,6 +787,12 @@ function dealDamageToPlayer_(battleState, damage) {
   var hpDamage = totalDamage - shieldDamage;
   battleState.player.shield = Math.max(0, shieldBefore - shieldDamage);
   battleState.player.hp = Math.max(0, Number(battleState.player.hp || 0) - hpDamage);
+  if (shieldDamage > 0) {
+    processSkillTriggers_(battleState, 'onBlock', { damage: totalDamage, shieldDamage: shieldDamage, hpDamage: hpDamage });
+  }
+  if (hpDamage > 0) {
+    processSkillTriggers_(battleState, 'onDamaged', { damage: totalDamage, shieldDamage: shieldDamage, hpDamage: hpDamage });
+  }
   return { damage: totalDamage, shieldDamage: shieldDamage, hpDamage: hpDamage };
 }
 
