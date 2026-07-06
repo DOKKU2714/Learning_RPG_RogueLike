@@ -195,7 +195,13 @@ function startBattle(runId) {
     pendingAction: null,
     lastMessage: '전투가 시작되었습니다.',
     lastTurnEvents: [],
+    skillCooldowns: {},
     skillUseCounts: {},
+    usedSkillTagsThisBattle: [],
+    usedSkillTagsThisTurn: [],
+    usedSkillCountByTagThisBattle: {},
+    usedSkillCountByTagThisTurn: {},
+    activeTriggers: [],
   };
   decideMonsterIntents(battleState);
 

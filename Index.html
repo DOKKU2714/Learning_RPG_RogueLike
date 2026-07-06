@@ -88,15 +88,30 @@
     var currentState = null;
     var authMode = 'login';
     var SKIP_INTRO = window.location.search.indexOf('skipIntro=1') !== -1;
+    var INTRO_SEEN_KEY = 'learningRpgIntroSeen';
     var currentUserRequestTimer = null;
 
     document.addEventListener('DOMContentLoaded', function() {
       bindLoginEnterKey();
       showLoginForm();
-      if (SKIP_INTRO) {
+      if (SKIP_INTRO || hasSeenIntroScreen()) {
         enterApp();
       }
     });
+
+    function hasSeenIntroScreen() {
+      try {
+        return localStorage.getItem(INTRO_SEEN_KEY) === '1';
+      } catch (error) {
+        return false;
+      }
+    }
+
+    function markIntroScreenSeen() {
+      try {
+        localStorage.setItem(INTRO_SEEN_KEY, '1');
+      } catch (error) {}
+    }
 
     function markIntroLogoLoaded() {
       var logo = document.getElementById('introLogo');
@@ -160,6 +175,7 @@
     }
 
     function enterApp() {
+      markIntroScreenSeen();
       document.getElementById('introScreen').classList.remove('active');
       document.getElementById('appScreen').classList.add('active');
       document.getElementById('registerPanel').classList.add('active');
@@ -231,12 +247,7 @@
         showLoginForm();
         return;
       }
-
-      var player = state.player;
-      document.getElementById('playerBadge').innerHTML =
-        '<div class="muted">접속 중</div>' +
-        '<h1 class="rpg-title" style="margin-bottom:4px;">' + escapeHtml(player.displayName) + '</h1>' +
-        '<p class="muted">학번 ' + escapeHtml(player.studentId) + '</p>';
+      document.getElementById('playerBadge').innerHTML = '';
       document.getElementById('adminButton').style.display = state.isAdmin ? 'block' : 'none';
     }
 

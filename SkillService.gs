@@ -623,6 +623,7 @@ function checkSkillConditions_(rule, skill, battleState, target) {
   if (!rule || typeof rule !== 'object') {
     return '';
   }
+  normalizeSkillRuntimeState_(battleState);
   var condition = rule.requireCondition || {};
   validateSkillRequireCondition_(battleState, skill, condition);
   if (condition.oncePerBattle) {
@@ -657,9 +658,8 @@ function checkSkillConditions_(rule, skill, battleState, target) {
   if (condition.requireHpAbovePercent && getHpPercent_(battleState.player) <= Number(condition.requireHpAbovePercent)) {
     return 'HP must be above ' + condition.requireHpAbovePercent + '%.';
   }
-  battleState.skillCooldowns = battleState.skillCooldowns || {};
   if (Number(battleState.skillCooldowns[skill.skillId] || 0) > 0) {
-    return 'Cooldown ' + Number(battleState.skillCooldowns[skill.skillId] || 0) + ' turn(s) remaining.';
+    return '쿨타임 ' + Number(battleState.skillCooldowns[skill.skillId] || 0) + '턴 남았습니다.';
   }
 
   return '';
@@ -688,7 +688,16 @@ function buildSkillFormulaContext_(battleState, skill, target, efficiency) {
     upgrade: upgradeLevel,
     level: level,
     skillLevel: level,
+    base: Number(skill.baseValue || 0),
+    baseValue: Number(skill.baseValue || 0),
+    skillBaseValue: Number(skill.baseValue || 0),
+    damageUpgrade: getSkillUpgradeValue(skill, 'damage'),
+    effectUpgrade: getSkillUpgradeValue(skill, 'effect'),
+    buffValueUpgrade: getSkillUpgradeValue(skill, 'buffValue'),
+    debuffChanceUpgrade: getSkillUpgradeValue(skill, 'debuffChance'),
+    atk: Number(effectiveStats.attack || 0),
     attack: Number(effectiveStats.attack || 0),
+    def: Number(effectiveStats.defense || 0),
     defense: Number(effectiveStats.defense || 0),
     hp: Number(battleState.player.hp || 0),
     maxHp: Number(battleState.player.maxHp || battleState.player.stats && battleState.player.stats.hp || 1),
@@ -1128,11 +1137,8 @@ function applySkillTagBonusToValue_(battleState, skill, tagBonus, value) {
 }
 
 function trackSkillTagsForUse_(battleState, skill) {
+  normalizeSkillRuntimeState_(battleState);
   var tags = normalizeSkillTags_(skill.tags);
-  battleState.usedSkillTagsThisBattle = battleState.usedSkillTagsThisBattle || [];
-  battleState.usedSkillTagsThisTurn = battleState.usedSkillTagsThisTurn || [];
-  battleState.usedSkillCountByTagThisBattle = battleState.usedSkillCountByTagThisBattle || {};
-  battleState.usedSkillCountByTagThisTurn = battleState.usedSkillCountByTagThisTurn || {};
   tags.forEach(function(tag) {
     if (battleState.usedSkillTagsThisBattle.indexOf(tag) === -1) battleState.usedSkillTagsThisBattle.push(tag);
     if (battleState.usedSkillTagsThisTurn.indexOf(tag) === -1) battleState.usedSkillTagsThisTurn.push(tag);
@@ -1142,16 +1148,16 @@ function trackSkillTagsForUse_(battleState, skill) {
 }
 
 function setSkillCooldownAfterUse_(battleState, skill) {
+  normalizeSkillRuntimeState_(battleState);
   var cooldown = Number(skill && skill.cooldown || 0);
   if (cooldown <= 0) {
     return;
   }
-  battleState.skillCooldowns = battleState.skillCooldowns || {};
   battleState.skillCooldowns[skill.skillId] = Math.max(0, cooldown);
 }
 
 function decrementSkillCooldowns_(battleState) {
-  battleState.skillCooldowns = battleState.skillCooldowns || {};
+  normalizeSkillRuntimeState_(battleState);
   Object.keys(battleState.skillCooldowns).forEach(function(skillId) {
     battleState.skillCooldowns[skillId] = Math.max(0, Number(battleState.skillCooldowns[skillId] || 0) - 1);
   });
@@ -1397,6 +1403,7 @@ function normalizeOwnedSkills_(skills) {
 }
 
 function normalizeBattleStateEffects_(battleState) {
+  normalizeSkillRuntimeState_(battleState);
   battleState.player.effects = battleState.player.effects || [];
   normalizeBattleMonsters_(battleState);
   (battleState.monsters || []).forEach(function(monster) {
@@ -1406,6 +1413,23 @@ function normalizeBattleStateEffects_(battleState) {
   });
   battleState.player.buffs = battleState.player.effects.filter(function(effect) { return effect.category === EFFECT_CATEGORIES.BUFF; });
   battleState.player.debuffs = battleState.player.effects.filter(function(effect) { return effect.category === EFFECT_CATEGORIES.DEBUFF; });
+}
+
+function normalizeSkillRuntimeState_(battleState) {
+  if (!battleState) {
+    return battleState;
+  }
+  battleState.skillCooldowns = battleState.skillCooldowns || {};
+  battleState.skillUseCounts = battleState.skillUseCounts || {};
+  battleState.usedSkillTagsThisBattle = battleState.usedSkillTagsThisBattle || [];
+  battleState.usedSkillTagsThisTurn = battleState.usedSkillTagsThisTurn || [];
+  battleState.usedSkillCountByTagThisBattle = battleState.usedSkillCountByTagThisBattle || {};
+  battleState.usedSkillCountByTagThisTurn = battleState.usedSkillCountByTagThisTurn || {};
+  battleState.activeTriggers = battleState.activeTriggers || [];
+  Object.keys(battleState.skillCooldowns).forEach(function(skillId) {
+    battleState.skillCooldowns[skillId] = Math.max(0, Number(battleState.skillCooldowns[skillId] || 0));
+  });
+  return battleState;
 }
 
 function getActiveEffectsForQuestion_(battleState) {
@@ -1540,11 +1564,11 @@ function getHpPercent_(target) {
 }
 
 function getSkillUseCount_(battleState, skillId) {
-  battleState.skillUseCounts = battleState.skillUseCounts || {};
+  normalizeSkillRuntimeState_(battleState);
   return Number(battleState.skillUseCounts[skillId] || 0);
 }
 
 function incrementSkillUseCount_(battleState, skillId) {
-  battleState.skillUseCounts = battleState.skillUseCounts || {};
+  normalizeSkillRuntimeState_(battleState);
   battleState.skillUseCounts[skillId] = getSkillUseCount_(battleState, skillId) + 1;
 }

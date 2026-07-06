@@ -81,41 +81,28 @@
 
   <div id="questionModal" class="question-modal-overlay" aria-hidden="true">
     <section class="question-modal" role="dialog" aria-modal="true" aria-labelledby="questionTitle">
-      <div class="modal-topline">
-        <div>
-          <p class="muted" style="margin-bottom:4px;">전투 문제</p>
-          <h2 id="questionTitle" style="margin:0;">문제</h2>
-        </div>
-        <div id="questionCreatorBadge" class="creator-badge">출제자: 김OO</div>
-      </div>
-
-      <div class="modal-meta-grid">
-        <div class="meta-box">
+      <div class="question-frame question-prompt-panel">
+        <div class="question-corner-badge question-difficulty-badge">
           <strong>난이도</strong>
-          <div id="questionDifficulty">1</div>
+          <span id="questionDifficulty">1</span>
         </div>
-        <div class="meta-box">
-          <strong>제한시간</strong>
-          <div id="questionMaxTime">10.0초</div>
-        </div>
-        <div class="meta-box">
-          <strong>남은 시간</strong>
-          <div id="questionRemainingTime">10.0초</div>
-        </div>
+        <div id="questionCreatorBadge" class="question-corner-badge creator-badge">출제자: 김OO</div>
+        <h2 id="questionTitle">문제</h2>
+        <p id="questionPrompt">문제 본문</p>
       </div>
 
-      <div class="meta-box" style="margin-bottom:14px;">
-        <div class="inline-actions" style="justify-content:space-between;">
-          <strong>효율</strong>
-          <span id="questionEfficiencyText">125%</span>
-        </div>
+      <div class="question-frame question-answer-panel">
+        <div id="questionAnswerArea"></div>
+      </div>
+
+      <div class="question-efficiency-panel">
+        <span id="questionMaxTime" class="question-max-time">10.0초</span>
         <div class="efficiency-meter">
+          <span id="questionEfficiencyText" class="question-efficiency-text">125%</span>
           <span id="questionEfficiencyFill" class="meter-fill" style="width:100%;"></span>
         </div>
+        <div id="questionRemainingTime" class="question-time-left">10.0초</div>
       </div>
-
-      <p id="questionPrompt" style="line-height:1.7;">문제 본문</p>
-      <div id="questionAnswerArea"></div>
 
       <div class="inline-actions" style="justify-content:flex-end; margin-top:14px;">
         <button id="questionSubmitButton" onclick="submitQuestionAnswer()">확인</button>
@@ -192,6 +179,7 @@
     var selectedRewardId = '';
     var rewardSelectionApplying = false;
     var passTurnLogPending = false;
+    var STAGE_INTRO_SEEN_PREFIX = 'learningRpgStageIntroSeen:';
 
     var dummyView = {
       runId: 'dummy-run',
@@ -253,7 +241,7 @@
             finishBattleStartFade();
             showDefeatSequence();
           } else {
-            playStageEntranceIntro();
+            startBattleEntrance();
           }
         })
         .withFailureHandler(function(error) {
@@ -262,7 +250,7 @@
           currentView = normalizeBattleView(dummyView);
           renderBattle(currentView);
           pushLog(error.message || '데모 UI로 전투 화면을 표시합니다.');
-          playStageEntranceIntro();
+          startBattleEntrance();
         })
         .getBattleView(getAuthToken());
     }
@@ -296,6 +284,7 @@
         return;
       }
 
+      markStageEntranceIntroSeen();
       stageIntroPlaying = true;
       setBattleInputLocked(true);
       setPlayerTurn(false);
@@ -421,6 +410,46 @@
       }, 1200);
     }
 
+    function startBattleEntrance() {
+      if (hasSeenStageEntranceIntro()) {
+        skipStageEntranceIntro();
+        return;
+      }
+      playStageEntranceIntro();
+    }
+
+    function skipStageEntranceIntro() {
+      stageIntroPlaying = false;
+      finishBattleStartFade();
+      setBattleInputLocked(false);
+      setPlayerTurn(true);
+    }
+
+    function getStageEntranceIntroSeenKey() {
+      var battle = currentView && currentView.battle ? currentView.battle : {};
+      var stage = battle.stage || {};
+      return STAGE_INTRO_SEEN_PREFIX + [
+        currentView && currentView.runId || 'run',
+        stage.stageId || stage.name || 'stage',
+        stage.floor || 'floor',
+        stage.stage || 'step'
+      ].join(':');
+    }
+
+    function hasSeenStageEntranceIntro() {
+      try {
+        return sessionStorage.getItem(getStageEntranceIntroSeenKey()) === '1';
+      } catch (error) {
+        return false;
+      }
+    }
+
+    function markStageEntranceIntroSeen() {
+      try {
+        sessionStorage.setItem(getStageEntranceIntroSeenKey(), '1');
+      } catch (error) {}
+    }
+
     function getStageEntranceTitle(stage) {
       var parts = getDisplayFloorParts(stage.floor);
       return {
@@ -526,9 +555,15 @@
       renderPlayerHud(battle.player);
       renderSkills(view.availableSkills || []);
       renderActionTooltips(battle.player);
-      pushLog(battle.lastMessage || '전투 시작!');
+      if (!isDefaultPlayerTurnPrompt(battle.lastMessage)) {
+        pushLog(battle.lastMessage || '전투 시작!');
+      }
       setPlayerTurn(isPlayerTurn && battle.status === 'active');
       updateBattleInputLockState();
+    }
+
+    function isDefaultPlayerTurnPrompt(message) {
+      return String(message || '').trim() === '내 턴입니다. 행동을 선택하세요.';
     }
 
     function renderSkills(skills) {
@@ -1030,9 +1065,6 @@
       document.getElementById('actionPanel').classList.toggle('disabled-actions', !active || isAnimatingTurn);
       updateBattleHudMode();
       updateBattleInputLockState();
-      if (active && !isAnimatingTurn && !passTurnLogPending) {
-        pushLog('내 턴입니다. 행동을 선택하세요.', { instant: true });
-      }
     }
 
     function updateBattleHudMode() {
@@ -1088,8 +1120,6 @@
         return;
       }
       if (handlePendingTurnResolutionBeforeAction()) return;
-      passTurnLogPending = true;
-      pushLog('턴을 종료합니다.', { instant: true });
       closeSkillPanel();
       var selectedSkill = findAvailableSkill(skillId);
       var actionPointCost = getSkillActionPointCost(selectedSkill);
@@ -1128,6 +1158,8 @@
       }
       if (handlePendingTurnResolutionBeforeAction()) return;
       closeSkillPanel();
+      passTurnLogPending = true;
+      pushLog('턴을 종료합니다.', { instant: true });
       setBattleInputLocked(true);
       setPlayerTurn(false);
       if (isDummyMode || !currentView || currentView.runId === 'dummy-run') {
@@ -1229,7 +1261,7 @@
       setQuestionInputsDisabled(false);
 
       var question = questionView.question;
-      document.getElementById('questionTitle').textContent = actionLabel(questionView.actionType) + ' 문제';
+      document.getElementById('questionTitle').textContent = '문제';
       document.getElementById('questionPrompt').textContent = question.prompt;
       document.getElementById('questionDifficulty').textContent = questionView.finalDifficulty || '-';
       document.getElementById('questionMaxTime').textContent = formatSecond(questionView.maxMs);
@@ -1309,8 +1341,12 @@
 
     function updateQuestionEfficiencyMeter(efficiency) {
       var normalizedEfficiency = Math.max(0, Number(efficiency || 0));
-      document.getElementById('questionEfficiencyText').textContent = Math.round(normalizedEfficiency * 100) + '%';
-      document.getElementById('questionEfficiencyFill').style.width = Math.round(Math.max(0, Math.min(1, (normalizedEfficiency - 0.5) / 0.75)) * 100) + '%';
+      var percent = Math.round(normalizedEfficiency * 100);
+      var fill = document.getElementById('questionEfficiencyFill');
+      document.getElementById('questionEfficiencyText').textContent = percent + '%';
+      fill.style.width = Math.round(Math.max(0, Math.min(1, (normalizedEfficiency - 0.5) / 0.75)) * 100) + '%';
+      fill.classList.remove('efficiency-high', 'efficiency-mid', 'efficiency-low');
+      fill.classList.add(percent <= 50 ? 'efficiency-low' : (percent <= 100 ? 'efficiency-mid' : 'efficiency-high'));
     }
 
     function calculateWrongEfficiency(wrongCount) {
@@ -1875,6 +1911,11 @@
       var skill = findAvailableSkill(questionView.skillId) || {};
       var type = skill.type || 'damage';
       var value = Number(skill.baseValue || 0);
+      var ruleDamage = getSkillPreviewDamage(skill);
+      if (ruleDamage > 0) {
+        applyOptimisticMonsterDamage(battle, questionView.targetId, Math.round(ruleDamage * Number(efficiency || 0)), 'skill', skill);
+        return;
+      }
       if (type === 'shield') {
         var shield = Math.max(0, Math.round((value + Number(battle.player && battle.player.stats && battle.player.stats.defense || 0)) * efficiency));
         battle.player.shield = Number(battle.player.shield || 0) + shield;
@@ -1891,6 +1932,12 @@
       var damageBase = type === 'damage' ? (value + attack) : (value || attack);
       var damage = Math.max(0, Math.round(damageBase * efficiency));
       applyOptimisticMonsterDamage(battle, questionView.targetId, damage, 'skill', skill);
+    }
+
+    function getSkillPreviewDamage(skill) {
+      if (!skill || !skill.previewText) return 0;
+      var match = String(skill.previewText).match(/(?:피해|Damage)\s*(\d+)/i);
+      return match ? Number(match[1] || 0) : 0;
     }
 
     function applyOptimisticMonsterDamage(battle, targetId, damage, actionType, skill) {
@@ -2171,7 +2218,7 @@
             currentView = normalizeBattleView(response);
             battleQuestionCache = (currentView.questionCache || []).slice();
             renderBattle(currentView);
-            playStageEntranceIntro();
+            startBattleEntrance();
           })
           .withFailureHandler(function(error) {
             hideLoadingModal();
