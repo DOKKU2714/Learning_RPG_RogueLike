@@ -58,6 +58,15 @@ function calculateAccuracyRate(playerData) {
 }
 
 function formatDisplayProgressText_(progressFloor, stage) {
+  return formatCompactStageText_(progressFloor, stage);
+}
+
+function formatCompactStageText_(progressFloor, stage) {
+  var displayFloor = Math.max(1, 6 - Number(progressFloor || 1));
+  return displayFloor + '-' + Number(stage || 1);
+}
+
+function formatDisplayProgressTextLegacy_(progressFloor, stage) {
   var floorNames = {
     1: '5층 옥상',
     2: '4층 1학년 교실층',

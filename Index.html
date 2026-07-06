@@ -94,7 +94,7 @@
     document.addEventListener('DOMContentLoaded', function() {
       bindLoginEnterKey();
       showLoginForm();
-      if (SKIP_INTRO || hasSeenIntroScreen()) {
+      if (SKIP_INTRO || getAuthToken()) {
         enterApp();
       }
     });
@@ -180,7 +180,17 @@
       document.getElementById('appScreen').classList.add('active');
       document.getElementById('registerPanel').classList.add('active');
       showLoginForm();
+      warmupGameDataSilently();
       refreshCurrentUser();
+    }
+
+    function warmupGameDataSilently() {
+      if (typeof google === 'undefined' || !google.script || !google.script.run) {
+        return;
+      }
+      google.script.run
+        .withFailureHandler(function() {})
+        .warmupGameData(getAuthToken());
     }
 
     function refreshCurrentUser(force) {
@@ -288,6 +298,7 @@
             hideLoadingModal();
             saveAuthToken(response.authToken);
             saveCurrentState(response.user);
+            warmupGameDataSilently();
             setRegisterMessage('회원가입되었습니다.', 'ok');
             renderCurrentUser(response.user);
           })
@@ -309,6 +320,7 @@
           hideLoadingModal();
           saveAuthToken(response.authToken);
           saveCurrentState(response.user);
+          warmupGameDataSilently();
           setRegisterMessage('로그인되었습니다.', 'ok');
           renderCurrentUser(response.user);
         })

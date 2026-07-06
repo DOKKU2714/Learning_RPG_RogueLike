@@ -112,6 +112,38 @@ function clearRuntimeCaches() {
   return { ok: true, clearedAt: new Date() };
 }
 
+function warmupGameData(authToken) {
+  var startedAt = new Date().getTime();
+  [
+    DB_SHEETS.SETTINGS,
+    DB_SHEETS.STAGES,
+    DB_SHEETS.MONSTER_GROUPS,
+    DB_SHEETS.MONSTERS,
+    DB_SHEETS.MONSTER_AI,
+    DB_SHEETS.SKILLS,
+    DB_SHEETS.EFFECTS,
+    DB_SHEETS.ITEMS,
+    DB_SHEETS.REWARDS,
+    DB_SHEETS.REWARD_GROUPS,
+    DB_SHEETS.QUESTIONS,
+  ].forEach(function(sheetName) {
+    readTableCached_(sheetName, 1800);
+  });
+  var user = null;
+  if (authToken) {
+    try {
+      user = getCurrentUser(authToken);
+    } catch (error) {
+      user = null;
+    }
+  }
+  return {
+    ok: true,
+    isRegistered: !!(user && user.isRegistered),
+    elapsedMs: new Date().getTime() - startedAt,
+  };
+}
+
 function appendRowObject_(sheetName, object) {
   var sheet = getSheet_(sheetName);
   var headers = getHeaderRow_(sheet);
@@ -120,6 +152,22 @@ function appendRowObject_(sheetName, object) {
   });
   sheet.appendRow(row);
   return object;
+}
+
+function appendRowObjects_(sheetName, objects) {
+  var rows = objects || [];
+  if (!rows.length) {
+    return [];
+  }
+  var sheet = getSheet_(sheetName);
+  var headers = getHeaderRow_(sheet);
+  var values = rows.map(function(object) {
+    return headers.map(function(header) {
+      return object[header] !== undefined ? object[header] : '';
+    });
+  });
+  sheet.getRange(sheet.getLastRow() + 1, 1, values.length, headers.length).setValues(values);
+  return rows;
 }
 
 function updateRowByKey_(sheetName, keyColumn, keyValue, patchObject) {
@@ -135,19 +183,18 @@ function updateRowByKey_(sheetName, keyColumn, keyValue, patchObject) {
     return null;
   }
 
-  var values = sheet.getRange(2, 1, lastRow - 1, headers.length).getValues();
-  for (var i = 0; i < values.length; i += 1) {
-    if (String(values[i][keyIndex]) === String(keyValue)) {
-      var currentObject = rowToObject_(headers, values[i]);
-      var updatedObject = Object.assign({}, currentObject, patchObject);
-      var updatedRow = headers.map(function(header) {
-        return updatedObject[header] !== undefined ? updatedObject[header] : '';
-      });
-      sheet.getRange(i + 2, 1, 1, headers.length).setValues([updatedRow]);
-      return updatedObject;
-    }
+  var rowNumber = findSheetRowNumberByKey_(sheet, headers, keyIndex, sheetName, keyColumn, keyValue);
+  if (!rowNumber) {
+    return null;
   }
-  return null;
+  var currentRow = sheet.getRange(rowNumber, 1, 1, headers.length).getValues()[0];
+  var currentObject = rowToObject_(headers, currentRow);
+  var updatedObject = Object.assign({}, currentObject, patchObject);
+  var updatedRow = headers.map(function(header) {
+    return updatedObject[header] !== undefined ? updatedObject[header] : '';
+  });
+  sheet.getRange(rowNumber, 1, 1, headers.length).setValues([updatedRow]);
+  return updatedObject;
 }
 
 function findRowByKey_(sheetName, keyColumn, keyValue) {
@@ -163,13 +210,55 @@ function findRowByKey_(sheetName, keyColumn, keyValue) {
     return null;
   }
 
-  var values = sheet.getRange(2, 1, lastRow - 1, headers.length).getValues();
-  for (var i = 0; i < values.length; i += 1) {
-    if (String(values[i][keyIndex]) === String(keyValue)) {
-      return rowToObject_(headers, values[i]);
+  var rowNumber = findSheetRowNumberByKey_(sheet, headers, keyIndex, sheetName, keyColumn, keyValue);
+  if (!rowNumber) {
+    return null;
+  }
+  var row = sheet.getRange(rowNumber, 1, 1, headers.length).getValues()[0];
+  return rowToObject_(headers, row);
+}
+
+function findSheetRowNumberByKey_(sheet, headers, keyIndex, sheetName, keyColumn, keyValue) {
+  var cachedRowNumber = getCachedSheetRowNumber_(sheetName, keyColumn, keyValue);
+  if (cachedRowNumber && cachedRowNumber >= 2 && cachedRowNumber <= sheet.getLastRow()) {
+    var cachedValue = sheet.getRange(cachedRowNumber, keyIndex + 1).getValue();
+    if (String(cachedValue) === String(keyValue)) {
+      return cachedRowNumber;
     }
   }
-  return null;
+
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) {
+    return 0;
+  }
+  var keyValues = sheet.getRange(2, keyIndex + 1, lastRow - 1, 1).getValues();
+  for (var i = 0; i < keyValues.length; i += 1) {
+    if (String(keyValues[i][0]) === String(keyValue)) {
+      var rowNumber = i + 2;
+      cacheSheetRowNumber_(sheetName, keyColumn, keyValue, rowNumber);
+      return rowNumber;
+    }
+  }
+  return 0;
+}
+
+function getCachedSheetRowNumber_(sheetName, keyColumn, keyValue) {
+  try {
+    var value = CacheService.getScriptCache().get(getSheetRowNumberCacheKey_(sheetName, keyColumn, keyValue));
+    return value ? Number(value) : 0;
+  } catch (error) {
+    return 0;
+  }
+}
+
+function cacheSheetRowNumber_(sheetName, keyColumn, keyValue, rowNumber) {
+  try {
+    CacheService.getScriptCache().put(getSheetRowNumberCacheKey_(sheetName, keyColumn, keyValue), String(rowNumber), 21600);
+  } catch (error) {}
+}
+
+function getSheetRowNumberCacheKey_(sheetName, keyColumn, keyValue) {
+  return ['row', sheetName, keyColumn, String(keyValue || '')].join(':');
 }
 
 function safeJsonParse_(value, fallback) {

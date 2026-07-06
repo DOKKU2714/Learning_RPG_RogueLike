@@ -39,7 +39,7 @@ function generateRewardChoices(runId, stageId, authToken) {
         updatedAt: new Date(),
       });
     }
-    return buildRewardChoiceView_(runId, currentStageId, rewardGroupId, rewardState, safeJsonParse_(run.skillsJson, []));
+    return buildRewardChoiceView_(runId, currentStageId, rewardGroupId, rewardState, safeJsonParse_(run.skillsJson, []), stageState.battle);
   }
 
   var choices = pickRewardChoices_(rewardGroupId, Number(stage.floor || run.currentFloor), safeJsonParse_(run.skillsJson, []));
@@ -49,7 +49,9 @@ function generateRewardChoices(runId, stageId, authToken) {
   rewardState = {
     stageId: currentStageId,
     rewardGroupId: rewardGroupId,
-    choices: choices.map(sanitizeRewardForClient_),
+    choices: choices.map(function(reward) {
+      return sanitizeRewardForClient_(reward, stageState.battle);
+    }),
     selectedRewardId: '',
     currencyGranted: true,
     currencyAmount: currencyResult.amount,
@@ -65,7 +67,7 @@ function generateRewardChoices(runId, stageId, authToken) {
     updatedAt: new Date(),
   });
 
-  return buildRewardChoiceView_(runId, currentStageId, rewardGroupId, rewardState, safeJsonParse_(run.skillsJson, []));
+  return buildRewardChoiceView_(runId, currentStageId, rewardGroupId, rewardState, safeJsonParse_(run.skillsJson, []), stageState.battle);
 }
 
 function selectReward(runId, rewardId, authToken) {
@@ -439,7 +441,7 @@ function pickWeightedReward_(rewards) {
   return rewards[rewards.length - 1];
 }
 
-function sanitizeRewardForClient_(reward) {
+function sanitizeRewardForClient_(reward, battleState) {
   var rarity = resolveRewardRarity_(reward);
   return {
     rewardId: reward.rewardId,
@@ -451,15 +453,66 @@ function sanitizeRewardForClient_(reward) {
     displayTitle: getRewardDisplayTitle_(reward),
     rarity: rarity,
     rarityLabel: getRarityLabel_(rarity),
+    skillDetail: buildRewardSkillDetail_(reward, battleState),
   };
 }
 
-function buildRewardChoiceView_(runId, stageId, rewardGroupId, rewardState, ownedSkills) {
+function buildRewardSkillDetail_(reward, battleState) {
+  if (!reward || (reward.type !== REWARD_TYPES.SKILL && reward.type !== REWARD_TYPES.SKILL_UPGRADE) || !reward.targetId) {
+    return null;
+  }
+
+  var skill = findCachedRowByKey_(DB_SHEETS.SKILLS, 'skillId', reward.targetId, 600);
+  if (!skill) {
+    return null;
+  }
+
+  var hydrated = hydrateSkill_(skill, Math.max(1, Number(reward.level || 1)));
+  var previewBattleState = battleState || {
+    player: {
+      stats: Object.assign({}, BASE_PLAYER_STATS),
+      effects: [],
+    },
+    monsters: [],
+    skillUseCounts: {},
+    skillCooldowns: {},
+  };
+  return {
+    skillId: hydrated.skillId,
+    name: hydrated.name,
+    type: hydrated.type,
+    target: hydrated.target,
+    level: hydrated.level,
+    baseValue: Number(hydrated.baseValue || 0),
+    cooldown: hydrated.cooldown || '',
+    cooldownText: buildSkillCooldownText_(hydrated),
+    useLimitText: buildSkillUseLimitText_(hydrated, previewBattleState),
+    difficultyBonus: Number(hydrated.difficultyBonus || 0),
+    actionPointCost: Number(hydrated.actionPointCost || 1),
+    rarity: hydrated.rarity,
+    rarityLabel: getRarityLabel_(hydrated.rarity),
+    tags: hydrated.tags,
+    description: hydrated.description,
+    effectJson: hydrated.effectJson || '',
+    previewText: buildSkillPreviewText_(hydrated, previewBattleState),
+  };
+}
+
+function buildRewardChoiceView_(runId, stageId, rewardGroupId, rewardState, ownedSkills, battleState) {
   var skills = normalizeOwnedSkills_(ownedSkills || []);
   var choices = (rewardState.choices || []).filter(function(reward) {
     return reward.type !== REWARD_TYPES.SKILL_UPGRADE || hasOwnedSkill_(skills, reward.targetId);
   }).map(function(reward) {
-    return sanitizeRewardForClient_(attachRewardRarity_(adaptRewardForChoice_(reward, skills)));
+    var adapted = attachRewardRarity_(adaptRewardForChoice_(reward, skills));
+    var ownedSkill = skills.filter(function(skill) {
+      return skill.skillId === adapted.targetId;
+    })[0];
+    if (adapted.type === REWARD_TYPES.SKILL_UPGRADE && ownedSkill) {
+      adapted.level = Number(ownedSkill.level || 1) + Math.max(1, Number(adapted.value || 1));
+    } else if (adapted.type === REWARD_TYPES.SKILL && ownedSkill) {
+      adapted.level = Number(ownedSkill.level || 1);
+    }
+    return sanitizeRewardForClient_(adapted, battleState);
   });
   return {
     runId: runId,

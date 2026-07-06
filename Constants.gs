@@ -29,7 +29,7 @@ var DB_COLUMNS = Object.freeze({
   QUESTIONS: ['questionId', 'type', 'prompt', 'choice1', 'choice2', 'choice3', 'choice4', 'answer', 'answerAliases', 'explanation', 'difficulty', 'creatorId', 'creatorName', 'subject', 'unit', 'tags', 'status', 'reviewComment', 'approvedBy', 'approvedAt', 'createdAt', 'updatedAt', 'correctCount', 'totalCount'],
   ANSWER_LOGS: ['answerLogId', 'questionId', 'playerId', 'creatorId', 'runId', 'battleId', 'floor', 'stage', 'actionType', 'selectedAnswer', 'isCorrect', 'elapsedMs', 'maxTimeMs', 'efficiency', 'finalDifficulty', 'isOtherPlayerQuestion', 'createdAt'],
   STAGES: ['stageId', 'floor', 'stage', 'name', 'baseDifficulty', 'minDifficulty', 'maxDifficulty', 'monsterGroupId', 'bossMonsterId', 'rewardGroupId', 'requiredOtherQuestionCount'],
-  MONSTER_GROUPS: ['monsterGroupId', 'name', 'monsterIds', 'weights'],
+  MONSTER_GROUPS: ['monsterGroupId', 'name', 'monsterIds', 'weights', 'monsterCount'],
   MONSTERS: ['monsterId', 'name', 'type', 'hp', 'attack', 'hpRegen', 'evasion', 'criticalRate', 'criticalDamage', 'defense', 'aiId', 'skillIds', 'description'],
   MONSTER_AI: ['aiId', 'patternName', 'actionType', 'conditionJson', 'probability', 'skillId', 'intentIcon', 'intentTextTemplate'],
   SKILLS: ['skillId', 'name', 'type', 'target', 'baseValue', 'hitCount', 'cooldown', 'conditionJson', 'difficultyBonus', 'effectJson', 'upgradeJson', 'description', 'actionPointCost', 'rarity', 'tags'],
@@ -206,6 +206,8 @@ var MASTER_SETTINGS = Object.freeze([
   { key: 'stagesPerFloor', value: '5', type: 'number', description: 'Number of stages per floor.' },
   { key: 'baseQuestionTimeSec', value: '10', type: 'number', description: 'Base question time in seconds.' },
   { key: 'questionTimePerDifficultySec', value: '2', type: 'number', description: 'Additional seconds per difficulty above 1.' },
+  { key: 'questionResultHoldMs', value: '900', type: 'number', description: 'Milliseconds to keep the correct-answer result visible before battle resolution continues.' },
+  { key: 'questionActionStartDelayMs', value: '0', type: 'number', description: 'Milliseconds to wait after closing the question modal before playing the battle action.' },
   { key: 'minAnswerEfficiency', value: '0.5', type: 'number', description: 'Minimum normal answer efficiency.' },
   { key: 'maxAnswerEfficiency', value: '1.25', type: 'number', description: 'Maximum answer efficiency.' },
   { key: 'extraWrongEfficiencyPenalty', value: '0.1', type: 'number', description: 'Efficiency penalty after timeout or repeated wrong answers.' },
@@ -331,11 +333,11 @@ var MASTER_MONSTERS = Object.freeze([
 ]);
 
 var MASTER_MONSTER_GROUPS = Object.freeze([
-  { monsterGroupId: 'group_floor_1', name: '1층 일반 몬스터', monsterIds: '["monster_shadow_problem"]', weights: '[100]' },
-  { monsterGroupId: 'group_floor_2', name: '2층 일반 몬스터', monsterIds: '["monster_shadow_problem"]', weights: '[100]' },
-  { monsterGroupId: 'group_floor_3', name: '3층 일반 몬스터', monsterIds: '["monster_shadow_problem"]', weights: '[100]' },
-  { monsterGroupId: 'group_floor_4', name: '4층 일반 몬스터', monsterIds: '["monster_shadow_problem"]', weights: '[100]' },
-  { monsterGroupId: 'group_floor_5', name: '5층 일반 몬스터', monsterIds: '["monster_shadow_problem"]', weights: '[100]' },
+  { monsterGroupId: 'group_floor_1', name: '1층 일반 몬스터', monsterIds: '["monster_shadow_problem"]', weights: '[100]', monsterCount: 1 },
+  { monsterGroupId: 'group_floor_2', name: '2층 일반 몬스터', monsterIds: '["monster_shadow_problem"]', weights: '[100]', monsterCount: 1 },
+  { monsterGroupId: 'group_floor_3', name: '3층 일반 몬스터', monsterIds: '["monster_shadow_problem"]', weights: '[100]', monsterCount: 1 },
+  { monsterGroupId: 'group_floor_4', name: '4층 일반 몬스터', monsterIds: '["monster_shadow_problem"]', weights: '[100]', monsterCount: 1 },
+  { monsterGroupId: 'group_floor_5', name: '5층 일반 몬스터', monsterIds: '["monster_shadow_problem"]', weights: '[100]', monsterCount: 1 },
 ]);
 
 var MASTER_REWARDS = Object.freeze([

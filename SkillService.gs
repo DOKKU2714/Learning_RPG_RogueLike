@@ -20,12 +20,14 @@ function getAvailableSkills(runState, battleState) {
       baseValue: Number(hydrated.baseValue || 0),
       cooldown: hydrated.cooldown || '',
       cooldownText: buildSkillCooldownText_(hydrated),
+      useLimitText: buildSkillUseLimitText_(hydrated, battleState),
       difficultyBonus: Number(hydrated.difficultyBonus || 0),
       actionPointCost: Number(hydrated.actionPointCost || 1),
       rarity: hydrated.rarity,
       rarityLabel: getRarityLabel_(hydrated.rarity),
       tags: hydrated.tags,
       description: hydrated.description,
+      effectJson: hydrated.effectJson || '',
       previewText: buildSkillPreviewText_(hydrated, battleState),
       available: !reason,
       unavailableReason: reason,
@@ -207,28 +209,35 @@ function useSkill(runId, skillId, targetId, answerPayload) {
 
   battleState.lastTurnEvents = [];
   consumeActionPoint_(battleState, Number(pendingAction.actionPointCost || getActionPointCostForAction_(ACTION_TYPES.SKILL, skill)));
-  tickEffectsAtTurnStart(battleState);
-  processSkillTriggers_(battleState, isCorrect ? 'onCorrect' : 'onWrong', { isCorrect: isCorrect, efficiency: efficiency });
-  var blockedByPenalty = processSkillFailPenaltyAfterAnswer_(battleState, skill, isCorrect);
-  if (!blockedByPenalty && battleState.player.hp > 0 && battleState.status === STATUS.BATTLE_ACTIVE) {
-    applySkillEffect(battleState, Object.assign({}, skill, { targetId: pendingAction.targetId }), efficiency, isCorrect);
+  tickEffectsOnPlayerAction(battleState);
+  if (battleState.player.hp <= 0) {
+    battleState.status = STATUS.BATTLE_DEFEAT;
+    battleState.lastMessage = '지속 피해로 쓰러졌습니다.';
   }
-
+  var skillWasUsed = battleState.player.hp > 0 && battleState.status === STATUS.BATTLE_ACTIVE;
+  if (skillWasUsed) {
+    processSkillTriggers_(battleState, isCorrect ? 'onCorrect' : 'onWrong', { isCorrect: isCorrect, efficiency: efficiency });
+    var blockedByPenalty = processSkillFailPenaltyAfterAnswer_(battleState, skill, isCorrect);
+    if (!blockedByPenalty && battleState.player.hp > 0 && battleState.status === STATUS.BATTLE_ACTIVE) {
+      applySkillEffect(battleState, Object.assign({}, skill, { targetId: pendingAction.targetId || '' }), efficiency, isCorrect);
+    }
+  }
   if (areAllMonstersDefeated_(battleState)) {
     battleState.status = STATUS.BATTLE_VICTORY;
     battleState.lastMessage = '몬스터를 처치했습니다.';
     logBattleEvent_(run, STATUS.BATTLE_VICTORY, { battleId: battleState.battleId });
   }
-
-  if (!shouldUseSkillRuleEngine_(getSkillExecutionRule_(skill))) {
+  if (skillWasUsed && !shouldUseSkillRuleEngine_(getSkillExecutionRule_(skill))) {
     trackSkillTagsForUse_(battleState, skill);
   }
-  setSkillCooldownAfterUse_(battleState, skill);
-  incrementSkillUseCount_(battleState, skill.skillId);
+  if (skillWasUsed) {
+    setSkillCooldownAfterUse_(battleState, skill);
+    incrementSkillUseCount_(battleState, skill.skillId);
+  }
   battleState.pendingAction = null;
   stageState.battle = battleState;
 
-  logAnswer({
+  queueBattleAnswerLog_(battleState, {
     questionId: question.questionId,
     playerId: player.playerId,
     creatorId: question.creatorId,
@@ -245,7 +254,9 @@ function useSkill(runId, skillId, targetId, answerPayload) {
     finalDifficulty: pendingAction.finalDifficulty,
     isOtherPlayerQuestion: pendingAction.isOtherPlayerQuestion,
   });
-  updateQuestionStats(question.questionId, isCorrect);
+  if (battleState.status !== STATUS.BATTLE_ACTIVE) {
+    flushQueuedBattleAnswerLogs_(battleState);
+  }
   saveStageState_(run.runId, stageState, battleState);
 
   return buildBattleView_(requireRun_(run.runId), getStageState_(requireRun_(run.runId)));
@@ -264,12 +275,43 @@ function applySkillEffect(battleState, skill, efficiency, isCorrect) {
   var hitCount = Math.max(1, Number(skill.hitCount || 1));
   var events = battleState.lastTurnEvents || [];
 
+  if (skill.type === SKILL_TYPES.DAMAGE && isAllEnemiesSkill_(skill)) {
+    var areaBaseDamage = Math.max(0, Math.round((Number(skill.baseValue || 0) + getSkillUpgradeValue(skill, 'damage') + Number(effectiveStats.attack || 0)) * Number(efficiency || 0)));
+    for (var areaHit = 0; areaHit < hitCount; areaHit += 1) {
+      getAliveMonsters_(battleState).forEach(function(damageTarget) {
+        var critical = rollCriticalDamage_(areaBaseDamage, effectiveStats);
+        var damage = applyFrozenBonusIfNeeded_(damageTarget, critical.damage);
+        var damageResult = dealDamageToMonster_(battleState, damageTarget, damage);
+        events.push({
+          actor: 'player',
+          type: ACTION_TYPES.SKILL,
+          skillId: skill.skillId,
+          targetMonsterId: damageTarget.instanceId || damageTarget.monsterId,
+          damage: damageResult.damage,
+          shieldDamage: damageResult.shieldDamage,
+          hpDamage: damageResult.hpDamage,
+          isCritical: critical.isCritical,
+          criticalMultiplier: critical.multiplier,
+          simultaneousGroupId: skill.skillId + ':allEnemies:' + areaHit,
+          message: critical.isCritical
+            ? skill.name + ' 치명타! ' + damageResult.damage + ' 피해!'
+            : skill.name + '으로 ' + damageResult.damage + ' 피해!',
+        });
+      });
+    }
+    syncPrimaryMonster_(battleState);
+    battleState.lastMessage = skill.name + '을 사용했습니다.';
+    battleState.lastTurnEvents = events;
+    return battleState;
+  }
+
   if (skill.type === SKILL_TYPES.DAMAGE) {
-    var damage = Math.max(0, Math.round((Number(skill.baseValue || 0) + getSkillUpgradeValue(skill, 'damage') + Number(effectiveStats.attack || 0)) * Number(efficiency || 0)));
+    var baseDamage = Math.max(0, Math.round((Number(skill.baseValue || 0) + getSkillUpgradeValue(skill, 'damage') + Number(effectiveStats.attack || 0)) * Number(efficiency || 0)));
     for (var i = 0; i < hitCount; i += 1) {
       target = getSkillTarget_(battleState, skill, skill.targetId || '');
       if (!target) break;
-      damage = applyFrozenBonusIfNeeded_(target, damage);
+      var critical = rollCriticalDamage_(baseDamage, effectiveStats);
+      var damage = applyFrozenBonusIfNeeded_(target, critical.damage);
       var damageResult = dealDamageToMonster_(battleState, target, damage);
       events.push({
         actor: 'player',
@@ -279,8 +321,13 @@ function applySkillEffect(battleState, skill, efficiency, isCorrect) {
         damage: damageResult.damage,
         shieldDamage: damageResult.shieldDamage,
         hpDamage: damageResult.hpDamage,
+        isCritical: critical.isCritical,
+        criticalMultiplier: critical.multiplier,
         message: skill.name + '으로 ' + damage + ' 피해!',
       });
+      events[events.length - 1].message = critical.isCritical
+        ? skill.name + ' 치명타! ' + damageResult.damage + ' 피해!'
+        : skill.name + '으로 ' + damageResult.damage + ' 피해!';
     }
     syncPrimaryMonster_(battleState);
     battleState.lastMessage = skill.name + '을 사용했습니다.';
@@ -445,29 +492,43 @@ function executeSkillByRule_(battleState, skill, rule, efficiency, isCorrect) {
   applySkillRuleHeal_(battleState, skill, rule, context);
   applySkillRuleSelfDamage_(battleState, skill, rule, context);
 
+  var criticalStats = calculateEffectiveStats(battleState.player.stats || {}, battleState.player.effects || []);
   var damageEvents = 0;
   targets.forEach(function(target) {
     if (!target || target.currentHp === undefined) {
       return;
     }
     for (var i = 0; i < (rule.targetMode === 'randomEnemies' ? 1 : hitCount); i += 1) {
-      var targetContext = buildSkillFormulaContext_(battleState, skill, target, efficiency);
+      var damageTarget = target;
+      if (Number(damageTarget.currentHp || 0) <= 0 && rule.targetMode !== 'allEnemies') {
+        damageTarget = rule.targetMode === 'randomEnemies' ? selectRandomAliveEnemy_(battleState) : getSkillTarget_(battleState, skill, skill.targetId || '');
+      }
+      if (!damageTarget || damageTarget.currentHp === undefined || Number(damageTarget.currentHp || 0) <= 0) {
+        continue;
+      }
+      var targetContext = buildSkillFormulaContext_(battleState, skill, damageTarget, efficiency);
       var damage = calculateSkillRuleDamage_(battleState, skill, rule, targetContext, efficiency);
       if (damage <= 0) {
         continue;
       }
-      damage = applyFrozenBonusIfNeeded_(target, damage);
-      var damageResult = dealDamageToMonster_(battleState, target, damage);
+      var critical = rollCriticalDamage_(damage, criticalStats);
+      damage = applyFrozenBonusIfNeeded_(damageTarget, critical.damage);
+      var damageResult = dealDamageToMonster_(battleState, damageTarget, damage);
       damageEvents += 1;
       battleState.lastTurnEvents.push({
         actor: 'player',
         type: ACTION_TYPES.SKILL,
         skillId: skill.skillId,
-        targetMonsterId: target.instanceId || target.monsterId,
+        targetMonsterId: damageTarget.instanceId || damageTarget.monsterId,
         damage: damageResult.damage,
         shieldDamage: damageResult.shieldDamage,
         hpDamage: damageResult.hpDamage,
-        message: skill.name + ' dealt ' + damageResult.damage + ' damage.',
+        isCritical: critical.isCritical,
+        criticalMultiplier: critical.multiplier,
+        simultaneousGroupId: rule.targetMode === 'allEnemies' ? skill.skillId + ':allEnemies:' + i : '',
+        message: critical.isCritical
+          ? skill.name + ' 치명타! ' + damageResult.damage + ' 피해!'
+          : skill.name + '으로 ' + damageResult.damage + ' 피해!',
       });
     }
   });
@@ -482,8 +543,10 @@ function executeSkillByRule_(battleState, skill, rule, efficiency, isCorrect) {
   } else if (isCorrect === false) {
     processImmediateSkillRuleActions_(battleState, skill, rule.onWrong, targets, context);
   }
-  applyCooldownModify_(battleState, skill, rule.cooldownModify);
-  trackSkillTagsForUse_(battleState, skill);
+  if (!battleState.suppressSkillUseBookkeeping) {
+    applyCooldownModify_(battleState, skill, rule.cooldownModify);
+    trackSkillTagsForUse_(battleState, skill);
+  }
   syncPrimaryMonster_(battleState);
   battleState.lastMessage = skill.name + ' used.';
   if (!damageEvents && !rule.shieldFormula && !rule.healFormula && !(rule.applyEffects || []).length) {
@@ -1201,10 +1264,15 @@ function tickEffectsAtTurnStart(battleState) {
   normalizeBattleStateEffects_(battleState);
   processSkillTriggers_(battleState, 'onTurnStart', {});
   applyTimedEffectDamage_(battleState.player, TRIGGER_TIMINGS.TURN_START, battleState, 'player');
-  applyTimedEffectDamage_(battleState.player, TRIGGER_TIMINGS.ON_ACTION, battleState, 'player');
   getAliveMonsters_(battleState).forEach(function(monster) {
     applyTimedEffectDamage_(monster, TRIGGER_TIMINGS.TURN_START, battleState, 'monster');
   });
+  return battleState;
+}
+
+function tickEffectsOnPlayerAction(battleState) {
+  normalizeBattleStateEffects_(battleState);
+  applyTimedEffectDamage_(battleState.player, TRIGGER_TIMINGS.ON_ACTION, battleState, 'player');
   return battleState;
 }
 
@@ -1311,6 +1379,25 @@ function buildSkillCooldownText_(skill) {
     return '스테이지 ' + Number(conditions.perStageLimit || 0) + '회';
   }
   return '쿨타임 없음';
+}
+
+function buildSkillUseLimitText_(skill, battleState) {
+  var conditions = safeJsonParse_(skill.conditionJson, {});
+  var limit = 0;
+  var scope = '';
+  if (conditions.perStageLimit) {
+    limit = Number(conditions.perStageLimit || 0);
+    scope = '스테이지';
+  } else if (conditions.perBattleLimit) {
+    limit = Number(conditions.perBattleLimit || 0);
+    scope = '전투';
+  }
+  if (!limit) {
+    return '';
+  }
+  var used = getSkillUseCount_(battleState, skill.skillId);
+  var remaining = Math.max(0, limit - used);
+  return scope + ' ' + remaining + '/' + limit + '회';
 }
 
 function buildRunState_(run) {
@@ -1442,11 +1529,14 @@ function getSkillTarget_(battleState, skill, explicitTargetId) {
     return battleState.player;
   }
   if (explicitTargetId) {
-    return (battleState.monsters || []).filter(function(monster) {
-      return (monster.instanceId || monster.monsterId) === explicitTargetId || monster.monsterId === explicitTargetId;
-    })[0] || getFirstAliveMonster_(battleState);
+    return getAliveMonsterById_(battleState, explicitTargetId) || getFirstAliveMonster_(battleState);
   }
   return getFirstAliveMonster_(battleState);
+}
+
+function isAllEnemiesSkill_(skill) {
+  var target = String(skill && skill.target || '').toLowerCase();
+  return target === 'allenemies' || target === 'all_enemies' || target === 'all-enemies' || target === 'enemies';
 }
 
 function applySkillLinkedEffect_(target, skill, source) {
