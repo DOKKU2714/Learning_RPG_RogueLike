@@ -70,7 +70,9 @@ function loginPlayer(loginPayload) {
 
 function logoutPlayer(authToken) {
   if (authToken) {
-    CacheService.getScriptCache().remove(getAuthCacheKey_(authToken));
+    var cache = CacheService.getScriptCache();
+    cache.remove(getAuthCacheKey_(authToken));
+    cache.remove(getAuthPlayerCacheKey_(authToken));
   }
   return { ok: true };
 }
@@ -154,17 +156,30 @@ function getPlayerByAuthToken_(authToken) {
     return null;
   }
 
-  var playerId = CacheService.getScriptCache().get(getAuthCacheKey_(token));
+  var cache = CacheService.getScriptCache();
+  var playerId = cache.get(getAuthCacheKey_(token));
   if (!playerId) {
     return null;
   }
 
-  return findRowByKey_(DB_SHEETS.PLAYERS, 'playerId', playerId);
+  var playerCacheKey = getAuthPlayerCacheKey_(token);
+  var cachedPlayer = safeJsonParse_(cache.get(playerCacheKey), null);
+  if (cachedPlayer && cachedPlayer.playerId === playerId) {
+    return cachedPlayer;
+  }
+
+  var player = findRowByKey_(DB_SHEETS.PLAYERS, 'playerId', playerId);
+  if (player) {
+    cache.put(playerCacheKey, safeJsonStringify_(player), 21600);
+  }
+  return player;
 }
 
 function buildAuthResponse_(player) {
   var authToken = generateId_('session');
-  CacheService.getScriptCache().put(getAuthCacheKey_(authToken), player.playerId, 21600);
+  var cache = CacheService.getScriptCache();
+  cache.put(getAuthCacheKey_(authToken), player.playerId, 21600);
+  cache.put(getAuthPlayerCacheKey_(authToken), safeJsonStringify_(player), 21600);
   return {
     authToken: authToken,
     user: getCurrentUser(authToken),
@@ -173,6 +188,10 @@ function buildAuthResponse_(player) {
 
 function getAuthCacheKey_(authToken) {
   return 'auth_' + String(authToken || '').trim();
+}
+
+function getAuthPlayerCacheKey_(authToken) {
+  return 'authPlayer_' + String(authToken || '').trim();
 }
 
 function ensurePlayerData_(playerId) {

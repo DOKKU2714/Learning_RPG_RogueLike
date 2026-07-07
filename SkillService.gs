@@ -28,11 +28,42 @@ function getAvailableSkills(runState, battleState) {
       tags: hydrated.tags,
       description: hydrated.description,
       effectJson: hydrated.effectJson || '',
+      effectDetails: buildSkillEffectDetails_(hydrated),
       previewText: buildSkillPreviewText_(hydrated, battleState),
       available: !reason,
       unavailableReason: reason,
     };
   }).filter(Boolean);
+}
+
+function buildSkillEffectDetails_(skill) {
+  var rule = getSkillExecutionRule_(skill);
+  var effects = [];
+  if (rule.effectId) {
+    effects.push(rule);
+  }
+  if (Array.isArray(rule.applyEffects)) {
+    effects = effects.concat(rule.applyEffects);
+  }
+  if (rule.efficiencyBonus && Array.isArray(rule.efficiencyBonus.applyEffects)) {
+    effects = effects.concat(rule.efficiencyBonus.applyEffects);
+  }
+  return effects.map(function(effectRule) {
+    var effect = effectRule.effectId ? findCachedRowByKey_(DB_SHEETS.EFFECTS, 'effectId', effectRule.effectId, 600) : null;
+    var value = effectRule.value !== undefined ? Number(effectRule.value || 0) : Number(effect && effect.value || 0);
+    if (effect && effect.effectType === EFFECT_TYPES.FLAT) {
+      value += getSkillUpgradeValue(skill, effect.category === EFFECT_CATEGORIES.BUFF ? 'buffValue' : 'effect');
+    }
+    return {
+      effectId: effectRule.effectId || '',
+      name: effectRule.name || effectRule.effectName || effect && effect.name || effectRule.effectId || '',
+      value: value,
+      effectType: effectRule.effectType || effect && effect.effectType || '',
+      category: effectRule.category || effect && effect.category || '',
+      chance: Math.min(100, Math.max(0, Number(effectRule.chance !== undefined ? effectRule.chance : 100))),
+      durationTurns: effectRule.durationTurns !== undefined ? effectRule.durationTurns : effect && effect.durationTurns || '',
+    };
+  });
 }
 
 function canUseSkill(skill, runState, battleState) {
@@ -180,13 +211,6 @@ function useSkill(runId, skillId, targetId, answerPayload) {
         reason: questionResult.fallbackReason,
         createdAt: new Date().toISOString(),
       });
-      logBattleEvent_(run, 'questionFallback', {
-        reason: questionResult.fallbackReason,
-        actionType: ACTION_TYPES.SKILL,
-        skillId: skill.skillId,
-        stageId: battleState.stage.stageId,
-        questionId: questionResult.question.questionId,
-      });
     }
     saveStageState_(runId, stageState, battleState);
     return buildQuestionView_(pendingAction.question, pendingAction);
@@ -196,7 +220,7 @@ function useSkill(runId, skillId, targetId, answerPayload) {
     throw new Error('풀이 중인 스킬 문제가 없습니다.');
   }
 
-  var question = findRowByKey_(DB_SHEETS.QUESTIONS, 'questionId', pendingAction.questionId);
+  var question = findCachedRowByKey_(DB_SHEETS.QUESTIONS, 'questionId', pendingAction.questionId, 120);
   if (!question) {
     throw new Error('문제를 찾을 수 없습니다.');
   }
@@ -1495,11 +1519,29 @@ function normalizeBattleStateEffects_(battleState) {
   normalizeBattleMonsters_(battleState);
   (battleState.monsters || []).forEach(function(monster) {
     monster.effects = monster.effects || [];
+    monster.effects = monster.effects.map(hydrateEffectDisplayFields_);
     monster.buffs = monster.effects.filter(function(effect) { return effect.category === EFFECT_CATEGORIES.BUFF; });
     monster.debuffs = monster.effects.filter(function(effect) { return effect.category === EFFECT_CATEGORIES.DEBUFF; });
   });
+  battleState.player.effects = battleState.player.effects.map(hydrateEffectDisplayFields_);
   battleState.player.buffs = battleState.player.effects.filter(function(effect) { return effect.category === EFFECT_CATEGORIES.BUFF; });
   battleState.player.debuffs = battleState.player.effects.filter(function(effect) { return effect.category === EFFECT_CATEGORIES.DEBUFF; });
+}
+
+function hydrateEffectDisplayFields_(effect) {
+  if (!effect || !effect.effectId || effect.description) {
+    return effect;
+  }
+  var master = findCachedRowByKey_(DB_SHEETS.EFFECTS, 'effectId', effect.effectId, 600);
+  if (!master) {
+    return effect;
+  }
+  effect.name = effect.name || master.name || '';
+  effect.description = master.description || '';
+  effect.category = effect.category || master.category || '';
+  effect.statKey = effect.statKey || master.statKey || '';
+  effect.effectType = effect.effectType || master.effectType || '';
+  return effect;
 }
 
 function normalizeSkillRuntimeState_(battleState) {
@@ -1573,6 +1615,7 @@ function buildEffectInstance_(effect, source) {
     statKey: effect.statKey,
     effectType: effect.effectType,
     value: Number(effect.value || 0),
+    description: effect.description || '',
     durationType: effect.durationType,
     remainingTurns: effect.durationType === DURATION_TYPES.TURN ? Number(effect.durationTurns || 1) : '',
     stackable: isTruthy_(effect.stackable),

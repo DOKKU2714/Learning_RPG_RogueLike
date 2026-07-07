@@ -143,13 +143,13 @@
     var isAnimatingTurn = false;
     var skillPanelOpen = false;
     var battleQuestionCache = [];
-    var BATTLE_STEP_DELAY_MS = 420;
+    var BATTLE_STEP_DELAY_MS = 220;
     var ATTACK_EFFECT_DELAY_MS = 420;
     var HIT_STATE_HOLD_MS = 560;
     var DEATH_STATE_HOLD_MS = 2200;
-    var MESSAGE_HOLD_MS = 450;
-    var TURN_END_DELAY_MS = 250;
-    var QUESTION_RESULT_HOLD_MS = 900;
+    var MESSAGE_HOLD_MS = 220;
+    var MONSTER_TURN_END_DELAY_MS = 560;
+    var QUESTION_RESULT_HOLD_MS = 1400;
     var QUESTION_RESULT_SKIP_ENABLE_MS = 0;
     var QUESTION_ACTION_START_DELAY_MS = 0;
     var defeatSequenceStarted = false;
@@ -176,7 +176,12 @@
     var rewardSelectionApplying = false;
     var passTurnLogPending = false;
     var pendingTargetSelection = null;
+    var pendingStageAnswerLogs = [];
+    var stageResultCommitInFlight = false;
+    var stageResultCommittedKey = '';
+    var CLIENT_BASE_GUARD_SHIELD = 5;
     var STAGE_INTRO_SEEN_PREFIX = 'learningRpgStageIntroSeen:';
+    var LOCAL_BATTLE_CHECKPOINT_PREFIX = 'learningRpgBattleCheckpoint:';
 
     var dummyView = {
       runId: 'dummy-run',
@@ -229,6 +234,8 @@
           hideLoadingModal();
           isDummyMode = false;
           currentView = normalizeBattleView(view);
+          resetStageCommitState();
+          restoreLocalBattleCheckpoint();
           applyBattleClientConfig(currentView.clientConfig);
           battleQuestionCache = (currentView.questionCache || []).slice();
           renderBattle(currentView);
@@ -272,11 +279,60 @@
     function applyBattleClientConfig(config) {
       config = config || {};
       if (config.questionResultHoldMs !== undefined && config.questionResultHoldMs !== '') {
-        QUESTION_RESULT_HOLD_MS = Math.max(0, Math.min(5000, Math.round(Number(config.questionResultHoldMs || QUESTION_RESULT_HOLD_MS))));
+        QUESTION_RESULT_HOLD_MS = Math.max(1400, Math.min(5000, Math.round(Number(config.questionResultHoldMs || QUESTION_RESULT_HOLD_MS))));
       }
       if (config.questionActionStartDelayMs !== undefined && config.questionActionStartDelayMs !== '') {
         QUESTION_ACTION_START_DELAY_MS = Math.max(0, Math.min(2000, Math.round(Number(config.questionActionStartDelayMs || QUESTION_ACTION_START_DELAY_MS))));
       }
+    }
+
+    function resetStageCommitState() {
+      pendingStageAnswerLogs = [];
+      stageResultCommitInFlight = false;
+      stageResultCommittedKey = '';
+    }
+
+    function getLocalBattleCheckpointKey(runId) {
+      return LOCAL_BATTLE_CHECKPOINT_PREFIX + String(runId || '');
+    }
+
+    function saveLocalBattleCheckpoint() {
+      if (!currentView || !currentView.runId || isDummyMode || currentView.runId === 'dummy-run') return;
+      if (pendingTurnResolutionActive || pendingTurnResolutionLoading || pendingQuestionTurnIsOptimistic) return;
+      try {
+        sessionStorage.setItem(getLocalBattleCheckpointKey(currentView.runId), JSON.stringify({
+          version: 2,
+          view: currentView,
+          answerLogs: pendingStageAnswerLogs,
+          savedAt: Date.now(),
+        }));
+      } catch (error) {
+        // Local checkpointing is best-effort.
+      }
+    }
+
+    function restoreLocalBattleCheckpoint() {
+      if (!currentView || !currentView.runId) return false;
+      try {
+        var checkpoint = JSON.parse(sessionStorage.getItem(getLocalBattleCheckpointKey(currentView.runId)) || 'null');
+        if (!checkpoint || !checkpoint.view || !checkpoint.view.battle) return false;
+        if (checkpoint.version !== 2) return false;
+        var serverBattle = currentView.battle || {};
+        var localBattle = checkpoint.view.battle || {};
+        if ((serverBattle.stage && serverBattle.stage.stageId) !== (localBattle.stage && localBattle.stage.stageId)) return false;
+        if (serverBattle.battleId && localBattle.battleId && serverBattle.battleId !== localBattle.battleId) return false;
+        currentView = normalizeBattleView(checkpoint.view);
+        pendingStageAnswerLogs = Array.isArray(checkpoint.answerLogs) ? checkpoint.answerLogs : [];
+        return true;
+      } catch (error) {
+        return false;
+      }
+    }
+
+    function clearLocalBattleCheckpoint(runId) {
+      try {
+        sessionStorage.removeItem(getLocalBattleCheckpointKey(runId || currentView && currentView.runId || ''));
+      } catch (error) {}
     }
 
     function finishBattleStartFade() {
@@ -641,7 +697,7 @@
     function renderActionTooltips(player) {
       var stats = (player && player.stats) || {};
       var attack = Math.max(0, Math.round(Number(stats.attack || 0)));
-      var defense = Math.max(0, Math.round(10 + Number(stats.defense || 0)));
+      var defense = Math.max(0, Math.round(CLIENT_BASE_GUARD_SHIELD + Number(stats.defense || 0)));
       document.getElementById('attackActionButton').setAttribute('data-tooltip', '문제를 풀고 효율에 따라 약 ' + attack + ' 피해를 줍니다.');
       document.getElementById('guardActionButton').setAttribute('data-tooltip', '문제를 풀고 효율에 따라 약 ' + defense + ' 방어막을 얻습니다.');
       document.getElementById('skillToggleButton').setAttribute('data-tooltip', '보유 스킬 목록을 엽니다.');
@@ -898,12 +954,13 @@
 
     function buildStatusTooltip(status, type) {
       var name = status.name || status.effectId || (type === 'buff' ? 'Buff' : 'Debuff');
+      var hasCustomDescription = !!String(status.description || '').trim();
       var description = buildStatusDescription(status, type);
       var duration = status.remainingTurns ? '\nTurns: ' + status.remainingTurns : '';
       var stack = Number(status.stacks || 1) > 1 ? '\n중첩: ' + Number(status.stacks || 1) : '';
       return {
         main: name + '\n' + description + duration + stack,
-        stat: buildStatusStatTooltip(status),
+        stat: hasCustomDescription ? '' : buildStatusStatTooltip(status),
       };
     }
 
@@ -911,6 +968,10 @@
       var id = status.effectId || '';
       var value = getStatusTotalValue(status);
       var amount = Math.abs(value);
+      var customDescription = String(status.description || '').trim();
+      if (customDescription) {
+        return renderStatusDescriptionTemplate(status, customDescription);
+      }
       if (id === 'debuff_bleed') return '행동할 때마다 ' + amount + ' 피해를 받습니다.';
       if (id === 'debuff_poison') return '턴 종료 시 ' + amount + ' 피해를 받습니다.';
       if (id === 'debuff_freeze') return '행동할 수 없습니다. 공격받으면 추가 피해와 함께 해제됩니다.';
@@ -931,6 +992,27 @@
         return statLabel + '이 ' + amount + ' ' + (value < 0 ? '감소합니다.' : '증가합니다.');
       }
       return status.description || (type === 'buff' ? '이로운 효과입니다.' : '해로운 효과입니다.');
+    }
+
+    function renderStatusDescriptionTemplate(status, template) {
+      var total = getStatusTotalValue(status);
+      var amount = Math.abs(total);
+      var baseValue = Math.abs(Number(status.value || 0));
+      var stacks = Math.max(1, Number(status.stacks || 1));
+      var turns = status.remainingTurns || '';
+      var statLabel = getStatLabel(status.statKey);
+      var direction = total < 0 ? '감소' : '증가';
+      var suffix = status.effectType === 'percent' ? '%' : '';
+      return String(template || '')
+        .replace(/\{total\}/g, amount + suffix)
+        .replace(/\{amount\}/g, amount + suffix)
+        .replace(/\{value\}/g, baseValue + suffix)
+        .replace(/\{stacks\}/g, stacks)
+        .replace(/\{turns\}/g, turns)
+        .replace(/\{stat\}/g, statLabel)
+        .replace(/\{direction\}/g, direction)
+        .replace(/\bn\b/g, amount + suffix)
+        .replace(/\bN\b/g, turns || amount + suffix);
     }
 
     function buildStatusStatTooltip(status) {
@@ -1320,17 +1402,35 @@
         playTurnSequence(nextView);
         return;
       }
+      startPassTurnServerSync();
+      playTurnSequence(buildClientPassTurnView());
+    }
+
+    function startPassTurnServerSync() {
+      pendingTurnResolutionActive = true;
+      pendingTurnResolutionLoading = true;
+      pendingQuestionTurnIsOptimistic = true;
+      pendingServerTurnView = null;
       google.script.run
         .withSuccessHandler(function(view) {
-          hideLoadingModal();
-          playTurnSequence(normalizeBattleView(view));
+          pendingServerTurnView = normalizeBattleView(view);
+          if (!isAnimatingTurn) {
+            applyPendingServerTurnSync();
+            renderBattle(currentView);
+            saveLocalBattleCheckpoint();
+          }
         })
         .withFailureHandler(function(error) {
+          pendingTurnResolutionActive = false;
+          pendingTurnResolutionLoading = false;
+          pendingQuestionTurnIsOptimistic = false;
+          pendingServerTurnView = null;
           hideLoadingModal();
-          setBattleInputLocked(false);
-          setPlayerTurn(true);
-          passTurnLogPending = false;
-          pushLog(error.message || '턴 종료에 실패했습니다.');
+          pushLog(error.message || '턴 종료 처리 중 오류가 발생했습니다.');
+          if (!isAnimatingTurn) {
+            setBattleInputLocked(false);
+            setPlayerTurn(true);
+          }
         })
         .passPlayerTurn(currentView.runId, getAuthToken());
     }
@@ -1556,6 +1656,42 @@
         return;
       }
 
+      var answerPayload = {
+        runId: currentView.runId,
+        authToken: getAuthToken(),
+        questionId: currentQuestionView.question.questionId,
+        selectedAnswer: answer.selectedAnswer,
+        selectedChoiceIndex: answer.selectedChoiceIndex,
+        selectedAnswerText: answer.selectedAnswerText,
+        elapsedMs: elapsedMs,
+        wrongCountAfterTimeout: wrongCountAfterTimeout,
+        actionType: currentQuestionView.actionType,
+        skillId: currentQuestionView.skillId || '',
+        targetId: currentQuestionView.targetId || '',
+        maxMs: currentQuestionView.maxMs,
+        finalDifficulty: currentQuestionView.finalDifficulty,
+        isOtherPlayerQuestion: !!currentQuestionView.isOtherPlayerQuestion,
+        fallbackReason: currentQuestionView.fallbackReason || '',
+      };
+
+      if (!hasClientAnswer(currentQuestionView.question)) {
+        submitQuestionAnswerOnServer(answerPayload, actionTypeForSubmit, skillIdForSubmit, targetIdForSubmit);
+        return;
+      }
+
+      window.setTimeout(function() {
+        var nextView = buildOptimisticNextViewFromQuestion();
+        if (!nextView) {
+          pendingQuestionTurnError = { message: '전투 결과를 계산하지 못했습니다.' };
+          requestQuestionResultProceed();
+          return;
+        }
+        pendingStageAnswerLogs.push(buildPendingStageAnswerLog(answerPayload, nextView));
+        receiveQuestionTurnView(nextView);
+      }, 0);
+    }
+
+    function submitQuestionAnswerOnServer(answerPayload, actionTypeForSubmit, skillIdForSubmit, targetIdForSubmit) {
       var runner = google.script.run
         .withSuccessHandler(function(view) {
           receiveQuestionTurnView(normalizeBattleView(view));
@@ -1583,24 +1719,6 @@
           document.getElementById('questionMessage').className = 'message error';
         });
 
-      var answerPayload = {
-        runId: currentView.runId,
-        authToken: getAuthToken(),
-        questionId: currentQuestionView.question.questionId,
-        selectedAnswer: answer.selectedAnswer,
-        selectedChoiceIndex: answer.selectedChoiceIndex,
-        selectedAnswerText: answer.selectedAnswerText,
-        elapsedMs: elapsedMs,
-        wrongCountAfterTimeout: wrongCountAfterTimeout,
-        actionType: currentQuestionView.actionType,
-        skillId: currentQuestionView.skillId || '',
-        targetId: currentQuestionView.targetId || '',
-        maxMs: currentQuestionView.maxMs,
-        finalDifficulty: currentQuestionView.finalDifficulty,
-        isOtherPlayerQuestion: !!currentQuestionView.isOtherPlayerQuestion,
-        fallbackReason: currentQuestionView.fallbackReason || '',
-      };
-
       window.setTimeout(function() {
         if (actionTypeForSubmit === 'skill') {
           runner.useSkill(currentView.runId, skillIdForSubmit, targetIdForSubmit, answerPayload);
@@ -1608,6 +1726,34 @@
           runner.submitActionAnswer(answerPayload);
         }
       }, 0);
+    }
+
+    function buildPendingStageAnswerLog(answerPayload, nextView) {
+      var questionView = currentQuestionView || {};
+      var question = questionView.question || {};
+      var battle = nextView && nextView.battle || currentView && currentView.battle || {};
+      return {
+        questionId: answerPayload.questionId,
+        playerId: currentView && currentView.playerId || '',
+        creatorId: question.creatorId || '',
+        creatorName: question.creatorName || '',
+        runId: currentView && currentView.runId || '',
+        battleId: battle.battleId || currentView && currentView.battle && currentView.battle.battleId || '',
+        floor: battle.stage && battle.stage.floor || '',
+        stage: battle.stage && battle.stage.stage || '',
+        actionType: answerPayload.actionType,
+        skillId: answerPayload.skillId || '',
+        targetId: answerPayload.targetId || '',
+        selectedAnswer: answerPayload.selectedAnswer,
+        selectedChoiceIndex: answerPayload.selectedChoiceIndex,
+        selectedAnswerText: answerPayload.selectedAnswerText,
+        elapsedMs: answerPayload.elapsedMs,
+        maxTimeMs: answerPayload.maxMs,
+        finalDifficulty: answerPayload.finalDifficulty,
+        isOtherPlayerQuestion: !!answerPayload.isOtherPlayerQuestion,
+        fallbackReason: answerPayload.fallbackReason || '',
+        wrongCountAfterTimeout: answerPayload.wrongCountAfterTimeout,
+      };
     }
 
     function startQuestionResultHold() {
@@ -1624,14 +1770,13 @@
       var hold = document.getElementById('questionResultHold');
       var fill = document.getElementById('questionResultHoldFill');
       var button = document.getElementById('questionSubmitButton');
-      if (hold && fill) {
-        hold.classList.remove('hidden');
-        hold.setAttribute('aria-hidden', 'false');
+      if (hold) {
+        hold.classList.add('hidden');
+        hold.setAttribute('aria-hidden', 'true');
+      }
+      if (fill) {
         fill.style.transition = 'none';
         fill.style.width = '100%';
-        void fill.offsetWidth;
-        fill.style.transition = 'width ' + QUESTION_RESULT_HOLD_MS + 'ms linear';
-        fill.style.width = '0%';
       }
       if (button) {
         button.disabled = true;
@@ -1736,6 +1881,7 @@
       pendingQuestionTurnIsOptimistic = false;
       pendingTurnResolutionActive = false;
       pendingTurnResolutionLoading = false;
+      saveLocalBattleCheckpoint();
       if (!isAnimatingTurn && !currentQuestionView) {
         renderBattle(currentView);
         if (currentView.battle.status === 'victory') {
@@ -1966,7 +2112,7 @@
         }
         pushLog('몬스터 턴 종료');
         await holdBattleMessage();
-        await skippableAutoDelay(TURN_END_DELAY_MS);
+        await skippableAutoDelay(MONSTER_TURN_END_DELAY_MS);
       }
 
       currentView = normalizeBattleView(nextView);
@@ -1975,6 +2121,7 @@
       if (pendingServerTurnView && applyPendingServerTurnSync()) {
         renderBattle(currentView);
       }
+      saveLocalBattleCheckpoint();
       isAnimatingTurn = false;
       setBattleInputLocked(false);
       if (pendingTurnResolutionActive && !pendingServerTurnView && currentView.battle.status === 'victory') {
@@ -2087,6 +2234,117 @@
       return nextView;
     }
 
+    function buildClientPassTurnView() {
+      var nextView = JSON.parse(JSON.stringify(currentView));
+      var battle = nextView.battle || {};
+      battle.lastTurnEvents = [];
+      normalizeClientActionPoints(battle.player);
+      battle.player.currentActionPoint = 0;
+
+      (battle.monsters || []).forEach(function(monster) {
+        monster.shield = 0;
+      });
+
+      if (!getFirstAliveMonster(battle)) {
+        battle.status = 'victory';
+        battle.lastMessage = '몬스터를 처치했습니다.';
+        return normalizeBattleView(nextView);
+      }
+
+      (battle.monsters || []).forEach(function(monster) {
+        if (Number(monster.currentHp || 0) <= 0 || Number(battle.player.hp || 0) <= 0) return;
+        var intent = monster.intent || {};
+        monster.intent = null;
+        var actionType = String(intent.actionType || 'attack');
+        var intentValue = getIntentNumericValue(intent.intentText || intent.intentTextTemplate);
+        if (actionType === 'guard') {
+          var shield = Math.max(0, Math.round(intentValue || Number(monster.defense || 0) || 6));
+          monster.shield = Number(monster.shield || 0) + shield;
+          battle.lastTurnEvents.push({
+            actor: 'monster',
+            type: 'guard',
+            monsterId: monster.instanceId || monster.monsterId,
+            monsterName: monster.name,
+            shield: shield,
+            message: monster.name + '이 방어 태세를 취했습니다.',
+          });
+          return;
+        }
+        if (actionType === 'skill') {
+          var skillType = String(intent.skillType || '').toLowerCase();
+          if (skillType === 'shield') {
+            var skillShield = Math.max(0, Math.round(intentValue || Number(monster.defense || 0) || 6));
+            monster.shield = Number(monster.shield || 0) + skillShield;
+            battle.lastTurnEvents.push({
+              actor: 'monster',
+              type: 'guard',
+              skillId: intent.skillId || '',
+              monsterId: monster.instanceId || monster.monsterId,
+              monsterName: monster.name,
+              shield: skillShield,
+              message: monster.name + '이 ' + (intent.skillName || '스킬') + ' 사용!',
+            });
+            return;
+          }
+          if (skillType === 'heal') {
+            var heal = Math.max(0, Math.round(intentValue || 0));
+            monster.currentHp = Math.min(Number(monster.maxHp || 1), Number(monster.currentHp || 0) + heal);
+            battle.lastTurnEvents.push({
+              actor: 'monster',
+              type: 'heal',
+              skillId: intent.skillId || '',
+              monsterId: monster.instanceId || monster.monsterId,
+              monsterName: monster.name,
+              heal: heal,
+              message: monster.name + '이 ' + (intent.skillName || '스킬') + ' 사용!',
+            });
+            return;
+          }
+          if (skillType === 'buff' || skillType === 'debuff') {
+            battle.lastTurnEvents.push({
+              actor: 'monster',
+              type: skillType,
+              skillId: intent.skillId || '',
+              monsterId: monster.instanceId || monster.monsterId,
+              monsterName: monster.name,
+              damage: 0,
+              message: monster.name + '이 ' + (intent.skillName || '스킬') + ' 사용!',
+            });
+            return;
+          }
+        }
+
+        var damage = Math.max(0, Math.round(intentValue || Number(monster.attack || 0)));
+        var result = applyOptimisticPlayerDamage(battle, damage);
+        battle.lastTurnEvents.push({
+          actor: 'monster',
+          type: 'attack',
+          monsterId: monster.instanceId || monster.monsterId,
+          monsterName: monster.name,
+          damage: result.damage,
+          shieldDamage: result.shieldDamage,
+          hpDamage: result.hpDamage,
+          message: monster.name + '의 공격!',
+        });
+      });
+
+      battle.player.shield = 0;
+      battle.turn = Number(battle.turn || 1) + 1;
+      battle.status = Number(battle.player.hp || 0) <= 0 ? 'defeat' : 'active';
+      battle.player.currentActionPoint = battle.status === 'active' ? Number(battle.player.maxActionPoint || 3) : 0;
+      if (battle.status === 'active') {
+        battle.usedSkillTagsThisTurn = [];
+        battle.usedSkillCountByTagThisTurn = {};
+      }
+      battle.lastMessage = battle.status === 'defeat' ? '몬스터의 공격으로 쓰러졌습니다.' : '내 턴입니다. 행동을 선택하세요.';
+      return normalizeBattleView(nextView);
+    }
+
+    function getIntentNumericValue(text) {
+      var match = String(text || '').match(/-?\d+/);
+      return match ? Number(match[0] || 0) : 0;
+    }
+
     function buildOptimisticNextViewFromQuestion() {
       if (!currentView || !currentQuestionView) return null;
       var nextView = JSON.parse(JSON.stringify(currentView));
@@ -2104,7 +2362,7 @@
 
       if (questionView.actionType === 'guard') {
         var defense = Number(battle.player && battle.player.stats && battle.player.stats.defense || 0);
-        var shield = Math.max(0, Math.round((10 + defense) * efficiency));
+        var shield = Math.max(0, Math.round((CLIENT_BASE_GUARD_SHIELD + defense) * efficiency));
         battle.player.shield = Number(battle.player.shield || 0) + shield;
         battle.lastTurnEvents.push({ actor: 'player', type: 'guard', shield: shield, message: '수비로 방어막 ' + shield + '을 만들었습니다.' });
       } else if (questionView.actionType === 'skill') {
@@ -2130,6 +2388,7 @@
 
     function applyOptimisticSkillAction(battle, questionView, efficiency) {
       var skill = findAvailableSkill(questionView.skillId) || {};
+      trackClientSkillUseTags(battle, skill);
       var type = skill.type || 'damage';
       var value = Number(skill.baseValue || 0);
       var hitCount = getSkillHitCount(skill);
@@ -2160,6 +2419,21 @@
       }
     }
 
+    function trackClientSkillUseTags(battle, skill) {
+      if (!battle || !skill) return;
+      var tags = normalizeSkillTags(skill.tags);
+      battle.usedSkillTagsThisBattle = battle.usedSkillTagsThisBattle || [];
+      battle.usedSkillTagsThisTurn = battle.usedSkillTagsThisTurn || [];
+      battle.usedSkillCountByTagThisBattle = battle.usedSkillCountByTagThisBattle || {};
+      battle.usedSkillCountByTagThisTurn = battle.usedSkillCountByTagThisTurn || {};
+      tags.forEach(function(tag) {
+        if (battle.usedSkillTagsThisBattle.indexOf(tag) === -1) battle.usedSkillTagsThisBattle.push(tag);
+        if (battle.usedSkillTagsThisTurn.indexOf(tag) === -1) battle.usedSkillTagsThisTurn.push(tag);
+        battle.usedSkillCountByTagThisBattle[tag] = Number(battle.usedSkillCountByTagThisBattle[tag] || 0) + 1;
+        battle.usedSkillCountByTagThisTurn[tag] = Number(battle.usedSkillCountByTagThisTurn[tag] || 0) + 1;
+      });
+    }
+
     function applyOptimisticSkillDamageTargets(battle, targetId, damage, skill, hitIndex) {
       if (skillTargetsAllEnemies(skill)) {
         getAliveOptimisticMonsters(battle).forEach(function(monster) {
@@ -2181,13 +2455,15 @@
       if (customDescription) {
         return renderSkillDescriptionTemplate(skill, customDescription);
       }
-      var damage = getSkillDisplayDamage(skill);
+      var metrics = getSkillDisplayMetrics(skill);
+      var damage = metrics.damage;
       if (damage > 0) {
         var hitCount = getSkillHitCount(skill);
+        var damageText = metrics.minDamage !== metrics.maxDamage ? metrics.damageRange : String(damage);
         if (hitCount > 1) {
-          return '적에게 <strong class="skill-damage-number">' + escapeHtml(damage) + '</strong> 피해를 <strong class="skill-damage-number">' + escapeHtml(hitCount) + '</strong>회 입힙니다.';
+          return '적에게 <strong class="skill-damage-number">' + escapeHtml(damageText) + '</strong> 피해를 <strong class="skill-damage-number">' + escapeHtml(hitCount) + '</strong>회 입힙니다.';
         }
-        return '적에게 <strong class="skill-damage-number">' + escapeHtml(damage) + '</strong> 피해를 입힙니다.';
+        return '적에게 <strong class="skill-damage-number">' + escapeHtml(damageText) + '</strong> 피해를 입힙니다.';
       }
       return renderSkillDescriptionTemplate(skill, fallbackText || '-');
     }
@@ -2197,6 +2473,22 @@
       var values = getSkillDescriptionTemplateValues(skill);
       [
         { keys: ['damage', '피해', '피해량'], value: values.damage, highlight: true },
+        { keys: ['damageRange', 'rangeDamage', 'randomDamage', '범위피해', '무작위피해'], value: values.damageRange, highlight: true },
+        { keys: ['minDamage', 'minimumDamage', '최소피해'], value: values.minDamage, highlight: true },
+        { keys: ['maxDamage', 'maximumDamage', '최대피해'], value: values.maxDamage, highlight: true },
+        { keys: ['shield', 'shieldAmount', '방어막'], value: values.shield, highlight: true },
+        { keys: ['heal', 'healAmount', '회복량'], value: values.heal, highlight: true },
+        { keys: ['effectValue', 'buffValue', 'debuffValue', '효과값', '버프수치'], value: values.effectValue, highlight: true },
+        { keys: ['effectChance', 'chance', '확률'], value: values.effectChance, highlight: false },
+        { keys: ['effectName', '효과명'], value: values.effectName, highlight: false },
+        { keys: ['tag', '태그'], value: values.tag, highlight: false },
+        { keys: ['tagUseCount', 'usedTagCount', '타격기술수', '사용한타격기술수'], value: values.tagUseCount, highlight: true },
+        { keys: ['tagDamageMultiplier', 'tagMultiplier', '피해계수', '계수'], value: values.tagDamageMultiplier, highlight: true },
+        { keys: ['tagDamagePercent', 'tagPercent', '피해증가율'], value: values.tagDamagePercent, highlight: true },
+        { keys: ['tagDamageAdd', 'tagAdd', '추가피해'], value: values.tagDamageAdd, highlight: true },
+        { keys: ['base', 'baseValue', '기본값'], value: values.base, highlight: false },
+        { keys: ['attack', 'atk', '공격력'], value: values.attack, highlight: false },
+        { keys: ['defense', 'def', '방어력'], value: values.defense, highlight: false },
         { keys: ['hitCount', 'hits', '타수', '횟수'], value: values.hitCount, highlight: true },
         { keys: ['totalDamage', 'total', '총피해', '총피해량'], value: values.totalDamage, highlight: true },
         { keys: ['ap', 'cost', '행동력'], value: values.ap, highlight: false },
@@ -2211,11 +2503,28 @@
     }
 
     function getSkillDescriptionTemplateValues(skill) {
-      var damage = getSkillDisplayDamage(skill);
+      var metrics = getSkillDisplayMetrics(skill);
+      var damage = metrics.damage;
       var hitCount = getSkillHitCount(skill);
       return {
         name: skill && skill.name || '',
+        base: Number(skill && skill.baseValue || 0),
         damage: damage,
+        minDamage: metrics.minDamage,
+        maxDamage: metrics.maxDamage,
+        damageRange: metrics.damageRange,
+        shield: metrics.shield,
+        heal: metrics.heal,
+        effectName: metrics.effectName,
+        effectValue: metrics.effectValue,
+        effectChance: metrics.effectChance,
+        tag: metrics.tag,
+        tagUseCount: metrics.tagUseCount,
+        tagDamageMultiplier: metrics.tagDamageMultiplier,
+        tagDamagePercent: metrics.tagDamagePercent,
+        tagDamageAdd: metrics.tagDamageAdd,
+        attack: metrics.attack,
+        defense: metrics.defense,
         hitCount: hitCount,
         totalDamage: damage * hitCount,
         ap: getSkillActionPointCost(skill),
@@ -2223,6 +2532,181 @@
         cooldown: getSkillCooldownDisplayText(skill) || '쿨타임 없음',
         useLimit: getSkillUseLimitText(skill) || '',
       };
+    }
+
+    function getSkillDisplayMetrics(skill) {
+      var battle = currentView && currentView.battle || {};
+      var playerStats = battle.player && battle.player.stats || {};
+      var attack = Number(playerStats.attack || 0);
+      var defense = Number(playerStats.defense || 0);
+      var base = Number(skill && skill.baseValue || 0);
+      var rule = safeJsonParseClient(skill && skill.effectJson, {});
+      var context = {
+        base: base,
+        baseValue: base,
+        skillBaseValue: base,
+        atk: attack,
+        attack: attack,
+        def: defense,
+        defense: defense,
+        level: Math.max(1, Number(skill && skill.level || 1)),
+        skillLevel: Math.max(1, Number(skill && skill.level || 1)),
+      };
+      var previewRange = getSkillPreviewDamageRange(skill);
+      var formulaRange = getSkillFormulaDamageRange(rule, context);
+      var effectMetrics = getSkillEffectDisplayMetrics(skill, rule);
+      var tagMetrics = getSkillTagBonusDisplayMetrics(rule);
+      var type = String(skill && skill.type || '').toLowerCase();
+      var fallbackDamage = type === 'damage' ? Math.max(0, Math.round(base + attack)) : 0;
+      var minDamage = previewRange ? previewRange.min : (formulaRange ? formulaRange.min : fallbackDamage);
+      var maxDamage = previewRange ? previewRange.max : (formulaRange ? formulaRange.max : fallbackDamage);
+      var damage = maxDamage;
+      var shield = getSkillDisplayShield(skill, rule, context);
+      var heal = getSkillDisplayHeal(skill, rule, context);
+      return {
+        damage: damage,
+        minDamage: minDamage,
+        maxDamage: maxDamage,
+        damageRange: minDamage === maxDamage ? String(maxDamage) : (minDamage + '-' + maxDamage),
+        shield: shield,
+        heal: heal,
+        effectName: effectMetrics.name,
+        effectValue: effectMetrics.value,
+        effectChance: effectMetrics.chance,
+        tag: tagMetrics.tag,
+        tagUseCount: tagMetrics.usedCount,
+        tagDamageMultiplier: tagMetrics.damageMultiplier,
+        tagDamagePercent: tagMetrics.percent,
+        tagDamageAdd: tagMetrics.add,
+        attack: attack,
+        defense: defense,
+      };
+    }
+
+    function getSkillEffectDisplayMetrics(skill, rule) {
+      var detail = skill && Array.isArray(skill.effectDetails) && skill.effectDetails.length ? skill.effectDetails[0] : null;
+      if (detail) {
+        return {
+          name: detail.name || detail.effectId || '',
+          value: detail.value !== undefined ? detail.value : '',
+          chance: detail.chance !== undefined ? detail.chance : 100,
+        };
+      }
+      var effects = [];
+      if (rule && Array.isArray(rule.applyEffects)) {
+        effects = effects.concat(rule.applyEffects);
+      }
+      if (rule && rule.effectId) {
+        effects.push(rule);
+      }
+      if (rule && rule.efficiencyBonus && Array.isArray(rule.efficiencyBonus.applyEffects)) {
+        effects = effects.concat(rule.efficiencyBonus.applyEffects);
+      }
+      var first = effects[0] || {};
+      var value = first.value !== undefined ? first.value : (first.valueFormula || 0);
+      return {
+        name: first.name || first.effectName || first.effectId || '',
+        value: value,
+        chance: first.chance !== undefined ? first.chance : 100,
+      };
+    }
+
+    function getSkillTagBonusDisplayMetrics(rule) {
+      var tagBonus = rule && rule.tagBonus || {};
+      var tag = tagBonus.tag || tagBonus.requireTag || 'strike';
+      var battle = currentView && currentView.battle || {};
+      var counts = battle.usedSkillCountByTagThisBattle || {};
+      return {
+        tag: tag,
+        usedCount: Number(counts[tag] || counts.strike || counts['타격'] || 0),
+        damageMultiplier: tagBonus.damageMultiplier !== undefined ? tagBonus.damageMultiplier : '',
+        percent: tagBonus.percent !== undefined ? tagBonus.percent : '',
+        add: tagBonus.add !== undefined ? tagBonus.add : '',
+      };
+    }
+
+    function getSkillPreviewDamageRange(skill) {
+      var text = String(skill && skill.previewText || '');
+      var range = text.match(/(?:Damage\s*)?(\d+)\s*[-~]\s*(\d+)/i);
+      if (range) {
+        var first = Number(range[1] || 0);
+        var second = Number(range[2] || first);
+        return { min: Math.min(first, second), max: Math.max(first, second) };
+      }
+      var single = text.match(/(?:Damage\s*)?(\d+)/i);
+      if (single) {
+        var value = Number(single[1] || 0);
+        return { min: value, max: value };
+      }
+      return null;
+    }
+
+    function getSkillFormulaDamageRange(rule, context) {
+      if (!rule || typeof rule !== 'object') return null;
+      var baseMin = rule.damageFormula ? evaluateSkillDisplayFormula(rule.damageFormula, context, 'min') : 0;
+      var baseMax = rule.damageFormula ? evaluateSkillDisplayFormula(rule.damageFormula, context, 'max') : 0;
+      if (rule.randomMin !== undefined || rule.randomMax !== undefined) {
+        var randomMin = Number(rule.randomMin || 0);
+        var randomMax = Number(rule.randomMax !== undefined ? rule.randomMax : randomMin);
+        baseMin += Math.min(randomMin, randomMax);
+        baseMax += Math.max(randomMin, randomMax);
+      }
+      if (rule.extraDamageFormula) {
+        baseMin += evaluateSkillDisplayFormula(rule.extraDamageFormula, context, 'min');
+        baseMax += evaluateSkillDisplayFormula(rule.extraDamageFormula, context, 'max');
+      }
+      if (!rule.damageFormula && rule.randomMin === undefined && rule.randomMax === undefined && !rule.extraDamageFormula) {
+        return null;
+      }
+      return {
+        min: Math.max(0, Math.round(Math.min(baseMin, baseMax))),
+        max: Math.max(0, Math.round(Math.max(baseMin, baseMax))),
+      };
+    }
+
+    function getSkillDisplayShield(skill, rule, context) {
+      var type = String(skill && skill.type || '').toLowerCase();
+      if (rule && rule.shieldFormula) {
+        return Math.max(0, Math.round(evaluateSkillDisplayFormula(rule.shieldFormula, context, 'max')));
+      }
+      if (type === 'shield') {
+        return Math.max(0, Math.round(Number(skill && skill.baseValue || 0) + Number(context.defense || 0)));
+      }
+      return 0;
+    }
+
+    function getSkillDisplayHeal(skill, rule, context) {
+      var type = String(skill && skill.type || '').toLowerCase();
+      if (rule && rule.healFormula) {
+        return Math.max(0, Math.round(evaluateSkillDisplayFormula(rule.healFormula, context, 'max')));
+      }
+      if (type === 'heal') {
+        return Math.max(0, Math.round(Number(skill && skill.baseValue || 0)));
+      }
+      return 0;
+    }
+
+    function evaluateSkillDisplayFormula(formula, context, rangeMode) {
+      var source = String(formula || '').replace(/\s+/g, '');
+      if (!source) return 0;
+      if (!/^[0-9A-Za-z_.+\-*/()%dD]+$/.test(source)) return 0;
+      source = source.replace(/(\d+)[dD](\d+)/g, function(match, countText, sidesText) {
+        var count = Math.max(1, Number(countText || 1));
+        var sides = Math.max(1, Number(sidesText || 1));
+        if (rangeMode === 'min') return String(count);
+        if (rangeMode === 'max') return String(count * sides);
+        return String(Math.round(count * ((1 + sides) / 2)));
+      });
+      Object.keys(context || {}).sort(function(a, b) { return b.length - a.length; }).forEach(function(key) {
+        var pattern = new RegExp('\\b' + escapeRegExpClient(key) + '\\b', 'g');
+        source = source.replace(pattern, String(Number(context[key] || 0)));
+      });
+      if (!/^[0-9.+\-*/()%]+$/.test(source)) return 0;
+      try {
+        return Number(Function('"use strict"; return (' + source + ');')() || 0);
+      } catch (error) {
+        return 0;
+      }
     }
 
     function replaceSkillDescriptionTokens(text, keys, value, highlight) {
@@ -2246,13 +2730,7 @@
     }
 
     function getSkillDisplayDamage(skill) {
-      var previewDamage = getSkillPreviewDamage(skill);
-      if (previewDamage > 0) return previewDamage;
-      if (!skill || String(skill.type || '').toLowerCase() !== 'damage') return 0;
-      var battle = currentView && currentView.battle || {};
-      var playerStats = battle.player && battle.player.stats || {};
-      var attack = Number(playerStats.attack || 0);
-      return Math.max(0, Math.round(Number(skill.baseValue || 0) + attack));
+      return getSkillDisplayMetrics(skill).damage;
     }
 
     function isSkillUseLimitText(text) {
@@ -2346,14 +2824,73 @@
         });
         return;
       }
+      commitStageResultIfNeeded(function() {
+        google.script.run
+          .withSuccessHandler(function(rewardView) {
+            hideLoadingModal();
+            renderRewardChoices(rewardView);
+          })
+          .withFailureHandler(function(error) {
+            hideLoadingModal();
+            pushLog(error.message);
+          })
+          .generateRewardChoices(currentView.runId, currentView.battle.stage.stageId, getAuthToken());
+      }, function(error) {
+        hideLoadingModal();
+        pushLog(error.message || '전투 결과 저장에 실패했습니다.');
+      });
+    }
+
+    function commitStageResultIfNeeded(onSuccess, onFailure) {
+      if (!currentView || !currentView.battle || currentView.battle.status === 'active') {
+        if (onSuccess) onSuccess(currentView);
+        return;
+      }
+      if (isDummyMode || currentView.runId === 'dummy-run') {
+        if (onSuccess) onSuccess(currentView);
+        return;
+      }
+      var commitKey = [
+        currentView.runId,
+        currentView.battle.battleId || '',
+        currentView.battle.status || '',
+      ].join(':');
+      if (stageResultCommittedKey === commitKey) {
+        if (onSuccess) onSuccess(currentView);
+        return;
+      }
+      if (stageResultCommitInFlight) {
+        return;
+      }
+
+      stageResultCommitInFlight = true;
+      showLoadingModal('전투 결과 저장 중...', '스테이지 결과를 기록하는 중...');
       google.script.run
-        .withSuccessHandler(function(rewardView) {
-          renderRewardChoices(rewardView);
+        .withSuccessHandler(function(view) {
+          stageResultCommitInFlight = false;
+          stageResultCommittedKey = commitKey;
+          pendingStageAnswerLogs = [];
+          clearLocalBattleCheckpoint(currentView && currentView.runId);
+          if (view && view.battle) {
+            currentView = normalizeBattleView(view);
+            battleQuestionCache = (currentView.questionCache || battleQuestionCache || []).slice();
+          }
+          if (onSuccess) onSuccess(currentView);
         })
         .withFailureHandler(function(error) {
-          pushLog(error.message);
+          stageResultCommitInFlight = false;
+          if (onFailure) {
+            onFailure(error);
+            return;
+          }
+          pushLog(error.message || '전투 결과 저장에 실패했습니다.');
         })
-        .generateRewardChoices(currentView.runId, currentView.battle.stage.stageId, getAuthToken());
+        .commitStageResult({
+          runId: currentView.runId,
+          battle: currentView.battle,
+          answerLogs: pendingStageAnswerLogs.slice(),
+          stageState: currentView.stageState || {},
+        }, getAuthToken());
     }
 
     function renderRewardChoices(rewardView) {
@@ -2603,6 +3140,8 @@
             }
             currentView = normalizeBattleView(response);
             battleQuestionCache = (currentView.questionCache || []).slice();
+            clearLocalBattleCheckpoint(currentView.runId);
+            resetStageCommitState();
             renderBattle(currentView);
             startBattleEntrance();
           })
@@ -3145,6 +3684,12 @@
       setBattleInputLocked(true);
       setPlayerTurn(false);
       closeQuestionModal();
+      commitStageResultIfNeeded(function() {
+        hideLoadingModal();
+      }, function(error) {
+        hideLoadingModal();
+        pushLog(error.message || '패배 결과 저장에 실패했습니다.');
+      });
 
       var shell = document.getElementById('battleShell');
       var overlay = document.getElementById('defeatOverlay');

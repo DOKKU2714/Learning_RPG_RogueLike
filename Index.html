@@ -180,8 +180,9 @@
       document.getElementById('appScreen').classList.add('active');
       document.getElementById('registerPanel').classList.add('active');
       showLoginForm();
-      warmupGameDataSilently();
-      refreshCurrentUser();
+      if (getAuthToken()) {
+        refreshCurrentUser();
+      }
     }
 
     function warmupGameDataSilently() {
@@ -195,6 +196,12 @@
 
     function refreshCurrentUser(force) {
       setMainMessage('');
+      var authToken = getAuthToken();
+      if (!authToken) {
+        saveCurrentState(null);
+        renderCurrentUser({ isRegistered: false });
+        return;
+      }
       if (!force) {
         var cachedState = getCachedCurrentState();
         if (cachedState) {
@@ -232,7 +239,7 @@
           document.getElementById('registerPanel').classList.add('active');
           setRegisterMessage(error.message, 'error');
         })
-        .getCurrentUser(getAuthToken());
+        .getCurrentUser(authToken);
     }
 
     function clearCurrentUserRequestTimer() {

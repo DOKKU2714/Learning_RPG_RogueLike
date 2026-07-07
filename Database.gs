@@ -194,6 +194,9 @@ function updateRowByKey_(sheetName, keyColumn, keyValue, patchObject) {
     return updatedObject[header] !== undefined ? updatedObject[header] : '';
   });
   sheet.getRange(rowNumber, 1, 1, headers.length).setValues([updatedRow]);
+  if (sheetName === DB_SHEETS.RUNS && typeof cacheRun_ === 'function') {
+    cacheRun_(updatedObject);
+  }
   return updatedObject;
 }
 
@@ -269,7 +272,18 @@ function safeJsonParse_(value, fallback) {
   try {
     return JSON.parse(value);
   } catch (error) {
-    return fallback;
+    try {
+      var text = String(value || '').trim();
+      if (!/^[\[{]/.test(text) || text.indexOf("'") === -1) {
+        return fallback;
+      }
+      var normalized = text.replace(/'([^'\\]*(?:\\.[^'\\]*)*)'/g, function(match, inner) {
+        return '"' + inner.replace(/"/g, '\\"') + '"';
+      });
+      return JSON.parse(normalized);
+    } catch (retryError) {
+      return fallback;
+    }
   }
 }
 
