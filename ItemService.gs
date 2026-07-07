@@ -1,0 +1,591 @@
+function normalizeOwnedItems_(items) {
+  var index = {};
+  (Array.isArray(items) ? items : []).forEach(function(item) {
+    var itemId = '';
+    var count = 1;
+    var acquiredAt = '';
+    if (typeof item === 'string') {
+      itemId = String(item || '').trim();
+    } else if (item) {
+      itemId = String(item.itemId || item.id || '').trim();
+      count = Math.max(1, Number(item.count || 1));
+      acquiredAt = item.acquiredAt || '';
+    }
+    if (!itemId) {
+      return;
+    }
+    if (!index[itemId]) {
+      index[itemId] = { itemId: itemId, count: 0, acquiredAt: acquiredAt || new Date().toISOString() };
+    }
+    index[itemId].count += count;
+  });
+  return Object.keys(index).map(function(itemId) {
+    return index[itemId];
+  });
+}
+
+function getItemRows_() {
+  var rows = [];
+  try {
+    rows = readTableCached_(DB_SHEETS.ITEMS, 600);
+  } catch (error) {
+    rows = [];
+  }
+  var sheetRows = readKoreanItemListRows_();
+  var merged = {};
+  (rows && rows.length ? rows : MASTER_ITEMS.slice()).concat(sheetRows).forEach(function(item) {
+    var itemId = item.itemId || item.id || '';
+    if (!itemId) {
+      return;
+    }
+    merged[itemId] = item;
+  });
+  return Object.keys(merged).map(function(itemId) {
+    return merged[itemId];
+  });
+}
+
+function getItemById_(itemId) {
+  var id = String(itemId || '').trim();
+  if (!id) {
+    return null;
+  }
+  return getItemRows_().filter(function(item) {
+    return item.itemId === id || item.id === id;
+  })[0] || null;
+}
+
+function getItemEffects_(item) {
+  var raw = item && (item.effects || item.effectJson) || [];
+  var parsed = safeJsonParse_(raw, []);
+  if (!Array.isArray(parsed)) {
+    parsed = parsed && typeof parsed === 'object' ? [parsed] : [];
+  }
+  return parsed.map(function(effect) {
+    var normalized = Object.assign({}, effect || {});
+    if (!normalized.type && normalized.statKey) {
+      normalized.type = ITEM_EFFECT_TYPES.STAT;
+    }
+    return normalized;
+  });
+}
+
+function readKoreanItemListRows_() {
+  var rows = [];
+  try {
+    rows = readTableCached_(DB_SHEETS.ITEM_LIST, 600);
+  } catch (error) {
+    return [];
+  }
+  return rows.map(function(row) {
+    return convertKoreanItemRow_(row);
+  }).filter(Boolean);
+}
+
+function convertKoreanItemRow_(row) {
+  var name = String(row.name || row.itemName || row['아이템명'] || '').trim();
+  if (!name) {
+    return null;
+  }
+  var no = String(row.No || row.no || row['번호'] || '').trim();
+  var itemId = String(row.id || row.itemId || row['id'] || row['ID'] || '').trim();
+  var masterItem = MASTER_ITEMS.filter(function(item) {
+    return item.name === name;
+  })[0];
+  if (!itemId) {
+    itemId = masterItem ? masterItem.itemId : (no ? 'item_sheet_' + no : buildItemIdFromName_(name));
+  }
+  var effects = [];
+  ['효과 1', '효과 2', '효과 3', '효과 4', '효과 5'].forEach(function(column) {
+    var parsed = parseItemEffectText_(row[column]);
+    if (parsed) {
+      effects.push(parsed);
+    }
+  });
+  return {
+    itemId: itemId,
+    name: name,
+    type: row.type || 'passive',
+    target: row.target || 'self',
+    effectJson: safeJsonStringify_(effects),
+    triggerTiming: row.triggerTiming || inferItemTriggerTiming_(effects),
+    description: row.description || row['플레이버/설명'] || '',
+    rarity: normalizeRarity_(row.rarity || row['등급']) || RARITIES.COMMON,
+  };
+}
+
+function buildItemIdFromName_(name) {
+  return 'item_' + String(name || '').trim().replace(/\s+/g, '_').replace(/[^\w가-힣?]/g, '').toLowerCase();
+}
+
+function inferItemTriggerTiming_(effects) {
+  if ((effects || []).some(function(effect) { return effect.type === ITEM_EFFECT_TYPES.BATTLE_START_EFFECT; })) {
+    return 'battleStart';
+  }
+  if ((effects || []).some(function(effect) { return effect.type === ITEM_EFFECT_TYPES.SKILL_EXTRA_DAMAGE; })) {
+    return 'onSkillUse';
+  }
+  return 'passive';
+}
+
+function parseItemEffectText_(text) {
+  var value = String(text || '').trim();
+  if (!value) {
+    return null;
+  }
+  var normalized = value.replace(/[“”]/g, '"').replace(/\s+/g, ' ');
+  var numberMatch = normalized.match(/([+-]?\d+(?:\.\d+)?)/);
+  var numberValue = numberMatch ? Number(numberMatch[1]) : 0;
+  var signedMatch = normalized.match(/([+-]\d+(?:\.\d+)?)/);
+  var signedValue = signedMatch ? Number(signedMatch[1]) : numberValue;
+  var statKey = parseItemStatKeyFromText_(normalized);
+  if (normalized.indexOf('전투 시작') !== -1 && normalized.indexOf('멍청해짐') !== -1) {
+    return { type: ITEM_EFFECT_TYPES.BATTLE_START_EFFECT, effectId: 'debuff_foolish', stacks: Math.max(1, numberValue || 1), summary: value };
+  }
+  if (normalized.indexOf('전투 시작') !== -1 && normalized.indexOf('똑똑해짐') !== -1) {
+    return { type: ITEM_EFFECT_TYPES.BATTLE_START_EFFECT, effectId: 'buff_smart', stacks: Math.max(1, numberValue || 1), summary: value };
+  }
+  if (normalized.indexOf('타격') !== -1 && normalized.indexOf('스킬') !== -1 && normalized.indexOf('추가 피해') !== -1) {
+    return { type: ITEM_EFFECT_TYPES.SKILL_EXTRA_DAMAGE, skillName: '타격', skillId: 'skill_strike', skillTag: 'strike', value: Math.abs(numberValue), summary: value };
+  }
+  if (normalized.indexOf('피해 증폭') !== -1 || normalized.indexOf('주는 피해') !== -1) {
+    return { type: ITEM_EFFECT_TYPES.DAMAGE_DEALT_PERCENT, value: signedValue, summary: value };
+  }
+  if (normalized.indexOf('입는 피해') !== -1 || normalized.indexOf('받는 피해') !== -1) {
+    return { type: ITEM_EFFECT_TYPES.DAMAGE_TAKEN_PERCENT, value: signedValue, summary: value };
+  }
+  if (normalized.indexOf('스킬 피해') !== -1) {
+    return { type: ITEM_EFFECT_TYPES.SKILL_DAMAGE_PERCENT, value: signedValue, summary: value };
+  }
+  if (normalized.indexOf('일반 공격 피해') !== -1 || normalized.indexOf('기본 공격 피해') !== -1) {
+    return { type: ITEM_EFFECT_TYPES.BASIC_ATTACK_DAMAGE_PERCENT, value: signedValue, summary: value };
+  }
+  if (normalized.indexOf('문제 난이도') !== -1) {
+    return { type: ITEM_EFFECT_TYPES.QUESTION_DIFFICULTY, value: signedValue, summary: value };
+  }
+  if (normalized.indexOf('문제 최대 효율') !== -1) {
+    return { type: ITEM_EFFECT_TYPES.QUESTION_MAX_EFFICIENCY_PERCENT, value: signedValue, summary: value };
+  }
+  if (normalized.indexOf('주관식 문제 정답') !== -1 && normalized.indexOf('효율') !== -1) {
+    return { type: ITEM_EFFECT_TYPES.SHORT_ANSWER_CORRECT_EFFICIENCY_PERCENT, value: signedValue, summary: value };
+  }
+  if (normalized.indexOf('주관식') !== -1 && normalized.indexOf('확률') !== -1) {
+    return { type: ITEM_EFFECT_TYPES.SHORT_ANSWER_CHANCE_PERCENT, value: signedValue, summary: value };
+  }
+  if (normalized.indexOf('문제 시간') !== -1) {
+    return {
+      type: ITEM_EFFECT_TYPES.QUESTION_TIME,
+      questionType: normalized.indexOf('주관식') !== -1 ? QUESTION_TYPES.SHORT_ANSWER : (normalized.indexOf('객관식') !== -1 ? QUESTION_TYPES.MULTIPLE_CHOICE : 'all'),
+      value: signedValue,
+      summary: value,
+    };
+  }
+  if (statKey) {
+    return {
+      type: ITEM_EFFECT_TYPES.STAT,
+      statKey: statKey,
+      effectType: normalized.indexOf('%') !== -1 && statKey === STAT_KEYS.ATTACK ? EFFECT_TYPES.PERCENT : EFFECT_TYPES.FLAT,
+      value: signedValue,
+      summary: value,
+    };
+  }
+  return { type: 'note', value: 0, summary: value };
+}
+
+function parseItemStatKeyFromText_(text) {
+  if (text.indexOf('공격력') !== -1) return STAT_KEYS.ATTACK;
+  if (text.indexOf('최대 체력') !== -1 || text.indexOf('체력') !== -1) return STAT_KEYS.HP;
+  if (text.indexOf('회피율') !== -1) return STAT_KEYS.EVASION;
+  if (text.indexOf('명중률') !== -1) return STAT_KEYS.ACCURACY;
+  if (text.indexOf('치명타 확률') !== -1) return STAT_KEYS.CRITICAL_RATE;
+  if (text.indexOf('치명타 피해') !== -1) return STAT_KEYS.CRITICAL_DAMAGE;
+  if (text.indexOf('방어력') !== -1) return STAT_KEYS.DEFENSE;
+  return '';
+}
+
+function buildItemClientDetail_(item) {
+  if (!item) {
+    return null;
+  }
+  var effects = getItemEffects_(item);
+  var rarity = normalizeRarity_(item.rarity) || RARITIES.COMMON;
+  return {
+    id: item.itemId || item.id || '',
+    itemId: item.itemId || item.id || '',
+    name: item.name || '',
+    rarity: rarity,
+    rarityLabel: getRarityLabel_(rarity),
+    effects: effects,
+    effectSummary: buildItemEffectSummary_(item),
+    description: item.description || '',
+  };
+}
+
+function buildItemEffectSummary_(item) {
+  return getItemEffects_(item).map(function(effect) {
+    return effect.summary || describeItemEffect_(effect);
+  }).filter(Boolean).join(' / ');
+}
+
+function describeItemEffect_(effect) {
+  var value = Number(effect.value || 0);
+  var sign = value > 0 ? '+' : '';
+  if (effect.type === ITEM_EFFECT_TYPES.STAT) {
+    return getItemStatLabel_(effect.statKey) + ' ' + sign + value + (effect.effectType === EFFECT_TYPES.PERCENT ? '%' : '');
+  }
+  if (effect.type === ITEM_EFFECT_TYPES.DAMAGE_DEALT_PERCENT) {
+    return '피해 증폭 ' + sign + value + '%';
+  }
+  if (effect.type === ITEM_EFFECT_TYPES.DAMAGE_TAKEN_PERCENT) {
+    return '입는 피해 ' + sign + value + '%';
+  }
+  if (effect.type === ITEM_EFFECT_TYPES.BASIC_ATTACK_DAMAGE_PERCENT) {
+    return '일반 공격 피해 ' + sign + value + '%';
+  }
+  if (effect.type === ITEM_EFFECT_TYPES.SKILL_DAMAGE_PERCENT) {
+    return '스킬 피해 ' + sign + value + '%';
+  }
+  if (effect.type === ITEM_EFFECT_TYPES.SKILL_EXTRA_DAMAGE) {
+    return (effect.skillName || '특정 스킬') + ' 추가 피해 ' + sign + value;
+  }
+  if (effect.type === ITEM_EFFECT_TYPES.BATTLE_START_EFFECT) {
+    return '전투 시작 효과 ' + (effect.effectId || '');
+  }
+  if (effect.type === ITEM_EFFECT_TYPES.QUESTION_DIFFICULTY) {
+    return '문제 난이도 ' + sign + value;
+  }
+  if (effect.type === ITEM_EFFECT_TYPES.QUESTION_MAX_EFFICIENCY_PERCENT) {
+    return '문제 최대 효율 ' + sign + value + '%';
+  }
+  if (effect.type === ITEM_EFFECT_TYPES.QUESTION_TIME) {
+    return '문제 시간 ' + sign + value + '초';
+  }
+  if (effect.type === ITEM_EFFECT_TYPES.SHORT_ANSWER_CHANCE_PERCENT) {
+    return '주관식 문제 확률 ' + sign + value + '%';
+  }
+  if (effect.type === ITEM_EFFECT_TYPES.SHORT_ANSWER_CORRECT_EFFICIENCY_PERCENT) {
+    return '주관식 정답 효율 ' + sign + value + '%';
+  }
+  return '';
+}
+
+function getItemStatLabel_(statKey) {
+  var labels = {
+    attack: '공격력',
+    hp: '최대 체력',
+    hpRegen: '회복력',
+    evasion: '회피율',
+    criticalRate: '치명타 확률',
+    criticalDamage: '치명타 피해',
+    defense: '방어력',
+    accuracy: '명중률',
+  };
+  return labels[statKey] || String(statKey || '스탯');
+}
+
+function buildItemModifiers_(ownedItems) {
+  var modifiers = {
+    statFlat: {},
+    statPercent: {},
+    damageDealtPercent: 0,
+    damageTakenPercent: 0,
+    basicAttackDamagePercent: 0,
+    skillDamagePercent: 0,
+    skillExtraDamage: [],
+    battleStartEffects: [],
+    questionDifficulty: 0,
+    questionMaxEfficiencyPercent: 0,
+    questionTimeByType: {},
+    shortAnswerChancePercent: 0,
+    shortAnswerCorrectEfficiencyPercent: 0,
+  };
+  normalizeOwnedItems_(ownedItems).forEach(function(owned) {
+    var item = getItemById_(owned.itemId);
+    var count = Math.max(1, Number(owned.count || 1));
+    if (!item) {
+      return;
+    }
+    getItemEffects_(item).forEach(function(effect) {
+      var type = effect.type || ITEM_EFFECT_TYPES.STAT;
+      var value = Number(effect.value || 0) * count;
+      if (type === ITEM_EFFECT_TYPES.STAT) {
+        var statKey = effect.statKey;
+        if (!statKey) {
+          return;
+        }
+        var bucket = effect.effectType === EFFECT_TYPES.PERCENT ? modifiers.statPercent : modifiers.statFlat;
+        bucket[statKey] = Number(bucket[statKey] || 0) + value;
+      } else if (type === ITEM_EFFECT_TYPES.DAMAGE_DEALT_PERCENT) {
+        modifiers.damageDealtPercent += value;
+      } else if (type === ITEM_EFFECT_TYPES.DAMAGE_TAKEN_PERCENT) {
+        modifiers.damageTakenPercent += value;
+      } else if (type === ITEM_EFFECT_TYPES.BASIC_ATTACK_DAMAGE_PERCENT) {
+        modifiers.basicAttackDamagePercent += value;
+      } else if (type === ITEM_EFFECT_TYPES.SKILL_DAMAGE_PERCENT) {
+        modifiers.skillDamagePercent += value;
+      } else if (type === ITEM_EFFECT_TYPES.SKILL_EXTRA_DAMAGE) {
+        modifiers.skillExtraDamage.push(Object.assign({}, effect, { value: value, itemId: item.itemId }));
+      } else if (type === ITEM_EFFECT_TYPES.BATTLE_START_EFFECT) {
+        modifiers.battleStartEffects.push(Object.assign({}, effect, {
+          itemId: item.itemId,
+          stacks: Math.max(1, Number(effect.stacks || 1)) * count,
+        }));
+      } else if (type === ITEM_EFFECT_TYPES.QUESTION_DIFFICULTY) {
+        modifiers.questionDifficulty += value;
+      } else if (type === ITEM_EFFECT_TYPES.QUESTION_MAX_EFFICIENCY_PERCENT) {
+        modifiers.questionMaxEfficiencyPercent += value;
+      } else if (type === ITEM_EFFECT_TYPES.QUESTION_TIME) {
+        var questionType = effect.questionType || 'all';
+        modifiers.questionTimeByType[questionType] = Number(modifiers.questionTimeByType[questionType] || 0) + value;
+      } else if (type === ITEM_EFFECT_TYPES.SHORT_ANSWER_CHANCE_PERCENT) {
+        modifiers.shortAnswerChancePercent += value;
+      } else if (type === ITEM_EFFECT_TYPES.SHORT_ANSWER_CORRECT_EFFICIENCY_PERCENT) {
+        modifiers.shortAnswerCorrectEfficiencyPercent += value;
+      }
+    });
+  });
+  return modifiers;
+}
+
+function calculateStatsWithItemEffects_(baseStats, ownedItems) {
+  var source = Object.assign({}, BASE_PLAYER_STATS, baseStats || {});
+  var modifiers = buildItemModifiers_(ownedItems);
+  var stats = Object.assign({}, source);
+  Object.keys(modifiers.statPercent).forEach(function(statKey) {
+    stats[statKey] = Number(source[statKey] || 0) * (1 + (Number(modifiers.statPercent[statKey] || 0) / 100));
+  });
+  Object.keys(modifiers.statFlat).forEach(function(statKey) {
+    stats[statKey] = Number(stats[statKey] !== undefined ? stats[statKey] : source[statKey] || 0) + Number(modifiers.statFlat[statKey] || 0);
+  });
+  stats.hp = Math.max(1, Math.round(Number(stats.hp || 1)));
+  stats.attack = Math.round(Number(stats.attack || 0));
+  stats.defense = Math.round(Number(stats.defense || 0));
+  stats.hpRegen = Math.round(Number(stats.hpRegen || 0));
+  stats.evasion = clampPercent_(stats.evasion);
+  stats.criticalRate = clampPercent_(stats.criticalRate);
+  stats.accuracy = clampPercent_(stats.accuracy === undefined ? 100 : stats.accuracy);
+  stats.criticalDamage = Math.max(0, Math.round(Number(stats.criticalDamage || 0)));
+  return stats;
+}
+
+function clampPercent_(value) {
+  return Math.max(0, Math.min(100, Number(value || 0)));
+}
+
+function applyBattleStartItemEffects_(battleState) {
+  if (!battleState || !battleState.player || battleState.itemBattleStartApplied) {
+    return battleState;
+  }
+  var modifiers = getBattleItemModifiers_(battleState);
+  (modifiers.battleStartEffects || []).forEach(function(rule) {
+    var effect = rule.effectId ? findCachedRowByKey_(DB_SHEETS.EFFECTS, 'effectId', rule.effectId, 600) : null;
+    if (!effect) {
+      return;
+    }
+    var stacks = Math.max(1, Number(rule.stacks || 1));
+    var configured = Object.assign({}, effect, {
+      stackable: stacks > 1 ? true : effect.stackable,
+      maxStacks: Math.max(Number(effect.maxStacks || 1), stacks),
+    });
+    for (var i = 0; i < stacks; i += 1) {
+      applyEffect(battleState.player, configured, { source: 'item', itemId: rule.itemId || '' });
+    }
+  });
+  battleState.itemBattleStartApplied = true;
+  normalizeBattleStateEffects_(battleState);
+  return battleState;
+}
+
+function syncBattlePlayerItemsFromRun_(battleState, run) {
+  if (!battleState || !battleState.player || !run) {
+    return battleState;
+  }
+  var items = normalizeOwnedItems_(safeJsonParse_(run.itemsJson, []));
+  var baseStats = battleState.player.baseStats || safeJsonParse_(run.statsJson, Object.assign({}, BASE_PLAYER_STATS));
+  var currentMaxHp = Math.max(1, Number(battleState.player.maxHp || battleState.player.stats && battleState.player.stats.hp || baseStats.hp || BASE_PLAYER_STATS.hp));
+  var nextStats = calculateStatsWithItemEffects_(baseStats, items);
+  var nextMaxHp = Math.max(1, Number(nextStats.hp || 1));
+  battleState.player.baseStats = baseStats;
+  battleState.player.items = items;
+  battleState.player.itemModifiers = buildItemModifiers_(items);
+  battleState.player.stats = nextStats;
+  battleState.player.maxHp = nextMaxHp;
+  if (nextMaxHp !== currentMaxHp) {
+    battleState.player.hp = Math.min(nextMaxHp, Math.max(0, Number(battleState.player.hp || 0)));
+  }
+  return battleState;
+}
+
+function getBattleItemModifiers_(battleState) {
+  if (!battleState || !battleState.player) {
+    return buildItemModifiers_([]);
+  }
+  if (!battleState.player.itemModifiers) {
+    battleState.player.itemModifiers = buildItemModifiers_(battleState.player.items || []);
+  }
+  return battleState.player.itemModifiers;
+}
+
+function applyOutgoingItemDamageModifiers_(battleState, damage, context) {
+  var modifiers = getBattleItemModifiers_(battleState);
+  var next = Math.max(0, Number(damage || 0));
+  var percent = Number(modifiers.damageDealtPercent || 0);
+  var actionType = context && context.actionType || '';
+  if (actionType === ACTION_TYPES.ATTACK) {
+    percent += Number(modifiers.basicAttackDamagePercent || 0);
+  }
+  if (actionType === ACTION_TYPES.SKILL) {
+    percent += Number(modifiers.skillDamagePercent || 0);
+    (modifiers.skillExtraDamage || []).forEach(function(rule) {
+      if (doesSkillMatchItemTrigger_(context && context.skill, rule)) {
+        next += Number(rule.value || 0);
+      }
+    });
+  }
+  next *= 1 + (percent / 100);
+  return Math.max(0, Math.round(next));
+}
+
+function applyIncomingItemDamageModifiers_(battleState, damage) {
+  var modifiers = getBattleItemModifiers_(battleState);
+  var next = Math.max(0, Number(damage || 0)) * (1 + (Number(modifiers.damageTakenPercent || 0) / 100));
+  return Math.max(0, Math.round(next));
+}
+
+function doesSkillMatchItemTrigger_(skill, rule) {
+  if (!skill || !rule) {
+    return false;
+  }
+  if (rule.skillId && skill.skillId === rule.skillId) {
+    return true;
+  }
+  if (rule.skillName && skill.name === rule.skillName) {
+    return true;
+  }
+  if (rule.skillTag && normalizeSkillTags_(skill.tags).indexOf(rule.skillTag) !== -1) {
+    return true;
+  }
+  return false;
+}
+
+function getItemQuestionModifiers_(battleState, question) {
+  var modifiers = getBattleItemModifiers_(battleState);
+  var questionType = question && question.type || '';
+  var timeSeconds = Number(modifiers.questionTimeByType.all || 0);
+  if (questionType && modifiers.questionTimeByType[questionType] !== undefined) {
+    var typeSeconds = Number(modifiers.questionTimeByType[questionType] || 0);
+    if (questionType === QUESTION_TYPES.SHORT_ANSWER) {
+      typeSeconds = typeSeconds / Number(GAME_RULES.SHORT_ANSWER_TIME_MULTIPLIER || 1.2);
+    }
+    timeSeconds += typeSeconds;
+  }
+  return {
+    questionDifficulty: Number(modifiers.questionDifficulty || 0),
+    questionMaxEfficiencyPercent: Number(modifiers.questionMaxEfficiencyPercent || 0),
+    questionTimeSeconds: timeSeconds,
+    shortAnswerChancePercent: Number(modifiers.shortAnswerChancePercent || 0),
+    shortAnswerCorrectEfficiencyPercent: Number(modifiers.shortAnswerCorrectEfficiencyPercent || 0),
+  };
+}
+
+function applyItemQuestionEfficiencyModifiers_(efficiency, isCorrect, question, battleState, maxEfficiency) {
+  var next = Number(efficiency || 0);
+  var modifiers = getItemQuestionModifiers_(battleState, question);
+  if (isCorrect && question && question.type === QUESTION_TYPES.SHORT_ANSWER) {
+    next += Number(modifiers.shortAnswerCorrectEfficiencyPercent || 0) / 100;
+  }
+  return roundTo_(Math.max(0, Math.min(Number(maxEfficiency || next), next)), 3);
+}
+
+function addItemToOwnedItems_(ownedItems, itemId) {
+  var items = normalizeOwnedItems_(ownedItems);
+  var id = String(itemId || '').trim();
+  if (!id) {
+    throw new Error('아이템 보상 targetId가 비어 있습니다.');
+  }
+  var existing = items.filter(function(item) {
+    return item.itemId === id;
+  })[0];
+  if (existing) {
+    existing.count = Math.max(1, Number(existing.count || 1)) + 1;
+  } else {
+    items.push({ itemId: id, count: 1, acquiredAt: new Date().toISOString() });
+  }
+  return items;
+}
+
+function pickAutoItemReward_(ownedItems) {
+  var config = ITEM_REWARD_CONFIG;
+  var rarity = pickItemRewardRarity_(config.rarityWeights);
+  var item = pickItemByRarityWithFallback_(rarity, ownedItems, config);
+  if (!item) {
+    return null;
+  }
+  return buildAutoItemReward_(item);
+}
+
+function buildAutoItemReward_(item) {
+  var detail = buildItemClientDetail_(item);
+  return {
+    rewardId: 'auto_item_' + detail.itemId,
+    type: REWARD_TYPES.ITEM,
+    targetId: detail.itemId,
+    value: 1,
+    weight: 0,
+    minFloor: 1,
+    maxFloor: GAME_RULES.FLOOR_COUNT,
+    description: detail.name,
+    detailDescription: [detail.effectSummary, detail.description].filter(Boolean).join('\n'),
+    rarity: detail.rarity,
+    itemDetail: detail,
+  };
+}
+
+function pickItemRewardRarity_(rarityWeights) {
+  var ordered = [RARITIES.COMMON, RARITIES.UNCOMMON, RARITIES.RARE, RARITIES.EPIC, RARITIES.LEGENDARY, RARITIES.UNIQUE];
+  var weights = ordered.map(function(rarity) {
+    return Math.max(0, Number(rarityWeights && rarityWeights[rarity] || 0));
+  });
+  return pickWeighted_(ordered, weights);
+}
+
+function pickItemByRarityWithFallback_(rarity, ownedItems, config) {
+  var ordered = [RARITIES.COMMON, RARITIES.UNCOMMON, RARITIES.RARE, RARITIES.EPIC, RARITIES.LEGENDARY, RARITIES.UNIQUE];
+  var rarityIndex = Math.max(0, ordered.indexOf(rarity));
+  for (var i = rarityIndex; i >= 0; i -= 1) {
+    var pool = getAvailableItemRewardPool_(ordered[i], ownedItems, config);
+    if (pool.length) {
+      return pickRandom_(pool);
+    }
+  }
+  var allPool = getAvailableItemRewardPool_('', ownedItems, config);
+  return allPool.length ? pickRandom_(allPool) : null;
+}
+
+function getAvailableItemRewardPool_(rarity, ownedItems, config) {
+  var ownedMap = normalizeOwnedItems_(ownedItems).reduce(function(map, item) {
+    map[item.itemId] = item;
+    return map;
+  }, {});
+  return getItemRows_().filter(function(item) {
+    var itemId = item.itemId || item.id || '';
+    var itemRarity = normalizeRarity_(item.rarity) || RARITIES.COMMON;
+    if (rarity && itemRarity !== rarity) {
+      return false;
+    }
+    if (config.excludeOwnedItems && ownedMap[itemId]) {
+      return false;
+    }
+    if (itemRarity === RARITIES.UNIQUE && config.preventDuplicateUniqueItems && ownedMap[itemId]) {
+      return false;
+    }
+    if (itemRarity !== RARITIES.UNIQUE && !config.allowDuplicateNonUniqueItems && ownedMap[itemId]) {
+      return false;
+    }
+    return true;
+  });
+}
+
+function shouldRollItemReward_() {
+  return Math.random() * 100 < Math.max(0, Math.min(100, Number(ITEM_REWARD_CONFIG.itemRewardChancePercent || 0)));
+}

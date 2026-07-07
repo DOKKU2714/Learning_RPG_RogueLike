@@ -14,6 +14,7 @@ var DB_SHEETS = Object.freeze({
   SKILLS: 'Skills',
   EFFECTS: 'Effects',
   ITEMS: 'Items',
+  ITEM_LIST: '아이템 목록',
   REWARDS: 'Rewards',
   REWARD_GROUPS: 'RewardGroups',
   BATTLE_LOGS: 'BattleLogs',
@@ -35,6 +36,7 @@ var DB_COLUMNS = Object.freeze({
   SKILLS: ['skillId', 'name', 'type', 'target', 'baseValue', 'hitCount', 'cooldown', 'conditionJson', 'difficultyBonus', 'effectJson', 'upgradeJson', 'description', 'actionPointCost', 'rarity', 'tags'],
   EFFECTS: ['effectId', 'name', 'category', 'statKey', 'effectType', 'value', 'durationType', 'durationTurns', 'stackable', 'maxStacks', 'triggerTiming', 'description'],
   ITEMS: ['itemId', 'name', 'type', 'target', 'effectJson', 'triggerTiming', 'description', 'rarity'],
+  ITEM_LIST: ['No', '아이템명', '등급', '효과 1', '효과 2', '효과 3', '효과 4', '효과 5', '플레이버/설명'],
   REWARDS: ['rewardId', 'type', 'targetId', 'value', 'weight', 'minFloor', 'maxFloor', 'description', 'detailDescription', 'rarity'],
   REWARD_GROUPS: ['rewardGroupId', 'rewardIds', 'currencyMin', 'currencyMax', 'description'],
   BATTLE_LOGS: ['battleLogId', 'runId', 'playerId', 'floor', 'stage', 'result', 'summaryJson', 'createdAt'],
@@ -56,6 +58,7 @@ var DB_SCHEMA = Object.freeze([
   { sheetName: DB_SHEETS.SKILLS, headers: DB_COLUMNS.SKILLS },
   { sheetName: DB_SHEETS.EFFECTS, headers: DB_COLUMNS.EFFECTS },
   { sheetName: DB_SHEETS.ITEMS, headers: DB_COLUMNS.ITEMS },
+  { sheetName: DB_SHEETS.ITEM_LIST, headers: DB_COLUMNS.ITEM_LIST },
   { sheetName: DB_SHEETS.REWARDS, headers: DB_COLUMNS.REWARDS },
   { sheetName: DB_SHEETS.REWARD_GROUPS, headers: DB_COLUMNS.REWARD_GROUPS },
   { sheetName: DB_SHEETS.BATTLE_LOGS, headers: DB_COLUMNS.BATTLE_LOGS },
@@ -161,6 +164,7 @@ var STAT_KEYS = Object.freeze({
   CRITICAL_RATE: 'criticalRate',
   CRITICAL_DAMAGE: 'criticalDamage',
   DEFENSE: 'defense',
+  ACCURACY: 'accuracy',
   QUESTION_TIME: 'questionTime',
   QUESTION_DIFFICULTY: 'questionDifficulty',
 });
@@ -173,18 +177,50 @@ var BASE_PLAYER_STATS = Object.freeze({
   criticalRate: 5,
   criticalDamage: 150,
   defense: 0,
+  accuracy: 100,
+});
+
+var ITEM_EFFECT_TYPES = Object.freeze({
+  STAT: 'stat',
+  DAMAGE_DEALT_PERCENT: 'damageDealtPercent',
+  DAMAGE_TAKEN_PERCENT: 'damageTakenPercent',
+  BASIC_ATTACK_DAMAGE_PERCENT: 'basicAttackDamagePercent',
+  SKILL_DAMAGE_PERCENT: 'skillDamagePercent',
+  SKILL_EXTRA_DAMAGE: 'skillExtraDamage',
+  BATTLE_START_EFFECT: 'battleStartEffect',
+  QUESTION_DIFFICULTY: 'questionDifficulty',
+  QUESTION_MAX_EFFICIENCY_PERCENT: 'questionMaxEfficiencyPercent',
+  QUESTION_TIME: 'questionTime',
+  SHORT_ANSWER_CHANCE_PERCENT: 'shortAnswerChancePercent',
+  SHORT_ANSWER_CORRECT_EFFICIENCY_PERCENT: 'shortAnswerCorrectEfficiencyPercent',
+});
+
+var ITEM_REWARD_CONFIG = Object.freeze({
+  itemRewardChancePercent: 30,
+  rarityWeights: Object.freeze({
+    common: 50,
+    uncommon: 25,
+    rare: 15,
+    epic: 7,
+    legendary: 2,
+    unique: 1,
+  }),
+  preventDuplicateUniqueItems: true,
+  allowDuplicateNonUniqueItems: true,
+  excludeOwnedItems: false,
 });
 
 var GAME_RULES = Object.freeze({
   FLOOR_COUNT: 5,
   STAGES_PER_FLOOR: 5,
   MIN_DIFFICULTY: 1,
-  MAX_DIFFICULTY: 10,
+  MAX_DIFFICULTY: 5,
   DEFAULT_REQUIRED_OTHER_QUESTION_COUNT: 1,
   BASE_GUARD_SHIELD: 5,
   DEFAULT_MAX_ACTION_POINT: 3,
   BASE_QUESTION_TIME_SEC: 10,
   QUESTION_TIME_PER_DIFFICULTY_SEC: 2,
+  SHORT_ANSWER_TIME_MULTIPLIER: 1.2,
   MIN_ANSWER_EFFICIENCY: 0.5,
   MAX_ANSWER_EFFICIENCY: 1.25,
   EXTRA_WRONG_EFFICIENCY_PENALTY: 0.1,
@@ -231,7 +267,7 @@ var MASTER_EFFECTS = Object.freeze([
   { effectId: 'debuff_foolish', name: '멍청해짐', category: EFFECT_CATEGORIES.DEBUFF, statKey: STAT_KEYS.QUESTION_DIFFICULTY, effectType: EFFECT_TYPES.FLAT, value: 1, durationType: DURATION_TYPES.TURN, durationTurns: 3, stackable: false, maxStacks: 1, triggerTiming: TRIGGER_TIMINGS.PASSIVE, description: 'N턴간 문제 난이도 +1.' },
   { effectId: 'buff_power', name: '힘', category: EFFECT_CATEGORIES.BUFF, statKey: STAT_KEYS.ATTACK, effectType: EFFECT_TYPES.FLAT, value: 2, durationType: DURATION_TYPES.STAGE, durationTurns: '', stackable: true, maxStacks: 99, triggerTiming: TRIGGER_TIMINGS.PASSIVE, description: '공격력 n 증가. 스택 가능.' },
   { effectId: 'buff_hard', name: '단단함', category: EFFECT_CATEGORIES.BUFF, statKey: STAT_KEYS.DEFENSE, effectType: EFFECT_TYPES.FLAT, value: 2, durationType: DURATION_TYPES.STAGE, durationTurns: '', stackable: true, maxStacks: 99, triggerTiming: TRIGGER_TIMINGS.PASSIVE, description: '방어력 n 증가. 스택 가능.' },
-  { effectId: 'buff_focus', name: '집중', category: EFFECT_CATEGORIES.BUFF, statKey: STAT_KEYS.CRITICAL_RATE, effectType: EFFECT_TYPES.FLAT, value: 5, durationType: DURATION_TYPES.STAGE, durationTurns: '', stackable: true, maxStacks: 99, triggerTiming: TRIGGER_TIMINGS.PASSIVE, description: '치명타 확률 n% 증가. 스택 가능.' },
+  { effectId: 'buff_focus', name: '집중', category: EFFECT_CATEGORIES.BUFF, statKey: STAT_KEYS.CRITICAL_RATE, effectType: EFFECT_TYPES.FLAT, value: 20, durationType: DURATION_TYPES.STAGE, durationTurns: '', stackable: true, maxStacks: 99, triggerTiming: TRIGGER_TIMINGS.PASSIVE, description: '치명타 확률 n% 증가. 스택 가능.' },
   { effectId: 'buff_smart', name: '똑똑해짐', category: EFFECT_CATEGORIES.BUFF, statKey: STAT_KEYS.QUESTION_DIFFICULTY, effectType: EFFECT_TYPES.FLAT, value: -1, durationType: DURATION_TYPES.STAGE, durationTurns: '', stackable: false, maxStacks: 1, triggerTiming: TRIGGER_TIMINGS.PASSIVE, description: '문제 난이도 -1. 최소 난이도 1 고정.' },
   { effectId: 'buff_wisdom', name: '지혜', category: EFFECT_CATEGORIES.BUFF, statKey: STAT_KEYS.QUESTION_TIME, effectType: EFFECT_TYPES.FLAT, value: 3, durationType: DURATION_TYPES.STAGE, durationTurns: '', stackable: false, maxStacks: 1, triggerTiming: TRIGGER_TIMINGS.PASSIVE, description: '문제 풀이 제한시간 +n초.' },
 ]);
@@ -353,13 +389,28 @@ var MASTER_REWARDS = Object.freeze([
   { rewardId: 'reward_skill_basic_slash', type: REWARD_TYPES.SKILL, targetId: 'skill_basic_slash', value: 1, weight: 20, minFloor: 1, maxFloor: 5, description: '스킬 획득: 깊게 베기', detailDescription: '강한 피해를 주는 공격 스킬을 획득합니다. 이미 보유 중이면 강화 보상으로 바뀝니다.', rarity: '' },
   { rewardId: 'reward_skill_guard_focus', type: REWARD_TYPES.SKILL, targetId: 'skill_guard_focus', value: 1, weight: 20, minFloor: 1, maxFloor: 5, description: '스킬 획득: 집중 방어', detailDescription: '큰 방어막을 얻는 방어 스킬을 획득합니다. 이미 보유 중이면 강화 보상으로 바뀝니다.', rarity: '' },
   { rewardId: 'reward_skill_upgrade_placeholder', type: REWARD_TYPES.SKILL_UPGRADE, targetId: 'skill_basic_slash', value: 1, weight: 1, minFloor: 1, maxFloor: 5, description: '스킬 강화 데이터 자리표시자', detailDescription: '대상 스킬의 레벨을 올립니다.', rarity: '' },
-  { rewardId: 'reward_item_small_heal', type: REWARD_TYPES.ITEM, targetId: 'item_small_heal', value: 1, weight: 1, minFloor: 1, maxFloor: 5, description: '아이템 보상 데이터 자리표시자', detailDescription: '사용 가능한 회복 아이템을 획득합니다.', rarity: '' },
 ]);
 
 var MASTER_REWARD_GROUPS = Object.freeze([
-  { rewardGroupId: 'reward_group_default', rewardIds: '["reward_stat_attack_2","reward_stat_hp_10","reward_stat_defense_2","reward_stat_critical_rate_3","reward_skill_basic_slash","reward_skill_guard_focus","reward_skill_upgrade_placeholder","reward_item_small_heal"]', currencyMin: 5, currencyMax: 15, description: '기본 스테이지 클리어 보상 그룹.' },
+  { rewardGroupId: 'reward_group_default', rewardIds: '["reward_stat_attack_2","reward_stat_hp_10","reward_stat_defense_2","reward_stat_critical_rate_3","reward_skill_basic_slash","reward_skill_guard_focus","reward_skill_upgrade_placeholder"]', currencyMin: 5, currencyMax: 15, description: '기본 스테이지 클리어 보상 그룹.' },
 ]);
 
 var MASTER_ITEMS = Object.freeze([
-  { itemId: 'item_small_heal', name: '작은 회복약', type: 'consumable', target: 'self', effectJson: '{"statKey":"hp","effectType":"flat","value":20}', triggerTiming: 'manual', description: '체력을 20 회복한다.', rarity: RARITIES.COMMON },
+  { itemId: 'item_knuckle', name: '너클', type: 'passive', target: 'self', effectJson: '[{"type":"skillExtraDamage","skillName":"타격","skillId":"skill_strike","skillTag":"strike","value":3,"summary":"타격 스킬 사용 시 3의 추가 피해"}]', triggerTiming: 'onSkillUse', description: '', rarity: RARITIES.LEGENDARY },
+  { itemId: 'item_yut', name: '윷', type: 'passive', target: 'self', effectJson: '[{"type":"battleStartEffect","effectId":"debuff_foolish","stacks":3,"summary":"매 전투 시작 시 멍청해짐 3중첩"},{"type":"damageDealtPercent","value":20,"summary":"피해 증폭 +20%"}]', triggerTiming: 'battleStart', description: '', rarity: RARITIES.EPIC },
+  { itemId: 'item_combat_boots', name: '전투화', type: 'passive', target: 'self', effectJson: '[{"type":"stat","statKey":"evasion","effectType":"flat","value":-5,"summary":"회피율 -5%"},{"type":"stat","statKey":"defense","effectType":"flat","value":2,"summary":"방어력 +2"}]', triggerTiming: 'passive', description: '', rarity: RARITIES.COMMON },
+  { itemId: 'item_smartphone', name: '스마트폰', type: 'passive', target: 'self', effectJson: '[{"type":"questionDifficulty","value":-1,"summary":"문제 난이도 -1"},{"type":"questionMaxEfficiencyPercent","value":-15,"summary":"문제 최대 효율 -15%"}]', triggerTiming: 'passive', description: '', rarity: RARITIES.UNIQUE },
+  { itemId: 'item_good_feel_pen', name: '느좋 볼펜', type: 'passive', target: 'self', effectJson: '[{"type":"shortAnswerCorrectEfficiencyPercent","value":10,"summary":"주관식 문제 정답 시 효율 +10%"},{"type":"shortAnswerChancePercent","value":10,"summary":"주관식 문제 확률 +10%"}]', triggerTiming: 'passive', description: '괜히 글을 쓰고싶어지는 볼펜이다.', rarity: RARITIES.RARE },
+  { itemId: 'item_suspicious_glasses', name: '뭔가 수상한 안경', type: 'passive', target: 'self', effectJson: '[{"type":"stat","statKey":"criticalRate","effectType":"flat","value":20,"summary":"치명타 확률 +20%"},{"type":"stat","statKey":"criticalDamage","effectType":"flat","value":-20,"summary":"치명타 피해 -20%"}]', triggerTiming: 'passive', description: '', rarity: RARITIES.EPIC },
+  { itemId: 'item_roka_tshirt', name: 'ROKA 티셔츠', type: 'passive', target: 'self', effectJson: '[{"type":"stat","statKey":"hp","effectType":"flat","value":-5,"summary":"최대 체력 -5"},{"type":"stat","statKey":"defense","effectType":"flat","value":-1,"summary":"방어력 -1"},{"type":"damageTakenPercent","value":20,"summary":"입는 피해 +20%"},{"type":"damageDealtPercent","value":20,"summary":"피해 증폭 +20%"}]', triggerTiming: 'passive', description: '어른이 된 느낌', rarity: RARITIES.UNIQUE },
+  { itemId: 'item_goalkeeper_gloves', name: '골키퍼 장갑', type: 'passive', target: 'self', effectJson: '[{"type":"stat","statKey":"hp","effectType":"flat","value":5,"summary":"최대 체력 +5"},{"type":"stat","statKey":"attack","effectType":"flat","value":-2,"summary":"공격력 -2"}]', triggerTiming: 'passive', description: '', rarity: RARITIES.UNCOMMON },
+  { itemId: 'item_compass', name: '컴퍼스', type: 'passive', target: 'self', effectJson: '[{"type":"stat","statKey":"attack","effectType":"flat","value":3,"summary":"공격력 +3"},{"type":"stat","statKey":"hp","effectType":"flat","value":-5,"summary":"최대 체력 -5"}]', triggerTiming: 'passive', description: '', rarity: RARITIES.COMMON },
+  { itemId: 'item_dice', name: '주사위', type: 'passive', target: 'self', effectJson: '[{"type":"questionTime","questionType":"multipleChoice","value":2,"summary":"객관식 문제 시간 +2초"},{"type":"questionTime","questionType":"shortAnswer","value":-2,"summary":"주관식 문제 시간 -2초"}]', triggerTiming: 'passive', description: '', rarity: RARITIES.COMMON },
+  { itemId: 'item_dirty_eyepatch', name: '더러운 안대', type: 'passive', target: 'self', effectJson: '[{"type":"stat","statKey":"accuracy","effectType":"flat","value":-15,"summary":"명중률 -15%"},{"type":"stat","statKey":"criticalRate","effectType":"flat","value":20,"summary":"치명타 확률 +20%"}]', triggerTiming: 'passive', description: '', rarity: RARITIES.COMMON },
+  { itemId: 'item_top_student_note', name: '전교 1등의 노트', type: 'passive', target: 'self', effectJson: '[{"type":"battleStartEffect","effectId":"buff_smart","stacks":1,"summary":"전투 시작 시 똑똑해짐 획득"},{"type":"questionMaxEfficiencyPercent","value":10,"summary":"문제 최대 효율 +10%"}]', triggerTiming: 'battleStart', description: '', rarity: RARITIES.UNIQUE },
+  { itemId: 'item_fountain_pen', name: '만년필', type: 'passive', target: 'self', effectJson: '[{"type":"stat","statKey":"attack","effectType":"flat","value":3,"summary":"공격력 +3"},{"type":"stat","statKey":"evasion","effectType":"flat","value":-10,"summary":"회피율 -10%"}]', triggerTiming: 'passive', description: '다른 용도로 사용할 수 있을 것 같다.', rarity: RARITIES.RARE },
+  { itemId: 'item_fake_gun', name: '총?', type: 'passive', target: 'self', effectJson: '[{"type":"stat","statKey":"attack","effectType":"percent","value":20,"summary":"공격력 +20%"},{"type":"stat","statKey":"criticalDamage","effectType":"flat","value":50,"summary":"치명타 피해 +50%"},{"type":"stat","statKey":"defense","effectType":"flat","value":-5,"summary":"방어력 -5"}]', triggerTiming: 'passive', description: '진짜 총은 아닌 듯 하다.', rarity: RARITIES.UNIQUE },
+  { itemId: 'item_suspicious_bag', name: '수상한 가방', type: 'passive', target: 'self', effectJson: '[{"type":"skillDamagePercent","value":20,"summary":"스킬 피해 +20%"},{"type":"basicAttackDamagePercent","value":-30,"summary":"일반 공격 피해 -30%"}]', triggerTiming: 'passive', description: '', rarity: RARITIES.EPIC },
+  { itemId: 'item_sneakers', name: '운동화', type: 'passive', target: 'self', effectJson: '[{"type":"stat","statKey":"evasion","effectType":"flat","value":15,"summary":"회피율 +15%"},{"type":"stat","statKey":"criticalRate","effectType":"flat","value":-10,"summary":"치명타 확률 -10%"}]', triggerTiming: 'passive', description: '', rarity: RARITIES.COMMON },
+  { itemId: 'item_sword_stick', name: '검 모양 막대기', type: 'passive', target: 'self', effectJson: '[{"type":"stat","statKey":"attack","effectType":"flat","value":5,"summary":"공격력 +5"},{"type":"stat","statKey":"defense","effectType":"flat","value":-3,"summary":"방어력 -3"}]', triggerTiming: 'passive', description: '', rarity: RARITIES.UNCOMMON },
 ]);

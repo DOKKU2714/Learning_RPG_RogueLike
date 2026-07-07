@@ -94,6 +94,12 @@
     background: #101010;
   }
 
+  .difficulty-select {
+    color: #ffd84a;
+    font-weight: 900;
+    letter-spacing: 0;
+  }
+
   textarea {
     min-height: 112px;
     resize: vertical;
@@ -617,6 +623,20 @@
     font-weight: 900;
   }
 
+  .difficulty-stars {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    color: #ffd84a;
+    font-size: 18px;
+    line-height: 1;
+    text-shadow: 0 1px 0 #2b1c00, 0 0 10px rgba(255, 216, 74, 0.42);
+  }
+
+  .difficulty-star {
+    display: inline-block;
+  }
+
   .question-prompt-panel .creator-badge {
     right: -2px;
     color: #f0dfaa;
@@ -1034,7 +1054,7 @@
     position: absolute;
     left: 0;
     right: 0;
-    top: 8px;
+    top: 14px;
     z-index: 3;
     font-size: 13px;
     font-weight: 900;
@@ -1052,7 +1072,7 @@
   .monster-hp-bar {
     position: absolute;
     left: 50%;
-    top: 31px;
+    top: 37px;
     z-index: 3;
     width: 160px;
     transform: translateX(-50%);
@@ -1089,7 +1109,7 @@
 
   .monster-status-row {
     position: absolute;
-    top: 40px;
+    top: 46px;
     right: calc(50% - 80px);
     z-index: 4;
     justify-content: flex-start;
@@ -1670,7 +1690,7 @@
 
   .skill-detail-header {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     justify-content: space-between;
     gap: 10px;
   }
@@ -1689,6 +1709,31 @@
     color: #d8d8d8;
     font-size: 12px;
     line-height: 1.35;
+  }
+
+  .skill-detail-ap-line {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    flex: 0 0 auto;
+    margin-left: auto;
+    white-space: nowrap;
+  }
+
+  .skill-detail-ap-inline {
+    display: inline-flex;
+    width: 24px;
+    height: 24px;
+    align-items: center;
+    justify-content: center;
+    border: 2px solid rgba(255, 255, 255, 0.78);
+    border-radius: 50%;
+    color: #ffffff;
+    font-size: 15px;
+    font-style: normal;
+    font-weight: 900;
+    line-height: 1;
+    text-shadow: 0 1px 2px #000;
   }
 
   .skill-detail-description {
@@ -2612,7 +2657,7 @@
     font-family: var(--font-title);
     width: 100%;
     max-width: 100%;
-    font-size: clamp(24px, 4.1vw, 42px);
+    font-size: clamp(20px, 3.3vw, 34px);
     font-weight: 800;
     letter-spacing: 0;
     line-height: 1.1;
@@ -2638,11 +2683,12 @@
     max-width: 100%;
     color: currentColor;
     font-family: var(--font-title);
-    font-size: clamp(15px, 2.1vw, 24px);
+    font-size: clamp(13px, 1.7vw, 20px);
     line-height: 1.2;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    overflow-wrap: anywhere;
   }
 
   .reward-choice-card.rarity-common {

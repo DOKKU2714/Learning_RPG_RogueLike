@@ -191,6 +191,8 @@
     var stageResultCommitFailureCallbacks = [];
     var currentRewardView = null;
     var CLIENT_BASE_GUARD_SHIELD = 5;
+    var MAX_QUESTION_DIFFICULTY = 5;
+    var SHORT_ANSWER_TIME_MULTIPLIER = 1.2;
     var STAGE_INTRO_SEEN_PREFIX = 'learningRpgStageIntroSeen:';
     var LOCAL_BATTLE_CHECKPOINT_PREFIX = 'learningRpgBattleCheckpoint:';
 
@@ -723,7 +725,7 @@
           '<span class="skill-detail-card rarity-' + escapeHtml(rarityClass) + '" aria-hidden="true">' +
             '<span class="skill-detail-header">' +
               '<strong class="skill-detail-name">' + escapeHtml(skill.name) + '</strong>' +
-              '<em class="skill-detail-ap skill-detail-ap-cost">행동력 <strong>(' + escapeHtml(apCost) + ')</strong> 소모</em>' +
+              '<span class="skill-detail-line skill-detail-ap-line">행동력 <em class="skill-detail-ap-inline">' + escapeHtml(apCost) + '</em> 소비</span>' +
             '</span>' +
             '<span class="skill-detail-meta">' + escapeHtml(rarity) + ' / Lv.' + escapeHtml(skill.level || 1) + '</span>' +
             '<span class="skill-detail-description">' + detailDescription + '</span>' +
@@ -762,12 +764,22 @@
     }
 
     function renderActionTooltips(player) {
-      var stats = (player && player.stats) || {};
+      var stats = getClientEffectiveStats(player);
       var attack = Math.max(0, Math.round(Number(stats.attack || 0)));
       var defense = Math.max(0, Math.round(CLIENT_BASE_GUARD_SHIELD + Number(stats.defense || 0)));
       document.getElementById('attackActionButton').setAttribute('data-tooltip', '문제를 풀고 효율에 따라 약 ' + attack + ' 피해를 줍니다.');
       document.getElementById('guardActionButton').setAttribute('data-tooltip', '문제를 풀고 효율에 따라 약 ' + defense + ' 방어막을 얻습니다.');
       document.getElementById('skillToggleButton').setAttribute('data-tooltip', '보유 스킬 목록을 엽니다.');
+    }
+
+    function formatEffectiveStat(baseStats, effectiveStats, statKey, suffix) {
+      var base = Number(baseStats && baseStats[statKey] || 0);
+      var effective = Number(effectiveStats && effectiveStats[statKey] || 0);
+      var rounded = Math.round(effective * 10) / 10;
+      var delta = Math.round((effective - base) * 10) / 10;
+      var unit = suffix || '';
+      if (!delta) return rounded + unit;
+      return rounded + unit + ' (' + (delta > 0 ? '+' : '') + delta + unit + ')';
     }
 
     function toggleSkillPanel() {
@@ -1092,15 +1104,16 @@
         criticalRate: '치명타가 발생할 확률입니다.',
         criticalDamage: '치명타 발생 시 피해 배율입니다.',
         evasion: '공격을 회피할 확률입니다.',
+        accuracy: '공격이 명중할 확률의 기준값입니다.',
         hpRegen: '회복 효과의 기준값입니다.',
         questionTime: '문제 풀이 제한시간에 영향을 줍니다.',
         questionDifficulty: '출제되는 문제 난이도에 영향을 줍니다.',
       };
       if (status.statKey === 'defense') {
         if (status.effectType === 'percent') {
-          return label + '\n방어막 수치가 ' + value + '% ' + (Number(status.value || 0) < 0 ? '감소합니다.' : '증가합니다.');
+          return label + '\n받는 피해와 방어막 수치가 ' + value + '% ' + (Number(status.value || 0) < 0 ? '감소합니다.' : '증가합니다.');
         }
-        return label + '\n방어막 수치가 ' + value + '만큼 ' + (Number(status.value || 0) < 0 ? '감소합니다.' : '증가합니다.');
+        return label + '\n받는 피해와 방어막 수치가 ' + value + '만큼 ' + (Number(status.value || 0) < 0 ? '불리해집니다.' : '유리해집니다.');
       }
       return label + '\n' + (descriptions[status.statKey] || '전투 계산에 사용되는 능력치입니다.');
     }
@@ -1116,6 +1129,7 @@
         criticalRate: '치명타 확률',
         criticalDamage: '치명타 피해',
         evasion: 'Evasion',
+        accuracy: '명중률',
         hpRegen: 'Regen',
         questionTime: '제한시간',
         questionDifficulty: 'Question difficulty',
@@ -1215,15 +1229,17 @@
       var panel = document.getElementById('battleStatsPanel');
       var player = currentView && currentView.battle ? currentView.battle.player || {} : {};
       var stats = player.stats || {};
+      var effectiveStats = getClientEffectiveStats(player);
       var rows = [
         ['HP', (player.hp || 0) + ' / ' + (player.maxHp || stats.hp || '-')],
         ['Shield', player.shield || 0],
         ['AP', (player.currentActionPoint || 0) + ' / ' + (player.maxActionPoint || player.baseMaxActionPoint || 3)],
-        ['Attack', stats.attack || 0],
-        ['Defense', stats.defense || 0],
-        ['회피', (stats.evasion || 0) + '%'],
-        ['치명타 확률', (stats.criticalRate || 0) + '%'],
-        ['치명타 피해', (stats.criticalDamage || 0) + '%'],
+        ['Attack', formatEffectiveStat(stats, effectiveStats, 'attack', '')],
+        ['Defense', formatEffectiveStat(stats, effectiveStats, 'defense', '')],
+        ['명중률', formatEffectiveStat(stats, effectiveStats, 'accuracy', '%')],
+        ['회피', formatEffectiveStat(stats, effectiveStats, 'evasion', '%')],
+        ['치명타 확률', formatEffectiveStat(stats, effectiveStats, 'criticalRate', '%')],
+        ['치명타 피해', formatEffectiveStat(stats, effectiveStats, 'criticalDamage', '%')],
         ['화폐', currentView ? Number(currentView.currency || 0) : 0],
       ];
       panel.innerHTML = '<strong>현재 스탯</strong>' + rows.map(function(row) {
@@ -1531,10 +1547,12 @@
       var skill = findAvailableSkill(skillId);
       var bonus = Number(skill && skill.difficultyBonus || 0);
       if (!bonus) return questionView;
-      var nextDifficulty = Math.max(1, Math.min(10, Number(questionView.finalDifficulty || 1) + bonus));
-      var addedMs = Math.max(0, nextDifficulty - Number(questionView.finalDifficulty || 1)) * 2000;
+      var nextDifficulty = Math.max(1, Math.min(MAX_QUESTION_DIFFICULTY, Number(questionView.finalDifficulty || 1) + bonus));
+      var question = questionView.question || {};
+      var typeMultiplier = question.type === 'shortAnswer' ? SHORT_ANSWER_TIME_MULTIPLIER : 1;
+      var addedMs = Math.max(0, nextDifficulty - Number(questionView.finalDifficulty || 1)) * 2000 * typeMultiplier;
       questionView.finalDifficulty = nextDifficulty;
-      questionView.maxMs = Number(questionView.maxMs || 10000) + addedMs;
+      questionView.maxMs = Math.round(Number(questionView.maxMs || 10000) + addedMs);
       return questionView;
     }
 
@@ -1566,7 +1584,7 @@
       var question = questionView.question;
       document.getElementById('questionTitle').textContent = '문제';
       document.getElementById('questionPrompt').textContent = question.prompt;
-      document.getElementById('questionDifficulty').textContent = questionView.finalDifficulty || '-';
+      document.getElementById('questionDifficulty').innerHTML = renderDifficultyStars(questionView.finalDifficulty);
       document.getElementById('questionMaxTime').textContent = formatSecond(questionView.maxMs);
       document.getElementById('questionCreatorBadge').textContent = '출제자: ' + (question.creatorName || '알 수 없음');
       document.getElementById('questionCreatorBadge').style.visibility = (questionView.isOtherPlayerQuestion || question.creatorId) ? 'visible' : 'hidden';
@@ -1635,19 +1653,25 @@
     }
 
     function calculateTimedEfficiency(remainingMs, maxMs) {
+      var maxEfficiency = getQuestionMaxAnswerEfficiency();
       var ratio = Math.max(0, Math.min(1, Number(remainingMs || 0) / Math.max(1, Number(maxMs || 1))));
       if (ratio >= 0.5) {
-        return 1 + ((ratio - 0.5) * ((MAX_ANSWER_EFFICIENCY - 1) / 0.5));
+        return 1 + ((ratio - 0.5) * ((maxEfficiency - 1) / 0.5));
       }
       return MIN_ANSWER_EFFICIENCY + (ratio * ((1 - MIN_ANSWER_EFFICIENCY) / 0.5));
     }
 
+    function getQuestionMaxAnswerEfficiency() {
+      return Math.max(1, Number(currentQuestionView && currentQuestionView.maxAnswerEfficiency || MAX_ANSWER_EFFICIENCY));
+    }
+
     function updateQuestionEfficiencyMeter(efficiency) {
       var normalizedEfficiency = Math.max(0, Number(efficiency || 0));
+      var maxEfficiency = getQuestionMaxAnswerEfficiency();
       var percent = Math.round(normalizedEfficiency * 100);
       var fill = document.getElementById('questionEfficiencyFill');
       document.getElementById('questionEfficiencyText').textContent = percent + '%';
-      fill.style.width = Math.round(Math.max(0, Math.min(1, (normalizedEfficiency - MIN_ANSWER_EFFICIENCY) / Math.max(0.01, MAX_ANSWER_EFFICIENCY - MIN_ANSWER_EFFICIENCY))) * 100) + '%';
+      fill.style.width = Math.round(Math.max(0, Math.min(1, (normalizedEfficiency - MIN_ANSWER_EFFICIENCY) / Math.max(0.01, maxEfficiency - MIN_ANSWER_EFFICIENCY))) * 100) + '%';
       fill.classList.remove('efficiency-high', 'efficiency-mid', 'efficiency-low');
       fill.classList.add(percent <= 50 ? 'efficiency-low' : (percent <= 100 ? 'efficiency-mid' : 'efficiency-high'));
     }
@@ -2413,6 +2437,7 @@
     function assignClientMonsterIntents(battle) {
       var rules = currentView && currentView.monsterAiRules || [];
       (battle.monsters || []).forEach(function(monster) {
+        syncClientStatusBuckets(monster);
         if (Number(monster.currentHp || 0) <= 0) {
           monster.intent = null;
           return;
@@ -2470,7 +2495,9 @@
       if (!target || !intent || !intent.skillEffect) return null;
       var chance = intent.skillEffectChance === undefined ? 100 : Number(intent.skillEffectChance || 0);
       if (Math.random() * 100 > chance) return null;
-      return applyClientEffect(target, intent.skillEffect, { source: 'monster', skillId: intent.skillId || '' });
+      var applied = applyClientEffect(target, intent.skillEffect, { source: 'monster', skillId: intent.skillId || '' });
+      syncClientStatusBuckets(target);
+      return applied;
     }
 
     function applyClientPlayerSkillEffects(battle, skill, target) {
@@ -2484,6 +2511,7 @@
         var chance = effect.chance === undefined ? 100 : Number(effect.chance || 0);
         if (Math.random() * 100 > chance) return;
         applyClientEffect(effectTarget, effect, { source: 'player', skillId: skill.skillId || '' });
+        syncClientStatusBuckets(effectTarget);
       });
     }
 
@@ -2498,6 +2526,13 @@
 
     function getClientEffectiveStat(target, statKey) {
       return RULE_ENGINE_SHARED.getEffectiveStat(target, statKey);
+    }
+
+    function getClientEffectiveStats(target) {
+      return RULE_ENGINE_SHARED.calculateEffectiveStats(
+        target && target.stats || {},
+        target && target.effects || []
+      );
     }
 
     function hasClientEffect(target, effectId) {
@@ -2770,8 +2805,9 @@
 
     function getSkillPreviewDamage(skill) {
       if (!skill || !skill.previewText) return 0;
-      var match = String(skill.previewText).match(/(?:Damage\s*)?(\d+)/i);
-      return match ? Number(match[1] || 0) : 0;
+      if (String(skill.type || '').toLowerCase() !== 'damage') return 0;
+      var match = String(skill.previewText).match(/(?:Damage\s*)?(\d+)/i) || String(skill.previewText).match(/\d+/);
+      return match ? Number(match[1] || match[0] || 0) : 0;
     }
 
     function buildSkillDetailDescription(skill, fallbackText) {
@@ -2860,7 +2896,7 @@
 
     function getSkillDisplayMetrics(skill) {
       var battle = currentView && currentView.battle || {};
-      var playerStats = battle.player && battle.player.stats || {};
+      var playerStats = getClientEffectiveStats(battle.player || {});
       var attack = Number(playerStats.attack || 0);
       var defense = Number(playerStats.defense || 0);
       var base = Number(skill && skill.baseValue || 0);
@@ -2950,6 +2986,9 @@
     }
 
     function getSkillPreviewDamageRange(skill) {
+      if (String(skill && skill.type || '').toLowerCase() !== 'damage') {
+        return null;
+      }
       var text = String(skill && skill.previewText || '');
       var range = text.match(/(?:Damage\s*)?(\d+)\s*[-~]\s*(\d+)/i);
       if (range) {
@@ -3091,7 +3130,8 @@
     function applyOptimisticMonsterDamage(battle, targetId, damage, actionType, skill, simultaneousGroupId) {
       var target = findOptimisticTargetMonster(battle, targetId);
       if (!target) return;
-      var totalDamage = Math.max(0, Math.round(Number(damage || 0)));
+      var critical = rollClientCriticalDamage(battle, damage);
+      var totalDamage = critical.damage;
       var shieldDamage = Math.min(Number(target.shield || 0), totalDamage);
       var hpDamage = totalDamage - shieldDamage;
       target.shield = Math.max(0, Number(target.shield || 0) - shieldDamage);
@@ -3105,9 +3145,27 @@
         damage: totalDamage,
         shieldDamage: shieldDamage,
         hpDamage: hpDamage,
+        isCritical: critical.isCritical,
+        criticalMultiplier: critical.multiplier,
         simultaneousGroupId: simultaneousGroupId || '',
-        message: skill && skill.name ? skill.name + '! ' + target.name + '에게 ' + totalDamage + ' 피해!' : target.name + '에게 ' + totalDamage + ' 피해를 주었습니다.',
+        message: critical.isCritical
+          ? (skill && skill.name ? skill.name + ' 치명타! ' + totalDamage + ' 피해!' : target.name + '에게 치명타! ' + totalDamage + ' 피해를 주었습니다.')
+          : (skill && skill.name ? skill.name + '! ' + target.name + '에게 ' + totalDamage + ' 피해!' : target.name + '에게 ' + totalDamage + ' 피해를 주었습니다.'),
       });
+    }
+
+    function rollClientCriticalDamage(battle, damage) {
+      var baseDamage = Math.max(0, Math.round(Number(damage || 0)));
+      var stats = getClientEffectiveStats(battle && battle.player || {});
+      var criticalRate = Math.max(0, Number(stats.criticalRate || 0));
+      var criticalDamage = Math.max(100, Number(stats.criticalDamage || 100));
+      var isCritical = baseDamage > 0 && criticalRate > 0 && Math.random() * 100 < criticalRate;
+      var multiplier = isCritical ? criticalDamage / 100 : 1;
+      return {
+        damage: isCritical ? Math.max(0, Math.round(baseDamage * multiplier)) : baseDamage,
+        isCritical: isCritical,
+        multiplier: multiplier,
+      };
     }
 
     function getAliveOptimisticMonsters(battle) {
@@ -3292,7 +3350,7 @@
           '<span class="reward-detail-card rarity-' + escapeHtml(rarity) + '" aria-hidden="true">' +
             '<span class="skill-detail-header">' +
               '<strong class="skill-detail-name">' + escapeHtml(detailName) + '</strong>' +
-              (reward.skillDetail ? '<em class="skill-detail-ap skill-detail-ap-cost">행동력 <strong>(' + escapeHtml(getSkillActionPointCost(reward.skillDetail)) + ')</strong> 소모</em>' : '') +
+              (reward.skillDetail ? '<span class="skill-detail-line skill-detail-ap-line">행동력 <em class="skill-detail-ap-inline">' + escapeHtml(getSkillActionPointCost(reward.skillDetail)) + '</em> 소비</span>' : '') +
             '</span>' +
             '<span class="skill-detail-meta">' + detailMeta + '</span>' +
             '<span class="skill-detail-description">' + detail + '</span>' +
@@ -3326,7 +3384,7 @@
     function fitRewardCardText() {
       Array.prototype.forEach.call(document.querySelectorAll('.reward-choice-heading, .reward-choice-body strong'), function(element) {
         var baseSize = Number(window.getComputedStyle(element).fontSize.replace('px', '')) || 20;
-        var minSize = element.classList.contains('reward-choice-heading') ? 20 : 13;
+        var minSize = element.classList.contains('reward-choice-heading') ? 16 : 10;
         element.style.fontSize = baseSize + 'px';
         var size = baseSize;
         while (element.scrollWidth > element.clientWidth && size > minSize) {
@@ -3334,6 +3392,15 @@
           element.style.fontSize = size + 'px';
         }
       });
+    }
+
+    function renderDifficultyStars(difficulty) {
+      var count = Math.max(1, Math.min(MAX_QUESTION_DIFFICULTY, Math.round(Number(difficulty || 1))));
+      var stars = '';
+      for (var i = 0; i < count; i += 1) {
+        stars += '<span class="difficulty-star">&#9733;</span>';
+      }
+      return '<span class="difficulty-stars" aria-label="난이도 ' + count + '">' + stars + '</span>';
     }
 
     function buildRewardHoverDescription(reward) {
@@ -3437,6 +3504,7 @@
         criticalRate: 'CRIT',
         criticalDamage: 'CRIT DMG',
         defense: 'DEF',
+        accuracy: 'ACC',
         questionTime: 'TIME',
       };
       return labels[targetId] || String(targetId || '');

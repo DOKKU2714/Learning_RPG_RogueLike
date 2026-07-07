@@ -219,6 +219,7 @@
 
   <script>
     var WEB_APP_URL = '<?= getWebAppUrl_() ?>';
+    var MAX_QUESTION_DIFFICULTY = 5;
 
     function init() {
       google.script.run
@@ -264,7 +265,7 @@
             '<strong>해설</strong><span>' + escapeHtml(question.explanation || '-') + '</span>' +
           '</div>' +
           '<div class="actions">' +
-            '<div><label for="difficulty-' + escapeHtml(question.questionId) + '">난이도</label>' + difficultySelect(question.questionId) + '</div>' +
+            '<div><label for="difficulty-' + escapeHtml(question.questionId) + '">난이도</label>' + difficultySelect(question.questionId, question.difficulty) + '</div>' +
             '<div><label for="comment-' + escapeHtml(question.questionId) + '">반려 사유</label><textarea id="comment-' + escapeHtml(question.questionId) + '" placeholder="반려할 때 입력"></textarea></div>' +
             '<button onclick="approve(\'' + escapeJs(question.questionId) + '\')">승인</button>' +
             '<button class="danger" onclick="rejectQuestionItem(\'' + escapeJs(question.questionId) + '\')">반려</button>' +
@@ -283,12 +284,31 @@
       }).join('') + '</ol>';
     }
 
-    function difficultySelect(questionId) {
+    function difficultySelect(questionId, selectedDifficulty) {
       var options = [];
-      for (var i = 1; i <= 10; i += 1) {
-        options.push('<option value="' + i + '">' + i + '</option>');
+      var selected = Math.max(1, Math.min(MAX_QUESTION_DIFFICULTY, Number(selectedDifficulty || 1)));
+      for (var i = 1; i <= MAX_QUESTION_DIFFICULTY; i += 1) {
+        options.push('<option value="' + i + '"' + (i === selected ? ' selected' : '') + '>' + difficultyStarsText(i) + '</option>');
       }
-      return '<select id="difficulty-' + escapeHtml(questionId) + '">' + options.join('') + '</select>';
+      return '<select class="difficulty-select" id="difficulty-' + escapeHtml(questionId) + '">' + options.join('') + '</select>';
+    }
+
+    function difficultyStarsText(value) {
+      var count = Math.max(1, Math.min(MAX_QUESTION_DIFFICULTY, Number(value || 1)));
+      var text = '';
+      for (var i = 0; i < count; i += 1) {
+        text += '&#9733;';
+      }
+      return text;
+    }
+
+    function renderDifficultyStars(value) {
+      var count = Math.max(1, Math.min(MAX_QUESTION_DIFFICULTY, Number(value || 1)));
+      var stars = '';
+      for (var i = 0; i < count; i += 1) {
+        stars += '<span class="difficulty-star">&#9733;</span>';
+      }
+      return '<span class="difficulty-stars" aria-label="난이도 ' + count + '">' + stars + '</span>';
     }
 
     function approve(questionId) {
@@ -354,7 +374,7 @@
               '<td class="stat-prompt" title="' + escapeHtml(question.prompt) + '">' + escapeHtml(question.prompt) + '</td>' +
               '<td>' + escapeHtml(question.creatorName || '-') + '</td>' +
               '<td>' + escapeHtml(question.status || '-') + '</td>' +
-              '<td>' + escapeHtml(question.difficulty || '-') + '</td>' +
+              '<td>' + renderDifficultyStars(question.difficulty || 1) + '</td>' +
               '<td>' + Number(question.correctCount || 0) + ' / ' + Number(question.totalCount || 0) + '</td>' +
               '<td>' + formatRate(question.correctRate) + '</td>' +
             '</tr>';

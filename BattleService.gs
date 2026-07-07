@@ -138,7 +138,29 @@ function loadStage(stageId) {
   if (!stage) {
     throw new Error('스테이지를 찾을 수 없습니다: ' + stageId);
   }
-  return stage;
+  return normalizeStageDifficulty_(stage);
+}
+
+function normalizeStageDifficulty_(stage) {
+  var normalized = Object.assign({}, stage || {});
+  var baseDifficulty = clampDifficulty_(Number(normalized.baseDifficulty || GAME_RULES.MIN_DIFFICULTY));
+  var minDifficulty = clampDifficulty_(Number(normalized.minDifficulty || baseDifficulty));
+  var maxDifficulty = clampDifficulty_(Number(normalized.maxDifficulty || baseDifficulty));
+  if (minDifficulty > maxDifficulty) {
+    minDifficulty = maxDifficulty;
+  }
+  normalized.baseDifficulty = baseDifficulty;
+  normalized.minDifficulty = minDifficulty;
+  normalized.maxDifficulty = maxDifficulty;
+  return normalized;
+}
+
+function getStageDifficultyRange_(stage) {
+  var normalized = normalizeStageDifficulty_(stage || {});
+  return {
+    minDifficulty: Number(normalized.minDifficulty || GAME_RULES.MIN_DIFFICULTY),
+    maxDifficulty: Number(normalized.maxDifficulty || GAME_RULES.MAX_DIFFICULTY),
+  };
 }
 
 function normalizePlayerActionPoints_(battleState, resetForTurn) {
@@ -222,7 +244,9 @@ function startBattle(runId) {
   var battleId = generateId_('battle');
   var playerGhostSelection = selectPlayerGhostForBattle_(run, stage, stageState, battleId);
   var monsters = createMonstersForStage_(stage, playerGhostSelection.monster);
-  var stats = safeJsonParse_(run.statsJson, Object.assign({}, BASE_PLAYER_STATS));
+  var baseStats = safeJsonParse_(run.statsJson, Object.assign({}, BASE_PLAYER_STATS));
+  var items = normalizeOwnedItems_(safeJsonParse_(run.itemsJson, []));
+  var stats = calculateStatsWithItemEffects_(baseStats, items);
   var battleState = {
     battleId: battleId,
     status: STATUS.BATTLE_ACTIVE,
@@ -237,9 +261,7 @@ function startBattle(runId) {
       maxDifficulty: Number(stage.maxDifficulty),
       monsterGroupId: stage.monsterGroupId || '',
       bossMonsterId: stage.bossMonsterId || '',
-      bossConfig: {
-        shortQuestionChance: stage.bossMonsterId ? 15 : 0,
-      },
+      bossConfig: {},
       rewardGroupId: stage.rewardGroupId,
     },
     player: {
@@ -251,7 +273,10 @@ function startBattle(runId) {
       currentActionPoint: GAME_RULES.DEFAULT_MAX_ACTION_POINT,
       actionPointMaxDelta: 0,
       nextTurnActionPointDelta: 0,
+      baseStats: baseStats,
       stats: stats,
+      items: items,
+      itemModifiers: buildItemModifiers_(items),
       effects: [],
     },
     monsters: monsters,
@@ -270,6 +295,7 @@ function startBattle(runId) {
     usedSkillCountByTagThisTurn: {},
     activeTriggers: [],
   };
+  applyBattleStartItemEffects_(battleState);
   decideMonsterIntents(battleState);
 
   stageState.battle = battleState;
@@ -412,11 +438,11 @@ function selectQuestionForAction(playerId, runId, actionType, difficultyBonus, a
   }
 
   var activeEffects = getActiveEffectsForQuestion_(battleState);
-  var preferredQuestionType = shouldUseShortQuestionInBoss(battleState.stage.bossConfig) ? QUESTION_TYPES.SHORT_ANSWER : '';
-  var questionResult = pickQuestion_(playerId, battleState.stage, stageState.otherStudentQuestionShown, preferredQuestionType, getForcedQuestionCreatorId_(battleState));
+  var questionResult = pickQuestion_(playerId, battleState.stage, stageState.otherStudentQuestionShown, getForcedQuestionCreatorId_(battleState), getItemQuestionModifiers_(battleState, null));
   var baseDifficulty = applyBossDifficultyBonus(battleState.stage, Number(questionResult.question.difficulty || battleState.stage.baseDifficulty) + Number(difficultyBonus || 0));
-  var finalDifficulty = calculateFinalQuestionDifficulty(baseDifficulty, activeEffects);
-  var maxMs = calculateFinalQuestionTimeLimit(finalDifficulty, activeEffects);
+  var questionModifiers = getItemQuestionModifiers_(battleState, questionResult.question);
+  var finalDifficulty = calculateFinalQuestionDifficulty(baseDifficulty, activeEffects, questionModifiers);
+  var maxMs = calculateFinalQuestionTimeLimitForQuestion_(finalDifficulty, activeEffects, questionResult.question, questionModifiers);
   var pendingAction = {
     actionType: normalizedAction,
     targetId: normalizedAction === ACTION_TYPES.ATTACK ? targetId || '' : '',
@@ -426,6 +452,7 @@ function selectQuestionForAction(playerId, runId, actionType, difficultyBonus, a
     issuedAt: new Date().getTime(),
     maxMs: maxMs,
     finalDifficulty: finalDifficulty,
+    maxAnswerEfficiency: calculateMaxAnswerEfficiency_(questionModifiers),
     isOtherPlayerQuestion: questionResult.isOtherPlayerQuestion,
     fallbackReason: questionResult.fallbackReason,
   };
@@ -482,11 +509,11 @@ function submitActionAnswer(answerPayload) {
   }
 
   var elapsedMs = Math.max(0, Number(payload.elapsedMs || 0));
-  var maxMs = Number(pendingAction.maxMs || calculateFinalQuestionTimeLimit(pendingAction.finalDifficulty, getActiveEffectsForQuestion_(battleState)));
+  var maxMs = Number(pendingAction.maxMs || calculateFinalQuestionTimeLimitForQuestion_(pendingAction.finalDifficulty, getActiveEffectsForQuestion_(battleState), pendingAction.question || question, getItemQuestionModifiers_(battleState, question)));
   var remainingMs = Math.max(0, maxMs - elapsedMs);
   var isCorrect = isCorrectAnswer_(question, payload.selectedAnswer, payload.selectedChoiceIndex, payload.selectedAnswerText);
   var wrongCountAfterTimeout = Number(payload.wrongCountAfterTimeout || 0);
-  var efficiency = calculateEfficiency(isCorrect, remainingMs, maxMs, wrongCountAfterTimeout);
+  var efficiency = calculateEfficiency(isCorrect, remainingMs, maxMs, wrongCountAfterTimeout, getItemQuestionModifiers_(battleState, question), question);
 
   battleState.lastTurnEvents = [];
   consumeActionPoint_(battleState, Number(pendingAction.actionPointCost || getActionPointCostForAction_(pendingAction.actionType, null)));
@@ -539,15 +566,16 @@ function calculateQuestionTimeLimit(difficulty, activeEffects) {
   return calculateFinalQuestionTimeLimit(difficulty, activeEffects);
 }
 
-function calculateFinalQuestionDifficulty(baseDifficulty, activeEffects) {
+function calculateFinalQuestionDifficulty(baseDifficulty, activeEffects, questionModifiers) {
   var difficultyBonus = getEffectFlatBonus_(activeEffects, STAT_KEYS.QUESTION_DIFFICULTY);
+  difficultyBonus += Number(questionModifiers && questionModifiers.questionDifficulty || 0);
   return clampDifficulty_(Number(baseDifficulty || GAME_RULES.MIN_DIFFICULTY) + difficultyBonus);
 }
 
-function calculateEfficiency(isCorrect, remainingMs, maxMs, wrongCountAfterTimeout) {
+function calculateEfficiency(isCorrect, remainingMs, maxMs, wrongCountAfterTimeout, questionModifiers, question) {
   var efficiencyRules = getAnswerEfficiencyRules_();
   var minEfficiency = efficiencyRules.minAnswerEfficiency;
-  var maxEfficiency = efficiencyRules.maxAnswerEfficiency;
+  var maxEfficiency = calculateMaxAnswerEfficiency_(questionModifiers, efficiencyRules.maxAnswerEfficiency);
   var extraPenalty = efficiencyRules.extraWrongEfficiencyPenalty;
   var penaltyCount = Math.max(0, Number(wrongCountAfterTimeout || 0));
   if (penaltyCount > 0) {
@@ -557,12 +585,25 @@ function calculateEfficiency(isCorrect, remainingMs, maxMs, wrongCountAfterTimeo
   if (isCorrect) {
     var ratio = Math.max(0, Math.min(1, Number(remainingMs || 0) / Math.max(1, Number(maxMs || 1))));
     if (ratio >= 0.5) {
-      return roundTo_(1 + ((ratio - 0.5) * ((maxEfficiency - 1) / 0.5)), 3);
+      var highEfficiency = 1 + ((ratio - 0.5) * ((maxEfficiency - 1) / 0.5));
+      if (question && question.type === QUESTION_TYPES.SHORT_ANSWER) {
+        highEfficiency += Number(questionModifiers && questionModifiers.shortAnswerCorrectEfficiencyPercent || 0) / 100;
+      }
+      return roundTo_(Math.min(maxEfficiency, highEfficiency), 3);
     }
-    return roundTo_(minEfficiency + (ratio * ((1 - minEfficiency) / 0.5)), 3);
+    var lowEfficiency = minEfficiency + (ratio * ((1 - minEfficiency) / 0.5));
+    if (question && question.type === QUESTION_TYPES.SHORT_ANSWER) {
+      lowEfficiency += Number(questionModifiers && questionModifiers.shortAnswerCorrectEfficiencyPercent || 0) / 100;
+    }
+    return roundTo_(Math.min(maxEfficiency, lowEfficiency), 3);
   }
 
   return roundTo_(minEfficiency, 3);
+}
+
+function calculateMaxAnswerEfficiency_(questionModifiers, baseMaxEfficiency) {
+  var base = Number(baseMaxEfficiency || getAnswerEfficiencyRules_().maxAnswerEfficiency);
+  return Math.max(0, roundTo_(base * (1 + (Number(questionModifiers && questionModifiers.questionMaxEfficiencyPercent || 0) / 100)), 3));
 }
 
 function getAnswerEfficiencyRules_() {
@@ -597,8 +638,33 @@ function applyAttack(battleState, efficiency, targetId) {
   if (!target) {
     return battleState;
   }
+  var targetStats = calculateEffectiveStats({
+    attack: target.attack,
+    defense: target.defense,
+    hp: target.maxHp,
+    evasion: target.evasion,
+    accuracy: 100,
+  }, target.effects || []);
+  var hit = rollHit_(effectiveStats, targetStats);
+  if (!hit.hit) {
+    battleState.lastMessage = target.name + '에게 공격했지만 빗나갔습니다.';
+    battleState.lastPlayerAction = { type: ACTION_TYPES.ATTACK, value: 0, efficiency: efficiency, targetMonsterId: target.instanceId || target.monsterId, missed: true, hitChance: hit.chance };
+    battleState.lastTurnEvents = battleState.lastTurnEvents || [];
+    battleState.lastTurnEvents.push({
+      actor: 'player',
+      type: ACTION_TYPES.ATTACK,
+      targetMonsterId: target.instanceId || target.monsterId,
+      targetName: target.name,
+      damage: 0,
+      missed: true,
+      hitChance: hit.chance,
+      message: battleState.lastMessage,
+    });
+    return battleState;
+  }
   var critical = rollCriticalDamage_(baseDamage, effectiveStats);
   var damage = applyFrozenBonusIfNeeded_(target, critical.damage);
+  damage = applyOutgoingItemDamageModifiers_(battleState, damage, { actionType: ACTION_TYPES.ATTACK });
   var damageResult = dealDamageToMonster_(battleState, target, damage);
   syncPrimaryMonster_(battleState);
   battleState.lastMessage = target.name + '에게 ' + damage + ' 피해를 주었습니다.';
@@ -625,14 +691,24 @@ function applyAttack(battleState, efficiency, targetId) {
 
 function rollCriticalDamage_(damage, stats) {
   var baseDamage = Math.max(0, Math.round(Number(damage || 0)));
-  var criticalRate = Math.max(0, Number(stats && stats.criticalRate || 0));
-  var criticalDamage = Math.max(100, Number(stats && stats.criticalDamage || 100));
+  var criticalRate = clampPercent_(Number(stats && stats.criticalRate || 0));
+  var criticalDamage = Math.max(0, Number(stats && stats.criticalDamage || 100));
   var isCritical = baseDamage > 0 && criticalRate > 0 && Math.random() * 100 < criticalRate;
   var multiplier = isCritical ? criticalDamage / 100 : 1;
   return {
     damage: isCritical ? Math.max(0, Math.round(baseDamage * multiplier)) : baseDamage,
     isCritical: isCritical,
     multiplier: multiplier,
+  };
+}
+
+function rollHit_(attackerStats, defenderStats) {
+  var accuracy = attackerStats && attackerStats.accuracy !== undefined ? Number(attackerStats.accuracy || 0) : 100;
+  var evasion = defenderStats && defenderStats.evasion !== undefined ? Number(defenderStats.evasion || 0) : 0;
+  var chance = clampPercent_(accuracy - evasion);
+  return {
+    hit: chance >= 100 || Math.random() * 100 < chance,
+    chance: chance,
   };
 }
 
@@ -761,6 +837,7 @@ function selectMonsterAction(monster, aiRows, battleState) {
     intentIcon: row.intentIcon || 'sword',
     intentTextTemplate: row.intentTextTemplate || '',
   };
+  action.value = calculateMonsterIntentValue_(action, monster);
   action.intentText = buildIntentText(action, monster, battleState);
   return action;
 }
@@ -857,6 +934,36 @@ function buildIntentText(action, monster, battleState) {
   return action.intentTextTemplate || '행동 대기';
 }
 
+function calculateMonsterIntentValue_(action, monster) {
+  var monsterStats = calculateEffectiveStats({
+    attack: monster.attack,
+    defense: monster.defense,
+    hp: monster.maxHp,
+  }, monster.effects || []);
+  if (!action || action.actionType === ACTION_TYPES.ATTACK) {
+    return Math.max(0, Math.round(Number(monsterStats.attack || 0)));
+  }
+  if (action.actionType === ACTION_TYPES.GUARD || action.actionType === 'shield') {
+    return calculateMonsterShieldValue_(monster);
+  }
+  if (action.actionType === ACTION_TYPES.SKILL && action.skillId) {
+    var skill = findCachedRowByKey_(DB_SHEETS.SKILLS, 'skillId', action.skillId, 600);
+    if (!skill) {
+      return 0;
+    }
+    if (skill.type === SKILL_TYPES.DAMAGE) {
+      return Math.max(0, Math.round(Number(skill.baseValue || 0) + Number(monsterStats.attack || 0)));
+    }
+    if (skill.type === SKILL_TYPES.SHIELD) {
+      return Math.max(0, Math.round(Number(skill.baseValue || 0) + Number(monsterStats.defense || 0)));
+    }
+    if (skill.type === SKILL_TYPES.HEAL) {
+      return Math.max(0, Math.round(Number(skill.baseValue || 0)));
+    }
+  }
+  return 0;
+}
+
 function executeMonsterIntent(battleState, monsterId) {
   var monster = (battleState.monsters || []).filter(function(candidate) {
     return (candidate.instanceId || candidate.monsterId) === monsterId || candidate.monsterId === monsterId;
@@ -880,7 +987,33 @@ function applyMonsterAttackIntent_(battleState, monster, intent) {
     attack: monster.attack,
     defense: monster.defense,
     hp: monster.maxHp,
+    evasion: monster.evasion,
+    accuracy: 100,
   }, monster.effects || []);
+  var playerStats = calculateEffectiveStats(battleState.player.stats || BASE_PLAYER_STATS, battleState.player.effects || []);
+  var hit = rollHit_(monsterStats, playerStats);
+  if (!hit.hit) {
+    battleState.lastMonsterAction = {
+      type: ACTION_TYPES.ATTACK,
+      monsterId: monster.instanceId || monster.monsterId,
+      monsterName: monster.name,
+      damage: 0,
+      missed: true,
+      hitChance: hit.chance,
+    };
+    battleState.lastTurnEvents.push({
+      actor: 'monster',
+      type: ACTION_TYPES.ATTACK,
+      monsterId: monster.instanceId || monster.monsterId,
+      monsterName: monster.name,
+      damage: 0,
+      missed: true,
+      hitChance: hit.chance,
+      message: monster.name + '의 공격이 빗나갔습니다.',
+    });
+    monster.intent = null;
+    return battleState;
+  }
   var result = dealDamageToPlayer_(battleState, Math.max(0, Math.round(Number(monsterStats.attack || 0))));
   battleState.lastMonsterAction = {
     type: ACTION_TYPES.ATTACK,
@@ -929,8 +1062,27 @@ function applyMonsterSkillIntent_(battleState, monster, intent) {
     attack: monster.attack,
     defense: monster.defense,
     hp: monster.maxHp,
+    evasion: monster.evasion,
+    accuracy: 100,
   }, monster.effects || []);
   if (skill.type === SKILL_TYPES.DAMAGE) {
+    var playerStats = calculateEffectiveStats(battleState.player.stats || BASE_PLAYER_STATS, battleState.player.effects || []);
+    var hit = rollHit_(monsterStats, playerStats);
+    if (!hit.hit) {
+      battleState.lastTurnEvents.push({
+        actor: 'monster',
+        type: ACTION_TYPES.SKILL,
+        skillId: skill.skillId,
+        monsterId: monster.instanceId || monster.monsterId,
+        monsterName: monster.name,
+        damage: 0,
+        missed: true,
+        hitChance: hit.chance,
+        message: monster.name + '의 ' + skill.name + '이 빗나갔습니다.',
+      });
+      monster.intent = null;
+      return battleState;
+    }
     var result = dealDamageToPlayer_(battleState, Math.max(0, Math.round(Number(skill.baseValue || 0) + Number(monsterStats.attack || 0))));
     battleState.lastTurnEvents.push({
       actor: 'monster',
@@ -945,9 +1097,12 @@ function applyMonsterSkillIntent_(battleState, monster, intent) {
     });
   } else if (skill.type === SKILL_TYPES.DEBUFF) {
     applyMonsterSkillEffect_(battleState.player, skill, 'player');
+    normalizeBattleStateEffects_(battleState);
     battleState.lastTurnEvents.push({ actor: 'monster', type: 'debuff', skillId: skill.skillId, monsterId: monster.instanceId || monster.monsterId, monsterName: monster.name, damage: 0, message: monster.name + '이 ' + skill.name + ' 사용!' });
   } else if (skill.type === SKILL_TYPES.BUFF) {
     applyMonsterSkillEffect_(monster, skill, 'monster');
+    normalizeBattleStateEffects_(battleState);
+    syncPrimaryMonster_(battleState);
     battleState.lastTurnEvents.push({ actor: 'monster', type: 'buff', skillId: skill.skillId, monsterId: monster.instanceId || monster.monsterId, monsterName: monster.name, damage: 0, message: monster.name + '이 ' + skill.name + ' 사용!' });
   } else if (skill.type === SKILL_TYPES.SHIELD) {
     var shield = Math.max(0, Math.round(Number(skill.baseValue || 0) + Number(monsterStats.defense || 0)));
@@ -958,6 +1113,8 @@ function applyMonsterSkillIntent_(battleState, monster, intent) {
     monster.currentHp = Math.min(Number(monster.maxHp || 1), Number(monster.currentHp || 0) + heal);
     battleState.lastTurnEvents.push({ actor: 'monster', type: 'heal', skillId: skill.skillId, monsterId: monster.instanceId || monster.monsterId, monsterName: monster.name, heal: heal, damage: 0, message: monster.name + '이 ' + skill.name + ' 사용!' });
   }
+  normalizeBattleStateEffects_(battleState);
+  syncPrimaryMonster_(battleState);
   monster.intent = null;
   return battleState;
 }
@@ -969,11 +1126,34 @@ function applyMonsterSkillEffect_(target, skill, source) {
     return null;
   }
   var effect = findCachedRowByKey_(DB_SHEETS.EFFECTS, 'effectId', config.effectId, 600);
-  return effect ? applyEffect(target, effect, { source: source, skillId: skill.skillId }) : null;
+  if (!effect) {
+    return null;
+  }
+  var configured = Object.assign({}, effect);
+  if (config.value !== undefined) {
+    configured.value = Number(config.value || 0);
+  } else if (configured.effectType === EFFECT_TYPES.FLAT) {
+    configured.value = Number(configured.value || 0) + getSkillUpgradeValue(skill, configured.category === EFFECT_CATEGORIES.BUFF ? 'buffValue' : 'effect');
+  }
+  if (config.durationType) {
+    configured.durationType = config.durationType;
+  }
+  if (config.durationTurns !== undefined) {
+    configured.durationTurns = config.durationTurns;
+  }
+  if (config.stackable !== undefined) {
+    configured.stackable = config.stackable;
+  }
+  if (config.maxStacks !== undefined) {
+    configured.maxStacks = Number(config.maxStacks || 1);
+  }
+  return applyEffect(target, configured, { source: source, skillId: skill.skillId });
 }
 
 function dealDamageToPlayer_(battleState, damage) {
-  var totalDamage = Math.max(0, Math.round(Number(damage || 0)));
+  var effectiveStats = calculateEffectiveStats(battleState.player.stats || BASE_PLAYER_STATS, battleState.player.effects || []);
+  var modifiedDamage = applyIncomingItemDamageModifiers_(battleState, damage);
+  var totalDamage = Math.max(0, Math.round(Number(modifiedDamage || 0) - Number(effectiveStats.defense || 0)));
   var shieldBefore = Number(battleState.player.shield || 0);
   var shieldDamage = Math.min(shieldBefore, totalDamage);
   var hpDamage = totalDamage - shieldDamage;
@@ -989,7 +1169,14 @@ function dealDamageToPlayer_(battleState, damage) {
 }
 
 function dealDamageToMonster_(battleState, monster, damage) {
-  var totalDamage = Math.max(0, Math.round(Number(damage || 0)));
+  var monsterStats = calculateEffectiveStats({
+    attack: monster.attack,
+    defense: monster.defense,
+    hp: monster.maxHp,
+    evasion: monster.evasion,
+    accuracy: 100,
+  }, monster.effects || []);
+  var totalDamage = Math.max(0, Math.round(Number(damage || 0) - Number(monsterStats.defense || 0)));
   var shieldBefore = Number(monster.shield || 0);
   var shieldDamage = Math.min(shieldBefore, totalDamage);
   var hpDamage = totalDamage - shieldDamage;
@@ -1046,12 +1233,6 @@ function applyBossDifficultyBonus(stage, questionDifficulty) {
   return Number(questionDifficulty || GAME_RULES.MIN_DIFFICULTY) + (stage && stage.bossMonsterId ? 1 : 0);
 }
 
-function shouldUseShortQuestionInBoss(bossConfig) {
-  var config = bossConfig || {};
-  var chance = Math.max(0, Math.min(100, Number(config.shortQuestionChance || 0)));
-  return chance > 0 && Math.random() * 100 < chance;
-}
-
 function saveRunState(runId, battleState) {
   var run = requireRun_(runId);
   var stageState = getStageState_(run);
@@ -1103,7 +1284,7 @@ function commitStageResult(stagePayload, authToken) {
     var elapsedMs = Math.max(0, Number(answerPayload.elapsedMs || 0));
     var maxMs = Math.max(1, Number(answerPayload.maxTimeMs || answerPayload.maxMs || 1));
     var isCorrect = isCorrectAnswer_(question, answerPayload.selectedAnswer, answerPayload.selectedChoiceIndex, answerPayload.selectedAnswerText);
-    var efficiency = calculateEfficiency(isCorrect, Math.max(0, maxMs - elapsedMs), maxMs, Number(answerPayload.wrongCountAfterTimeout || 0));
+    var efficiency = calculateEfficiency(isCorrect, Math.max(0, maxMs - elapsedMs), maxMs, Number(answerPayload.wrongCountAfterTimeout || 0), getItemQuestionModifiers_(battleState, question), question);
     queueBattleAnswerLog_(battleState, {
       questionId: question.questionId,
       playerId: player.playerId,
@@ -1269,6 +1450,7 @@ function updateQuestionStats(questionId, isCorrect) {
 function buildBattleView_(run, stageState) {
   var battleState = stageState.battle;
   if (battleState) {
+    syncBattlePlayerItemsFromRun_(battleState, run);
     normalizeBattleStateEffects_(battleState);
     normalizeBattleMonsters_(battleState);
     normalizePlayerActionPoints_(battleState, false);
@@ -1419,6 +1601,7 @@ function buildQuestionView_(question, pendingAction) {
     question: question,
     maxMs: pendingAction ? pendingAction.maxMs : '',
     finalDifficulty: pendingAction ? pendingAction.finalDifficulty : '',
+    maxAnswerEfficiency: pendingAction ? pendingAction.maxAnswerEfficiency || '' : '',
     isOtherPlayerQuestion: pendingAction ? pendingAction.isOtherPlayerQuestion : false,
     fallbackReason: pendingAction ? pendingAction.fallbackReason : '',
   });
@@ -1441,15 +1624,17 @@ function preloadBattleQuestions(runId, authToken) {
 function buildBattleQuestionCache_(run, stageState, battleState) {
   try {
     var activeEffects = getActiveEffectsForQuestion_(battleState);
-    var selectedQuestions = selectQuestionCacheRows_(run.playerId, battleState.stage, stageState.otherStudentQuestionShown, getForcedQuestionCreatorId_(battleState));
+    var selectedQuestions = selectQuestionCacheRows_(run.playerId, battleState.stage, stageState.otherStudentQuestionShown, getForcedQuestionCreatorId_(battleState), getItemQuestionModifiers_(battleState, null));
     return selectedQuestions.map(function(question) {
       var baseDifficulty = applyBossDifficultyBonus(battleState.stage, Number(question.difficulty || battleState.stage.baseDifficulty));
-      var finalDifficulty = calculateFinalQuestionDifficulty(baseDifficulty, activeEffects);
-      var maxMs = calculateFinalQuestionTimeLimit(finalDifficulty, activeEffects);
+      var questionModifiers = getItemQuestionModifiers_(battleState, question);
+      var finalDifficulty = calculateFinalQuestionDifficulty(baseDifficulty, activeEffects, questionModifiers);
+      var maxMs = calculateFinalQuestionTimeLimitForQuestion_(finalDifficulty, activeEffects, question, questionModifiers);
       return {
         question: sanitizeQuestionForBattleCache_(question),
         maxMs: maxMs,
         finalDifficulty: finalDifficulty,
+        maxAnswerEfficiency: calculateMaxAnswerEfficiency_(questionModifiers),
         isOtherPlayerQuestion: question.creatorId !== run.playerId,
         fallbackReason: '',
       };
@@ -1459,10 +1644,11 @@ function buildBattleQuestionCache_(run, stageState, battleState) {
   }
 }
 
-function selectQuestionCacheRows_(playerId, stage, otherStudentQuestionShown, forcedCreatorId) {
+function selectQuestionCacheRows_(playerId, stage, otherStudentQuestionShown, forcedCreatorId, questionModifiers) {
   var limit = 30;
-  var minDifficulty = Number(stage.minDifficulty || GAME_RULES.MIN_DIFFICULTY);
-  var maxDifficulty = Number(stage.maxDifficulty || GAME_RULES.MAX_DIFFICULTY);
+  var range = getStageDifficultyRange_(stage);
+  var minDifficulty = range.minDifficulty;
+  var maxDifficulty = range.maxDifficulty;
   var approvedQuestions = readTableCached_(DB_SHEETS.QUESTIONS, 120).filter(function(question) {
     return question.status === STATUS.QUESTION_APPROVED;
   });
@@ -1490,7 +1676,7 @@ function selectQuestionCacheRows_(playerId, stage, otherStudentQuestionShown, fo
   function pushRandomFrom(pool) {
     var candidates = pool.slice();
     while (selected.length < limit && candidates.length > 0) {
-      var picked = pickRandom_(candidates);
+      var picked = pickQuestionWithTypeBias_(candidates, questionModifiers);
       pushQuestion(picked);
       candidates = candidates.filter(function(candidate) {
         return candidate.questionId !== picked.questionId;
@@ -1499,7 +1685,7 @@ function selectQuestionCacheRows_(playerId, stage, otherStudentQuestionShown, fo
   }
 
   if (!otherStudentQuestionShown && rangedQuestions.length > 0) {
-    pushQuestion(pickRandom_(rangedQuestions));
+    pushQuestion(pickQuestionWithTypeBias_(rangedQuestions, questionModifiers));
   }
   pushRandomFrom(rangedQuestions);
   pushRandomFrom(allowedQuestions);
@@ -1525,7 +1711,8 @@ function createPendingActionFromCachedPayload_(battleState, payload, actionType,
   var difficultyBonus = skill ? Number(skill.difficultyBonus || 0) : 0;
   var actionPointCost = getActionPointCostForAction_(actionType, skill);
   var baseDifficulty = applyBossDifficultyBonus(battleState.stage, Number(question.difficulty || battleState.stage.baseDifficulty) + difficultyBonus);
-  var finalDifficulty = calculateFinalQuestionDifficulty(baseDifficulty, activeEffects);
+  var questionModifiers = getItemQuestionModifiers_(battleState, question);
+  var finalDifficulty = calculateFinalQuestionDifficulty(baseDifficulty, activeEffects, questionModifiers);
   return {
     actionType: actionType,
     skillId: skillId || payload.skillId || '',
@@ -1534,8 +1721,9 @@ function createPendingActionFromCachedPayload_(battleState, payload, actionType,
     questionId: question.questionId,
     question: sanitizeQuestionForClient_(question),
     issuedAt: new Date().getTime() - Math.max(0, Number(payload.elapsedMs || 0)),
-    maxMs: calculateFinalQuestionTimeLimit(finalDifficulty, activeEffects),
+    maxMs: calculateFinalQuestionTimeLimitForQuestion_(finalDifficulty, activeEffects, question, questionModifiers),
     finalDifficulty: finalDifficulty,
+    maxAnswerEfficiency: calculateMaxAnswerEfficiency_(questionModifiers),
     isOtherPlayerQuestion: question.creatorId !== playerId,
     fallbackReason: payload.fallbackReason || '',
     fromCache: true,
@@ -1572,16 +1760,14 @@ function markCachedQuestionShown_(stageState, pendingAction) {
   }
 }
 
-function pickQuestion_(playerId, stage, otherStudentQuestionShown, preferredQuestionType, forcedCreatorId) {
-  var minDifficulty = Number(stage.minDifficulty || GAME_RULES.MIN_DIFFICULTY);
-  var maxDifficulty = Number(stage.maxDifficulty || GAME_RULES.MAX_DIFFICULTY);
+function pickQuestion_(playerId, stage, otherStudentQuestionShown, forcedCreatorId, questionModifiers) {
+  var range = getStageDifficultyRange_(stage);
+  var minDifficulty = range.minDifficulty;
+  var maxDifficulty = range.maxDifficulty;
   var approvedQuestions = readTableCached_(DB_SHEETS.QUESTIONS, 120).filter(function(question) {
     return question.status === STATUS.QUESTION_APPROVED;
   });
-  var preferredQuestions = preferredQuestionType ? approvedQuestions.filter(function(question) {
-    return question.type === preferredQuestionType;
-  }) : [];
-  var questionPool = (preferredQuestions.length ? preferredQuestions : approvedQuestions).filter(function(question) {
+  var questionPool = approvedQuestions.filter(function(question) {
     if (question.creatorId === playerId) {
       return false;
     }
@@ -1593,13 +1779,38 @@ function pickQuestion_(playerId, stage, otherStudentQuestionShown, preferredQues
   });
 
   if (rangedQuestions.length > 0) {
-    return questionPickResult_(pickRandom_(rangedQuestions), true, '');
+    return questionPickResult_(pickQuestionWithTypeBias_(rangedQuestions, questionModifiers), true, '');
   }
   if (questionPool.length > 0) {
-    return questionPickResult_(pickRandom_(questionPool), true, 'noQuestionInDifficultyRange');
+    return questionPickResult_(pickQuestionWithTypeBias_(questionPool, questionModifiers), true, 'noQuestionInDifficultyRange');
   }
 
   throw new Error('No approved question is available from another player.');
+}
+
+function pickQuestionWithTypeBias_(questions, questionModifiers) {
+  var pool = questions || [];
+  if (!pool.length) {
+    return null;
+  }
+  var shortAnswerBonus = Number(questionModifiers && questionModifiers.shortAnswerChancePercent || 0);
+  if (!shortAnswerBonus) {
+    return pickRandom_(pool);
+  }
+  var shortAnswers = pool.filter(function(question) {
+    return question.type === QUESTION_TYPES.SHORT_ANSWER;
+  });
+  var others = pool.filter(function(question) {
+    return question.type !== QUESTION_TYPES.SHORT_ANSWER;
+  });
+  if (!shortAnswers.length || !others.length) {
+    return pickRandom_(pool);
+  }
+  var baseChance = (shortAnswers.length / pool.length) * 100;
+  if (Math.random() * 100 < Math.min(100, baseChance + shortAnswerBonus)) {
+    return pickRandom_(shortAnswers);
+  }
+  return pickRandom_(others);
 }
 
 function questionPickResult_(question, isOtherPlayerQuestion, fallbackReason) {
@@ -1633,7 +1844,7 @@ function saveStageState_(runId, stageState, battleState) {
   var patch = {
     currentHp: battleState.player.hp,
     currentShield: battleState.player.shield,
-    statsJson: safeJsonStringify_(battleState.player.stats),
+    statsJson: safeJsonStringify_(battleState.player.baseStats || battleState.player.stats),
     stageStateJson: safeJsonStringify_(stageState),
     updatedAt: new Date(),
   };
@@ -2035,7 +2246,7 @@ function buildStageId_(floor, stage) {
 function getEffectFlatBonus_(activeEffects, statKey) {
   return (activeEffects || []).reduce(function(total, effect) {
     if (effect.statKey === statKey && effect.effectType === EFFECT_TYPES.FLAT) {
-      return total + Number(effect.value || 0);
+      return total + (Number(effect.value || 0) * Math.max(1, Number(effect.stacks || 1)));
     }
     return total;
   }, 0);

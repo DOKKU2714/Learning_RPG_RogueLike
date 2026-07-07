@@ -195,7 +195,7 @@
             return '<tr>' +
               '<td class="question-prompt" title="' + escapeHtml(question.prompt) + '">' + escapeHtml(question.prompt) + '</td>' +
               '<td>' + escapeHtml(question.status || '-') + '</td>' +
-              '<td>' + escapeHtml(question.difficulty || '-') + '</td>' +
+              '<td>' + renderDifficultyStars(question.difficulty || 1) + '</td>' +
               '<td>' + Number(question.correctCount || 0) + ' / ' + Number(question.totalCount || 0) + '</td>' +
               '<td>' + formatRate(question.correctRate) + '</td>' +
             '</tr>';
@@ -205,6 +205,15 @@
 
     function formatRate(rate) {
       return Number(rate || 0).toFixed(1).replace(/\.0$/, '') + '%';
+    }
+
+    function renderDifficultyStars(value) {
+      var count = Math.max(1, Math.min(5, Number(value || 1)));
+      var stars = '';
+      for (var i = 0; i < count; i += 1) {
+        stars += '<span class="difficulty-star">&#9733;</span>';
+      }
+      return '<span class="difficulty-stars" aria-label="난이도 ' + count + '">' + stars + '</span>';
     }
 
     function formatTime(ms) {

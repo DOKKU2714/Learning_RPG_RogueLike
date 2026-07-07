@@ -18,7 +18,7 @@ function createQuestion(questionPayload, authToken) {
     answer: normalizedPayload.answer,
     answerAliases: safeJsonStringify_(normalizedPayload.answerAliases),
     explanation: normalizedPayload.explanation,
-    difficulty: '',
+    difficulty: normalizedPayload.difficulty,
     creatorId: player.playerId,
     creatorName: player.displayName,
     subject: normalizedPayload.subject,
@@ -139,6 +139,7 @@ function normalizeQuestionPayload_(payload) {
     subject: String(source.subject || '').trim(),
     unit: String(source.unit || '').trim(),
     tags: splitList_(source.tags).join(', '),
+    difficulty: normalizeDifficulty_(source.difficulty || GAME_RULES.MIN_DIFFICULTY),
   };
 
   if (type === QUESTION_TYPES.MULTIPLE_CHOICE) {
@@ -160,7 +161,7 @@ function normalizeQuestionPayload_(payload) {
 function normalizeDifficulty_(difficulty) {
   var numberValue = Number(difficulty);
   if (!Number.isInteger(numberValue) || numberValue < GAME_RULES.MIN_DIFFICULTY || numberValue > GAME_RULES.MAX_DIFFICULTY) {
-    throw new Error('난이도는 1부터 10까지 지정해야 합니다.');
+    throw new Error('난이도는 1부터 5까지 지정해야 합니다.');
   }
   return numberValue;
 }

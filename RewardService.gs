@@ -6,6 +6,7 @@ var ALLOWED_REWARD_STAT_KEYS_ = Object.freeze([
   'criticalRate',
   'criticalDamage',
   'defense',
+  'accuracy',
 ]);
 
 function generateRewardChoices(runId, stageId, authToken) {
@@ -42,7 +43,7 @@ function generateRewardChoices(runId, stageId, authToken) {
     return buildRewardChoiceView_(runId, currentStageId, rewardGroupId, rewardState, safeJsonParse_(run.skillsJson, []), stageState.battle);
   }
 
-  var choices = pickRewardChoices_(rewardGroupId, Number(stage.floor || run.currentFloor), safeJsonParse_(run.skillsJson, []));
+  var choices = pickRewardChoices_(rewardGroupId, Number(stage.floor || run.currentFloor), safeJsonParse_(run.skillsJson, []), safeJsonParse_(run.itemsJson, []));
   var currencyResult = grantCurrencyForRun_(run, stageState, rewardGroupId);
   run = requireRun_(runId);
   stageState = getStageState_(run);
@@ -58,7 +59,7 @@ function generateRewardChoices(runId, stageId, authToken) {
     stageClearRegenApplied: !!rewardState.stageClearRegenApplied,
     regenAmount: Number(rewardState.regenAmount || 0),
     currentHpAfterRegen: Number(rewardState.currentHpAfterRegen || run.currentHp || 0),
-    maxHpAfterRegen: Number(rewardState.maxHpAfterRegen || safeJsonParse_(run.statsJson, BASE_PLAYER_STATS).hp || BASE_PLAYER_STATS.hp),
+    maxHpAfterRegen: Number(rewardState.maxHpAfterRegen || calculateStatsWithItemEffects_(safeJsonParse_(run.statsJson, BASE_PLAYER_STATS), safeJsonParse_(run.itemsJson, [])).hp || BASE_PLAYER_STATS.hp),
     createdAt: new Date().toISOString(),
   };
   stageState.reward = rewardState;
@@ -93,7 +94,7 @@ function previewRewardChoicesForStageResult(stagePayload, authToken) {
     rewardState = {
       stageId: currentStageId,
       rewardGroupId: rewardGroupId,
-      choices: pickRewardChoices_(rewardGroupId, Number(stage.floor || run.currentFloor), safeJsonParse_(run.skillsJson, [])),
+      choices: pickRewardChoices_(rewardGroupId, Number(stage.floor || run.currentFloor), safeJsonParse_(run.skillsJson, []), safeJsonParse_(run.itemsJson, [])),
       selectedRewardId: '',
       currencyGranted: false,
       currencyAmount: previewCurrencyReward_(rewardGroupId),
@@ -109,9 +110,10 @@ function previewRewardChoicesForStageResult(stagePayload, authToken) {
 }
 
 function previewStageClearRegen_(run, battle) {
+  var runItems = safeJsonParse_(run.itemsJson, []);
   var stats = battle && battle.player && battle.player.stats
     ? battle.player.stats
-    : safeJsonParse_(run.statsJson, Object.assign({}, BASE_PLAYER_STATS));
+    : calculateStatsWithItemEffects_(safeJsonParse_(run.statsJson, Object.assign({}, BASE_PLAYER_STATS)), runItems);
   var maxHp = Math.max(1, Number(stats.hp || battle && battle.player && battle.player.maxHp || BASE_PLAYER_STATS.hp));
   var currentHp = Math.max(0, Number(battle && battle.player && battle.player.hp || run.currentHp || 0));
   var regen = Math.max(0, Math.round(Number(stats.hpRegen || 0)));
@@ -196,15 +198,18 @@ function selectReward(runId, rewardId, authToken, rewardView) {
     }
   } else if (reward.type === REWARD_TYPES.SKILL_UPGRADE) {
     applySkillUpgradeReward_(runState, reward);
+  } else if (reward.type === REWARD_TYPES.ITEM) {
+    applyItemReward_(runState, reward);
   }
 
   rewardState.selectedRewardId = reward.rewardId;
   rewardState.selectedAt = new Date().toISOString();
   stageState.reward = rewardState;
   updateRowByKey_(DB_SHEETS.RUNS, 'runId', runId, {
-    currentHp: Math.min(Number(runState.stats.hp || BASE_PLAYER_STATS.hp), Number(runState.currentHp || 0)),
+    currentHp: Math.min(Number(calculateStatsWithItemEffects_(runState.stats, runState.items).hp || BASE_PLAYER_STATS.hp), Number(runState.currentHp || 0)),
     statsJson: safeJsonStringify_(runState.stats),
     skillsJson: safeJsonStringify_(runState.skills),
+    itemsJson: safeJsonStringify_(runState.items),
     stageStateJson: safeJsonStringify_(stageState),
     updatedAt: new Date(),
   });
@@ -243,7 +248,7 @@ function grantStageClearRegenForRun_(run, stageState) {
     return { run: run, stageState: stageState, amount: Number(rewardState.regenAmount || 0) };
   }
 
-  var stats = safeJsonParse_(run.statsJson, Object.assign({}, BASE_PLAYER_STATS));
+  var stats = calculateStatsWithItemEffects_(safeJsonParse_(run.statsJson, Object.assign({}, BASE_PLAYER_STATS)), safeJsonParse_(run.itemsJson, []));
   var maxHp = Math.max(1, Number(stats.hp || BASE_PLAYER_STATS.hp));
   var currentHp = Math.max(0, Number(run.currentHp || 0));
   var regen = Math.max(0, Math.round(Number(stats.hpRegen || 0)));
@@ -365,6 +370,15 @@ function applySkillUpgradeReward_(runState, reward) {
   return runState;
 }
 
+function applyItemReward_(runState, reward) {
+  var beforeStats = calculateStatsWithItemEffects_(runState.stats, runState.items);
+  runState.items = addItemToOwnedItems_(runState.items, reward.targetId);
+  var afterStats = calculateStatsWithItemEffects_(runState.stats, runState.items);
+  var hpDelta = Math.max(0, Number(afterStats.hp || 1) - Number(beforeStats.hp || 1));
+  runState.currentHp = Math.min(Number(afterStats.hp || 1), Math.max(0, Number(runState.currentHp || 0) + hpDelta));
+  return runState;
+}
+
 function moveToNextStage(runId, authToken) {
   var run = requireRun_(runId);
   requireRewardRunOwner_(run, authToken);
@@ -440,7 +454,7 @@ function updatePlayerProgressFromRun_(run) {
   return updateRowByKey_(DB_SHEETS.PLAYER_DATA, 'playerId', run.playerId, patch);
 }
 
-function pickRewardChoices_(rewardGroupId, floor, ownedSkills) {
+function pickRewardChoices_(rewardGroupId, floor, ownedSkills, ownedItems) {
   var group = findCachedRowByKey_(DB_SHEETS.REWARD_GROUPS, 'rewardGroupId', rewardGroupId, 600);
   if (!group) {
     throw new Error('보상 그룹을 찾을 수 없습니다: ' + rewardGroupId);
@@ -459,7 +473,13 @@ function pickRewardChoices_(rewardGroupId, floor, ownedSkills) {
   var candidates = rewards.slice();
   var choices = [];
   while (choices.length < 3 && candidates.length > 0) {
-    var picked = pickWeightedReward_(candidates);
+    var picked = shouldRollItemReward_() ? pickAutoItemReward_(ownedItems) : null;
+    if (picked && choices.some(function(choice) { return choice.rewardId === picked.rewardId; })) {
+      picked = null;
+    }
+    if (!picked) {
+      picked = pickWeightedReward_(candidates);
+    }
     choices.push(picked);
     candidates = candidates.filter(function(candidate) {
       return candidate.rewardId !== picked.rewardId;
@@ -524,18 +544,31 @@ function pickWeightedReward_(rewards) {
 
 function sanitizeRewardForClient_(reward, battleState) {
   var rarity = resolveRewardRarity_(reward);
+  var itemDetail = buildRewardItemDetail_(reward);
+  var description = itemDetail ? itemDetail.name : reward.description;
+  var detailDescription = itemDetail
+    ? [itemDetail.effectSummary, itemDetail.description].filter(Boolean).join('\n')
+    : reward.detailDescription || '';
   return {
     rewardId: reward.rewardId,
     type: reward.type,
     targetId: reward.targetId,
     value: Number(reward.value || 0),
-    description: reward.description,
-    detailDescription: reward.detailDescription || '',
+    description: description,
+    detailDescription: detailDescription,
     displayTitle: getRewardDisplayTitle_(reward),
     rarity: rarity,
     rarityLabel: getRarityLabel_(rarity),
     skillDetail: buildRewardSkillDetail_(reward, battleState),
+    itemDetail: itemDetail,
   };
+}
+
+function buildRewardItemDetail_(reward) {
+  if (!reward || reward.type !== REWARD_TYPES.ITEM || !reward.targetId) {
+    return null;
+  }
+  return reward.itemDetail || buildItemClientDetail_(getItemById_(reward.targetId));
 }
 
 function buildRewardSkillDetail_(reward, battleState) {
@@ -549,15 +582,7 @@ function buildRewardSkillDetail_(reward, battleState) {
   }
 
   var hydrated = hydrateSkill_(skill, Math.max(1, Number(reward.level || 1)));
-  var previewBattleState = battleState || {
-    player: {
-      stats: Object.assign({}, BASE_PLAYER_STATS),
-      effects: [],
-    },
-    monsters: [],
-    skillUseCounts: {},
-    skillCooldowns: {},
-  };
+  var previewBattleState = buildRewardSkillPreviewBattleState_(battleState);
   return {
     skillId: hydrated.skillId,
     name: hydrated.name,
@@ -577,6 +602,46 @@ function buildRewardSkillDetail_(reward, battleState) {
     effectJson: hydrated.effectJson || '',
     previewText: buildSkillPreviewText_(hydrated, previewBattleState),
   };
+}
+
+function buildRewardSkillPreviewBattleState_(battleState) {
+  if (!battleState || !battleState.player) {
+    return {
+      player: {
+        stats: Object.assign({}, BASE_PLAYER_STATS),
+        effects: [],
+      },
+      monsters: [],
+      skillUseCounts: {},
+      skillCooldowns: {},
+      usedSkillCountByTagThisBattle: {},
+      usedSkillCountByTagThisTurn: {},
+    };
+  }
+
+  var preview = {
+    player: Object.assign({}, battleState.player, {
+      stats: Object.assign({}, battleState.player.stats || BASE_PLAYER_STATS),
+      effects: [],
+      buffs: [],
+      debuffs: [],
+    }),
+    monsters: (battleState.monsters || []).map(function(monster) {
+      return Object.assign({}, monster, {
+        effects: [],
+        buffs: [],
+        debuffs: [],
+      });
+    }),
+    skillUseCounts: Object.assign({}, battleState.skillUseCounts || {}),
+    skillCooldowns: Object.assign({}, battleState.skillCooldowns || {}),
+    usedSkillCountByTagThisBattle: Object.assign({}, battleState.usedSkillCountByTagThisBattle || {}),
+    usedSkillCountByTagThisTurn: Object.assign({}, battleState.usedSkillCountByTagThisTurn || {}),
+    usedSkillTagsThisBattle: (battleState.usedSkillTagsThisBattle || []).slice(),
+    usedSkillTagsThisTurn: (battleState.usedSkillTagsThisTurn || []).slice(),
+  };
+  preview.monster = preview.monsters[0] || null;
+  return preview;
 }
 
 function buildRewardChoiceView_(runId, stageId, rewardGroupId, rewardState, ownedSkills, battleState) {
@@ -627,7 +692,7 @@ function resolveRewardRarity_(reward) {
   }
 
   if (reward.type === REWARD_TYPES.ITEM) {
-    var item = findCachedRowByKey_(DB_SHEETS.ITEMS, 'itemId', reward.targetId, 600);
+    var item = getItemById_(reward.targetId);
     return normalizeRarity_(item && item.rarity) || ownRarity || RARITIES.COMMON;
   }
 

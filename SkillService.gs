@@ -230,11 +230,11 @@ function useSkill(runId, skillId, targetId, answerPayload) {
     }
 
     var activeEffects = getActiveEffectsForQuestion_(battleState);
-    var preferredQuestionType = shouldUseShortQuestionInBoss(battleState.stage.bossConfig) ? QUESTION_TYPES.SHORT_ANSWER : '';
-    var questionResult = pickQuestion_(run.playerId, battleState.stage, stageState.otherStudentQuestionShown, preferredQuestionType, getForcedQuestionCreatorId_(battleState));
+    var questionResult = pickQuestion_(run.playerId, battleState.stage, stageState.otherStudentQuestionShown, getForcedQuestionCreatorId_(battleState), getItemQuestionModifiers_(battleState, null));
     var baseDifficulty = applyBossDifficultyBonus(battleState.stage, Number(questionResult.question.difficulty || battleState.stage.baseDifficulty) + Number(skill.difficultyBonus || 0) + getSkillRuleQuestionDifficultyBonus_(skill));
-    var finalDifficulty = calculateFinalQuestionDifficulty(baseDifficulty, activeEffects);
-    var maxMs = calculateFinalQuestionTimeLimit(finalDifficulty, activeEffects);
+    var questionModifiers = getItemQuestionModifiers_(battleState, questionResult.question);
+    var finalDifficulty = calculateFinalQuestionDifficulty(baseDifficulty, activeEffects, questionModifiers);
+    var maxMs = calculateFinalQuestionTimeLimitForQuestion_(finalDifficulty, activeEffects, questionResult.question, questionModifiers);
     pendingAction = {
       actionType: ACTION_TYPES.SKILL,
       skillId: skill.skillId,
@@ -245,6 +245,7 @@ function useSkill(runId, skillId, targetId, answerPayload) {
       issuedAt: new Date().getTime(),
       maxMs: maxMs,
       finalDifficulty: finalDifficulty,
+      maxAnswerEfficiency: calculateMaxAnswerEfficiency_(questionModifiers),
       isOtherPlayerQuestion: questionResult.isOtherPlayerQuestion,
       fallbackReason: questionResult.fallbackReason,
     };
@@ -277,10 +278,10 @@ function useSkill(runId, skillId, targetId, answerPayload) {
   }
 
   var elapsedMs = Math.max(0, Number(payload.elapsedMs || 0));
-  var maxMs = Number(pendingAction.maxMs || calculateFinalQuestionTimeLimit(pendingAction.finalDifficulty, getActiveEffectsForQuestion_(battleState)));
+  var maxMs = Number(pendingAction.maxMs || calculateFinalQuestionTimeLimitForQuestion_(pendingAction.finalDifficulty, getActiveEffectsForQuestion_(battleState), pendingAction.question || question, getItemQuestionModifiers_(battleState, question)));
   var remainingMs = Math.max(0, maxMs - elapsedMs);
   var isCorrect = isCorrectAnswer_(question, payload.selectedAnswer, payload.selectedChoiceIndex, payload.selectedAnswerText);
-  var efficiency = calculateEfficiency(isCorrect, remainingMs, maxMs, Number(payload.wrongCountAfterTimeout || 0));
+  var efficiency = calculateEfficiency(isCorrect, remainingMs, maxMs, Number(payload.wrongCountAfterTimeout || 0), getItemQuestionModifiers_(battleState, question), question);
 
   battleState.lastTurnEvents = [];
   consumeActionPoint_(battleState, Number(pendingAction.actionPointCost || getActionPointCostForAction_(ACTION_TYPES.SKILL, skill)));
@@ -354,8 +355,31 @@ function applySkillEffect(battleState, skill, efficiency, isCorrect) {
     var areaBaseDamage = Math.max(0, Math.round((Number(skill.baseValue || 0) + getSkillUpgradeValue(skill, 'damage') + Number(effectiveStats.attack || 0)) * Number(efficiency || 0)));
     for (var areaHit = 0; areaHit < hitCount; areaHit += 1) {
       getAliveMonsters_(battleState).forEach(function(damageTarget) {
+        var targetStats = calculateEffectiveStats({
+          attack: damageTarget.attack,
+          defense: damageTarget.defense,
+          hp: damageTarget.maxHp,
+          evasion: damageTarget.evasion,
+          accuracy: 100,
+        }, damageTarget.effects || []);
+        var hit = rollHit_(effectiveStats, targetStats);
+        if (!hit.hit) {
+          events.push({
+            actor: 'player',
+            type: ACTION_TYPES.SKILL,
+            skillId: skill.skillId,
+            targetMonsterId: damageTarget.instanceId || damageTarget.monsterId,
+            damage: 0,
+            missed: true,
+            hitChance: hit.chance,
+            simultaneousGroupId: skill.skillId + ':allEnemies:' + areaHit,
+            message: skill.name + '이 빗나갔습니다.',
+          });
+          return;
+        }
         var critical = rollCriticalDamage_(areaBaseDamage, effectiveStats);
         var damage = applyFrozenBonusIfNeeded_(damageTarget, critical.damage);
+        damage = applyOutgoingItemDamageModifiers_(battleState, damage, { actionType: ACTION_TYPES.SKILL, skill: skill });
         var damageResult = dealDamageToMonster_(battleState, damageTarget, damage);
         events.push({
           actor: 'player',
@@ -385,8 +409,30 @@ function applySkillEffect(battleState, skill, efficiency, isCorrect) {
     for (var i = 0; i < hitCount; i += 1) {
       target = getSkillTarget_(battleState, skill, skill.targetId || '');
       if (!target) break;
+      var targetStats = calculateEffectiveStats({
+        attack: target.attack,
+        defense: target.defense,
+        hp: target.maxHp,
+        evasion: target.evasion,
+        accuracy: 100,
+      }, target.effects || []);
+      var hit = rollHit_(effectiveStats, targetStats);
+      if (!hit.hit) {
+        events.push({
+          actor: 'player',
+          type: ACTION_TYPES.SKILL,
+          skillId: skill.skillId,
+          targetMonsterId: target.instanceId || target.monsterId,
+          damage: 0,
+          missed: true,
+          hitChance: hit.chance,
+          message: skill.name + '이 빗나갔습니다.',
+        });
+        continue;
+      }
       var critical = rollCriticalDamage_(baseDamage, effectiveStats);
       var damage = applyFrozenBonusIfNeeded_(target, critical.damage);
+      damage = applyOutgoingItemDamageModifiers_(battleState, damage, { actionType: ACTION_TYPES.SKILL, skill: skill });
       var damageResult = dealDamageToMonster_(battleState, target, damage);
       events.push({
         actor: 'player',
@@ -556,8 +602,31 @@ function executeSkillByRule_(battleState, skill, rule, efficiency, isCorrect) {
       if (damage <= 0) {
         continue;
       }
+      var targetStats = calculateEffectiveStats({
+        attack: damageTarget.attack,
+        defense: damageTarget.defense,
+        hp: damageTarget.maxHp,
+        evasion: damageTarget.evasion,
+        accuracy: 100,
+      }, damageTarget.effects || []);
+      var hit = rollHit_(criticalStats, targetStats);
+      if (!hit.hit) {
+        battleState.lastTurnEvents.push({
+          actor: 'player',
+          type: ACTION_TYPES.SKILL,
+          skillId: skill.skillId,
+          targetMonsterId: damageTarget.instanceId || damageTarget.monsterId,
+          damage: 0,
+          missed: true,
+          hitChance: hit.chance,
+          simultaneousGroupId: rule.targetMode === 'allEnemies' ? skill.skillId + ':allEnemies:' + i : '',
+          message: skill.name + '이 빗나갔습니다.',
+        });
+        continue;
+      }
       var critical = rollCriticalDamage_(damage, criticalStats);
       damage = applyFrozenBonusIfNeeded_(damageTarget, critical.damage);
+      damage = applyOutgoingItemDamageModifiers_(battleState, damage, { actionType: ACTION_TYPES.SKILL, skill: skill });
       var damageResult = dealDamageToMonster_(battleState, damageTarget, damage);
       damageEvents += 1;
       battleState.lastTurnEvents.push({
@@ -1324,11 +1393,24 @@ function calculateEffectiveStats(baseStats, activeEffects) {
   return getSharedRuleEngine_().calculateEffectiveStats(baseStats, activeEffects);
 }
 
-function calculateFinalQuestionTimeLimit(baseDifficulty, activeEffects) {
+function calculateFinalQuestionTimeLimit(baseDifficulty, activeEffects, questionModifiers) {
   var finalDifficulty = clampDifficulty_(Number(baseDifficulty || GAME_RULES.MIN_DIFFICULTY));
   var extraSeconds = getEffectFlatBonus_(activeEffects, STAT_KEYS.QUESTION_TIME);
+  extraSeconds += Number(questionModifiers && questionModifiers.questionTimeSeconds || 0);
   var seconds = GAME_RULES.BASE_QUESTION_TIME_SEC + ((finalDifficulty - 1) * GAME_RULES.QUESTION_TIME_PER_DIFFICULTY_SEC) + extraSeconds;
   return Math.max(3000, seconds * 1000);
+}
+
+function calculateFinalQuestionTimeLimitForQuestion_(baseDifficulty, activeEffects, question, questionModifiers) {
+  var maxMs = calculateFinalQuestionTimeLimit(baseDifficulty, activeEffects, questionModifiers);
+  if (isShortAnswerQuestion_(question)) {
+    return Math.round(maxMs * Number(GAME_RULES.SHORT_ANSWER_TIME_MULTIPLIER || 1.2));
+  }
+  return maxMs;
+}
+
+function isShortAnswerQuestion_(question) {
+  return question && question.type === QUESTION_TYPES.SHORT_ANSWER;
 }
 
 function getSkillUpgradeValue(skill, key) {
@@ -1586,8 +1668,22 @@ function applySkillLinkedEffect_(target, skill, source) {
     throw new Error('효과를 찾을 수 없습니다: ' + config.effectId);
   }
   var upgraded = Object.assign({}, effect);
-  if (upgraded.effectType === EFFECT_TYPES.FLAT) {
-    upgraded.value = Number(upgraded.value || 0) + getSkillUpgradeValue(skill, 'buffValue');
+  if (config.value !== undefined) {
+    upgraded.value = Number(config.value || 0);
+  } else if (upgraded.effectType === EFFECT_TYPES.FLAT) {
+    upgraded.value = Number(upgraded.value || 0) + getSkillUpgradeValue(skill, upgraded.category === EFFECT_CATEGORIES.BUFF ? 'buffValue' : 'effect');
+  }
+  if (config.durationType) {
+    upgraded.durationType = config.durationType;
+  }
+  if (config.durationTurns !== undefined) {
+    upgraded.durationTurns = config.durationTurns;
+  }
+  if (config.stackable !== undefined) {
+    upgraded.stackable = config.stackable;
+  }
+  if (config.maxStacks !== undefined) {
+    upgraded.maxStacks = Number(config.maxStacks || 1);
   }
   return applyEffect(target, upgraded, { source: source, skillId: skill.skillId });
 }

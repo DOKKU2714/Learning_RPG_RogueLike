@@ -177,6 +177,7 @@
           '<div data-area="aliases"><label>복수 정답 / 별칭</label><input data-field="answerAliases" placeholder="쉼표 또는 줄바꿈으로 구분"></div>' +
           '<div><label>과목</label><input data-field="subject" placeholder="예: 사회"></div>' +
           '<div><label>단원</label><input data-field="unit" placeholder="예: 조선 전기"></div>' +
+          '<div><label>희망 난이도</label>' + difficultySelectHtml('data-field="difficulty"') + '</div>' +
           '<div style="grid-column:1 / -1;"><label>태그</label><input data-field="tags" placeholder="쉼표로 구분"></div>' +
         '</div>' +
         '<div style="margin-top:12px;">' +
@@ -247,7 +248,34 @@
         subject: valueOf(card, 'subject'),
         unit: valueOf(card, 'unit'),
         tags: valueOf(card, 'tags'),
+        difficulty: valueOf(card, 'difficulty') || '1',
       };
+    }
+
+    function difficultySelectHtml(attributes) {
+      var options = [];
+      for (var i = 1; i <= 5; i += 1) {
+        options.push('<option value="' + i + '">' + difficultyStarsText(i) + '</option>');
+      }
+      return '<select class="difficulty-select" ' + (attributes || '') + '>' + options.join('') + '</select>';
+    }
+
+    function difficultyStarsText(value) {
+      var count = Math.max(1, Math.min(5, Number(value || 1)));
+      var text = '';
+      for (var i = 0; i < count; i += 1) {
+        text += '&#9733;';
+      }
+      return text;
+    }
+
+    function renderDifficultyStars(value) {
+      var count = Math.max(1, Math.min(5, Number(value || 1)));
+      var stars = '';
+      for (var i = 0; i < count; i += 1) {
+        stars += '<span class="difficulty-star">&#9733;</span>';
+      }
+      return '<span class="difficulty-stars" aria-label="난이도 ' + count + '">' + stars + '</span>';
     }
 
     function getQuestionType(card) {
@@ -289,7 +317,7 @@
       container.innerHTML = questions.map(function(question) {
         return '<article class="question-item">' +
           '<strong>' + escapeHtml(question.prompt) + '</strong>' +
-          '<p class="muted">' + escapeHtml(typeLabel(question.type)) + ' | ' + escapeHtml(statusLabel(question.status)) + ' | 난이도 ' + escapeHtml(question.difficulty || '-') + '</p>' +
+          '<p class="muted">' + escapeHtml(typeLabel(question.type)) + ' | ' + escapeHtml(statusLabel(question.status)) + ' | ' + renderDifficultyStars(question.difficulty || 1) + '</p>' +
           '<p>정답: ' + escapeHtml(question.answer) + '</p>' +
         '</article>';
       }).join('');

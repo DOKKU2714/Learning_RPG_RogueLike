@@ -101,6 +101,7 @@ function clearMasterTableCaches_() {
     DB_SHEETS.SKILLS,
     DB_SHEETS.EFFECTS,
     DB_SHEETS.ITEMS,
+    DB_SHEETS.ITEM_LIST,
     DB_SHEETS.REWARDS,
     DB_SHEETS.REWARD_GROUPS,
     DB_SHEETS.QUESTIONS,
@@ -123,6 +124,7 @@ function warmupGameData(authToken) {
     DB_SHEETS.SKILLS,
     DB_SHEETS.EFFECTS,
     DB_SHEETS.ITEMS,
+    DB_SHEETS.ITEM_LIST,
     DB_SHEETS.REWARDS,
     DB_SHEETS.REWARD_GROUPS,
     DB_SHEETS.QUESTIONS,
@@ -349,6 +351,7 @@ function seedMasterData() {
   MASTER_ITEMS.forEach(function(item) {
     upsertRowByKey_(DB_SHEETS.ITEMS, 'itemId', item.itemId, item);
   });
+  seedKoreanItemListTemplate_();
 
   MASTER_REWARDS.forEach(function(reward) {
     upsertRowByKey_(DB_SHEETS.REWARDS, 'rewardId', reward.rewardId, reward);
@@ -363,6 +366,33 @@ function seedMasterData() {
   });
 
   clearMasterTableCaches_();
+}
+
+function seedKoreanItemListTemplate_() {
+  var existingRows = [];
+  try {
+    existingRows = readTable_(DB_SHEETS.ITEM_LIST);
+  } catch (error) {
+    return [];
+  }
+  if (existingRows.length) {
+    return [];
+  }
+  var rows = MASTER_ITEMS.map(function(item, index) {
+    var effects = getItemEffects_(item);
+    var row = {
+      No: index + 1,
+      '아이템명': item.name || '',
+      '등급': getRarityLabel_(item.rarity),
+      '플레이버/설명': item.description || '',
+    };
+    for (var i = 0; i < 5; i += 1) {
+      row['효과 ' + (i + 1)] = effects[i] ? effects[i].summary || describeItemEffect_(effects[i]) : '';
+    }
+    return row;
+  });
+  appendRowObjects_(DB_SHEETS.ITEM_LIST, rows);
+  return rows;
 }
 
 /**
