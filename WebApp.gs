@@ -1,8 +1,10 @@
 function doGet(e) {
   var page = ((e && e.parameter && e.parameter.page) || 'index').toLowerCase();
   var route = getRoute_(page);
+  var template = HtmlService.createTemplateFromFile(route.file);
+  template.requestParams = (e && e.parameter) || {};
 
-  return HtmlService.createTemplateFromFile(route.file)
+  return template
     .evaluate()
     .setTitle(route.title)
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);

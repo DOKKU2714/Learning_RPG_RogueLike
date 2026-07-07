@@ -1,12 +1,12 @@
 ﻿<!DOCTYPE html>
-<html lang="ko">
+<html lang="ko" class="battle-page-root">
 <head>
   <base target="_top">
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <?!= include_('UiStyles'); ?>
 </head>
-<body>
+<body class="battle-page-body">
   <main id="battleShell" class="battle-shell battle-video-shell fade-in">
     <section class="battle-scene" aria-label="전투 화면">
       <video id="battleBackgroundVideo" class="battle-background-video" muted loop playsinline></video>
@@ -163,6 +163,7 @@
     var stageNarrationActive = false;
     var stageNarrationComplete = null;
     var activeAutoDelayResolver = null;
+    var activeBattleLogAdvanceResolver = null;
     var questionResultHoldTimerId = null;
     var questionResultSkipTimerId = null;
     var pendingQuestionTurnView = null;
@@ -262,6 +263,9 @@
     }
 
     function setupBattleUi() {
+      window.scrollTo(0, 0);
+      document.documentElement.scrollTop = 0;
+      document.body.scrollTop = 0;
       if (window.location.search.indexOf('debug=1') !== -1) {
         document.querySelector('.battle-debug-controls').classList.add('active');
       }
@@ -409,18 +413,45 @@
       var stage = currentView && currentView.battle ? currentView.battle.stage || {} : {};
       var lines = [];
       if (Number(stage.floor || 0) === 1 && Number(stage.stage || 0) === 1) {
-        lines.push(
-          { text: '낯선 기척이 옥상에 내려앉았다.', sparkleDot: true },
-          { text: '문제의 그림자가 모습을 드러낸다.' },
-          { text: '앞에 무언가 이상한 형체가 보인다.' },
-          { text: '무언가 이상하게 다가온다!' },
-          { text: '전투가 시작됩니다.' }
-        );
+        lines = lines.concat(getConfiguredFirstStageIntroLines());
       }
       if (hasPlayerGhostEncounter()) {
         lines.push({ text: '탈출하지 못한 목소리가 메아리칩니다!' });
       }
       return lines;
+    }
+
+    function getConfiguredFirstStageIntroLines() {
+      var config = currentView && currentView.clientConfig ? currentView.clientConfig : {};
+      var configured = normalizeClientNarrationLines(config.firstStageIntroLines);
+      if (configured.length) {
+        return configured;
+      }
+      return [
+        { text: '눈을 떠보니 학교 옥상이다 .', sparkleDot: true },
+        { text: '일단 여기서 나가야겠다.' },
+        { text: '눈앞에 무언가 나타났다!' }
+      ];
+    }
+
+    function normalizeClientNarrationLines(lines) {
+      if (!Array.isArray(lines)) {
+        return [];
+      }
+      return lines.map(function(line) {
+        if (typeof line === 'string') {
+          return { text: line.trim(), sparkleDot: false };
+        }
+        if (!line || typeof line !== 'object') {
+          return null;
+        }
+        return {
+          text: String(line.text || '').trim(),
+          sparkleDot: !!line.sparkleDot,
+        };
+      }).filter(function(line) {
+        return line && line.text;
+      });
     }
 
     function hasPlayerGhostEncounter() {
@@ -768,6 +799,9 @@
         }
         if (stageNarrationActive) {
           advanceManualNarration();
+          return;
+        }
+        if (advanceBattleLogManually()) {
           return;
         }
         if (isAnimatingTurn) {
@@ -1674,21 +1708,7 @@
         fallbackReason: currentQuestionView.fallbackReason || '',
       };
 
-      if (!hasClientAnswer(currentQuestionView.question)) {
-        submitQuestionAnswerOnServer(answerPayload, actionTypeForSubmit, skillIdForSubmit, targetIdForSubmit);
-        return;
-      }
-
-      window.setTimeout(function() {
-        var nextView = buildOptimisticNextViewFromQuestion();
-        if (!nextView) {
-          pendingQuestionTurnError = { message: '전투 결과를 계산하지 못했습니다.' };
-          requestQuestionResultProceed();
-          return;
-        }
-        pendingStageAnswerLogs.push(buildPendingStageAnswerLog(answerPayload, nextView));
-        receiveQuestionTurnView(nextView);
-      }, 0);
+      submitQuestionAnswerOnServer(answerPayload, actionTypeForSubmit, skillIdForSubmit, targetIdForSubmit);
     }
 
     function submitQuestionAnswerOnServer(answerPayload, actionTypeForSubmit, skillIdForSubmit, targetIdForSubmit) {
@@ -2046,23 +2066,24 @@
             event.targetMonsterId = event.targetMonsterId || getFirstAliveMonsterId(currentView && currentView.battle);
             await animatePlayerAttack(event.targetMonsterId);
             await skippableAutoDelay(ATTACK_EFFECT_DELAY_MS);
-            pushLog(effectEventMessage, { instant: true });
+            pushLog(effectEventMessage);
             await animateMonsterHit(event.targetMonsterId, event.damage, event.hpDamage, event.shieldDamage, event.isCritical);
+            await waitForBattleLogAdvance();
           } else if (event.target === 'player') {
-            pushLog(effectEventMessage, { instant: true });
+            pushLog(effectEventMessage);
             animatePlayerHit(event.damage, event.hpDamage || event.damage, event.shieldDamage);
+            await waitForBattleLogAdvance();
           } else {
             pushLog(effectEventMessage);
-            await holdBattleMessage();
+            await waitForBattleLogAdvance();
           }
-          await skippableAutoDelay(BATTLE_STEP_DELAY_MS);
         }
         if (event.actor === 'player') {
           if (event.simultaneousGroupId && (event.type === 'attack' || event.type === 'skill')) {
             var simultaneousEvents = collectSimultaneousEvents(events, i, consumedSimultaneousEvents);
             if (simultaneousEvents.length > 1) {
               await playSimultaneousMonsterHits(simultaneousEvents);
-              await skippableAutoDelay(BATTLE_STEP_DELAY_MS);
+              await waitForBattleLogAdvance();
               continue;
             }
           }
@@ -2070,18 +2091,18 @@
           if (event.type === 'attack' || event.type === 'skill') {
             event.targetMonsterId = event.targetMonsterId || getFirstAliveMonsterId(currentView && currentView.battle);
             await animatePlayerAttack(event.targetMonsterId);
-            pushLog(playerEventMessage, { instant: true });
+            pushLog(playerEventMessage);
             await animateMonsterHit(event.targetMonsterId, event.damage, event.hpDamage, event.shieldDamage, event.isCritical);
           } else if (event.type === 'guard') {
-            pushLog(playerEventMessage, { instant: true });
+            pushLog(playerEventMessage);
             animatePlayerShield(event.shield);
           } else if ((event.type === 'debuff' || event.type === 'buff') && event.targetMonsterId) {
-            pushLog(playerEventMessage, { instant: true });
+            pushLog(playerEventMessage);
             animateMonsterEffect(event.targetMonsterId, event.effectName || 'EFFECT');
           } else {
-            pushLog(playerEventMessage, { instant: true });
+            pushLog(playerEventMessage);
           }
-          await skippableAutoDelay(BATTLE_STEP_DELAY_MS);
+          await waitForBattleLogAdvance();
         }
       }
 
@@ -2178,7 +2199,7 @@
         return animatePlayerAttack(targetId);
       }));
       var message = events[0] && events[0].message || '광역 공격!';
-      pushLog(message, { instant: true });
+      pushLog(message);
       await Promise.all(events.map(function(event) {
         return animateMonsterHit(event.targetMonsterId, event.damage, event.hpDamage, event.shieldDamage, event.isCritical);
       }));
@@ -3745,6 +3766,25 @@
 
     function holdBattleMessage() {
       return skippableAutoDelay(MESSAGE_HOLD_MS);
+    }
+
+    function waitForBattleLogAdvance() {
+      return new Promise(function(resolve) {
+        activeBattleLogAdvanceResolver = function() {
+          if (activeBattleLogAdvanceResolver !== null) {
+            activeBattleLogAdvanceResolver = null;
+          }
+          resolve();
+        };
+      });
+    }
+
+    function advanceBattleLogManually() {
+      if (!activeBattleLogAdvanceResolver) return false;
+      var resolver = activeBattleLogAdvanceResolver;
+      activeBattleLogAdvanceResolver = null;
+      resolver();
+      return true;
     }
 
     function skippableAutoDelay(ms) {

@@ -32,6 +32,36 @@ function startRun(playerId, authToken) {
     return toClientObject_(existingRun);
   }
 
+  return createNewRun_(playerId);
+}
+
+function getActiveRunSummary(playerId, authToken) {
+  var check = canStartGame(playerId, authToken);
+  if (!check.canStart) {
+    throw new Error(check.reasons.join('\n'));
+  }
+
+  var existingRun = getActiveRun(playerId);
+  return toClientObject_({
+    hasActiveRun: !!existingRun,
+    run: existingRun ? buildRunResumeSummary_(existingRun) : null,
+  });
+}
+
+function restartRun(playerId, authToken) {
+  var check = canStartGame(playerId, authToken);
+  if (!check.canStart) {
+    throw new Error(check.reasons.join('\n'));
+  }
+
+  var existingRun = getActiveRun(playerId);
+  if (existingRun) {
+    abandonActiveRun_(existingRun);
+  }
+  return createNewRun_(playerId);
+}
+
+function createNewRun_(playerId) {
   var now = new Date();
   var stats = Object.assign({}, BASE_PLAYER_STATS);
   var run = {
@@ -59,6 +89,28 @@ function startRun(playerId, authToken) {
 
   appendRowObject_(DB_SHEETS.RUNS, run);
   return startBattle(run.runId);
+}
+
+function buildRunResumeSummary_(run) {
+  return {
+    runId: run.runId,
+    currentFloor: Number(run.currentFloor || 1),
+    currentStage: Number(run.currentStage || 1),
+    currentHp: Number(run.currentHp || 0),
+    currentShield: Number(run.currentShield || 0),
+    currency: Number(run.currency || 0),
+    startedAt: run.startedAt || '',
+    updatedAt: run.updatedAt || '',
+  };
+}
+
+function abandonActiveRun_(run) {
+  var now = new Date();
+  return updateRowByKey_(DB_SHEETS.RUNS, 'runId', run.runId, {
+    status: STATUS.RUN_FAILED,
+    updatedAt: now,
+    endedAt: now,
+  });
 }
 
 function getActiveRun(playerId) {
@@ -1216,7 +1268,45 @@ function getBattleClientConfig_() {
   return {
     questionResultHoldMs: clampClientDelay_(settings.questionResultHoldMs, 900, 0, 5000),
     questionActionStartDelayMs: clampClientDelay_(settings.questionActionStartDelayMs, 0, 0, 2000),
+    firstStageIntroLines: getFirstStageIntroLines_(settings),
   };
+}
+
+function getFirstStageIntroLines_(settings) {
+  var configured = settings && settings.firstStageIntroLinesJson;
+  var normalized = normalizeNarrationLines_(configured);
+  if (normalized.length) {
+    return normalized;
+  }
+  return [
+    { text: '눈을 떠보니 학교 옥상이다 .', sparkleDot: true },
+    { text: '일단 여기서 나가야겠다.' },
+    { text: '눈앞에 무언가 나타났다!' },
+  ];
+}
+
+function normalizeNarrationLines_(value) {
+  var rawLines = value;
+  if (typeof rawLines === 'string') {
+    rawLines = safeJsonParse_(rawLines, null) || rawLines.split(/\r?\n/);
+  }
+  if (!Array.isArray(rawLines)) {
+    return [];
+  }
+  return rawLines.map(function(line) {
+    if (typeof line === 'string') {
+      return { text: String(line || '').trim(), sparkleDot: false };
+    }
+    if (!line || typeof line !== 'object') {
+      return null;
+    }
+    return {
+      text: String(line.text || '').trim(),
+      sparkleDot: !!line.sparkleDot,
+    };
+  }).filter(function(line) {
+    return line && line.text;
+  });
 }
 
 function clampClientDelay_(value, fallback, min, max) {
@@ -1459,10 +1549,6 @@ function saveStageState_(runId, stageState, battleState) {
     patch.status = STATUS.RUN_FAILED;
     patch.endedAt = new Date();
     createPlayerGhostForDefeat_(runId, battleState);
-  }
-
-  if (battleState.status === STATUS.BATTLE_ACTIVE) {
-    return patchCachedRun_(runId, patch);
   }
 
   return updateRowByKey_(DB_SHEETS.RUNS, 'runId', runId, patch);

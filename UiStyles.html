@@ -856,17 +856,31 @@
 
   .battle-video-shell {
     position: relative;
-    min-height: 100vh;
+    height: 100vh;
+    height: 100dvh;
+    min-height: 0;
     display: block;
     overflow: hidden;
     padding: 0;
     background: #060606;
   }
 
+  .battle-page-body {
+    height: 100vh;
+    height: 100dvh;
+    overflow: hidden;
+  }
+
+  .battle-page-root {
+    height: 100vh;
+    height: 100dvh;
+    overflow: hidden;
+  }
+
   .battle-scene {
     position: absolute;
     inset: 0;
-    overflow: hidden;
+    overflow: visible;
     background: #050505;
   }
 
@@ -911,6 +925,7 @@
     align-items: flex-end;
     gap: clamp(12px, 2.4vw, 28px);
     transform: translateX(-50%);
+    overflow: visible;
   }
 
   .battle-menu-button {
@@ -975,12 +990,13 @@
   .monster-slot {
     position: relative;
     width: 280px;
-    height: 325px;
+    height: 365px;
     min-width: 92px;
     flex: 0 0 280px;
     display: flex;
     justify-content: center;
     align-items: flex-end;
+    overflow: visible;
   }
 
   .monster-slot.target-selectable {
@@ -1199,6 +1215,8 @@
   }
 
   .monster-image-sprite .monster-art {
+    position: relative;
+    z-index: 1;
     width: 100%;
     height: 100%;
     object-fit: contain;
@@ -1211,6 +1229,7 @@
     left: 50%;
     right: auto;
     bottom: -12px;
+    z-index: 4;
     display: block;
     width: max-content;
     max-width: 170px;
@@ -1234,6 +1253,14 @@
 
   .monster-state-hit .monster-art {
     filter: drop-shadow(0 18px 16px rgba(0, 0, 0, 0.7)) brightness(1.6) saturate(0.85);
+  }
+
+  .monster-hit-red .monster-art {
+    animation: monsterArtRedFlash 780ms ease-out forwards;
+  }
+
+  .monster-hit-white .monster-art {
+    animation: monsterArtWhiteFlash 780ms ease-out forwards;
   }
 
   .monster-state-death .monster-art,
@@ -1871,26 +1898,7 @@
 
   .monster-hit-red::before,
   .monster-hit-white::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    z-index: 2;
-    pointer-events: none;
-    mix-blend-mode: screen;
-    animation: monsterRedFlash 780ms ease-out forwards;
-  }
-
-  .monster-hit-red::before {
-    background:
-      linear-gradient(90deg, transparent, rgba(255, 36, 36, 0.42), transparent),
-      rgba(255, 0, 0, 0.26);
-  }
-
-  .monster-hit-white::before {
-    background:
-      linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.58), transparent),
-      rgba(255, 255, 255, 0.32);
-    animation: monsterRedFlash 780ms ease-out forwards;
+    content: none;
   }
 
   .incoming-slash {
@@ -2177,6 +2185,30 @@
     18% { opacity: 1; }
     54% { opacity: 0.38; }
     100% { opacity: 0; transform: translateX(12%) skewX(-16deg); }
+  }
+
+  @keyframes monsterArtRedFlash {
+    0%, 100% {
+      filter: drop-shadow(0 18px 16px rgba(0, 0, 0, 0.7)) brightness(1);
+    }
+    18% {
+      filter: drop-shadow(0 18px 16px rgba(0, 0, 0, 0.7)) drop-shadow(0 0 16px rgba(255, 40, 40, 0.75)) brightness(1.85) sepia(0.8) saturate(2.8) hue-rotate(-28deg);
+    }
+    48% {
+      filter: drop-shadow(0 18px 16px rgba(0, 0, 0, 0.7)) drop-shadow(0 0 10px rgba(255, 40, 40, 0.45)) brightness(1.32) sepia(0.34) saturate(1.8) hue-rotate(-18deg);
+    }
+  }
+
+  @keyframes monsterArtWhiteFlash {
+    0%, 100% {
+      filter: drop-shadow(0 18px 16px rgba(0, 0, 0, 0.7)) brightness(1);
+    }
+    18% {
+      filter: drop-shadow(0 18px 16px rgba(0, 0, 0, 0.7)) drop-shadow(0 0 18px rgba(255, 255, 255, 0.72)) brightness(2.1) grayscale(0.4);
+    }
+    48% {
+      filter: drop-shadow(0 18px 16px rgba(0, 0, 0, 0.7)) drop-shadow(0 0 10px rgba(255, 255, 255, 0.42)) brightness(1.42) grayscale(0.18);
+    }
   }
 
   @keyframes monsterEntrance {

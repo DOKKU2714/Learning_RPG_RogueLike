@@ -208,6 +208,11 @@ var MASTER_SETTINGS = Object.freeze([
   { key: 'questionTimePerDifficultySec', value: '2', type: 'number', description: 'Additional seconds per difficulty above 1.' },
   { key: 'questionResultHoldMs', value: '1400', type: 'number', description: 'Milliseconds to keep the correct-answer result visible before battle resolution continues.' },
   { key: 'questionActionStartDelayMs', value: '0', type: 'number', description: 'Milliseconds to wait after closing the question modal before playing the battle action.' },
+  { key: 'firstStageIntroLinesJson', value: JSON.stringify([
+    { text: '눈을 떠보니 학교 옥상이다 .', sparkleDot: true },
+    { text: '일단 여기서 나가야겠다.' },
+    { text: '눈앞에 무언가 나타났다!' },
+  ]), type: 'json', description: 'Narration lines shown before the first battle of a new run. Use [{text, sparkleDot}].' },
   { key: 'minAnswerEfficiency', value: '0.5', type: 'number', description: 'Minimum normal answer efficiency.' },
   { key: 'maxAnswerEfficiency', value: '1.25', type: 'number', description: 'Maximum answer efficiency.' },
   { key: 'extraWrongEfficiencyPenalty', value: '0.1', type: 'number', description: 'Efficiency penalty after timeout or repeated wrong answers.' },

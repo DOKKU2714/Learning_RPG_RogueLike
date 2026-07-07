@@ -5,9 +5,30 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <?!= include_('UiStyles'); ?>
+  <style>
+    .resume-run-modal {
+      width: min(520px, 100%);
+    }
+
+    .resume-run-summary {
+      margin: 14px 0 18px;
+      border: 1px solid var(--line-dark);
+      padding: 12px;
+      color: var(--accent);
+      background: #111;
+      text-align: center;
+    }
+
+    .resume-run-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+  </style>
 </head>
 <body>
-  <section id="introScreen" class="intro-screen screen active" onclick="enterApp()">
+  <? var skipIntroOnLoad = requestParams && requestParams.skipIntro === '1'; ?>
+  <section id="introScreen" class="intro-screen screen <?= skipIntroOnLoad ? '' : 'active' ?>" onclick="enterApp()">
     <div>
       <div id="introLogo" class="intro-logo intro-logo-image">
         <img
@@ -23,8 +44,8 @@
     </div>
   </section>
 
-  <main id="appScreen" class="menu-shell screen fade-in">
-    <section id="registerPanel" class="rpg-panel screen">
+  <main id="appScreen" class="menu-shell screen fade-in <?= skipIntroOnLoad ? 'active' : '' ?>">
+    <section id="registerPanel" class="rpg-panel screen <?= skipIntroOnLoad ? 'active' : '' ?>">
       <h1 id="authTitle" class="rpg-title">로그인</h1>
       <p id="userSummary" class="muted" style="text-align:center;">학번, 이름, 비밀번호를 입력하세요.</p>
 
@@ -80,6 +101,18 @@
     </section>
   </main>
 
+  <div id="resumeRunModal" class="question-modal-overlay" aria-hidden="true">
+    <section class="question-modal resume-run-modal" role="dialog" aria-modal="true" aria-labelledby="resumeRunTitle">
+      <h2 id="resumeRunTitle" class="rpg-title">이전 진행 발견</h2>
+      <p class="muted" style="text-align:center;">이전에 하던 플레이를 이어 하시겠습니까?</p>
+      <div id="resumeRunSummary" class="resume-run-summary"></div>
+      <div class="resume-run-actions">
+        <button class="secondary" onclick="abandonPreviousRunAndStart()">포기</button>
+        <button onclick="continuePreviousRun()">이어하기</button>
+      </div>
+    </section>
+  </div>
+
   <?!= include_('UiLoadingModal'); ?>
 
   <script>
@@ -90,14 +123,36 @@
     var SKIP_INTRO = window.location.search.indexOf('skipIntro=1') !== -1;
     var INTRO_SEEN_KEY = 'learningRpgIntroSeen';
     var currentUserRequestTimer = null;
+    var pendingResumeRun = null;
+    var pendingGameStartAt = 0;
 
-    document.addEventListener('DOMContentLoaded', function() {
-      bindLoginEnterKey();
-      showLoginForm();
-      if (SKIP_INTRO || getAuthToken()) {
-        enterApp();
+    document.addEventListener('DOMContentLoaded', bootIndexPage);
+
+    function bootIndexPage() {
+      try {
+        bindLoginEnterKey();
+        showLoginForm();
+        if (SKIP_INTRO || getAuthToken()) {
+          enterApp();
+        }
+      } catch (error) {
+        recoverIndexBoot(error);
       }
-    });
+    }
+
+    function recoverIndexBoot(error) {
+      try {
+        document.getElementById('introScreen').classList.remove('active');
+        document.getElementById('appScreen').classList.add('active');
+        document.getElementById('registerPanel').classList.add('active');
+        document.getElementById('mainPanel').classList.remove('active');
+        document.getElementById('infoPanel').classList.remove('active');
+        showLoginForm();
+        setRegisterMessage('화면 초기화 중 문제가 발생했습니다. 다시 로그인해 주세요.', 'error');
+      } catch (recoverError) {
+        document.body.innerHTML = '<main class="menu-shell screen active"><section class="rpg-panel screen active"><h1 class="rpg-title">로그인</h1><p class="message error">화면을 초기화하지 못했습니다. 새로고침해 주세요.</p></section></main>';
+      }
+    }
 
     function hasSeenIntroScreen() {
       try {
@@ -180,9 +235,7 @@
       document.getElementById('appScreen').classList.add('active');
       document.getElementById('registerPanel').classList.add('active');
       showLoginForm();
-      if (getAuthToken()) {
-        refreshCurrentUser();
-      }
+      refreshCurrentUser();
     }
 
     function warmupGameDataSilently() {
@@ -344,16 +397,71 @@
         return;
       }
       var startedAt = Date.now();
+      pendingGameStartAt = startedAt;
       showLoadingModal('전투를 준비하는 중...', '게임 시작 조건을 확인하는 중...');
       google.script.run
-        .withSuccessHandler(function() {
-          transitionToBattlePage(startedAt);
+        .withSuccessHandler(function(summary) {
+          if (summary && summary.hasActiveRun) {
+            hideLoadingModal();
+            showResumeRunModal(summary.run);
+            return;
+          }
+          startRunFromMenu(startedAt, false);
         })
         .withFailureHandler(function(error) {
           hideLoadingModal();
-          setMainMessage(error.message, 'error');
+          setMainMessage(error && error.message ? error.message : '게임 시작 조건을 확인하지 못했습니다.', 'error');
         })
-        .startRun(currentState.player.playerId, getAuthToken());
+        .getActiveRunSummary(currentState.player.playerId, getAuthToken());
+    }
+
+    function startRunFromMenu(startedAt, restart) {
+      showLoadingModal(
+        restart ? '새 게임을 준비하는 중...' : '전투를 준비하는 중...',
+        restart ? '이전 진행을 포기하고 처음부터 시작합니다.' : '전투 데이터를 불러오는 중...'
+      );
+      google.script.run
+        .withSuccessHandler(function() {
+          transitionToBattlePage(startedAt || Date.now());
+        })
+        .withFailureHandler(function(error) {
+          hideLoadingModal();
+          hideResumeRunModal();
+          setMainMessage(error && error.message ? error.message : '게임을 시작하지 못했습니다.', 'error');
+        })[restart ? 'restartRun' : 'startRun'](currentState.player.playerId, getAuthToken());
+    }
+
+    function showResumeRunModal(run) {
+      pendingResumeRun = run || null;
+      var modal = document.getElementById('resumeRunModal');
+      var summary = document.getElementById('resumeRunSummary');
+      var floor = Number(run && run.currentFloor || 1);
+      var stage = Number(run && run.currentStage || 1);
+      var hp = Number(run && run.currentHp || 0);
+      var shield = Number(run && run.currentShield || 0);
+      summary.innerHTML = [
+        '<strong>' + escapeHtml(floor + '층 ' + stage + '스테이지') + '</strong>',
+        '<span>HP ' + escapeHtml(hp) + (shield > 0 ? ' / 보호막 ' + escapeHtml(shield) : '') + '</span>'
+      ].join('<br>');
+      modal.classList.add('active');
+      modal.setAttribute('aria-hidden', 'false');
+    }
+
+    function hideResumeRunModal() {
+      var modal = document.getElementById('resumeRunModal');
+      if (!modal) return;
+      modal.classList.remove('active');
+      modal.setAttribute('aria-hidden', 'true');
+    }
+
+    function continuePreviousRun() {
+      hideResumeRunModal();
+      startRunFromMenu(pendingGameStartAt || Date.now(), false);
+    }
+
+    function abandonPreviousRunAndStart() {
+      hideResumeRunModal();
+      startRunFromMenu(pendingGameStartAt || Date.now(), true);
     }
 
     function transitionToBattlePage(startedAt) {
@@ -435,11 +543,17 @@
     }
 
     function getAuthToken() {
-      return sessionStorage.getItem('learningRpgAuthToken') || '';
+      try {
+        return sessionStorage.getItem('learningRpgAuthToken') || '';
+      } catch (error) {
+        return '';
+      }
     }
 
     function saveAuthToken(authToken) {
-      sessionStorage.setItem('learningRpgAuthToken', authToken);
+      try {
+        sessionStorage.setItem('learningRpgAuthToken', authToken);
+      } catch (error) {}
     }
 
     function saveCurrentState(state) {
