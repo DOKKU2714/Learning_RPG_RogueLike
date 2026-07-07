@@ -112,6 +112,7 @@ var REWARD_TYPES = Object.freeze({
   SKILL: 'skill',
   SKILL_UPGRADE: 'skillUpgrade',
   ITEM: 'item',
+  REST: 'rest',
 });
 
 var RARITIES = Object.freeze({
@@ -210,9 +211,24 @@ var ITEM_REWARD_CONFIG = Object.freeze({
   excludeOwnedItems: false,
 });
 
+var SKILL_REWARD_CONFIG = Object.freeze({
+  skillRewardChancePercent: 30,
+  rarityWeights: Object.freeze({
+    common: 50,
+    uncommon: 25,
+    rare: 15,
+    epic: 7,
+    legendary: 2,
+    unique: 1,
+  }),
+  preferUnownedSkills: true,
+});
+
 var GAME_RULES = Object.freeze({
   FLOOR_COUNT: 5,
   STAGES_PER_FLOOR: 5,
+  FLOOR_REST_STAGE: 6,
+  FLOOR_REST_HEAL_PERCENT: 25,
   MIN_DIFFICULTY: 1,
   MAX_DIFFICULTY: 5,
   DEFAULT_REQUIRED_OTHER_QUESTION_COUNT: 1,
@@ -386,13 +402,10 @@ var MASTER_REWARDS = Object.freeze([
   { rewardId: 'reward_stat_hp_10', type: REWARD_TYPES.STAT, targetId: STAT_KEYS.HP, value: 10, weight: 25, minFloor: 1, maxFloor: 5, description: '최대 체력 +10', detailDescription: '최대 체력이 증가하고 현재 체력도 함께 회복됩니다.', rarity: RARITIES.COMMON },
   { rewardId: 'reward_stat_defense_2', type: REWARD_TYPES.STAT, targetId: STAT_KEYS.DEFENSE, value: 2, weight: 25, minFloor: 1, maxFloor: 5, description: '방어력 +2', detailDescription: '수비 행동으로 얻는 방어막 수치가 증가합니다.', rarity: RARITIES.COMMON },
   { rewardId: 'reward_stat_critical_rate_3', type: REWARD_TYPES.STAT, targetId: STAT_KEYS.CRITICAL_RATE, value: 3, weight: 15, minFloor: 1, maxFloor: 5, description: '치명타 확률 +3', detailDescription: '공격 시 치명타가 발생할 확률이 증가합니다.', rarity: RARITIES.UNCOMMON },
-  { rewardId: 'reward_skill_basic_slash', type: REWARD_TYPES.SKILL, targetId: 'skill_basic_slash', value: 1, weight: 20, minFloor: 1, maxFloor: 5, description: '스킬 획득: 깊게 베기', detailDescription: '강한 피해를 주는 공격 스킬을 획득합니다. 이미 보유 중이면 강화 보상으로 바뀝니다.', rarity: '' },
-  { rewardId: 'reward_skill_guard_focus', type: REWARD_TYPES.SKILL, targetId: 'skill_guard_focus', value: 1, weight: 20, minFloor: 1, maxFloor: 5, description: '스킬 획득: 집중 방어', detailDescription: '큰 방어막을 얻는 방어 스킬을 획득합니다. 이미 보유 중이면 강화 보상으로 바뀝니다.', rarity: '' },
-  { rewardId: 'reward_skill_upgrade_placeholder', type: REWARD_TYPES.SKILL_UPGRADE, targetId: 'skill_basic_slash', value: 1, weight: 1, minFloor: 1, maxFloor: 5, description: '스킬 강화 데이터 자리표시자', detailDescription: '대상 스킬의 레벨을 올립니다.', rarity: '' },
 ]);
 
 var MASTER_REWARD_GROUPS = Object.freeze([
-  { rewardGroupId: 'reward_group_default', rewardIds: '["reward_stat_attack_2","reward_stat_hp_10","reward_stat_defense_2","reward_stat_critical_rate_3","reward_skill_basic_slash","reward_skill_guard_focus","reward_skill_upgrade_placeholder"]', currencyMin: 5, currencyMax: 15, description: '기본 스테이지 클리어 보상 그룹.' },
+  { rewardGroupId: 'reward_group_default', rewardIds: '["reward_stat_attack_2","reward_stat_hp_10","reward_stat_defense_2","reward_stat_critical_rate_3"]', currencyMin: 5, currencyMax: 15, description: '기본 스테이지 클리어 보상 그룹.' },
 ]);
 
 var MASTER_ITEMS = Object.freeze([

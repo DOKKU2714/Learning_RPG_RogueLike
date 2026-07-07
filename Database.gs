@@ -463,6 +463,20 @@ function buildStageSeedData_() {
         requiredOtherQuestionCount: GAME_RULES.DEFAULT_REQUIRED_OTHER_QUESTION_COUNT,
       });
     }
+
+    stages.push({
+      stageId: 'floor_' + floor + '_stage_' + GAME_RULES.FLOOR_REST_STAGE,
+      floor: floor,
+      stage: GAME_RULES.FLOOR_REST_STAGE,
+      name: floor + '층-' + GAME_RULES.FLOOR_REST_STAGE + '스테이지',
+      baseDifficulty: GAME_RULES.MIN_DIFFICULTY,
+      minDifficulty: GAME_RULES.MIN_DIFFICULTY,
+      maxDifficulty: GAME_RULES.MIN_DIFFICULTY,
+      monsterGroupId: '',
+      bossMonsterId: '',
+      rewardGroupId: 'reward_group_default',
+      requiredOtherQuestionCount: 0,
+    });
   }
 
   return stages;

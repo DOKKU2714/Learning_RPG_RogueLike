@@ -135,6 +135,16 @@
   <script>
     var WEB_APP_URL = '<?= getWebAppUrl_() ?>';
     var ASSET_BASE_URL = '<?= getAssetBaseUrl_() ?>';
+    var BATTLE_SOUND_FILES = {
+      block: 'Resources/Sounds/Block.wav',
+      blockSuccess: 'Resources/Sounds/Block_Success.wav',
+      buff: 'Resources/Sounds/Buff.wav',
+      debuff: 'Resources/Sounds/Debuff.wav',
+      gameover: 'Resources/Sounds/Gameover.wav',
+      hit: 'Resources/Sounds/Hit.wav',
+      hpDown: 'Resources/Sounds/Hp_down.wav',
+    };
+    var battleSoundCache = {};
     var currentView = null;
     var currentQuestionView = null;
     var questionStartedAt = 0;
@@ -918,6 +928,38 @@
       });
     }
 
+    function getBattleSoundUrl(soundKey) {
+      var path = BATTLE_SOUND_FILES[soundKey] || '';
+      if (!ASSET_BASE_URL || !path) return '';
+      return ASSET_BASE_URL.replace(/\/+$/, '') + '/' + path.replace(/^\/+/, '');
+    }
+
+    function getBattleSound(soundKey) {
+      var url = getBattleSoundUrl(soundKey);
+      if (!url || typeof Audio === 'undefined') return null;
+      if (!battleSoundCache[soundKey]) {
+        var audio = new Audio(url);
+        audio.preload = 'auto';
+        battleSoundCache[soundKey] = audio;
+      }
+      return battleSoundCache[soundKey];
+    }
+
+    function playBattleSound(soundKey) {
+      var baseAudio = getBattleSound(soundKey);
+      if (!baseAudio) return;
+      var audio = baseAudio.cloneNode ? baseAudio.cloneNode(true) : new Audio(baseAudio.src);
+      audio.volume = 0.75;
+      var playPromise = audio.play();
+      if (playPromise && playPromise.catch) {
+        playPromise.catch(function() {});
+      }
+    }
+
+    function playStatusSound(type) {
+      playBattleSound(type === 'debuff' ? 'debuff' : 'buff');
+    }
+
     function getMonsterImageUrl(monster, state) {
       if (!ASSET_BASE_URL || !monster || !monster.monsterId || monster.avatarType === 'photo') {
         return '';
@@ -947,6 +989,7 @@
         skill: 'Reward_Skill.png',
         skillUpgrade: 'Reward_Skill_Upgrade.png',
         item: 'Reward_Item.png',
+        rest: 'Reward_Stat.png',
       };
       return ASSET_BASE_URL + '/Resources/Reward/' + (files[type] || 'Reward_Stat.png');
     }
@@ -3234,6 +3277,8 @@
         selectedRewardId: '',
         currencyGranted: false,
         currencyAmount: Number(rewardView.currencyAmount || 0),
+        floorRestChoice: !!rewardView.floorRestChoice,
+        intermissionStage: rewardView.intermissionStage || null,
         stageClearRegenApplied: true,
         regenAmount: Number(rewardView.regenAmount || 0),
         currentHpAfterRegen: Number(rewardView.currentHpAfterRegen || 0),
@@ -3320,8 +3365,19 @@
       selectedRewardId = '';
       rewardSelectionApplying = false;
       var regenAmount = Number(rewardView.regenAmount || 0);
+      if (rewardView.intermissionStage) {
+        renderBattleBackground(rewardView.intermissionStage);
+      }
       animateStageClearRegen(rewardView);
       var rewardContainer = document.getElementById('rewardChoices');
+      var rewardTitle = document.getElementById('rewardTitle');
+      var rewardSubtitle = document.querySelector('.reward-clear-header p');
+      if (rewardTitle) {
+        rewardTitle.textContent = rewardView.floorRestChoice ? '층 정비' : '스테이지 클리어';
+      }
+      if (rewardSubtitle) {
+        rewardSubtitle.textContent = rewardView.floorRestChoice ? '휴식하거나 보상을 하나 고르세요' : '보상을 고르세요';
+      }
       rewardContainer.innerHTML = rewardView.choices.map(function(reward) {
         var iconUrl = getRewardIconUrl(reward.type);
         var rarity = normalizeRewardRarity(reward.rarity);
@@ -3331,7 +3387,10 @@
         var detailName = reward.skillDetail && reward.skillDetail.name || name;
         var detailMeta = reward.skillDetail
           ? (escapeHtml(reward.skillDetail.rarityLabel || reward.rarityLabel || getRewardRarityLabel(rarity)) + ' / Lv.' + escapeHtml(reward.skillDetail.level || 1))
-          : (escapeHtml(reward.rarityLabel || getRewardRarityLabel(rarity)) + ' / ' + escapeHtml(formatRewardMeta(reward)));
+          : (reward.type === 'rest'
+            ? '회복 / HP +' + escapeHtml(reward.healAmount || 0)
+            : (escapeHtml(reward.rarityLabel || getRewardRarityLabel(rarity)) + ' / ' + escapeHtml(formatRewardMeta(reward))));
+        var rarityBadge = reward.type === 'rest' ? '회복' : (reward.rarityLabel || getRewardRarityLabel(rarity));
         var rewardSkillUseLimitText = reward.skillDetail ? getSkillUseLimitText(reward.skillDetail) : '';
         var rewardSkillCooldown = reward.skillDetail ? getSkillCooldownDisplayText(reward.skillDetail) : '';
         var rewardSkillLines = reward.skillDetail
@@ -3340,7 +3399,7 @@
           : '';
         return '<button class="reward-choice-card rarity-' + escapeHtml(rarity) + '" data-reward-id="' + escapeHtml(reward.rewardId) + '">' +
           '<span class="reward-choice-heading">' + escapeHtml(title) + '</span>' +
-          '<span class="reward-rarity-badge">' + escapeHtml(reward.rarityLabel || getRewardRarityLabel(rarity)) + '</span>' +
+          '<span class="reward-rarity-badge">' + escapeHtml(rarityBadge) + '</span>' +
           '<span class="reward-choice-icon-wrap">' +
             '<img class="reward-choice-icon" src="' + escapeHtml(iconUrl) + '" alt="" onerror="this.remove();">' +
           '</span>' +
@@ -3375,6 +3434,7 @@
       rewardModal.classList.remove('reward-applying');
       rewardModal.classList.add('active');
       rewardModal.classList.add('stage-clear-reward-overlay');
+      rewardModal.classList.toggle('floor-rest-reward-overlay', !!rewardView.floorRestChoice);
       rewardModal.setAttribute('aria-hidden', 'false');
       window.requestAnimationFrame(function() {
         spawnStageClearBurst();
@@ -3434,6 +3494,9 @@
       if (reward.type === 'item') {
         return typeLabel + (value ? ' / x' + value : '');
       }
+      if (reward.type === 'rest') {
+        return typeLabel + ' / HP +' + (reward.healAmount || 0);
+      }
       return typeLabel;
     }
 
@@ -3443,6 +3506,7 @@
         skill: '스킬 획득',
         skillUpgrade: '스킬 강화',
         item: '아이템 획득',
+        rest: '휴식',
       };
       return labels[type] || '보상';
     }
@@ -3491,6 +3555,7 @@
         skill: 'SKILL',
         skillUpgrade: 'SKILL UP',
         item: 'ITEM',
+        rest: 'REST',
       };
       return labels[type] || String(type || 'REWARD');
     }
@@ -3551,6 +3616,7 @@
         window.setTimeout(function() {
           rewardModal.classList.remove('active');
           rewardModal.classList.remove('stage-clear-reward-overlay');
+          rewardModal.classList.remove('floor-rest-reward-overlay');
           rewardModal.classList.remove('reward-applying');
           rewardSelectionApplying = false;
           pushLog('데모 보상을 선택했습니다.');
@@ -3566,6 +3632,7 @@
               rewardSelectionApplying = false;
               rewardModal.classList.remove('active');
               rewardModal.classList.remove('stage-clear-reward-overlay');
+              rewardModal.classList.remove('floor-rest-reward-overlay');
               rewardModal.classList.remove('reward-applying');
               if (response.cleared) {
                 pushLog('1층 스테이지를 클리어했습니다. 탈출에 성공했습니다.');
@@ -3639,8 +3706,13 @@
       var visibleShieldDamage = Number(shieldDamage || 0);
       applyMonsterDamageDelta(monsterId, visibleHpDamage, shieldDamage || 0);
       if (visibleHpDamage <= 0 && visibleShieldDamage <= 0) return Promise.resolve();
-      if (visibleHpDamage <= 0 && visibleShieldDamage > 0) {
+      if (visibleShieldDamage > 0) {
+        playBattleSound('blockSuccess');
         spawnShieldBlockIcon(target);
+      }
+      if (visibleHpDamage > 0) {
+        playBattleSound('hit');
+        playBattleSound('hpDown');
       }
       target.classList.remove('monster-hit', 'monster-hit-red', 'monster-hit-white');
       setMonsterSpriteState(target, 'hit');
@@ -3727,6 +3799,7 @@
       var target = document.querySelector('[data-monster-id="' + cssEscape(monsterId) + '"] .compact-monster');
       if (!target) return;
       var normalizedType = type === 'debuff' ? 'debuff' : 'buff';
+      playStatusSound(normalizedType);
       target.classList.remove('status-effect-buff', 'status-effect-debuff');
       void target.offsetWidth;
       target.classList.add('status-effect-' + normalizedType);
@@ -3739,6 +3812,7 @@
     function animatePlayerStatusEffect(type) {
       var anchor = document.querySelector('.player-compact-panel') || document.getElementById('playerHpText');
       var normalizedType = type === 'debuff' ? 'debuff' : 'buff';
+      playStatusSound(normalizedType);
       if (anchor) {
         anchor.classList.remove('player-status-effect-buff', 'player-status-effect-debuff');
         void anchor.offsetWidth;
@@ -3783,6 +3857,11 @@
         }
         return;
       }
+      if (Number(shieldDamage || 0) > 0) {
+        playBattleSound('blockSuccess');
+      }
+      playBattleSound('hit');
+      playBattleSound('hpDown');
       shell.classList.remove('player-hit');
       shell.classList.remove('player-shield-block');
       void shell.offsetWidth;
@@ -3794,6 +3873,7 @@
     function animatePlayerShieldBlock() {
       var shell = document.getElementById('battleShell');
       if (!shell) return;
+      playBattleSound('blockSuccess');
       shell.classList.remove('player-shield-block');
       shell.classList.remove('player-hit');
       void shell.offsetWidth;
@@ -3842,6 +3922,7 @@
     }
 
     function animatePlayerShield(shield) {
+      playBattleSound('block');
       var player = currentView && currentView.battle ? currentView.battle.player : {};
       renderPlayerHud({
         hp: Number(player.hp || 0),
@@ -3856,7 +3937,10 @@
 
     function animateMonsterShield(monsterId) {
       var target = document.querySelector('[data-monster-id="' + cssEscape(monsterId) + '"] .compact-monster');
-      if (target) spawnShieldEffect(target);
+      if (target) {
+        playBattleSound('block');
+        spawnShieldEffect(target);
+      }
     }
 
     function spawnShieldBlockIcon(anchor) {
@@ -4197,6 +4281,7 @@
     function showDefeatSequence() {
       if (defeatSequenceStarted) return;
       defeatSequenceStarted = true;
+      playBattleSound('gameover');
       setBattleInputLocked(true);
       setPlayerTurn(false);
       closeQuestionModal();

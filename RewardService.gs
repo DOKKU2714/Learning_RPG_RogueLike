@@ -25,13 +25,14 @@ function generateRewardChoices(runId, stageId, authToken) {
 
   var stage = loadStage(currentStageId);
   var rewardGroupId = stage.rewardGroupId;
+  var isFloorRestChoice = shouldOfferFloorRestChoice_(stage);
   var rewardState = stageState.reward || {};
   var regenResult = grantStageClearRegenForRun_(run, stageState);
   run = regenResult.run;
   stageState = regenResult.stageState;
   rewardState = stageState.reward || {};
   if (rewardState.stageId === currentStageId && rewardState.choices && rewardState.choices.length) {
-    if (!rewardState.currencyGranted) {
+    if (!rewardState.currencyGranted && !rewardState.floorRestChoice) {
       rewardState.currencyAmount = grantCurrencyForRun_(run, stageState, rewardGroupId).amount;
       rewardState.currencyGranted = true;
       stageState.reward = rewardState;
@@ -44,7 +45,12 @@ function generateRewardChoices(runId, stageId, authToken) {
   }
 
   var choices = pickRewardChoices_(rewardGroupId, Number(stage.floor || run.currentFloor), safeJsonParse_(run.skillsJson, []), safeJsonParse_(run.itemsJson, []));
-  var currencyResult = grantCurrencyForRun_(run, stageState, rewardGroupId);
+  if (isFloorRestChoice) {
+    choices = [buildFloorRestRewardChoice_(run, stageState.battle)].concat(choices);
+  }
+  var currencyAmount = isFloorRestChoice
+    ? previewCurrencyReward_(rewardGroupId)
+    : grantCurrencyForRun_(run, stageState, rewardGroupId).amount;
   run = requireRun_(runId);
   stageState = getStageState_(run);
   rewardState = {
@@ -54,8 +60,10 @@ function generateRewardChoices(runId, stageId, authToken) {
       return sanitizeRewardForClient_(reward, stageState.battle);
     }),
     selectedRewardId: '',
-    currencyGranted: true,
-    currencyAmount: currencyResult.amount,
+    currencyGranted: !isFloorRestChoice,
+    currencyAmount: currencyAmount,
+    floorRestChoice: isFloorRestChoice,
+    intermissionStage: isFloorRestChoice ? buildFloorRestStageView_(stage) : null,
     stageClearRegenApplied: !!rewardState.stageClearRegenApplied,
     regenAmount: Number(rewardState.regenAmount || 0),
     currentHpAfterRegen: Number(rewardState.currentHpAfterRegen || run.currentHp || 0),
@@ -87,17 +95,29 @@ function previewRewardChoicesForStageResult(stagePayload, authToken) {
   var currentStageId = battle.stage && battle.stage.stageId || buildStageId_(run.currentFloor, run.currentStage);
   var stage = loadStage(currentStageId);
   var rewardGroupId = stage.rewardGroupId;
+  var isFloorRestChoice = shouldOfferFloorRestChoice_(stage);
   var clientStageState = payload.stageState || {};
   var rewardState = clientStageState.reward || {};
   if (!(rewardState.stageId === currentStageId && rewardState.choices && rewardState.choices.length)) {
     var previewRegen = previewStageClearRegen_(run, battle);
+    var battleAfterPreviewRegen = Object.assign({}, battle, {
+      player: Object.assign({}, battle.player || {}, {
+        hp: previewRegen.nextHp,
+      }),
+    });
+    var choices = pickRewardChoices_(rewardGroupId, Number(stage.floor || run.currentFloor), safeJsonParse_(run.skillsJson, []), safeJsonParse_(run.itemsJson, []));
+    if (isFloorRestChoice) {
+      choices = [buildFloorRestRewardChoice_(run, battleAfterPreviewRegen)].concat(choices);
+    }
     rewardState = {
       stageId: currentStageId,
       rewardGroupId: rewardGroupId,
-      choices: pickRewardChoices_(rewardGroupId, Number(stage.floor || run.currentFloor), safeJsonParse_(run.skillsJson, []), safeJsonParse_(run.itemsJson, [])),
+      choices: choices,
       selectedRewardId: '',
       currencyGranted: false,
       currencyAmount: previewCurrencyReward_(rewardGroupId),
+      floorRestChoice: isFloorRestChoice,
+      intermissionStage: isFloorRestChoice ? buildFloorRestStageView_(stage) : null,
       stageClearRegenApplied: true,
       regenAmount: previewRegen.amount,
       currentHpAfterRegen: previewRegen.nextHp,
@@ -135,6 +155,60 @@ function previewCurrencyReward_(rewardGroupId) {
   return randomInt_(Math.min(min, max), Math.max(min, max));
 }
 
+function shouldOfferFloorRestChoice_(stage) {
+  var floor = Number(stage && stage.floor || 1);
+  var stageNumber = Number(stage && stage.stage || 1);
+  return floor < GAME_RULES.FLOOR_COUNT
+    && stageNumber === GAME_RULES.STAGES_PER_FLOOR
+    && !!(stage && stage.bossMonsterId);
+}
+
+function buildFloorRestStageView_(stage) {
+  return {
+    stageId: buildStageId_(Number(stage.floor || 1), GAME_RULES.FLOOR_REST_STAGE),
+    floor: Number(stage.floor || 1),
+    stage: GAME_RULES.FLOOR_REST_STAGE,
+    name: Number(stage.floor || 1) + '층-' + GAME_RULES.FLOOR_REST_STAGE + '스테이지',
+  };
+}
+
+function buildFloorRestRewardChoice_(run, battle) {
+  var preview = previewFloorRestHeal_(run, battle);
+  return {
+    rewardId: 'floor_rest_heal',
+    type: REWARD_TYPES.REST,
+    targetId: STAT_KEYS.HP,
+    value: GAME_RULES.FLOOR_REST_HEAL_PERCENT,
+    weight: 0,
+    minFloor: 1,
+    maxFloor: GAME_RULES.FLOOR_COUNT,
+    description: '휴식',
+    detailDescription: '최대 체력의 ' + GAME_RULES.FLOOR_REST_HEAL_PERCENT + '%만큼 회복합니다. 현재 기준 +' + preview.amount + ' 회복.',
+    rarity: RARITIES.COMMON,
+    healAmount: preview.amount,
+    currentHpAfterRest: preview.nextHp,
+    maxHpAfterRest: preview.maxHp,
+  };
+}
+
+function previewFloorRestHeal_(run, battle) {
+  var runItems = safeJsonParse_(run.itemsJson, []);
+  var stats = battle && battle.player && battle.player.stats
+    ? battle.player.stats
+    : calculateStatsWithItemEffects_(safeJsonParse_(run.statsJson, Object.assign({}, BASE_PLAYER_STATS)), runItems);
+  var maxHp = Math.max(1, Number(stats.hp || battle && battle.player && battle.player.maxHp || BASE_PLAYER_STATS.hp));
+  var battleHp = Number(battle && battle.player && battle.player.hp || 0);
+  var runHp = Number(run.currentHp || 0);
+  var currentHp = Math.max(0, Math.max(battleHp, runHp));
+  var rawAmount = Math.ceil(maxHp * (Number(GAME_RULES.FLOOR_REST_HEAL_PERCENT || 0) / 100));
+  var amount = Math.max(0, Math.min(rawAmount, maxHp - currentHp));
+  return {
+    amount: amount,
+    nextHp: currentHp + amount,
+    maxHp: maxHp,
+  };
+}
+
 function selectReward(runId, rewardId, authToken, rewardView) {
   var run = requireRun_(runId);
   requireRewardRunOwner_(run, authToken);
@@ -152,6 +226,8 @@ function selectReward(runId, rewardId, authToken, rewardView) {
       selectedRewardId: '',
       currencyGranted: false,
       currencyAmount: Number(rewardView.currencyAmount || 0),
+      floorRestChoice: !!rewardView.floorRestChoice,
+      intermissionStage: rewardView.intermissionStage || null,
       stageClearRegenApplied: true,
       regenAmount: Number(rewardView.regenAmount || 0),
       currentHpAfterRegen: Number(rewardView.currentHpAfterRegen || 0),
@@ -174,10 +250,13 @@ function selectReward(runId, rewardId, authToken, rewardView) {
     throw new Error('보상 후보에 없는 보상입니다.');
   }
 
-  if (!rewardState.currencyGranted) {
+  var isRestReward = reward.type === REWARD_TYPES.REST;
+  if (!isRestReward && !rewardState.currencyGranted) {
     var currencyResult = grantCurrencyForRun_(run, stageState, rewardState.rewardGroupId, rewardState.currencyAmount);
     rewardState.currencyGranted = true;
     rewardState.currencyAmount = currencyResult.amount;
+  } else if (isRestReward) {
+    rewardState.currencyAmount = 0;
   }
 
   var runState = {
@@ -200,6 +279,8 @@ function selectReward(runId, rewardId, authToken, rewardView) {
     applySkillUpgradeReward_(runState, reward);
   } else if (reward.type === REWARD_TYPES.ITEM) {
     applyItemReward_(runState, reward);
+  } else if (reward.type === REWARD_TYPES.REST) {
+    applyRestReward_(runState, reward);
   }
 
   rewardState.selectedRewardId = reward.rewardId;
@@ -221,7 +302,7 @@ function selectReward(runId, rewardId, authToken, rewardView) {
       cleared: true,
       run: toClientObject_(movedRun),
       selectedReward: reward,
-      currencyAmount: rewardState.currencyAmount,
+      currencyAmount: isRestReward ? 0 : rewardState.currencyAmount,
     };
   }
 
@@ -230,7 +311,7 @@ function selectReward(runId, rewardId, authToken, rewardView) {
   return Object.assign(buildBattleView_(nextRun, getStageState_(nextRun)), {
     rewardSelected: true,
     selectedReward: reward,
-    currencyAmount: rewardState.currencyAmount,
+    currencyAmount: isRestReward ? 0 : rewardState.currencyAmount,
   });
 }
 
@@ -379,6 +460,15 @@ function applyItemReward_(runState, reward) {
   return runState;
 }
 
+function applyRestReward_(runState, reward) {
+  var stats = calculateStatsWithItemEffects_(runState.stats, runState.items);
+  var maxHp = Math.max(1, Number(stats.hp || BASE_PLAYER_STATS.hp));
+  var percent = Number(reward.value || GAME_RULES.FLOOR_REST_HEAL_PERCENT || 0);
+  var amount = Math.ceil(maxHp * (percent / 100));
+  runState.currentHp = Math.min(maxHp, Math.max(0, Number(runState.currentHp || 0)) + Math.max(0, amount));
+  return runState;
+}
+
 function moveToNextStage(runId, authToken) {
   var run = requireRun_(runId);
   requireRewardRunOwner_(run, authToken);
@@ -464,7 +554,7 @@ function pickRewardChoices_(rewardGroupId, floor, ownedSkills, ownedItems) {
   var rewards = readTableCached_(DB_SHEETS.REWARDS, 600).filter(function(reward) {
     var idAllowed = rewardIds.length === 0 || rewardIds.indexOf(reward.rewardId) !== -1;
     var floorAllowed = Number(reward.minFloor || 1) <= floor && Number(reward.maxFloor || GAME_RULES.FLOOR_COUNT) >= floor;
-    var typeAllowed = reward.type === REWARD_TYPES.STAT || reward.type === REWARD_TYPES.SKILL || reward.type === REWARD_TYPES.SKILL_UPGRADE || reward.type === REWARD_TYPES.ITEM;
+    var typeAllowed = reward.type === REWARD_TYPES.STAT;
     var statAllowed = reward.type !== REWARD_TYPES.STAT || ALLOWED_REWARD_STAT_KEYS_.indexOf(reward.targetId) !== -1;
     var skillUpgradeAllowed = reward.type !== REWARD_TYPES.SKILL_UPGRADE || hasOwnedSkill_(ownedSkills, reward.targetId);
     return idAllowed && floorAllowed && typeAllowed && statAllowed && skillUpgradeAllowed;
@@ -472,13 +562,24 @@ function pickRewardChoices_(rewardGroupId, floor, ownedSkills, ownedItems) {
 
   var candidates = rewards.slice();
   var choices = [];
-  while (choices.length < 3 && candidates.length > 0) {
-    var picked = shouldRollItemReward_() ? pickAutoItemReward_(ownedItems) : null;
+  var attemptCount = 0;
+  while (choices.length < 3 && attemptCount < 12) {
+    attemptCount += 1;
+    var picked = shouldRollSkillReward_() ? pickAutoSkillReward_(ownedSkills) : null;
     if (picked && choices.some(function(choice) { return choice.rewardId === picked.rewardId; })) {
       picked = null;
     }
     if (!picked) {
+      picked = shouldRollItemReward_() ? pickAutoItemReward_(ownedItems) : null;
+    }
+    if (picked && choices.some(function(choice) { return choice.rewardId === picked.rewardId; })) {
+      picked = null;
+    }
+    if (!picked && candidates.length > 0) {
       picked = pickWeightedReward_(candidates);
+    }
+    if (!picked) {
+      continue;
     }
     choices.push(picked);
     candidates = candidates.filter(function(candidate) {
@@ -492,6 +593,92 @@ function pickRewardChoices_(rewardGroupId, floor, ownedSkills, ownedItems) {
   return choices.map(function(choice) {
     return attachRewardRarity_(adaptRewardForChoice_(choice, ownedSkills));
   });
+}
+
+function shouldRollSkillReward_() {
+  return Math.random() * 100 < Math.max(0, Math.min(100, Number(SKILL_REWARD_CONFIG.skillRewardChancePercent || 0)));
+}
+
+function pickAutoSkillReward_(ownedSkills) {
+  var rarity = pickSkillRewardRarity_(SKILL_REWARD_CONFIG.rarityWeights);
+  var skill = pickSkillByRarityWithFallback_(rarity, ownedSkills, SKILL_REWARD_CONFIG);
+  if (!skill) {
+    return null;
+  }
+  return buildAutoSkillReward_(skill);
+}
+
+function pickSkillRewardRarity_(rarityWeights) {
+  var ordered = [RARITIES.COMMON, RARITIES.UNCOMMON, RARITIES.RARE, RARITIES.EPIC, RARITIES.LEGENDARY, RARITIES.UNIQUE];
+  var weights = ordered.map(function(rarity) {
+    return Math.max(0, Number(rarityWeights && rarityWeights[rarity] || 0));
+  });
+  return pickWeighted_(ordered, weights);
+}
+
+function pickSkillByRarityWithFallback_(rarity, ownedSkills, config) {
+  var ordered = [RARITIES.COMMON, RARITIES.UNCOMMON, RARITIES.RARE, RARITIES.EPIC, RARITIES.LEGENDARY, RARITIES.UNIQUE];
+  var rarityIndex = Math.max(0, ordered.indexOf(rarity));
+  for (var i = rarityIndex; i >= 0; i -= 1) {
+    var pool = getAvailableSkillRewardPool_(ordered[i], ownedSkills, config);
+    if (pool.length) {
+      return pickRandom_(pool);
+    }
+  }
+  var allPool = getAvailableSkillRewardPool_('', ownedSkills, Object.assign({}, config, { preferUnownedSkills: false }));
+  return allPool.length ? pickRandom_(allPool) : null;
+}
+
+function getAvailableSkillRewardPool_(rarity, ownedSkills, config) {
+  var ownedMap = normalizeOwnedSkills_(ownedSkills || []).reduce(function(map, skill) {
+    map[skill.skillId] = skill;
+    return map;
+  }, {});
+  var rows = getSkillRowsForRewards_();
+  var pool = rows.filter(function(skill) {
+    var skillId = String(skill.skillId || '').trim();
+    var skillRarity = normalizeRarity_(skill.rarity) || RARITIES.COMMON;
+    if (!skillId) {
+      return false;
+    }
+    if (rarity && skillRarity !== rarity) {
+      return false;
+    }
+    if (config && config.preferUnownedSkills && ownedMap[skillId]) {
+      return false;
+    }
+    return true;
+  });
+  if (!pool.length && config && config.preferUnownedSkills) {
+    return getAvailableSkillRewardPool_(rarity, ownedSkills, Object.assign({}, config, { preferUnownedSkills: false }));
+  }
+  return pool;
+}
+
+function getSkillRowsForRewards_() {
+  var rows = [];
+  try {
+    rows = readTableCached_(DB_SHEETS.SKILLS, 600);
+  } catch (error) {
+    rows = [];
+  }
+  return rows && rows.length ? rows : MASTER_SKILLS.slice();
+}
+
+function buildAutoSkillReward_(skill) {
+  var rarity = normalizeRarity_(skill.rarity) || RARITIES.COMMON;
+  return {
+    rewardId: 'auto_skill_' + skill.skillId,
+    type: REWARD_TYPES.SKILL,
+    targetId: skill.skillId,
+    value: 1,
+    weight: 0,
+    minFloor: 1,
+    maxFloor: GAME_RULES.FLOOR_COUNT,
+    description: '스킬 획득: ' + (skill.name || skill.skillId),
+    detailDescription: skill.description || '',
+    rarity: rarity,
+  };
 }
 
 function adaptRewardForChoice_(reward, ownedSkills) {
@@ -561,6 +748,9 @@ function sanitizeRewardForClient_(reward, battleState) {
     rarityLabel: getRarityLabel_(rarity),
     skillDetail: buildRewardSkillDetail_(reward, battleState),
     itemDetail: itemDetail,
+    healAmount: Number(reward.healAmount || 0),
+    currentHpAfterRest: Number(reward.currentHpAfterRest || 0),
+    maxHpAfterRest: Number(reward.maxHpAfterRest || 0),
   };
 }
 
@@ -668,6 +858,8 @@ function buildRewardChoiceView_(runId, stageId, rewardGroupId, rewardState, owne
     regenAmount: Number(rewardState.regenAmount || 0),
     currentHpAfterRegen: Number(rewardState.currentHpAfterRegen || 0),
     maxHpAfterRegen: Number(rewardState.maxHpAfterRegen || 0),
+    floorRestChoice: !!rewardState.floorRestChoice,
+    intermissionStage: rewardState.intermissionStage || null,
     choices: choices,
   };
 }
@@ -743,6 +935,9 @@ function getRewardDisplayTitle_(reward) {
   }
   if (reward.type === REWARD_TYPES.ITEM) {
     return '아이템 획득';
+  }
+  if (reward.type === REWARD_TYPES.REST) {
+    return '휴식';
   }
   return '보상';
 }
