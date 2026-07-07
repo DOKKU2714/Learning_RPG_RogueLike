@@ -941,13 +941,13 @@
   .monster-layer {
     position: absolute;
     left: 50%;
-    top: 27vh;
+    top: 26vh;
     z-index: 2;
-    width: min(980px, 92vw);
+    width: min(1080px, 96vw);
     display: flex;
     justify-content: center;
     align-items: flex-end;
-    gap: clamp(12px, 2.4vw, 28px);
+    gap: clamp(10px, 2.2vw, 26px);
     transform: translateX(-50%);
     overflow: visible;
   }
@@ -1013,10 +1013,10 @@
 
   .monster-slot {
     position: relative;
-    width: 280px;
-    height: 388px;
+    width: 322px;
+    height: 430px;
     min-width: 92px;
-    flex: 0 0 280px;
+    flex: 0 0 322px;
     display: flex;
     justify-content: center;
     align-items: flex-end;
@@ -1035,9 +1035,9 @@
     content: "";
     position: absolute;
     left: 50%;
-    bottom: 6px;
-    width: 82%;
-    height: 70%;
+    bottom: 4px;
+    width: 86%;
+    height: 75%;
     transform: translateX(-50%);
     border: 2px solid rgba(255, 216, 74, 0.82);
     border-radius: 8px;
@@ -1054,7 +1054,7 @@
     position: absolute;
     left: 0;
     right: 0;
-    top: 14px;
+    top: 10px;
     z-index: 3;
     font-size: 13px;
     font-weight: 900;
@@ -1072,9 +1072,9 @@
   .monster-hp-bar {
     position: absolute;
     left: 50%;
-    top: 37px;
+    top: 33px;
     z-index: 3;
-    width: 160px;
+    width: 184px;
     transform: translateX(-50%);
     height: 7px;
     border-color: #ddd;
@@ -1109,14 +1109,14 @@
 
   .monster-status-row {
     position: absolute;
-    top: 46px;
-    right: calc(50% - 80px);
+    top: 43px;
+    right: calc(50% - 92px);
     z-index: 4;
     justify-content: flex-start;
     align-items: flex-start;
     flex-direction: row-reverse;
     min-height: 0;
-    width: 124px;
+    width: 142px;
     margin: 0;
     flex-wrap: wrap;
     gap: 4px;
@@ -1151,7 +1151,7 @@
     position: absolute;
     left: 50%;
     top: auto;
-    bottom: 38px;
+    bottom: 40px;
     z-index: 4;
     display: grid;
     place-items: center;
@@ -1215,8 +1215,8 @@
   .compact-monster {
     position: relative;
     isolation: isolate;
-    width: 255px;
-    max-width: 255px;
+    width: 293px;
+    max-width: 293px;
     aspect-ratio: 1 / 1.05;
     border: 0;
     outline: 0;
@@ -1260,7 +1260,7 @@
     bottom: 4px;
     z-index: 6;
     width: max-content;
-    max-width: 220px;
+    max-width: 253px;
     color: #f4f4f4;
     font-size: 12px;
     line-height: 1.25;
@@ -2883,17 +2883,21 @@
 
   @media (max-width: 760px) {
     .monster-layer {
-      top: 27vh;
-      gap: 8px;
+      top: 26vh;
+      width: 100vw;
+      gap: 4px;
     }
 
     .monster-slot {
-      width: 30vw;
-      height: 44vw;
+      width: 32vw;
+      height: 50.6vw;
+      min-width: 0;
+      flex-basis: 32vw;
     }
 
     .compact-monster {
-      width: 26vw;
+      width: 29.9vw;
+      max-width: 29.9vw;
     }
 
     .battle-hud {

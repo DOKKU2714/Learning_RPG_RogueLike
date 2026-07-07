@@ -103,7 +103,6 @@ function clearMasterTableCaches_() {
     DB_SHEETS.ITEMS,
     DB_SHEETS.ITEM_LIST,
     DB_SHEETS.REWARDS,
-    DB_SHEETS.REWARD_GROUPS,
     DB_SHEETS.QUESTIONS,
   ].forEach(clearTableCache_);
 }
@@ -126,7 +125,6 @@ function warmupGameData(authToken) {
     DB_SHEETS.ITEMS,
     DB_SHEETS.ITEM_LIST,
     DB_SHEETS.REWARDS,
-    DB_SHEETS.REWARD_GROUPS,
     DB_SHEETS.QUESTIONS,
   ].forEach(function(sheetName) {
     readTableCached_(sheetName, 1800);
@@ -357,10 +355,6 @@ function seedMasterData() {
     upsertRowByKey_(DB_SHEETS.REWARDS, 'rewardId', reward.rewardId, reward);
   });
 
-  MASTER_REWARD_GROUPS.forEach(function(group) {
-    upsertRowByKey_(DB_SHEETS.REWARD_GROUPS, 'rewardGroupId', group.rewardGroupId, group);
-  });
-
   buildStageSeedData_().forEach(function(stage) {
     upsertRowByKey_(DB_SHEETS.STAGES, 'stageId', stage.stageId, stage);
   });
@@ -387,12 +381,53 @@ function seedKoreanItemListTemplate_() {
       '플레이버/설명': item.description || '',
     };
     for (var i = 0; i < 5; i += 1) {
-      row['효과 ' + (i + 1)] = effects[i] ? effects[i].summary || describeItemEffect_(effects[i]) : '';
+      row['효과 ' + (i + 1)] = effects[i] ? formatItemEffectForSheet_(effects[i]) : '';
     }
     return row;
   });
   appendRowObjects_(DB_SHEETS.ITEM_LIST, rows);
   return rows;
+}
+
+function migrateItemListEffectsToStructured() {
+  var spreadsheet = getSpreadsheet_();
+  var sheet = spreadsheet.getSheetByName(DB_SHEETS.ITEM_LIST);
+  if (!sheet || sheet.getLastRow() < 2) {
+    return { updatedCells: 0 };
+  }
+
+  var headers = getHeaderRow_(sheet);
+  var effectColumns = ['효과 1', '효과 2', '효과 3', '효과 4', '효과 5'].map(function(header) {
+    return headers.indexOf(header);
+  }).filter(function(index) {
+    return index >= 0;
+  });
+  if (!effectColumns.length) {
+    return { updatedCells: 0 };
+  }
+
+  var range = sheet.getRange(2, 1, sheet.getLastRow() - 1, headers.length);
+  var values = range.getValues();
+  var updatedCells = 0;
+  values.forEach(function(row) {
+    effectColumns.forEach(function(columnIndex) {
+      var current = String(row[columnIndex] || '').trim();
+      if (!current || parseStructuredItemEffect_(current)) {
+        return;
+      }
+      var parsed = parseLegacyItemEffectText_(current);
+      if (!parsed || parsed.type === 'note') {
+        return;
+      }
+      row[columnIndex] = formatItemEffectForSheet_(parsed);
+      updatedCells += 1;
+    });
+  });
+  if (updatedCells > 0) {
+    range.setValues(values);
+    clearMasterTableCaches_();
+  }
+  return { updatedCells: updatedCells };
 }
 
 /**

@@ -133,6 +133,321 @@ function parseItemEffectText_(text) {
   if (!value) {
     return null;
   }
+
+  var structured = parseStructuredItemEffect_(value);
+  if (structured) {
+    return structured;
+  }
+
+  return parseLegacyItemEffectText_(value);
+}
+
+function parseStructuredItemEffect_(text) {
+  var value = String(text || '').trim();
+  if (!value) {
+    return null;
+  }
+
+  var jsonParsed = parseItemEffectJsonCell_(value);
+  if (jsonParsed) {
+    return jsonParsed;
+  }
+
+  var keyValueParsed = parseItemEffectKeyValueCell_(value);
+  if (keyValueParsed) {
+    return keyValueParsed;
+  }
+
+  var compactParsed = parseItemEffectCompactCell_(value);
+  if (compactParsed) {
+    return compactParsed;
+  }
+
+  return null;
+}
+
+function parseItemEffectJsonCell_(text) {
+  var trimmed = String(text || '').trim();
+  if (!/^[{\[]/.test(trimmed)) {
+    return null;
+  }
+  var parsed = safeJsonParse_(trimmed, null);
+  if (!parsed) {
+    return null;
+  }
+  if (Array.isArray(parsed)) {
+    parsed = parsed[0];
+  }
+  return normalizeStructuredItemEffect_(parsed, trimmed);
+}
+
+function parseItemEffectKeyValueCell_(text) {
+  var normalized = String(text || '').trim();
+  if (normalized.indexOf('=') === -1) {
+    return null;
+  }
+  var pairs = {};
+  normalized.split(/[;\n]/).forEach(function(part) {
+    var chunk = String(part || '').trim();
+    if (!chunk) {
+      return;
+    }
+    var index = chunk.indexOf('=');
+    if (index === -1) {
+      return;
+    }
+    var key = normalizeItemEffectKey_(chunk.slice(0, index));
+    var value = chunk.slice(index + 1).trim();
+    if (key) {
+      pairs[key] = value;
+    }
+  });
+  return normalizeStructuredItemEffect_(pairs, normalized);
+}
+
+function parseItemEffectCompactCell_(text) {
+  var parts = String(text || '').split('|').map(function(part) {
+    return part.trim();
+  }).filter(Boolean);
+  if (parts.length < 2) {
+    return null;
+  }
+
+  var type = normalizeItemEffectTypeAlias_(parts[0]);
+  if (!type) {
+    return null;
+  }
+
+  var effect = { type: type };
+  if (type === ITEM_EFFECT_TYPES.STAT) {
+    effect.statKey = normalizeItemStatKeyAlias_(parts[1]);
+    effect.effectType = normalizeItemEffectModeAlias_(parts[2] || EFFECT_TYPES.FLAT);
+    effect.value = parseSignedNumber_(parts[3]);
+  } else if (type === ITEM_EFFECT_TYPES.SKILL_EXTRA_DAMAGE) {
+    effect.skillId = parts[1] || '';
+    effect.value = parseSignedNumber_(parts[2]);
+    effect.skillTag = parts[3] || '';
+    effect.skillName = parts[4] || '';
+  } else if (type === ITEM_EFFECT_TYPES.BATTLE_START_EFFECT) {
+    effect.effectId = parts[1] || '';
+    effect.stacks = Math.max(1, Number(parts[2] || 1));
+    effect.value = 0;
+  } else if (type === ITEM_EFFECT_TYPES.QUESTION_TIME) {
+    effect.questionType = normalizeQuestionTypeAlias_(parts[1] || 'all');
+    effect.value = parseSignedNumber_(parts[2]);
+  } else {
+    effect.value = parseSignedNumber_(parts[1]);
+  }
+  if (parts.length > 5) {
+    effect.summary = parts.slice(5).join('|');
+  }
+  return normalizeStructuredItemEffect_(effect, text);
+}
+
+function normalizeStructuredItemEffect_(effect, originalText) {
+  if (!effect || typeof effect !== 'object') {
+    return null;
+  }
+
+  var type = normalizeItemEffectTypeAlias_(effect.type || effect.effectType || effect.kind);
+  if (!type) {
+    return null;
+  }
+
+  var normalized = {
+    type: type,
+    value: parseSignedNumber_(effect.value !== undefined && effect.value !== '' ? effect.value : 0),
+  };
+  var summary = effect.summary || effect.label || effect.text || effect.display || '';
+
+  if (type === ITEM_EFFECT_TYPES.STAT) {
+    normalized.statKey = normalizeItemStatKeyAlias_(effect.statKey || effect.stat || effect.target || effect.key);
+    normalized.effectType = normalizeItemEffectModeAlias_(effect.mode || effect.effectMode || effect.calc || effect.operation || effect.statMode || effect.effectType);
+    if (!normalized.statKey) {
+      return null;
+    }
+  } else if (type === ITEM_EFFECT_TYPES.SKILL_EXTRA_DAMAGE) {
+    normalized.skillId = String(effect.skillId || effect.skill || effect.targetSkill || '').trim();
+    normalized.skillName = String(effect.skillName || effect.name || '').trim();
+    normalized.skillTag = String(effect.skillTag || effect.tag || '').trim();
+    if (!normalized.skillId && !normalized.skillName && !normalized.skillTag) {
+      return null;
+    }
+  } else if (type === ITEM_EFFECT_TYPES.BATTLE_START_EFFECT) {
+    normalized.effectId = String(effect.effectId || effect.statusId || effect.buffId || effect.debuffId || effect.id || '').trim();
+    normalized.stacks = Math.max(1, Number(effect.stacks || effect.stack || effect.count || 1));
+    normalized.value = 0;
+    if (!normalized.effectId) {
+      return null;
+    }
+  } else if (type === ITEM_EFFECT_TYPES.QUESTION_TIME) {
+    normalized.questionType = normalizeQuestionTypeAlias_(effect.questionType || effect.question || effect.target || 'all');
+  }
+
+  if (summary) {
+    normalized.summary = String(summary);
+  }
+  if (!normalized.summary && originalText && originalText.indexOf('=') === -1 && originalText.indexOf('|') === -1 && !/^[{\[]/.test(String(originalText).trim())) {
+    normalized.summary = String(originalText);
+  }
+  return normalized;
+}
+
+function normalizeItemEffectKey_(key) {
+  var normalized = String(key || '').trim().replace(/[\s_-]+(.)/g, function(_, char) {
+    return String(char || '').toUpperCase();
+  });
+  return normalized ? normalized.charAt(0).toLowerCase() + normalized.slice(1) : '';
+}
+
+function normalizeItemEffectTypeAlias_(type) {
+  var value = String(type || '').trim();
+  if (!value) {
+    return '';
+  }
+  var lower = value.toLowerCase().replace(/[\s_-]+/g, '');
+  var aliases = {
+    stat: ITEM_EFFECT_TYPES.STAT,
+    stats: ITEM_EFFECT_TYPES.STAT,
+    ability: ITEM_EFFECT_TYPES.STAT,
+    능력치: ITEM_EFFECT_TYPES.STAT,
+    스탯: ITEM_EFFECT_TYPES.STAT,
+    damagedealtpercent: ITEM_EFFECT_TYPES.DAMAGE_DEALT_PERCENT,
+    damagedealt: ITEM_EFFECT_TYPES.DAMAGE_DEALT_PERCENT,
+    outgoingdamage: ITEM_EFFECT_TYPES.DAMAGE_DEALT_PERCENT,
+    outgoingdamagepercent: ITEM_EFFECT_TYPES.DAMAGE_DEALT_PERCENT,
+    피해증폭: ITEM_EFFECT_TYPES.DAMAGE_DEALT_PERCENT,
+    damagetakenpercent: ITEM_EFFECT_TYPES.DAMAGE_TAKEN_PERCENT,
+    damagetaken: ITEM_EFFECT_TYPES.DAMAGE_TAKEN_PERCENT,
+    incomingdamage: ITEM_EFFECT_TYPES.DAMAGE_TAKEN_PERCENT,
+    incomingdamagepercent: ITEM_EFFECT_TYPES.DAMAGE_TAKEN_PERCENT,
+    입는피해: ITEM_EFFECT_TYPES.DAMAGE_TAKEN_PERCENT,
+    받는피해: ITEM_EFFECT_TYPES.DAMAGE_TAKEN_PERCENT,
+    basicattackdamagepercent: ITEM_EFFECT_TYPES.BASIC_ATTACK_DAMAGE_PERCENT,
+    basicattackdamage: ITEM_EFFECT_TYPES.BASIC_ATTACK_DAMAGE_PERCENT,
+    attackdamagepercent: ITEM_EFFECT_TYPES.BASIC_ATTACK_DAMAGE_PERCENT,
+    일반공격피해: ITEM_EFFECT_TYPES.BASIC_ATTACK_DAMAGE_PERCENT,
+    기본공격피해: ITEM_EFFECT_TYPES.BASIC_ATTACK_DAMAGE_PERCENT,
+    skilldamagepercent: ITEM_EFFECT_TYPES.SKILL_DAMAGE_PERCENT,
+    skilldamage: ITEM_EFFECT_TYPES.SKILL_DAMAGE_PERCENT,
+    스킬피해: ITEM_EFFECT_TYPES.SKILL_DAMAGE_PERCENT,
+    skillextradamage: ITEM_EFFECT_TYPES.SKILL_EXTRA_DAMAGE,
+    skillbonusdamage: ITEM_EFFECT_TYPES.SKILL_EXTRA_DAMAGE,
+    skillflatdamage: ITEM_EFFECT_TYPES.SKILL_EXTRA_DAMAGE,
+    스킬추가피해: ITEM_EFFECT_TYPES.SKILL_EXTRA_DAMAGE,
+    battlestarteffect: ITEM_EFFECT_TYPES.BATTLE_START_EFFECT,
+    battleStartEffect: ITEM_EFFECT_TYPES.BATTLE_START_EFFECT,
+    onbattlestart: ITEM_EFFECT_TYPES.BATTLE_START_EFFECT,
+    전투시작효과: ITEM_EFFECT_TYPES.BATTLE_START_EFFECT,
+    questiondifficulty: ITEM_EFFECT_TYPES.QUESTION_DIFFICULTY,
+    problemdifficulty: ITEM_EFFECT_TYPES.QUESTION_DIFFICULTY,
+    문제난이도: ITEM_EFFECT_TYPES.QUESTION_DIFFICULTY,
+    questionmaxefficiencypercent: ITEM_EFFECT_TYPES.QUESTION_MAX_EFFICIENCY_PERCENT,
+    questionmaxefficiency: ITEM_EFFECT_TYPES.QUESTION_MAX_EFFICIENCY_PERCENT,
+    문제최대효율: ITEM_EFFECT_TYPES.QUESTION_MAX_EFFICIENCY_PERCENT,
+    questiontime: ITEM_EFFECT_TYPES.QUESTION_TIME,
+    문제시간: ITEM_EFFECT_TYPES.QUESTION_TIME,
+    shortanswerchancepercent: ITEM_EFFECT_TYPES.SHORT_ANSWER_CHANCE_PERCENT,
+    shortanswerchance: ITEM_EFFECT_TYPES.SHORT_ANSWER_CHANCE_PERCENT,
+    주관식확률: ITEM_EFFECT_TYPES.SHORT_ANSWER_CHANCE_PERCENT,
+    shortanswercorrectefficiencypercent: ITEM_EFFECT_TYPES.SHORT_ANSWER_CORRECT_EFFICIENCY_PERCENT,
+    shortanswerefficiency: ITEM_EFFECT_TYPES.SHORT_ANSWER_CORRECT_EFFICIENCY_PERCENT,
+    주관식정답효율: ITEM_EFFECT_TYPES.SHORT_ANSWER_CORRECT_EFFICIENCY_PERCENT,
+  };
+  return aliases[value] || aliases[lower] || '';
+}
+
+function normalizeItemStatKeyAlias_(statKey) {
+  var value = String(statKey || '').trim();
+  var lower = value.toLowerCase().replace(/[\s_-]+/g, '');
+  var aliases = {};
+  aliases[STAT_KEYS.ATTACK] = STAT_KEYS.ATTACK;
+  aliases[STAT_KEYS.HP] = STAT_KEYS.HP;
+  aliases[STAT_KEYS.HP_REGEN] = STAT_KEYS.HP_REGEN;
+  aliases[STAT_KEYS.EVASION] = STAT_KEYS.EVASION;
+  aliases[STAT_KEYS.CRITICAL_RATE] = STAT_KEYS.CRITICAL_RATE;
+  aliases[STAT_KEYS.CRITICAL_DAMAGE] = STAT_KEYS.CRITICAL_DAMAGE;
+  aliases[STAT_KEYS.DEFENSE] = STAT_KEYS.DEFENSE;
+  aliases[STAT_KEYS.ACCURACY] = STAT_KEYS.ACCURACY;
+  aliases.attack = STAT_KEYS.ATTACK;
+  aliases.atk = STAT_KEYS.ATTACK;
+  aliases['공격력'] = STAT_KEYS.ATTACK;
+  aliases.hp = STAT_KEYS.HP;
+  aliases.health = STAT_KEYS.HP;
+  aliases.maxhp = STAT_KEYS.HP;
+  aliases['체력'] = STAT_KEYS.HP;
+  aliases['최대체력'] = STAT_KEYS.HP;
+  aliases.hpregen = STAT_KEYS.HP_REGEN;
+  aliases.regen = STAT_KEYS.HP_REGEN;
+  aliases['회복력'] = STAT_KEYS.HP_REGEN;
+  aliases.evasion = STAT_KEYS.EVASION;
+  aliases.eva = STAT_KEYS.EVASION;
+  aliases.dodge = STAT_KEYS.EVASION;
+  aliases['회피율'] = STAT_KEYS.EVASION;
+  aliases.criticalrate = STAT_KEYS.CRITICAL_RATE;
+  aliases.critrate = STAT_KEYS.CRITICAL_RATE;
+  aliases.crit = STAT_KEYS.CRITICAL_RATE;
+  aliases['치명타확률'] = STAT_KEYS.CRITICAL_RATE;
+  aliases.criticaldamage = STAT_KEYS.CRITICAL_DAMAGE;
+  aliases.critdamage = STAT_KEYS.CRITICAL_DAMAGE;
+  aliases.critdmg = STAT_KEYS.CRITICAL_DAMAGE;
+  aliases['치명타피해'] = STAT_KEYS.CRITICAL_DAMAGE;
+  aliases.defense = STAT_KEYS.DEFENSE;
+  aliases.def = STAT_KEYS.DEFENSE;
+  aliases['방어력'] = STAT_KEYS.DEFENSE;
+  aliases.accuracy = STAT_KEYS.ACCURACY;
+  aliases.acc = STAT_KEYS.ACCURACY;
+  aliases.hit = STAT_KEYS.ACCURACY;
+  aliases['명중률'] = STAT_KEYS.ACCURACY;
+  return aliases[value] || aliases[lower] || '';
+}
+
+function normalizeItemEffectModeAlias_(mode) {
+  var value = String(mode || '').trim().toLowerCase().replace(/[\s_-]+/g, '');
+  var aliases = {
+    flat: EFFECT_TYPES.FLAT,
+    add: EFFECT_TYPES.FLAT,
+    plus: EFFECT_TYPES.FLAT,
+    fixed: EFFECT_TYPES.FLAT,
+    고정: EFFECT_TYPES.FLAT,
+    percent: EFFECT_TYPES.PERCENT,
+    percentage: EFFECT_TYPES.PERCENT,
+    pct: EFFECT_TYPES.PERCENT,
+    rate: EFFECT_TYPES.PERCENT,
+    퍼센트: EFFECT_TYPES.PERCENT,
+    '%': EFFECT_TYPES.PERCENT,
+  };
+  return aliases[value] || EFFECT_TYPES.FLAT;
+}
+
+function normalizeQuestionTypeAlias_(questionType) {
+  var value = String(questionType || '').trim();
+  var lower = value.toLowerCase().replace(/[\s_-]+/g, '');
+  var aliases = {
+    all: 'all',
+    any: 'all',
+    전체: 'all',
+    multiplechoice: QUESTION_TYPES.MULTIPLE_CHOICE,
+    choice: QUESTION_TYPES.MULTIPLE_CHOICE,
+    객관식: QUESTION_TYPES.MULTIPLE_CHOICE,
+    shortanswer: QUESTION_TYPES.SHORT_ANSWER,
+    short: QUESTION_TYPES.SHORT_ANSWER,
+    주관식: QUESTION_TYPES.SHORT_ANSWER,
+  };
+  return aliases[value] || aliases[lower] || 'all';
+}
+
+function parseSignedNumber_(value) {
+  var text = String(value || '').trim();
+  var match = text.match(/([+-]?\d+(?:\.\d+)?)/);
+  return match ? Number(match[1]) : 0;
+}
+
+function parseLegacyItemEffectText_(text) {
+  var value = String(text || '').trim();
+  if (!value) {
+    return null;
+  }
   var normalized = value.replace(/[“”]/g, '"').replace(/\s+/g, ' ');
   var numberMatch = normalized.match(/([+-]?\d+(?:\.\d+)?)/);
   var numberValue = numberMatch ? Number(numberMatch[1]) : 0;
@@ -225,6 +540,36 @@ function buildItemEffectSummary_(item) {
   return getItemEffects_(item).map(function(effect) {
     return effect.summary || describeItemEffect_(effect);
   }).filter(Boolean).join(' / ');
+}
+
+function formatItemEffectForSheet_(effect) {
+  if (!effect) {
+    return '';
+  }
+  var parts = ['type=' + (effect.type || ITEM_EFFECT_TYPES.STAT)];
+  if (effect.type === ITEM_EFFECT_TYPES.STAT) {
+    parts.push('stat=' + (effect.statKey || ''));
+    parts.push('mode=' + (effect.effectType || EFFECT_TYPES.FLAT));
+    parts.push('value=' + Number(effect.value || 0));
+  } else if (effect.type === ITEM_EFFECT_TYPES.SKILL_EXTRA_DAMAGE) {
+    if (effect.skillId) parts.push('skillId=' + effect.skillId);
+    if (effect.skillName) parts.push('skillName=' + effect.skillName);
+    if (effect.skillTag) parts.push('skillTag=' + effect.skillTag);
+    parts.push('value=' + Number(effect.value || 0));
+  } else if (effect.type === ITEM_EFFECT_TYPES.BATTLE_START_EFFECT) {
+    parts.push('effectId=' + (effect.effectId || ''));
+    parts.push('stacks=' + Math.max(1, Number(effect.stacks || 1)));
+  } else if (effect.type === ITEM_EFFECT_TYPES.QUESTION_TIME) {
+    parts.push('questionType=' + (effect.questionType || 'all'));
+    parts.push('value=' + Number(effect.value || 0));
+  } else {
+    parts.push('value=' + Number(effect.value || 0));
+  }
+  var summary = effect.summary || describeItemEffect_(effect);
+  if (summary) {
+    parts.push('label=' + summary);
+  }
+  return parts.join('; ');
 }
 
 function describeItemEffect_(effect) {
@@ -584,8 +929,4 @@ function getAvailableItemRewardPool_(rarity, ownedItems, config) {
     }
     return true;
   });
-}
-
-function shouldRollItemReward_() {
-  return Math.random() * 100 < Math.max(0, Math.min(100, Number(ITEM_REWARD_CONFIG.itemRewardChancePercent || 0)));
 }

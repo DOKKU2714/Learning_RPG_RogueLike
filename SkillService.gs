@@ -168,6 +168,9 @@ function getSkillUnavailableReason(skill, runState, battleState) {
   if (conditions.requiredEffect && !hasEffect_(player, conditions.requiredEffect)) {
     return '필요 효과가 없습니다: ' + conditions.requiredEffect;
   }
+  if (Number(battleState.skillCooldowns && battleState.skillCooldowns[skill.skillId] || 0) > 0) {
+    return '쿨타임 ' + Number(battleState.skillCooldowns[skill.skillId] || 0) + '턴 남았습니다.';
+  }
   var ruleReason = checkSkillConditions_(skillRule, skill, battleState, target);
   if (ruleReason) {
     return ruleReason;
@@ -1320,19 +1323,36 @@ function trackSkillTagsForUse_(battleState, skill) {
 
 function setSkillCooldownAfterUse_(battleState, skill) {
   normalizeSkillRuntimeState_(battleState);
-  var cooldown = Number(skill && skill.cooldown || 0);
+  var cooldown = parseSkillCooldown_(skill && skill.cooldown);
   if (cooldown <= 0) {
     return;
   }
   battleState.skillCooldowns[skill.skillId] = Math.max(0, cooldown);
+  battleState.skillCooldownStartedTurns[skill.skillId] = Number(battleState.turn || 1);
 }
 
 function decrementSkillCooldowns_(battleState) {
   normalizeSkillRuntimeState_(battleState);
+  var currentTurn = Number(battleState.turn || 1);
   Object.keys(battleState.skillCooldowns).forEach(function(skillId) {
+    var startedTurn = Number(battleState.skillCooldownStartedTurns[skillId] || 0);
+    if (startedTurn && currentTurn <= startedTurn + 1) {
+      return;
+    }
     battleState.skillCooldowns[skillId] = Math.max(0, Number(battleState.skillCooldowns[skillId] || 0) - 1);
+    if (Number(battleState.skillCooldowns[skillId] || 0) <= 0) {
+      delete battleState.skillCooldownStartedTurns[skillId];
+    }
   });
   return battleState.skillCooldowns;
+}
+
+function parseSkillCooldown_(value) {
+  if (value === '' || value === null || value === undefined) {
+    return 0;
+  }
+  var match = String(value).match(/-?\d+(?:\.\d+)?/);
+  return Math.max(0, Math.round(Number(match ? match[0] : value || 0)));
 }
 
 function cleanupSkillTriggersForTurn_(battleState) {
@@ -1462,7 +1482,8 @@ function buildSkillPreviewText_(skill, battleState) {
 
 function buildSkillCooldownText_(skill) {
   if (skill.cooldown !== '' && skill.cooldown !== null && skill.cooldown !== undefined) {
-    return '쿨타임 ' + Number(skill.cooldown || 0) + '턴';
+    var cooldown = parseSkillCooldown_(skill.cooldown);
+    return cooldown > 0 ? '쿨타임 ' + cooldown + '턴' : '쿨타임 없음';
   }
 
   var conditions = safeJsonParse_(skill.conditionJson, {});
@@ -1616,6 +1637,7 @@ function normalizeSkillRuntimeState_(battleState) {
     return battleState;
   }
   battleState.skillCooldowns = battleState.skillCooldowns || {};
+  battleState.skillCooldownStartedTurns = battleState.skillCooldownStartedTurns || {};
   battleState.skillUseCounts = battleState.skillUseCounts || {};
   battleState.usedSkillTagsThisBattle = battleState.usedSkillTagsThisBattle || [];
   battleState.usedSkillTagsThisTurn = battleState.usedSkillTagsThisTurn || [];

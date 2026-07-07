@@ -60,7 +60,6 @@ var DB_SCHEMA = Object.freeze([
   { sheetName: DB_SHEETS.ITEMS, headers: DB_COLUMNS.ITEMS },
   { sheetName: DB_SHEETS.ITEM_LIST, headers: DB_COLUMNS.ITEM_LIST },
   { sheetName: DB_SHEETS.REWARDS, headers: DB_COLUMNS.REWARDS },
-  { sheetName: DB_SHEETS.REWARD_GROUPS, headers: DB_COLUMNS.REWARD_GROUPS },
   { sheetName: DB_SHEETS.BATTLE_LOGS, headers: DB_COLUMNS.BATTLE_LOGS },
 ]);
 
@@ -197,7 +196,6 @@ var ITEM_EFFECT_TYPES = Object.freeze({
 });
 
 var ITEM_REWARD_CONFIG = Object.freeze({
-  itemRewardChancePercent: 30,
   rarityWeights: Object.freeze({
     common: 50,
     uncommon: 25,
@@ -212,7 +210,6 @@ var ITEM_REWARD_CONFIG = Object.freeze({
 });
 
 var SKILL_REWARD_CONFIG = Object.freeze({
-  skillRewardChancePercent: 30,
   rarityWeights: Object.freeze({
     common: 50,
     uncommon: 25,
@@ -222,6 +219,17 @@ var SKILL_REWARD_CONFIG = Object.freeze({
     unique: 1,
   }),
   preferUnownedSkills: true,
+});
+
+var REWARD_CONFIG = Object.freeze({
+  choicesCount: 3,
+  currencyMin: 5,
+  currencyMax: 15,
+  typeWeights: Object.freeze({
+    stat: 40,
+    skill: 30,
+    item: 30,
+  }),
 });
 
 var GAME_RULES = Object.freeze({
@@ -402,10 +410,6 @@ var MASTER_REWARDS = Object.freeze([
   { rewardId: 'reward_stat_hp_10', type: REWARD_TYPES.STAT, targetId: STAT_KEYS.HP, value: 10, weight: 25, minFloor: 1, maxFloor: 5, description: '최대 체력 +10', detailDescription: '최대 체력이 증가하고 현재 체력도 함께 회복됩니다.', rarity: RARITIES.COMMON },
   { rewardId: 'reward_stat_defense_2', type: REWARD_TYPES.STAT, targetId: STAT_KEYS.DEFENSE, value: 2, weight: 25, minFloor: 1, maxFloor: 5, description: '방어력 +2', detailDescription: '수비 행동으로 얻는 방어막 수치가 증가합니다.', rarity: RARITIES.COMMON },
   { rewardId: 'reward_stat_critical_rate_3', type: REWARD_TYPES.STAT, targetId: STAT_KEYS.CRITICAL_RATE, value: 3, weight: 15, minFloor: 1, maxFloor: 5, description: '치명타 확률 +3', detailDescription: '공격 시 치명타가 발생할 확률이 증가합니다.', rarity: RARITIES.UNCOMMON },
-]);
-
-var MASTER_REWARD_GROUPS = Object.freeze([
-  { rewardGroupId: 'reward_group_default', rewardIds: '["reward_stat_attack_2","reward_stat_hp_10","reward_stat_defense_2","reward_stat_critical_rate_3"]', currencyMin: 5, currencyMax: 15, description: '기본 스테이지 클리어 보상 그룹.' },
 ]);
 
 var MASTER_ITEMS = Object.freeze([

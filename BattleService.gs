@@ -2097,8 +2097,13 @@ function normalizeBattleMonsters_(battleState) {
     monster.skillIds = monster.skillIds || [];
     monster.shield = Number(monster.shield || 0);
     monster.intent = monster.intent || null;
-    monster.buffs = monster.buffs || [];
-    monster.debuffs = monster.debuffs || [];
+    monster.effects = (monster.effects || []).map(hydrateEffectDisplayFields_);
+    monster.buffs = monster.effects.filter(function(effect) {
+      return effect.category === EFFECT_CATEGORIES.BUFF;
+    });
+    monster.debuffs = monster.effects.filter(function(effect) {
+      return effect.category === EFFECT_CATEGORIES.DEBUFF;
+    });
     return monster;
   });
   syncPrimaryMonster_(battleState);

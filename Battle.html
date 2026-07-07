@@ -1167,15 +1167,17 @@
 
     function getStatLabel(statKey) {
       var labels = {
-        attack: 'Attack',
-        defense: 'Defense',
+        attack: '공격력',
+        defense: '방어력',
         criticalRate: '치명타 확률',
         criticalDamage: '치명타 피해',
-        evasion: 'Evasion',
+        evasion: '회피율',
         accuracy: '명중률',
-        hpRegen: 'Regen',
+        hp: '최대 체력',
+        hpRegen: '회복력',
+        action: '행동력',
         questionTime: '제한시간',
-        questionDifficulty: 'Question difficulty',
+        questionDifficulty: '문제 난이도',
       };
       return labels[statKey] || statKey || '효과';
     }
@@ -1274,13 +1276,13 @@
       var stats = player.stats || {};
       var effectiveStats = getClientEffectiveStats(player);
       var rows = [
-        ['HP', (player.hp || 0) + ' / ' + (player.maxHp || stats.hp || '-')],
-        ['Shield', player.shield || 0],
-        ['AP', (player.currentActionPoint || 0) + ' / ' + (player.maxActionPoint || player.baseMaxActionPoint || 3)],
-        ['Attack', formatEffectiveStat(stats, effectiveStats, 'attack', '')],
-        ['Defense', formatEffectiveStat(stats, effectiveStats, 'defense', '')],
+        ['체력', (player.hp || 0) + ' / ' + (player.maxHp || stats.hp || '-')],
+        ['방어막', player.shield || 0],
+        ['행동력', (player.currentActionPoint || 0) + ' / ' + (player.maxActionPoint || player.baseMaxActionPoint || 3)],
+        ['공격력', formatEffectiveStat(stats, effectiveStats, 'attack', '')],
+        ['방어력', formatEffectiveStat(stats, effectiveStats, 'defense', '')],
         ['명중률', formatEffectiveStat(stats, effectiveStats, 'accuracy', '%')],
-        ['회피', formatEffectiveStat(stats, effectiveStats, 'evasion', '%')],
+        ['회피율', formatEffectiveStat(stats, effectiveStats, 'evasion', '%')],
         ['치명타 확률', formatEffectiveStat(stats, effectiveStats, 'criticalRate', '%')],
         ['치명타 피해', formatEffectiveStat(stats, effectiveStats, 'criticalDamage', '%')],
         ['화폐', currentView ? Number(currentView.currency || 0) : 0],
@@ -2564,17 +2566,37 @@
     }
 
     function syncClientStatusBuckets(target) {
+      if (target && (!Array.isArray(target.effects) || !target.effects.length)) {
+        var statusEffects = []
+          .concat(Array.isArray(target.buffs) ? target.buffs : [])
+          .concat(Array.isArray(target.debuffs) ? target.debuffs : []);
+        if (statusEffects.length) {
+          target.effects = statusEffects;
+        }
+      }
       return RULE_ENGINE_SHARED.syncStatusBuckets(target);
     }
 
+    function getClientStatEffects(target) {
+      var effects = Array.isArray(target && target.effects) ? target.effects : [];
+      if (effects.length) {
+        return effects;
+      }
+      return []
+        .concat(Array.isArray(target && target.buffs) ? target.buffs : [])
+        .concat(Array.isArray(target && target.debuffs) ? target.debuffs : []);
+    }
+
     function getClientEffectiveStat(target, statKey) {
-      return RULE_ENGINE_SHARED.getEffectiveStat(target, statKey);
+      return RULE_ENGINE_SHARED.getEffectiveStat(Object.assign({}, target || {}, {
+        effects: getClientStatEffects(target),
+      }), statKey);
     }
 
     function getClientEffectiveStats(target) {
       return RULE_ENGINE_SHARED.calculateEffectiveStats(
         target && target.stats || {},
-        target && target.effects || []
+        getClientStatEffects(target)
       );
     }
 
@@ -3167,7 +3189,14 @@
       var cooldownText = String(skill && skill.cooldownText || '').trim();
       if (isSkillUseLimitText(cooldownText)) return '';
       if (cooldownText) return cooldownText;
-      return skill && skill.cooldown ? '쿨타임 ' + skill.cooldown + '턴' : '쿨타임 없음';
+      var cooldown = parseClientPositiveNumber(skill && skill.cooldown);
+      return cooldown > 0 ? '쿨타임 ' + cooldown + '턴' : '쿨타임 없음';
+    }
+
+    function parseClientPositiveNumber(value) {
+      if (value === '' || value === null || value === undefined) return 0;
+      var match = String(value).match(/-?\d+(?:\.\d+)?/);
+      return Math.max(0, Math.round(Number(match ? match[0] : value || 0)));
     }
 
     function applyOptimisticMonsterDamage(battle, targetId, damage, actionType, skill, simultaneousGroupId) {

@@ -24,7 +24,7 @@ function generateRewardChoices(runId, stageId, authToken) {
   }
 
   var stage = loadStage(currentStageId);
-  var rewardGroupId = stage.rewardGroupId;
+  var rewardGroupId = getDefaultRewardGroupId_();
   var isFloorRestChoice = shouldOfferFloorRestChoice_(stage);
   var rewardState = stageState.reward || {};
   var regenResult = grantStageClearRegenForRun_(run, stageState);
@@ -94,7 +94,7 @@ function previewRewardChoicesForStageResult(stagePayload, authToken) {
 
   var currentStageId = battle.stage && battle.stage.stageId || buildStageId_(run.currentFloor, run.currentStage);
   var stage = loadStage(currentStageId);
-  var rewardGroupId = stage.rewardGroupId;
+  var rewardGroupId = getDefaultRewardGroupId_();
   var isFloorRestChoice = shouldOfferFloorRestChoice_(stage);
   var clientStageState = payload.stageState || {};
   var rewardState = clientStageState.reward || {};
@@ -146,13 +146,25 @@ function previewStageClearRegen_(run, battle) {
 }
 
 function previewCurrencyReward_(rewardGroupId) {
-  var group = findCachedRowByKey_(DB_SHEETS.REWARD_GROUPS, 'rewardGroupId', rewardGroupId, 600);
-  if (!group) {
-    throw new Error('보상 그룹을 찾을 수 없습니다: ' + rewardGroupId);
-  }
-  var min = Number(group.currencyMin || 0);
-  var max = Number(group.currencyMax || min);
+  var config = getRewardConfig_();
+  var min = Number(config.currencyMin || 0);
+  var max = Number(config.currencyMax || min);
   return randomInt_(Math.min(min, max), Math.max(min, max));
+}
+
+function getRewardConfig_() {
+  return typeof REWARD_CONFIG !== 'undefined'
+    ? REWARD_CONFIG
+    : {
+      choicesCount: 3,
+      currencyMin: 5,
+      currencyMax: 15,
+      typeWeights: { stat: 40, skill: 30, item: 30 },
+    };
+}
+
+function getDefaultRewardGroupId_() {
+  return 'reward_global';
 }
 
 function shouldOfferFloorRestChoice_(stage) {
@@ -361,13 +373,9 @@ function grantCurrencyForRun_(run, stageState, rewardGroupId, fixedAmount) {
     return { amount: Number(rewardState.currencyAmount || 0), total: Number(run.currency || 0) };
   }
 
-  var group = findCachedRowByKey_(DB_SHEETS.REWARD_GROUPS, 'rewardGroupId', rewardGroupId, 600);
-  if (!group) {
-    throw new Error('보상 그룹을 찾을 수 없습니다: ' + rewardGroupId);
-  }
-
-  var min = Number(group.currencyMin || 0);
-  var max = Number(group.currencyMax || min);
+  var config = getRewardConfig_();
+  var min = Number(config.currencyMin || 0);
+  var max = Number(config.currencyMax || min);
   var amount = fixedAmount !== undefined && fixedAmount !== ''
     ? Math.max(0, Math.round(Number(fixedAmount || 0)))
     : randomInt_(Math.min(min, max), Math.max(min, max));
@@ -545,38 +553,33 @@ function updatePlayerProgressFromRun_(run) {
 }
 
 function pickRewardChoices_(rewardGroupId, floor, ownedSkills, ownedItems) {
-  var group = findCachedRowByKey_(DB_SHEETS.REWARD_GROUPS, 'rewardGroupId', rewardGroupId, 600);
-  if (!group) {
-    throw new Error('보상 그룹을 찾을 수 없습니다: ' + rewardGroupId);
-  }
-
-  var rewardIds = safeJsonParse_(group.rewardIds, []);
-  var rewards = readTableCached_(DB_SHEETS.REWARDS, 600).filter(function(reward) {
-    var idAllowed = rewardIds.length === 0 || rewardIds.indexOf(reward.rewardId) !== -1;
-    var floorAllowed = Number(reward.minFloor || 1) <= floor && Number(reward.maxFloor || GAME_RULES.FLOOR_COUNT) >= floor;
+  var rewards = getStatRewardRows_().filter(function(reward) {
     var typeAllowed = reward.type === REWARD_TYPES.STAT;
     var statAllowed = reward.type !== REWARD_TYPES.STAT || ALLOWED_REWARD_STAT_KEYS_.indexOf(reward.targetId) !== -1;
-    var skillUpgradeAllowed = reward.type !== REWARD_TYPES.SKILL_UPGRADE || hasOwnedSkill_(ownedSkills, reward.targetId);
-    return idAllowed && floorAllowed && typeAllowed && statAllowed && skillUpgradeAllowed;
+    return typeAllowed && statAllowed;
   });
 
   var candidates = rewards.slice();
   var choices = [];
   var attemptCount = 0;
-  while (choices.length < 3 && attemptCount < 12) {
+  var config = getRewardConfig_();
+  var choicesCount = Math.max(1, Number(config.choicesCount || 3));
+  while (choices.length < choicesCount && attemptCount < choicesCount * 8) {
     attemptCount += 1;
-    var picked = shouldRollSkillReward_() ? pickAutoSkillReward_(ownedSkills) : null;
+    var rewardType = pickRewardType_();
+    var picked = null;
+    if (rewardType === REWARD_TYPES.SKILL) {
+      picked = pickAutoSkillReward_(ownedSkills);
+    } else if (rewardType === REWARD_TYPES.ITEM) {
+      picked = pickAutoItemReward_(ownedItems);
+    } else if (candidates.length > 0) {
+      picked = pickWeightedReward_(candidates);
+    }
     if (picked && choices.some(function(choice) { return choice.rewardId === picked.rewardId; })) {
       picked = null;
     }
     if (!picked) {
-      picked = shouldRollItemReward_() ? pickAutoItemReward_(ownedItems) : null;
-    }
-    if (picked && choices.some(function(choice) { return choice.rewardId === picked.rewardId; })) {
-      picked = null;
-    }
-    if (!picked && candidates.length > 0) {
-      picked = pickWeightedReward_(candidates);
+      picked = pickFallbackRewardChoice_(candidates, ownedSkills, ownedItems, choices);
     }
     if (!picked) {
       continue;
@@ -595,8 +598,42 @@ function pickRewardChoices_(rewardGroupId, floor, ownedSkills, ownedItems) {
   });
 }
 
-function shouldRollSkillReward_() {
-  return Math.random() * 100 < Math.max(0, Math.min(100, Number(SKILL_REWARD_CONFIG.skillRewardChancePercent || 0)));
+function getStatRewardRows_() {
+  var rows = [];
+  try {
+    rows = readTableCached_(DB_SHEETS.REWARDS, 600);
+  } catch (error) {
+    rows = [];
+  }
+  return rows && rows.length ? rows : MASTER_REWARDS.slice();
+}
+
+function pickRewardType_() {
+  var weights = getRewardConfig_().typeWeights || {};
+  var types = [REWARD_TYPES.STAT, REWARD_TYPES.SKILL, REWARD_TYPES.ITEM];
+  var values = types.map(function(type) {
+    return Math.max(0, Number(weights[type] || 0));
+  });
+  return pickWeighted_(types, values);
+}
+
+function pickFallbackRewardChoice_(candidates, ownedSkills, ownedItems, choices) {
+  var picked = candidates.length > 0 ? pickWeightedReward_(candidates) : null;
+  if (picked && !choices.some(function(choice) { return choice.rewardId === picked.rewardId; })) {
+    return picked;
+  }
+
+  picked = pickAutoSkillReward_(ownedSkills);
+  if (picked && !choices.some(function(choice) { return choice.rewardId === picked.rewardId; })) {
+    return picked;
+  }
+
+  picked = pickAutoItemReward_(ownedItems);
+  if (picked && !choices.some(function(choice) { return choice.rewardId === picked.rewardId; })) {
+    return picked;
+  }
+
+  return null;
 }
 
 function pickAutoSkillReward_(ownedSkills) {
