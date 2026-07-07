@@ -92,10 +92,19 @@ function createNewRun_(playerId) {
 }
 
 function buildRunResumeSummary_(run) {
+  var stageName = '';
+  try {
+    var stageState = getStageState_(run);
+    var stage = loadStage(stageState.stageId || buildStageId_(run.currentFloor, run.currentStage));
+    stageName = stage.name || '';
+  } catch (error) {
+    stageName = '';
+  }
   return {
     runId: run.runId,
     currentFloor: Number(run.currentFloor || 1),
     currentStage: Number(run.currentStage || 1),
+    stageName: stageName,
     currentHp: Number(run.currentHp || 0),
     currentShield: Number(run.currentShield || 0),
     currency: Number(run.currency || 0),
@@ -536,20 +545,46 @@ function calculateFinalQuestionDifficulty(baseDifficulty, activeEffects) {
 }
 
 function calculateEfficiency(isCorrect, remainingMs, maxMs, wrongCountAfterTimeout) {
+  var efficiencyRules = getAnswerEfficiencyRules_();
+  var minEfficiency = efficiencyRules.minAnswerEfficiency;
+  var maxEfficiency = efficiencyRules.maxAnswerEfficiency;
+  var extraPenalty = efficiencyRules.extraWrongEfficiencyPenalty;
   var penaltyCount = Math.max(0, Number(wrongCountAfterTimeout || 0));
   if (penaltyCount > 0) {
-    return roundTo_(Math.max(0, GAME_RULES.MIN_ANSWER_EFFICIENCY - (GAME_RULES.EXTRA_WRONG_EFFICIENCY_PENALTY * (penaltyCount - 1))), 3);
+    return roundTo_(Math.max(0, minEfficiency - (extraPenalty * (penaltyCount - 1))), 3);
   }
 
   if (isCorrect) {
     var ratio = Math.max(0, Math.min(1, Number(remainingMs || 0) / Math.max(1, Number(maxMs || 1))));
     if (ratio >= 0.5) {
-      return roundTo_(1 + ((ratio - 0.5) * 0.5), 3);
+      return roundTo_(1 + ((ratio - 0.5) * ((maxEfficiency - 1) / 0.5)), 3);
     }
-    return roundTo_(GAME_RULES.MIN_ANSWER_EFFICIENCY + ratio, 3);
+    return roundTo_(minEfficiency + (ratio * ((1 - minEfficiency) / 0.5)), 3);
   }
 
-  return roundTo_(GAME_RULES.MIN_ANSWER_EFFICIENCY, 3);
+  return roundTo_(minEfficiency, 3);
+}
+
+function getAnswerEfficiencyRules_() {
+  var settings = {};
+  try {
+    settings = getAppSettings();
+  } catch (error) {
+    settings = {};
+  }
+  var minEfficiency = Number(settings.minAnswerEfficiency !== undefined && settings.minAnswerEfficiency !== '' ? settings.minAnswerEfficiency : GAME_RULES.MIN_ANSWER_EFFICIENCY);
+  var maxEfficiency = Number(settings.maxAnswerEfficiency !== undefined && settings.maxAnswerEfficiency !== '' ? settings.maxAnswerEfficiency : GAME_RULES.MAX_ANSWER_EFFICIENCY);
+  var extraPenalty = Number(settings.extraWrongEfficiencyPenalty !== undefined && settings.extraWrongEfficiencyPenalty !== '' ? settings.extraWrongEfficiencyPenalty : GAME_RULES.EXTRA_WRONG_EFFICIENCY_PENALTY);
+  if (!isFinite(minEfficiency)) minEfficiency = GAME_RULES.MIN_ANSWER_EFFICIENCY;
+  if (!isFinite(maxEfficiency)) maxEfficiency = GAME_RULES.MAX_ANSWER_EFFICIENCY;
+  if (!isFinite(extraPenalty)) extraPenalty = GAME_RULES.EXTRA_WRONG_EFFICIENCY_PENALTY;
+  minEfficiency = Math.max(0, Math.min(1, minEfficiency));
+  maxEfficiency = Math.max(1, maxEfficiency);
+  return {
+    minAnswerEfficiency: minEfficiency,
+    maxAnswerEfficiency: maxEfficiency,
+    extraWrongEfficiencyPenalty: Math.max(0, extraPenalty),
+  };
 }
 
 function applyAttack(battleState, efficiency, targetId) {
@@ -1051,6 +1086,9 @@ function commitStageResult(stagePayload, authToken) {
   stageState.otherStudentQuestionShown = !!(stageState.otherStudentQuestionShown || clientStageState.otherStudentQuestionShown);
   stageState.fallbackEvents = mergeStageFallbackEvents_(stageState.fallbackEvents, clientStageState.fallbackEvents);
   stageState.playerGhost = stageState.playerGhost || clientStageState.playerGhost || battleState.playerGhost || null;
+  if (clientStageState.reward && clientStageState.reward.choices && clientStageState.reward.choices.length) {
+    stageState.reward = clientStageState.reward;
+  }
   stageState.battle = battleState;
 
   queuedServerAnswerLogs.forEach(function(answerPayload) {
@@ -1248,6 +1286,7 @@ function buildBattleView_(run, stageState) {
     battle: battleState,
     clientConfig: getBattleClientConfig_(),
     availableSkills: battleState ? getAvailableSkills(runState, battleState) : [],
+    monsterAiRules: battleState ? buildClientMonsterAiRules_(battleState) : [],
     questionCache: battleState ? buildBattleQuestionCache_(run, stageState, battleState) : [],
     stageState: {
       otherStudentQuestionShown: !!stageState.otherStudentQuestionShown,
@@ -1269,7 +1308,18 @@ function getBattleClientConfig_() {
     questionResultHoldMs: clampClientDelay_(settings.questionResultHoldMs, 900, 0, 5000),
     questionActionStartDelayMs: clampClientDelay_(settings.questionActionStartDelayMs, 0, 0, 2000),
     firstStageIntroLines: getFirstStageIntroLines_(settings),
+    minAnswerEfficiency: getClientNumberSetting_(settings.minAnswerEfficiency, GAME_RULES.MIN_ANSWER_EFFICIENCY),
+    maxAnswerEfficiency: getClientNumberSetting_(settings.maxAnswerEfficiency, GAME_RULES.MAX_ANSWER_EFFICIENCY),
+    extraWrongEfficiencyPenalty: getClientNumberSetting_(settings.extraWrongEfficiencyPenalty, GAME_RULES.EXTRA_WRONG_EFFICIENCY_PENALTY),
   };
+}
+
+function getClientNumberSetting_(value, fallback) {
+  var number = Number(value);
+  if (!isFinite(number)) {
+    return Number(fallback || 0);
+  }
+  return number;
 }
 
 function getFirstStageIntroLines_(settings) {
@@ -1306,6 +1356,49 @@ function normalizeNarrationLines_(value) {
     };
   }).filter(function(line) {
     return line && line.text;
+  });
+}
+
+function buildClientMonsterAiRules_(battleState) {
+  var aiIds = {};
+  (battleState.monsters || []).forEach(function(monster) {
+    if (monster && monster.aiId) {
+      aiIds[monster.aiId] = true;
+    }
+  });
+  return readTableCached_(DB_SHEETS.MONSTER_AI, 600).concat(getPlayerGhostAiRows_()).filter(function(row) {
+    return !row.aiId || aiIds[row.aiId];
+  }).map(function(row) {
+    var skill = row.skillId ? findCachedRowByKey_(DB_SHEETS.SKILLS, 'skillId', row.skillId, 600) : null;
+    var effectConfig = skill ? safeJsonParse_(skill.effectJson, {}) : {};
+    var effect = effectConfig.effectId ? findCachedRowByKey_(DB_SHEETS.EFFECTS, 'effectId', effectConfig.effectId, 600) : null;
+    return {
+      aiId: row.aiId || '',
+      actionType: normalizeMonsterAiActionType_(row.actionType, row.skillId),
+      conditionJson: row.conditionJson || '{}',
+      probability: Number(row.probability || 0),
+      skillId: row.skillId || '',
+      skillType: skill ? skill.type || '' : '',
+      skillName: skill ? skill.name || '' : '',
+      skillBaseValue: skill ? Number(skill.baseValue || 0) : 0,
+      skillEffectChance: effectConfig.chance !== undefined ? Number(effectConfig.chance || 0) : 100,
+      skillEffect: effect ? {
+        effectId: effect.effectId || '',
+        name: effect.name || '',
+        category: effect.category || '',
+        statKey: effect.statKey || '',
+        effectType: effect.effectType || '',
+        value: Number(effect.value || 0),
+        durationType: effect.durationType || '',
+        durationTurns: effect.durationTurns,
+        stackable: effect.stackable === true || String(effect.stackable || '').toLowerCase() === 'true',
+        maxStacks: Number(effect.maxStacks || 1),
+        triggerTiming: effect.triggerTiming || '',
+        description: effect.description || '',
+      } : null,
+      intentIcon: row.intentIcon || 'sword',
+      intentTextTemplate: row.intentTextTemplate || '',
+    };
   });
 }
 

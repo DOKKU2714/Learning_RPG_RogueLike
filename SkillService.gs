@@ -29,9 +29,56 @@ function getAvailableSkills(runState, battleState) {
       description: hydrated.description,
       effectJson: hydrated.effectJson || '',
       effectDetails: buildSkillEffectDetails_(hydrated),
+      clientEffects: buildClientSkillEffects_(hydrated),
       previewText: buildSkillPreviewText_(hydrated, battleState),
       available: !reason,
       unavailableReason: reason,
+    };
+  }).filter(Boolean);
+}
+
+function buildClientSkillEffects_(skill) {
+  var rule = getSkillExecutionRule_(skill);
+  var effects = [];
+  if (rule.effectId) {
+    effects.push(rule);
+  }
+  if (Array.isArray(rule.applyEffects)) {
+    effects = effects.concat(rule.applyEffects);
+  }
+  if (rule.efficiencyBonus && Array.isArray(rule.efficiencyBonus.applyEffects)) {
+    effects = effects.concat(rule.efficiencyBonus.applyEffects);
+  }
+  return effects.map(function(effectRule) {
+    var effect = effectRule.effectId ? findCachedRowByKey_(DB_SHEETS.EFFECTS, 'effectId', effectRule.effectId, 600) : null;
+    if (!effect) {
+      return null;
+    }
+    var value = effectRule.value !== undefined ? Number(effectRule.value || 0) : Number(effect.value || 0);
+    if (effectRule.value === undefined && effect.effectType === EFFECT_TYPES.FLAT) {
+      value += getSkillUpgradeValue(skill, effect.category === EFFECT_CATEGORIES.BUFF ? 'buffValue' : 'effect');
+    }
+    var chance = effectRule.chance !== undefined ? Number(effectRule.chance || 0) : Number(rule.chance !== undefined ? rule.chance : 100);
+    if (effect.category === EFFECT_CATEGORIES.DEBUFF) {
+      chance += getSkillUpgradeValue(skill, 'debuffChance');
+    } else {
+      chance += getSkillUpgradeValue(skill, 'chance');
+    }
+    return {
+      target: effectRule.target || (skill.target === 'self' ? 'self' : 'enemy'),
+      effectId: effect.effectId || '',
+      name: effect.name || '',
+      category: effect.category || '',
+      statKey: effect.statKey || '',
+      effectType: effect.effectType || '',
+      value: value,
+      durationType: effectRule.durationType || effect.durationType || '',
+      durationTurns: effectRule.durationTurns !== undefined ? effectRule.durationTurns : effect.durationTurns,
+      stackable: effectRule.stackable !== undefined ? isTruthy_(effectRule.stackable) : isTruthy_(effect.stackable),
+      maxStacks: Number(effectRule.maxStacks || effect.maxStacks || 1),
+      triggerTiming: effect.triggerTiming || '',
+      description: effect.description || '',
+      chance: Math.min(100, Math.max(0, chance)),
     };
   }).filter(Boolean);
 }
@@ -132,6 +179,10 @@ function getSkillUnavailableReason(skill, runState, battleState) {
   }
 
   return '';
+}
+
+function isTruthy_(value) {
+  return getSharedRuleEngine_().isTruthy(value);
 }
 
 function useSkill(runId, skillId, targetId, answerPayload) {
@@ -396,45 +447,15 @@ function getSkillRuleQuestionDifficultyBonus_(skill) {
 }
 
 function shouldUseSkillRuleEngine_(rule) {
-  if (!rule || typeof rule !== 'object') {
-    return false;
-  }
-  return getSkillRuleEngineKeys_().some(function(key) {
-    return Object.prototype.hasOwnProperty.call(rule, key);
-  });
+  return getSharedRuleEngine_().shouldUseSkillRuleEngine(rule);
 }
 
 function getSkillRuleEngineKeys_() {
-  return [
-    'targetMode',
-    'hitCount',
-    'damageFormula',
-    'shieldFormula',
-    'selfDamage',
-    'applyEffects',
-    'efficiencyBonus',
-    'requireCondition',
-    'onUse',
-    'onDamaged',
-    'onBlock',
-    'onCorrect',
-    'onWrong',
-    'onTurnStart',
-    'onTurnEnd',
-    'cooldownModify',
-    'actionPointModify',
-    'failPenalty',
-    'tagBonus',
-    'scaleByEfficiency',
-    'randomMin',
-    'randomMax',
-    'extraDamageFormula',
-    'healFormula',
-  ];
+  return getSharedRuleEngine_().getSkillRuleEngineKeys();
 }
 
 function getSupportedSkillRuleKeys_() {
-  return getSkillRuleEngineKeys_().concat(['effectId', 'chance']);
+  return getSharedRuleEngine_().getSupportedSkillRuleKeys();
 }
 
 function warnSkillRule_(battleState, skill, message, data) {
@@ -808,40 +829,16 @@ function evaluateSkillFormulaValue_(value, context, fallback, battleState, skill
 }
 
 function evaluateSkillFormula_(formula, context, battleState, skill) {
-  var source = String(formula || '').replace(/\s+/g, '');
-  if (!source) {
-    return 0;
-  }
-  if (!/^[0-9A-Za-z_.+\-*/()%dD]+$/.test(source)) {
-    warnSkillRule_(battleState, skill, 'Unsafe formula rejected.', { formula: formula });
-    return 0;
-  }
-  source = source.replace(/(\d+)[dD](\d+)/g, function(match, countText, sidesText) {
-    var count = Math.max(1, Math.min(100, Number(countText || 1)));
-    var sides = Math.max(1, Math.min(100000, Number(sidesText || 1)));
-    var total = 0;
-    for (var i = 0; i < count; i += 1) {
-      total += randomSkillInt_(1, sides);
-    }
-    return String(total);
+  return getSharedRuleEngine_().evaluateFormula(formula, context || {}, {
+    random: Math.random,
+    warn: function(message, data) {
+      warnSkillRule_(battleState, skill, message, data || {});
+    },
   });
-
-  var parser = createSkillFormulaParser_(source, context || {}, battleState, skill);
-  var result = parser.parseExpression();
-  if (parser.hasRemaining()) {
-    warnSkillRule_(battleState, skill, 'Formula parse stopped before end.', { formula: formula, at: parser.index });
-  }
-  if (!isFinite(result)) {
-    warnSkillRule_(battleState, skill, 'Formula returned non-finite value.', { formula: formula });
-    return 0;
-  }
-  return Number(result || 0);
 }
 
 function randomSkillInt_(min, max) {
-  var low = Math.round(Math.min(Number(min || 0), Number(max || min || 0)));
-  var high = Math.round(Math.max(Number(min || 0), Number(max || min || 0)));
-  return Math.floor(Math.random() * (high - low + 1)) + low;
+  return getSharedRuleEngine_().randomInt(min, max, Math.random);
 }
 
 function createSkillFormulaParser_(source, context, battleState, skill) {
@@ -978,7 +975,25 @@ function applySkillEffectRule_(battleState, skill, effectRule, targets, context)
   if (effectRule.maxStacks !== undefined) applied.maxStacks = Number(effectRule.maxStacks || 1);
 
   getTargetsForEffectRule_(battleState, effectRule, targets).forEach(function(target) {
-    applyEffect(target, applied, { source: effectRule.target || 'rule', skillId: skill.skillId });
+    var appliedEffect = applyEffect(target, applied, { source: effectRule.target || 'rule', skillId: skill.skillId });
+    var effectType = String(appliedEffect && appliedEffect.category || applied.category || '').toLowerCase() === 'debuff' ? 'debuff' : 'buff';
+    battleState.lastTurnEvents = battleState.lastTurnEvents || [];
+    if (target && target.currentHp !== undefined) {
+      battleState.lastTurnEvents.push({
+        actor: 'player',
+        type: effectType,
+        skillId: skill.skillId,
+        targetMonsterId: target.instanceId || target.monsterId,
+        message: (target.name || '적') + '에게 ' + (skill.name || '스킬') + ' 효과!',
+      });
+      return;
+    }
+    battleState.lastTurnEvents.push({
+      actor: 'player',
+      type: effectType,
+      skillId: skill.skillId,
+      message: (skill.name || '스킬') + ' 효과를 얻었습니다.',
+    });
   });
 }
 
@@ -1264,24 +1279,7 @@ function cleanupSkillTriggersForTurn_(battleState) {
 }
 
 function applyEffect(target, effect, source) {
-  target.effects = target.effects || [];
-  var effectInstance = buildEffectInstance_(effect, source || {});
-  var existing = target.effects.filter(function(activeEffect) {
-    return activeEffect.effectId === effectInstance.effectId;
-  })[0];
-
-  if (existing && effectInstance.stackable) {
-    existing.stacks = Math.min(Number(existing.maxStacks || 99), Number(existing.stacks || 1) + 1);
-    existing.remainingTurns = Math.max(Number(existing.remainingTurns || 0), Number(effectInstance.remainingTurns || 0));
-    return existing;
-  }
-  if (existing && !effectInstance.stackable) {
-    Object.assign(existing, effectInstance);
-    return existing;
-  }
-
-  target.effects.push(effectInstance);
-  return effectInstance;
+  return getSharedRuleEngine_().applyEffect(target, effect, source || {}, source && source.turn);
 }
 
 function tickEffectsAtTurnStart(battleState) {
@@ -1323,20 +1321,7 @@ function clearStageDurationEffects(battleState) {
 }
 
 function calculateEffectiveStats(baseStats, activeEffects) {
-  var stats = Object.assign({}, baseStats || {});
-  (activeEffects || []).forEach(function(effect) {
-    var stacks = Math.max(1, Number(effect.stacks || 1));
-    var value = Number(effect.value || 0) * stacks;
-    if (!effect.statKey || effect.statKey === STAT_KEYS.QUESTION_TIME || effect.statKey === STAT_KEYS.QUESTION_DIFFICULTY || effect.statKey === 'action') {
-      return;
-    }
-    if (effect.effectType === EFFECT_TYPES.PERCENT) {
-      stats[effect.statKey] = Number(stats[effect.statKey] || 0) * (1 + (value / 100));
-    } else {
-      stats[effect.statKey] = Number(stats[effect.statKey] || 0) + value;
-    }
-  });
-  return stats;
+  return getSharedRuleEngine_().calculateEffectiveStats(baseStats, activeEffects);
 }
 
 function calculateFinalQuestionTimeLimit(baseDifficulty, activeEffects) {
@@ -1627,6 +1612,7 @@ function buildEffectInstance_(effect, source) {
 }
 
 function applyTimedEffectDamage_(target, timing, battleState, actor) {
+  return getSharedRuleEngine_().applyTimedEffectDamage(target, timing, battleState, actor);
   target.effects = target.effects || [];
   target.effects.forEach(function(effect) {
     if (effect.triggerTiming !== timing || effect.statKey !== STAT_KEYS.HP || effect.effectType !== EFFECT_TYPES.FLAT || Number(effect.value || 0) >= 0) {
@@ -1651,6 +1637,7 @@ function applyTimedEffectDamage_(target, timing, battleState, actor) {
 }
 
 function decrementTurnEffects_(target) {
+  return getSharedRuleEngine_().decrementTurnEffects(target);
   target.effects = (target.effects || []).map(function(effect) {
     if (effect.durationType === DURATION_TYPES.TURN) {
       effect.remainingTurns = Number(effect.remainingTurns || 0) - 1;
@@ -1685,6 +1672,7 @@ function hasControlEffect_(target, effectId) {
 }
 
 function hasEffect_(target, effectId) {
+  return getSharedRuleEngine_().hasEffect(target, effectId);
   return (target.effects || []).some(function(effect) {
     return effect.effectId === effectId;
   });

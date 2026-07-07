@@ -437,14 +437,37 @@
       var summary = document.getElementById('resumeRunSummary');
       var floor = Number(run && run.currentFloor || 1);
       var stage = Number(run && run.currentStage || 1);
+      var displayParts = getDisplayFloorParts(floor);
+      var displayFloor = displayParts.floorLabel;
+      var stageName = getStageDisplayName(run && run.stageName);
       var hp = Number(run && run.currentHp || 0);
       var shield = Number(run && run.currentShield || 0);
       summary.innerHTML = [
-        '<strong>' + escapeHtml(floor + '층 ' + stage + '스테이지') + '</strong>',
+        '<strong>' + escapeHtml(displayFloor + ' ' + (stageName || displayParts.areaLabel) + ' ' + stage + '스테이지') + '</strong>',
         '<span>HP ' + escapeHtml(hp) + (shield > 0 ? ' / 보호막 ' + escapeHtml(shield) : '') + '</span>'
       ].join('<br>');
       modal.classList.add('active');
       modal.setAttribute('aria-hidden', 'false');
+    }
+
+    function getDisplayFloorParts(progressFloor) {
+      var floor = Number(progressFloor || 1);
+      var displays = {
+        1: { floorLabel: '5층', areaLabel: '옥상' },
+        2: { floorLabel: '4층', areaLabel: '1학년 교실층' },
+        3: { floorLabel: '3층', areaLabel: '3학년 교실층' },
+        4: { floorLabel: '2층', areaLabel: '2학년 교실층' },
+        5: { floorLabel: '1층', areaLabel: '현관 앞' },
+      };
+      return displays[floor] || { floorLabel: floor + '층', areaLabel: '' };
+    }
+
+    function getStageDisplayName(stageName) {
+      var name = String(stageName || '').trim();
+      if (/^\d+층\s*\d+스테이지$/.test(name)) {
+        return '';
+      }
+      return name;
     }
 
     function hideResumeRunModal() {
@@ -475,6 +498,13 @@
         window.setTimeout(function() {
           goToPage('battle');
         }, 720);
+        window.setTimeout(function() {
+          if (document.visibilityState !== 'hidden') {
+            modal.classList.remove('page-transition');
+            document.getElementById('loadingTitle').textContent = '전투 화면으로 이동 중...';
+            document.getElementById('loadingText').textContent = '이동이 지연되면 새로고침 후 다시 시도해 주세요.';
+          }
+        }, 2200);
       }, waitMs);
     }
 
@@ -487,7 +517,46 @@
     }
 
     function goToPage(page) {
-      window.top.location.href = WEB_APP_URL + '?page=' + encodeURIComponent(page);
+      var baseUrl = getNavigationBaseUrl();
+      if (!baseUrl) {
+        hideLoadingModal();
+        setMainMessage('웹앱 이동 주소를 확인하지 못했습니다. 현재 배포 URL로 다시 접속해 주세요.', 'error');
+        return;
+      }
+      var separator = baseUrl.indexOf('?') === -1 ? '?' : '&';
+      var nextUrl = baseUrl + separator + 'page=' + encodeURIComponent(page);
+      try {
+        window.top.location.assign(nextUrl);
+      } catch (error) {
+        window.location.assign(nextUrl);
+      }
+    }
+
+    function getNavigationBaseUrl() {
+      var candidates = [
+        String(window.location && window.location.href || ''),
+        String(document.referrer || ''),
+        String(WEB_APP_URL || ''),
+      ];
+      try {
+        candidates.unshift(String(window.top && window.top.location && window.top.location.href || ''));
+      } catch (error) {}
+
+      for (var i = 0; i < candidates.length; i += 1) {
+        var cleanUrl = sanitizeWebAppBaseUrl(candidates[i]);
+        if (cleanUrl) {
+          return cleanUrl;
+        }
+      }
+      return '';
+    }
+
+    function sanitizeWebAppBaseUrl(url) {
+      var cleanUrl = String(url || '').split('#')[0].split('?')[0].replace(/\/+$/, '');
+      if (/^https:\/\/script\.google\.com\/macros\/s\/[^/]+\/(?:exec|dev)$/.test(cleanUrl)) {
+        return cleanUrl;
+      }
+      return '';
     }
 
     function getAuthFormPayload() {

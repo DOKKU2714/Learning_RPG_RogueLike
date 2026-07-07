@@ -70,7 +70,70 @@ function generateRewardChoices(runId, stageId, authToken) {
   return buildRewardChoiceView_(runId, currentStageId, rewardGroupId, rewardState, safeJsonParse_(run.skillsJson, []), stageState.battle);
 }
 
-function selectReward(runId, rewardId, authToken) {
+function previewRewardChoicesForStageResult(stagePayload, authToken) {
+  var payload = stagePayload || {};
+  var run = requireRun_(payload.runId);
+  requireRewardRunOwner_(run, authToken);
+  if (run.status !== STATUS.RUN_ACTIVE) {
+    throw new Error('진행 중인 런에서만 보상을 생성할 수 있습니다.');
+  }
+
+  var battle = payload.battle || {};
+  if (battle.status !== STATUS.BATTLE_VICTORY) {
+    throw new Error('전투 승리 후에만 보상을 받을 수 있습니다.');
+  }
+
+  var currentStageId = battle.stage && battle.stage.stageId || buildStageId_(run.currentFloor, run.currentStage);
+  var stage = loadStage(currentStageId);
+  var rewardGroupId = stage.rewardGroupId;
+  var clientStageState = payload.stageState || {};
+  var rewardState = clientStageState.reward || {};
+  if (!(rewardState.stageId === currentStageId && rewardState.choices && rewardState.choices.length)) {
+    var previewRegen = previewStageClearRegen_(run, battle);
+    rewardState = {
+      stageId: currentStageId,
+      rewardGroupId: rewardGroupId,
+      choices: pickRewardChoices_(rewardGroupId, Number(stage.floor || run.currentFloor), safeJsonParse_(run.skillsJson, [])),
+      selectedRewardId: '',
+      currencyGranted: false,
+      currencyAmount: previewCurrencyReward_(rewardGroupId),
+      stageClearRegenApplied: true,
+      regenAmount: previewRegen.amount,
+      currentHpAfterRegen: previewRegen.nextHp,
+      maxHpAfterRegen: previewRegen.maxHp,
+      createdAt: new Date().toISOString(),
+    };
+  }
+
+  return buildRewardChoiceView_(run.runId, currentStageId, rewardGroupId, rewardState, safeJsonParse_(run.skillsJson, []), battle);
+}
+
+function previewStageClearRegen_(run, battle) {
+  var stats = battle && battle.player && battle.player.stats
+    ? battle.player.stats
+    : safeJsonParse_(run.statsJson, Object.assign({}, BASE_PLAYER_STATS));
+  var maxHp = Math.max(1, Number(stats.hp || battle && battle.player && battle.player.maxHp || BASE_PLAYER_STATS.hp));
+  var currentHp = Math.max(0, Number(battle && battle.player && battle.player.hp || run.currentHp || 0));
+  var regen = Math.max(0, Math.round(Number(stats.hpRegen || 0)));
+  var amount = Math.max(0, Math.min(regen, maxHp - currentHp));
+  return {
+    amount: amount,
+    nextHp: currentHp + amount,
+    maxHp: maxHp,
+  };
+}
+
+function previewCurrencyReward_(rewardGroupId) {
+  var group = findCachedRowByKey_(DB_SHEETS.REWARD_GROUPS, 'rewardGroupId', rewardGroupId, 600);
+  if (!group) {
+    throw new Error('보상 그룹을 찾을 수 없습니다: ' + rewardGroupId);
+  }
+  var min = Number(group.currencyMin || 0);
+  var max = Number(group.currencyMax || min);
+  return randomInt_(Math.min(min, max), Math.max(min, max));
+}
+
+function selectReward(runId, rewardId, authToken, rewardView) {
   var run = requireRun_(runId);
   requireRewardRunOwner_(run, authToken);
   if (run.status !== STATUS.RUN_ACTIVE) {
@@ -79,6 +142,22 @@ function selectReward(runId, rewardId, authToken) {
 
   var stageState = getStageState_(run);
   var rewardState = stageState.reward;
+  if ((!rewardState || !rewardState.choices || !rewardState.choices.length) && rewardView && rewardView.choices && rewardView.choices.length) {
+    rewardState = {
+      stageId: rewardView.stageId || stageState.stageId || buildStageId_(run.currentFloor, run.currentStage),
+      rewardGroupId: rewardView.rewardGroupId || '',
+      choices: rewardView.choices,
+      selectedRewardId: '',
+      currencyGranted: false,
+      currencyAmount: Number(rewardView.currencyAmount || 0),
+      stageClearRegenApplied: true,
+      regenAmount: Number(rewardView.regenAmount || 0),
+      currentHpAfterRegen: Number(rewardView.currentHpAfterRegen || 0),
+      maxHpAfterRegen: Number(rewardView.maxHpAfterRegen || 0),
+      createdAt: new Date().toISOString(),
+    };
+    stageState.reward = rewardState;
+  }
   if (!rewardState || !rewardState.choices || !rewardState.choices.length) {
     throw new Error('선택 가능한 보상이 없습니다.');
   }
@@ -94,7 +173,7 @@ function selectReward(runId, rewardId, authToken) {
   }
 
   if (!rewardState.currencyGranted) {
-    var currencyResult = grantCurrencyForRun_(run, stageState, rewardState.rewardGroupId);
+    var currencyResult = grantCurrencyForRun_(run, stageState, rewardState.rewardGroupId, rewardState.currencyAmount);
     rewardState.currencyGranted = true;
     rewardState.currencyAmount = currencyResult.amount;
   }
@@ -189,7 +268,7 @@ function grantStageClearRegenForRun_(run, stageState) {
   };
 }
 
-function grantCurrencyForRun_(run, stageState, rewardGroupId) {
+function grantCurrencyForRun_(run, stageState, rewardGroupId, fixedAmount) {
   var runId = run.runId;
   var rewardState = stageState.reward || {};
   if (rewardState.rewardGroupId === rewardGroupId && rewardState.currencyGranted) {
@@ -203,7 +282,9 @@ function grantCurrencyForRun_(run, stageState, rewardGroupId) {
 
   var min = Number(group.currencyMin || 0);
   var max = Number(group.currencyMax || min);
-  var amount = randomInt_(Math.min(min, max), Math.max(min, max));
+  var amount = fixedAmount !== undefined && fixedAmount !== ''
+    ? Math.max(0, Math.round(Number(fixedAmount || 0)))
+    : randomInt_(Math.min(min, max), Math.max(min, max));
   var nextRunCurrency = Number(run.currency || 0) + amount;
   rewardState.rewardGroupId = rewardGroupId;
   rewardState.currencyGranted = true;
