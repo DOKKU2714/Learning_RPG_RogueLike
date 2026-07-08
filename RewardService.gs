@@ -25,7 +25,7 @@ function generateRewardChoices(runId, stageId, authToken) {
 
   var stage = loadStage(currentStageId);
   var rewardGroupId = getDefaultRewardGroupId_();
-  var isFloorRestChoice = shouldOfferFloorRestChoice_(stage);
+  var isFloorRestChoice = isFloorRestStage_(stage);
   var rewardState = stageState.reward || {};
   var ownedSkills = safeJsonParse_(run.skillsJson, []);
   var ownedItems = safeJsonParse_(run.itemsJson, []);
@@ -51,10 +51,9 @@ function generateRewardChoices(runId, stageId, authToken) {
     }
   }
 
-  var choices = pickRewardChoices_(rewardGroupId, Number(stage.floor || run.currentFloor), ownedSkills, ownedItems);
-  if (isFloorRestChoice) {
-    choices = [buildFloorRestRewardChoice_(run, stageState.battle)].concat(choices);
-  }
+  var choices = isFloorRestChoice
+    ? buildFloorRestChoices_(run, stageState.battle, rewardGroupId, Number(stage.floor || run.currentFloor), ownedSkills, ownedItems)
+    : pickRewardChoices_(rewardGroupId, Number(stage.floor || run.currentFloor), ownedSkills, ownedItems);
   var currencyAmount = isFloorRestChoice
     ? previewCurrencyReward_(rewardGroupId)
     : grantCurrencyForRun_(run, stageState, rewardGroupId).amount;
@@ -102,7 +101,7 @@ function previewRewardChoicesForStageResult(stagePayload, authToken) {
   var currentStageId = battle.stage && battle.stage.stageId || buildStageId_(run.currentFloor, run.currentStage);
   var stage = loadStage(currentStageId);
   var rewardGroupId = getDefaultRewardGroupId_();
-  var isFloorRestChoice = shouldOfferFloorRestChoice_(stage);
+  var isFloorRestChoice = isFloorRestStage_(stage);
   var clientStageState = payload.stageState || {};
   var rewardState = clientStageState.reward || {};
   var ownedSkills = safeJsonParse_(run.skillsJson, []);
@@ -114,10 +113,9 @@ function previewRewardChoicesForStageResult(stagePayload, authToken) {
         hp: previewRegen.nextHp,
       }),
     });
-    var choices = pickRewardChoices_(rewardGroupId, Number(stage.floor || run.currentFloor), ownedSkills, ownedItems);
-    if (isFloorRestChoice) {
-      choices = [buildFloorRestRewardChoice_(run, battleAfterPreviewRegen)].concat(choices);
-    }
+    var choices = isFloorRestChoice
+      ? buildFloorRestChoices_(run, battleAfterPreviewRegen, rewardGroupId, Number(stage.floor || run.currentFloor), ownedSkills, ownedItems)
+      : pickRewardChoices_(rewardGroupId, Number(stage.floor || run.currentFloor), ownedSkills, ownedItems);
     rewardState = {
       stageId: currentStageId,
       rewardGroupId: rewardGroupId,
@@ -189,11 +187,15 @@ function shouldRegenerateRewardChoices_(rewardState, ownedItems) {
   return typeof hasAvailableItemReward_ === 'function' && hasAvailableItemReward_(ownedItems);
 }
 
-function shouldOfferFloorRestChoice_(stage) {
+function isFloorRestStage_(stage) {
   var floor = Number(stage && stage.floor || 1);
   var stageNumber = Number(stage && stage.stage || 1);
   return floor < GAME_RULES.FLOOR_COUNT
-    && stageNumber === GAME_RULES.STAGES_PER_FLOOR;
+    && stageNumber === GAME_RULES.FLOOR_REST_STAGE;
+}
+
+function shouldOfferFloorRestChoice_(stage) {
+  return isFloorRestStage_(stage);
 }
 
 function buildFloorRestStageView_(stage) {
@@ -221,6 +223,73 @@ function buildFloorRestRewardChoice_(run, battle) {
     healAmount: preview.amount,
     currentHpAfterRest: preview.nextHp,
     maxHpAfterRest: preview.maxHp,
+  };
+}
+
+function buildFloorRestChoices_(run, battle, rewardGroupId, floor, ownedSkills, ownedItems) {
+  return [
+    buildFloorRestRewardChoice_(run, battle),
+    buildFloorRestClaimRewardChoice_(rewardGroupId, floor, ownedSkills, ownedItems),
+  ];
+}
+
+function buildFloorRestRewardViewForRun_(run, stageState) {
+  var stage = loadStage(stageState.stageId || buildStageId_(run.currentFloor, run.currentStage));
+  var rewardGroupId = getDefaultRewardGroupId_();
+  var ownedSkills = safeJsonParse_(run.skillsJson, []);
+  var ownedItems = safeJsonParse_(run.itemsJson, []);
+  var rewardState = {
+    stageId: stage.stageId,
+    rewardGroupId: rewardGroupId,
+    choices: buildFloorRestChoices_(run, stageState.battle, rewardGroupId, Number(stage.floor || run.currentFloor), ownedSkills, ownedItems).map(function(reward) {
+      return sanitizeRewardForClient_(reward, stageState.battle);
+    }),
+    selectedRewardId: '',
+    currencyGranted: false,
+    currencyAmount: previewCurrencyReward_(rewardGroupId),
+    floorRestChoice: true,
+    intermissionStage: buildFloorRestStageView_(stage),
+    stageClearRegenApplied: true,
+    regenAmount: 0,
+    currentHpAfterRegen: Number(run.currentHp || 0),
+    maxHpAfterRegen: Number(calculateStatsWithItemEffects_(safeJsonParse_(run.statsJson, BASE_PLAYER_STATS), ownedItems).hp || BASE_PLAYER_STATS.hp),
+    createdAt: new Date().toISOString(),
+  };
+  stageState.reward = rewardState;
+  updateRowByKey_(DB_SHEETS.RUNS, 'runId', run.runId, {
+    stageStateJson: safeJsonStringify_(stageState),
+    updatedAt: new Date(),
+  });
+  return {
+    showReward: true,
+    runId: run.runId,
+    battle: stageState.battle || null,
+    availableSkills: [],
+    questionCache: [],
+    stageState: {
+      otherStudentQuestionShown: !!stageState.otherStudentQuestionShown,
+      fallbackEvents: stageState.fallbackEvents || [],
+      reward: rewardState,
+      playerGhost: stageState.playerGhost || null,
+    },
+    rewardView: buildRewardChoiceView_(run.runId, stage.stageId, rewardGroupId, rewardState, ownedSkills, stageState.battle),
+  };
+}
+
+function buildFloorRestClaimRewardChoice_(rewardGroupId, floor, ownedSkills, ownedItems) {
+  var picked = pickRewardChoices_(rewardGroupId, floor, ownedSkills, ownedItems)[0] || pickFallbackRewardChoice_([], ownedSkills, ownedItems, []);
+  return {
+    rewardId: 'floor_rest_claim_reward',
+    type: 'rewardClaim',
+    targetId: picked ? picked.rewardId : '',
+    value: 1,
+    weight: 0,
+    minFloor: 1,
+    maxFloor: GAME_RULES.FLOOR_COUNT,
+    description: '보상 획득',
+    detailDescription: picked ? '휴식하지 않고 보상을 하나 획득합니다: ' + (picked.description || picked.rewardId) : '휴식하지 않고 보상을 하나 획득합니다.',
+    rarity: picked ? resolveRewardRarity_(picked) : RARITIES.COMMON,
+    claimReward: picked,
   };
 }
 
@@ -284,6 +353,7 @@ function selectReward(runId, rewardId, authToken, rewardView) {
   }
 
   var isRestReward = reward.type === REWARD_TYPES.REST;
+  var appliedReward = reward.type === 'rewardClaim' && reward.claimReward ? reward.claimReward : reward;
   if (!isRestReward && !rewardState.currencyGranted) {
     var currencyResult = grantCurrencyForRun_(run, stageState, rewardState.rewardGroupId, rewardState.currencyAmount);
     rewardState.currencyGranted = true;
@@ -300,20 +370,20 @@ function selectReward(runId, rewardId, authToken, rewardView) {
     currentHp: Number(run.currentHp || 0),
   };
 
-  if (reward.type === REWARD_TYPES.STAT) {
-    applyStatReward(runState, reward);
-  } else if (reward.type === REWARD_TYPES.SKILL) {
-    if (hasOwnedSkill_(runState.skills, reward.targetId)) {
-      applySkillUpgradeReward_(runState, Object.assign({}, reward, { type: REWARD_TYPES.SKILL_UPGRADE }));
+  if (appliedReward.type === REWARD_TYPES.STAT) {
+    applyStatReward(runState, appliedReward);
+  } else if (appliedReward.type === REWARD_TYPES.SKILL) {
+    if (hasOwnedSkill_(runState.skills, appliedReward.targetId)) {
+      applySkillUpgradeReward_(runState, Object.assign({}, appliedReward, { type: REWARD_TYPES.SKILL_UPGRADE }));
     } else {
-      applySkillReward(runState, reward);
+      applySkillReward(runState, appliedReward);
     }
-  } else if (reward.type === REWARD_TYPES.SKILL_UPGRADE) {
-    applySkillUpgradeReward_(runState, reward);
-  } else if (reward.type === REWARD_TYPES.ITEM) {
-    applyItemReward_(runState, reward);
-  } else if (reward.type === REWARD_TYPES.REST) {
-    applyRestReward_(runState, reward);
+  } else if (appliedReward.type === REWARD_TYPES.SKILL_UPGRADE) {
+    applySkillUpgradeReward_(runState, appliedReward);
+  } else if (appliedReward.type === REWARD_TYPES.ITEM) {
+    applyItemReward_(runState, appliedReward);
+  } else if (appliedReward.type === REWARD_TYPES.REST) {
+    applyRestReward_(runState, appliedReward);
   }
 
   rewardState.selectedRewardId = reward.rewardId;
@@ -334,16 +404,22 @@ function selectReward(runId, rewardId, authToken, rewardView) {
     return {
       cleared: true,
       run: toClientObject_(movedRun),
-      selectedReward: reward,
+      selectedReward: appliedReward,
       currencyAmount: isRestReward ? 0 : rewardState.currencyAmount,
     };
+  }
+
+  var movedStageState = getStageState_(movedRun);
+  var movedStage = loadStage(movedStageState.stageId || buildStageId_(movedRun.currentFloor, movedRun.currentStage));
+  if (isFloorRestStage_(movedStage)) {
+    return buildFloorRestRewardViewForRun_(movedRun, movedStageState);
   }
 
   startBattle(runId);
   var nextRun = requireRun_(runId);
   return Object.assign(buildBattleView_(nextRun, getStageState_(nextRun)), {
     rewardSelected: true,
-    selectedReward: reward,
+    selectedReward: appliedReward,
     currencyAmount: isRestReward ? 0 : rewardState.currencyAmount,
   });
 }
@@ -524,7 +600,9 @@ function moveToNextStageForRun_(run) {
 
   var nextFloor = floor;
   var nextStage = stage + 1;
-  if (nextStage > GAME_RULES.STAGES_PER_FLOOR) {
+  if (stage === GAME_RULES.STAGES_PER_FLOOR && floor < GAME_RULES.FLOOR_COUNT) {
+    nextStage = GAME_RULES.FLOOR_REST_STAGE;
+  } else if (stage === GAME_RULES.FLOOR_REST_STAGE || nextStage > GAME_RULES.STAGES_PER_FLOOR) {
     nextFloor += 1;
     nextStage = 1;
   }
@@ -827,6 +905,7 @@ function sanitizeRewardForClient_(reward, battleState) {
     rarityLabel: getRarityLabel_(rarity),
     skillDetail: buildRewardSkillDetail_(reward, battleState),
     itemDetail: itemDetail,
+    claimReward: reward.claimReward || null,
     healAmount: Number(reward.healAmount || 0),
     currentHpAfterRest: Number(reward.currentHpAfterRest || 0),
     maxHpAfterRest: Number(reward.maxHpAfterRest || 0),
@@ -863,7 +942,7 @@ function buildRewardSkillDetail_(reward, battleState) {
     cooldownText: buildSkillCooldownText_(hydrated),
     useLimitText: buildSkillUseLimitText_(hydrated, previewBattleState),
     difficultyBonus: Number(hydrated.difficultyBonus || 0),
-    actionPointCost: Number(hydrated.actionPointCost || 1),
+    actionPointCost: Number(hydrated.actionPointCost !== undefined && hydrated.actionPointCost !== '' ? hydrated.actionPointCost : 1),
     rarity: hydrated.rarity,
     rarityLabel: getRarityLabel_(hydrated.rarity),
     tags: hydrated.tags,

@@ -241,6 +241,9 @@ function startBattle(runId) {
   var run = requireRun_(runId);
   var stageState = getStageState_(run);
   var stage = loadStage(stageState.stageId || buildStageId_(run.currentFloor, run.currentStage));
+  if (Number(stage.stage || 0) === GAME_RULES.FLOOR_REST_STAGE && typeof buildFloorRestRewardViewForRun_ === 'function') {
+    return buildFloorRestRewardViewForRun_(run, stageState);
+  }
   var battleId = generateId_('battle');
   var playerGhostSelection = selectPlayerGhostForBattle_(run, stage, stageState, battleId);
   var monsters = createMonstersForStage_(stage, playerGhostSelection.monster);
@@ -517,7 +520,7 @@ function submitActionAnswer(answerPayload) {
   var efficiency = calculateEfficiency(isCorrect, remainingMs, maxMs, wrongCountAfterTimeout, getItemQuestionModifiers_(battleState, question), question);
 
   battleState.lastTurnEvents = [];
-  consumeActionPoint_(battleState, Number(pendingAction.actionPointCost || getActionPointCostForAction_(pendingAction.actionType, null)));
+  consumeActionPoint_(battleState, Number(pendingAction.actionPointCost !== undefined && pendingAction.actionPointCost !== '' ? pendingAction.actionPointCost : getActionPointCostForAction_(pendingAction.actionType, null)));
   tickEffectsOnPlayerAction(battleState);
   if (battleState.player.hp <= 0) {
     battleState.status = STATUS.BATTLE_DEFEAT;
@@ -1607,7 +1610,7 @@ function buildQuestionView_(question, pendingAction) {
     actionType: pendingAction ? pendingAction.actionType : '',
     skillId: pendingAction ? pendingAction.skillId || '' : '',
     targetId: pendingAction ? pendingAction.targetId || '' : '',
-    actionPointCost: pendingAction ? Number(pendingAction.actionPointCost || getActionPointCostForAction_(pendingAction.actionType, null)) : '',
+    actionPointCost: pendingAction ? Number(pendingAction.actionPointCost !== undefined && pendingAction.actionPointCost !== '' ? pendingAction.actionPointCost : getActionPointCostForAction_(pendingAction.actionType, null)) : '',
     question: question,
     maxMs: pendingAction ? pendingAction.maxMs : '',
     finalDifficulty: pendingAction ? pendingAction.finalDifficulty : '',

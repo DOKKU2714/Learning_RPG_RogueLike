@@ -1005,6 +1005,7 @@
         skillUpgrade: 'Reward_Skill_Upgrade.png',
         item: 'Reward_Item.png',
         rest: 'Reward_Stat.png',
+        rewardClaim: 'Reward_Item.png',
       };
       return ASSET_BASE_URL + '/Resources/Reward/' + (files[type] || 'Reward_Stat.png');
     }
@@ -1617,16 +1618,7 @@
     function pickRandomAliveMonsterFromBattle(battle, usedTargetIds) {
       var alive = getAliveMonstersFromBattle(battle);
       if (!alive.length) return null;
-      usedTargetIds = usedTargetIds || {};
-      var unused = alive.filter(function(monster) {
-        var id = getMonsterRuntimeId(monster);
-        return !id || !usedTargetIds[id];
-      });
-      var pool = unused.length ? unused : alive;
-      var picked = pool[Math.floor(Math.random() * pool.length)];
-      var pickedId = getMonsterRuntimeId(picked);
-      if (pickedId) usedTargetIds[pickedId] = true;
-      return picked;
+      return alive[Math.floor(Math.random() * alive.length)];
     }
 
     function getAliveClientMonsters() {
@@ -2443,9 +2435,9 @@
         event.targetMonsterId = event.targetMonsterId || getFirstAliveMonsterId(currentView && currentView.battle);
         return event.targetMonsterId;
       }).filter(Boolean);
-      await Promise.all(targets.map(function(targetId) {
-        return animatePlayerAttack(targetId);
-      }));
+      for (var i = 0; i < targets.length; i += 1) {
+        await animatePlayerAttack(targets[i]);
+      }
       var message = events[0] && events[0].message || '광역 공격!';
       pushLog(message);
       await Promise.all(events.map(function(event) {
@@ -2899,7 +2891,7 @@
       battle.lastTurnEvents = [];
       battle.pendingAction = null;
       normalizeClientActionPoints(battle.player);
-      var actionCost = Number(questionView.actionPointCost || (questionView.actionType === 'skill' ? getSkillActionPointCost(findAvailableSkill(questionView.skillId)) : 1));
+      var actionCost = Number(questionView.actionPointCost !== undefined && questionView.actionPointCost !== '' ? questionView.actionPointCost : (questionView.actionType === 'skill' ? getSkillActionPointCost(findAvailableSkill(questionView.skillId)) : 1));
       battle.player.currentActionPoint = Math.max(0, Number(battle.player.currentActionPoint || 0) - actionCost);
       applyClientTimedEffectDamage(battle.player, 'onAction', battle, 'player');
       if (Number(battle.player.hp || 0) <= 0) {
@@ -3066,11 +3058,11 @@
       if (skillTargetsRandomEnemies(skill)) {
         var randomTarget = pickRandomAliveMonsterFromBattle(battle, usedRandomTargetIds);
         if (randomTarget) {
-          applyOptimisticMonsterDamage(battle, randomTarget.instanceId || randomTarget.monsterId, damage, 'skill', skill, '');
+          applyOptimisticMonsterDamage(battle, randomTarget.instanceId || randomTarget.monsterId, damage, 'skill', skill, getSkillHitCount(skill) > 1 ? skill.skillId + ':multiHit' : '');
         }
         return;
       }
-      applyOptimisticMonsterDamage(battle, targetId, damage, 'skill', skill, '');
+      applyOptimisticMonsterDamage(battle, targetId, damage, 'skill', skill, getSkillHitCount(skill) > 1 ? skill.skillId + ':multiHit' : '');
     }
 
     function getSkillPreviewDamage(skill) {
@@ -3301,13 +3293,45 @@
 
     function getSkillDisplayShield(skill, rule, context) {
       var type = String(skill && skill.type || '').toLowerCase();
-      if (rule && rule.shieldFormula) {
-        return Math.max(0, Math.round(evaluateSkillDisplayFormula(rule.shieldFormula, context, 'max')));
+      var formulaShield = getSkillRuleDisplayShield(rule, context);
+      if (formulaShield > 0) {
+        return formulaShield || getSkillPreviewShieldValue(skill) || 0;
       }
       if (type === 'shield') {
-        return Math.max(0, Math.round(Number(skill && skill.baseValue || 0) + Number(context.defense || 0)));
+        return Math.max(0, Math.round(Number(skill && skill.baseValue || 0) + Number(context.defense || 0))) || getSkillPreviewShieldValue(skill) || 0;
       }
-      return 0;
+      return getSkillPreviewShieldValue(skill) || 0;
+    }
+
+    function getSkillRuleDisplayShield(rule, context) {
+      var formulas = collectSkillRuleShieldFormulas(rule);
+      if (!formulas.length) return 0;
+      return Math.max(0, Math.round(formulas.reduce(function(total, formula) {
+        return total + Number(evaluateSkillDisplayFormula(formula, context, 'max') || 0);
+      }, 0)));
+    }
+
+    function collectSkillRuleShieldFormulas(rule) {
+      var formulas = [];
+      appendSkillRuleShieldFormula(formulas, rule);
+      appendSkillRuleShieldFormula(formulas, rule && rule.onUse);
+      appendSkillRuleShieldFormula(formulas, rule && rule.onCorrect);
+      if (!formulas.length) {
+        appendSkillRuleShieldFormula(formulas, rule && rule.onWrong);
+      }
+      return formulas;
+    }
+
+    function appendSkillRuleShieldFormula(formulas, rule) {
+      if (rule && rule.shieldFormula !== undefined && rule.shieldFormula !== null && rule.shieldFormula !== '') {
+        formulas.push(rule.shieldFormula);
+      }
+    }
+
+    function getSkillPreviewShieldValue(skill) {
+      var text = String(skill && skill.previewText || '');
+      var match = text.match(/(?:Shield|방어막)\s*([0-9]+)/i);
+      return match ? Math.max(0, Number(match[1] || 0)) : 0;
     }
 
     function getSkillDisplayHeal(skill, rule, context) {
@@ -3770,6 +3794,9 @@
       if (reward.type === 'rest') {
         return typeLabel + ' / HP +' + (reward.healAmount || 0);
       }
+      if (reward.type === 'rewardClaim') {
+        return typeLabel;
+      }
       return typeLabel;
     }
 
@@ -3780,6 +3807,7 @@
         skillUpgrade: '스킬 강화',
         item: '아이템 획득',
         rest: '휴식',
+        rewardClaim: '보상 획득',
       };
       return labels[type] || '보상';
     }
@@ -3829,6 +3857,7 @@
         skillUpgrade: 'SKILL UP',
         item: 'ITEM',
         rest: 'REST',
+        rewardClaim: 'REWARD',
       };
       return labels[type] || String(type || 'REWARD');
     }
@@ -3910,6 +3939,12 @@
               if (response.cleared) {
                 pushLog('1층 스테이지를 클리어했습니다. 탈출에 성공했습니다.');
                 setPlayerTurn(false);
+                return;
+              }
+              if (response.showReward && response.rewardView) {
+                currentRewardView = response.rewardView;
+                ensureClientRewardState(response.rewardView);
+                renderRewardChoices(response.rewardView);
                 return;
               }
               currentView = normalizeBattleView(response);

@@ -22,7 +22,7 @@ function getAvailableSkills(runState, battleState) {
       cooldownText: buildSkillCooldownText_(hydrated),
       useLimitText: buildSkillUseLimitText_(hydrated, battleState),
       difficultyBonus: Number(hydrated.difficultyBonus || 0),
-      actionPointCost: Number(hydrated.actionPointCost || 1),
+      actionPointCost: Number(hydrated.actionPointCost !== undefined && hydrated.actionPointCost !== '' ? hydrated.actionPointCost : 1),
       rarity: hydrated.rarity,
       rarityLabel: getRarityLabel_(hydrated.rarity),
       tags: hydrated.tags,
@@ -288,7 +288,7 @@ function useSkill(runId, skillId, targetId, answerPayload) {
   var efficiency = calculateEfficiency(isCorrect, remainingMs, maxMs, Number(payload.wrongCountAfterTimeout || 0), getItemQuestionModifiers_(battleState, question), question);
 
   battleState.lastTurnEvents = [];
-  consumeActionPoint_(battleState, Number(pendingAction.actionPointCost || getActionPointCostForAction_(ACTION_TYPES.SKILL, skill)));
+  consumeActionPoint_(battleState, Number(pendingAction.actionPointCost !== undefined && pendingAction.actionPointCost !== '' ? pendingAction.actionPointCost : getActionPointCostForAction_(ACTION_TYPES.SKILL, skill)));
   tickEffectsOnPlayerAction(battleState);
   if (battleState.player.hp <= 0) {
     battleState.status = STATUS.BATTLE_DEFEAT;
@@ -411,10 +411,9 @@ function applySkillEffect(battleState, skill, efficiency, isCorrect) {
 
   if (skill.type === SKILL_TYPES.DAMAGE) {
     var baseDamage = Math.max(0, Math.round((Number(skill.baseValue || 0) + getSkillUpgradeValue(skill, 'damage') + Number(effectiveStats.attack || 0)) * Number(efficiency || 0)));
-    var usedDamageTargetIds = {};
     for (var i = 0; i < hitCount; i += 1) {
       target = isRandomTargetSkill
-        ? selectRandomAliveEnemyAvoiding_(battleState, usedDamageTargetIds)
+        ? selectRandomAliveEnemy_(battleState)
         : getSkillTarget_(battleState, skill, skill.targetId || '');
       if (!target) break;
       var targetStats = calculateEffectiveStats({
@@ -434,6 +433,7 @@ function applySkillEffect(battleState, skill, efficiency, isCorrect) {
           damage: 0,
           missed: true,
           hitChance: hit.chance,
+          simultaneousGroupId: hitCount > 1 ? skill.skillId + ':multiHit' : '',
           message: skill.name + '이 빗나갔습니다.',
         });
         continue;
@@ -452,6 +452,7 @@ function applySkillEffect(battleState, skill, efficiency, isCorrect) {
         hpDamage: damageResult.hpDamage,
         isCritical: critical.isCritical,
         criticalMultiplier: critical.multiplier,
+        simultaneousGroupId: hitCount > 1 ? skill.skillId + ':multiHit' : '',
         message: skill.name + '으로 ' + damage + ' 피해!',
       });
       events[events.length - 1].message = critical.isCritical
@@ -577,9 +578,8 @@ function executeSkillByRule_(battleState, skill, rule, efficiency, isCorrect) {
   var normalizedTargetMode = normalizeSkillTargetMode_(rule.targetMode || (skill.target === 'self' ? 'self' : 'singleEnemy'));
   if (normalizedTargetMode === 'randomEnemies') {
     targets = [];
-    var usedRandomTargetIds = {};
     for (var randomHit = 0; randomHit < hitCount; randomHit += 1) {
-      var randomTarget = selectRandomAliveEnemyAvoiding_(battleState, usedRandomTargetIds);
+      var randomTarget = selectRandomAliveEnemy_(battleState);
       if (randomTarget) {
         targets.push(randomTarget);
       }
@@ -629,7 +629,7 @@ function executeSkillByRule_(battleState, skill, rule, efficiency, isCorrect) {
           damage: 0,
           missed: true,
           hitChance: hit.chance,
-          simultaneousGroupId: normalizedTargetMode === 'allEnemies' ? skill.skillId + ':allEnemies:' + i : '',
+          simultaneousGroupId: normalizedTargetMode === 'allEnemies' ? skill.skillId + ':allEnemies:' + i : (hitCount > 1 ? skill.skillId + ':multiHit' : ''),
           message: skill.name + '이 빗나갔습니다.',
         });
         continue;
@@ -649,7 +649,7 @@ function executeSkillByRule_(battleState, skill, rule, efficiency, isCorrect) {
         hpDamage: damageResult.hpDamage,
         isCritical: critical.isCritical,
         criticalMultiplier: critical.multiplier,
-        simultaneousGroupId: normalizedTargetMode === 'allEnemies' ? skill.skillId + ':allEnemies:' + i : '',
+        simultaneousGroupId: normalizedTargetMode === 'allEnemies' ? skill.skillId + ':allEnemies:' + i : (hitCount > 1 ? skill.skillId + ':multiHit' : ''),
         message: critical.isCritical
           ? skill.name + ' 치명타! ' + damageResult.damage + ' 피해!'
           : skill.name + '으로 ' + damageResult.damage + ' 피해!',
@@ -673,7 +673,7 @@ function executeSkillByRule_(battleState, skill, rule, efficiency, isCorrect) {
   }
   syncPrimaryMonster_(battleState);
   battleState.lastMessage = skill.name + '을 사용했습니다.';
-  if (!damageEvents && !rule.shieldFormula && !rule.healFormula && !(rule.applyEffects || []).length) {
+  if (!damageEvents && !collectSkillRuleShieldFormulas_(rule).length && !rule.healFormula && !(rule.applyEffects || []).length) {
     battleState.lastTurnEvents.push({ actor: 'player', type: skill.type || ACTION_TYPES.SKILL, skillId: skill.skillId, message: skill.name + ' 효과가 발동했습니다.' });
   }
   return battleState;
@@ -685,8 +685,9 @@ function buildSkillRulePreviewText_(skill, battleState, rule) {
   if (rule.damageFormula) {
     parts.push('Damage ' + Math.max(0, Math.round(evaluateSkillFormula_(rule.damageFormula, context, battleState, skill))));
   }
-  if (rule.shieldFormula) {
-    parts.push('Shield ' + Math.max(0, Math.round(evaluateSkillFormula_(rule.shieldFormula, context, battleState, skill))));
+  var shield = getSkillRuleDisplayShield_(battleState, skill, rule, context);
+  if (shield > 0) {
+    parts.push('Shield ' + shield);
   }
   if (rule.healFormula) {
     parts.push('Heal ' + Math.max(0, Math.round(evaluateSkillFormula_(rule.healFormula, context, battleState, skill))));
@@ -700,6 +701,33 @@ function buildSkillRulePreviewText_(skill, battleState, rule) {
     parts.push('Bonus at ' + Math.round(Number(rule.efficiencyBonus.threshold || 0) * 100) + '%');
   }
   return parts.length ? parts.join(' / ') : 'Rule skill';
+}
+
+function getSkillRuleDisplayShield_(battleState, skill, rule, context) {
+  var formulas = collectSkillRuleShieldFormulas_(rule);
+  if (!formulas.length) {
+    return 0;
+  }
+  return Math.max(0, Math.round(formulas.reduce(function(total, formula) {
+    return total + Number(evaluateSkillFormula_(formula, context, battleState, skill) || 0);
+  }, 0)));
+}
+
+function collectSkillRuleShieldFormulas_(rule) {
+  var formulas = [];
+  appendSkillRuleShieldFormula_(formulas, rule);
+  appendSkillRuleShieldFormula_(formulas, rule && rule.onUse);
+  appendSkillRuleShieldFormula_(formulas, rule && rule.onCorrect);
+  if (!formulas.length) {
+    appendSkillRuleShieldFormula_(formulas, rule && rule.onWrong);
+  }
+  return formulas;
+}
+
+function appendSkillRuleShieldFormula_(formulas, rule) {
+  if (rule && rule.shieldFormula !== undefined && rule.shieldFormula !== null && rule.shieldFormula !== '') {
+    formulas.push(rule.shieldFormula);
+  }
 }
 
 function calculateSkillRuleDamage_(battleState, skill, rule, context, efficiency) {
@@ -1195,6 +1223,12 @@ function validateSkillTriggerRule_(battleState, skill, key, triggerRule) {
 function processImmediateSkillRuleActions_(battleState, skill, actionRule, targets, context) {
   if (!actionRule) {
     return;
+  }
+  if (actionRule.shieldFormula !== undefined && actionRule.shieldFormula !== null && actionRule.shieldFormula !== '') {
+    var shield = Math.max(0, Math.round(evaluateSkillFormula_(actionRule.shieldFormula, context, battleState, skill)));
+    battleState.player.shield = Number(battleState.player.shield || 0) + shield;
+    battleState.lastTurnEvents = battleState.lastTurnEvents || [];
+    battleState.lastTurnEvents.push({ actor: 'player', type: ACTION_TYPES.GUARD, skillId: skill.skillId, shield: shield, message: skill.name + ' 효과로 방어막 ' + shield + '을 얻었습니다.' });
   }
   if (actionRule.damageFormula) {
     var target = (targets || []).filter(function(candidate) {
