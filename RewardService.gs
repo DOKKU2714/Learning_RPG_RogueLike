@@ -167,7 +167,7 @@ function getRewardConfig_() {
       ensureItemRewardChoice: false,
       currencyMin: 5,
       currencyMax: 15,
-      typeWeights: { stat: 40, skill: 30, item: 20 },
+      typeWeights: { stat: 40, skill: 30, skillUpgrade: 25, item: 20 },
     };
 }
 
@@ -177,10 +177,16 @@ function getDefaultRewardGroupId_() {
 
 function shouldRegenerateRewardChoices_(rewardState, ownedItems) {
   var config = getRewardConfig_();
-  if (!config.ensureItemRewardChoice || !rewardState || rewardState.selectedRewardId) {
+  if (!rewardState || rewardState.selectedRewardId) {
     return false;
   }
   var choices = rewardState.choices || [];
+  if (rewardState.floorRestChoice && choices.some(function(choice) { return choice && choice.type === 'rewardClaim'; })) {
+    return true;
+  }
+  if (!config.ensureItemRewardChoice) {
+    return false;
+  }
   if (!choices.length || choices.some(function(choice) { return choice.type === REWARD_TYPES.ITEM; })) {
     return false;
   }
@@ -227,10 +233,9 @@ function buildFloorRestRewardChoice_(run, battle) {
 }
 
 function buildFloorRestChoices_(run, battle, rewardGroupId, floor, ownedSkills, ownedItems) {
-  return [
-    buildFloorRestRewardChoice_(run, battle),
-    buildFloorRestClaimRewardChoice_(rewardGroupId, floor, ownedSkills, ownedItems),
-  ];
+  return [buildFloorRestRewardChoice_(run, battle)].concat(
+    pickRewardChoices_(rewardGroupId, floor, ownedSkills, ownedItems)
+  );
 }
 
 function buildFloorRestRewardViewForRun_(run, stageState) {
@@ -348,6 +353,16 @@ function selectReward(runId, rewardId, authToken, rewardView) {
   var reward = rewardState.choices.filter(function(choice) {
     return choice.rewardId === rewardId;
   })[0];
+  if (!reward && rewardState.floorRestChoice && rewardView && rewardView.choices && rewardView.choices.length) {
+    rewardState.choices = rewardView.choices;
+    rewardState.floorRestChoice = !!rewardView.floorRestChoice;
+    rewardState.intermissionStage = rewardView.intermissionStage || rewardState.intermissionStage || null;
+    rewardState.currencyAmount = Number(rewardView.currencyAmount || rewardState.currencyAmount || 0);
+    stageState.reward = rewardState;
+    reward = rewardState.choices.filter(function(choice) {
+      return choice.rewardId === rewardId;
+    })[0];
+  }
   if (!reward) {
     throw new Error('보상 후보에 없는 보상입니다.');
   }
@@ -675,6 +690,8 @@ function pickRewardChoices_(rewardGroupId, floor, ownedSkills, ownedItems) {
     var picked = null;
     if (rewardType === REWARD_TYPES.SKILL) {
       picked = pickAutoSkillReward_(ownedSkills);
+    } else if (rewardType === REWARD_TYPES.SKILL_UPGRADE) {
+      picked = pickAutoSkillUpgradeReward_(ownedSkills);
     } else if (rewardType === REWARD_TYPES.ITEM) {
       picked = hasItemRewardChoice_(choices) ? null : pickAutoItemReward_(ownedItems);
     } else if (candidates.length > 0) {
@@ -721,7 +738,7 @@ function getStatRewardRows_() {
 
 function pickRewardType_() {
   var weights = getRewardConfig_().typeWeights || {};
-  var types = [REWARD_TYPES.STAT, REWARD_TYPES.SKILL, REWARD_TYPES.ITEM];
+  var types = [REWARD_TYPES.STAT, REWARD_TYPES.SKILL, REWARD_TYPES.SKILL_UPGRADE, REWARD_TYPES.ITEM];
   var values = types.map(function(type) {
     return Math.max(0, Number(weights[type] || 0));
   });
@@ -735,6 +752,11 @@ function pickFallbackRewardChoice_(candidates, ownedSkills, ownedItems, choices)
   }
 
   picked = pickAutoSkillReward_(ownedSkills);
+  if (picked && !choices.some(function(choice) { return choice.rewardId === picked.rewardId; })) {
+    return picked;
+  }
+
+  picked = pickAutoSkillUpgradeReward_(ownedSkills);
   if (picked && !choices.some(function(choice) { return choice.rewardId === picked.rewardId; })) {
     return picked;
   }
@@ -756,6 +778,18 @@ function pickAutoSkillReward_(ownedSkills) {
   return buildAutoSkillReward_(skill);
 }
 
+function pickAutoSkillUpgradeReward_(ownedSkills) {
+  var config = typeof SKILL_UPGRADE_REWARD_CONFIG !== 'undefined'
+    ? SKILL_UPGRADE_REWARD_CONFIG
+    : Object.assign({}, SKILL_REWARD_CONFIG, { onlyOwnedSkills: true, excludeOwnedSkills: false });
+  var rarity = pickSkillRewardRarity_(config.rarityWeights);
+  var skill = pickSkillByRarityWithFallback_(rarity, ownedSkills, config);
+  if (!skill) {
+    return null;
+  }
+  return buildAutoSkillUpgradeReward_(skill);
+}
+
 function pickSkillRewardRarity_(rarityWeights) {
   var ordered = [RARITIES.COMMON, RARITIES.UNCOMMON, RARITIES.RARE, RARITIES.EPIC, RARITIES.LEGENDARY, RARITIES.UNIQUE];
   var weights = ordered.map(function(rarity) {
@@ -773,7 +807,7 @@ function pickSkillByRarityWithFallback_(rarity, ownedSkills, config) {
       return pickRandom_(pool);
     }
   }
-  var allPool = getAvailableSkillRewardPool_('', ownedSkills, Object.assign({}, config, { preferUnownedSkills: false }));
+  var allPool = getAvailableSkillRewardPool_('', ownedSkills, config);
   return allPool.length ? pickRandom_(allPool) : null;
 }
 
@@ -795,14 +829,14 @@ function getAvailableSkillRewardPool_(rarity, ownedSkills, config) {
     if (rarity && skillRarity !== rarity) {
       return false;
     }
-    if (config && config.preferUnownedSkills && ownedMap[skillId]) {
+    if (config && config.excludeOwnedSkills && ownedMap[skillId]) {
+      return false;
+    }
+    if (config && config.onlyOwnedSkills && !ownedMap[skillId]) {
       return false;
     }
     return true;
   });
-  if (!pool.length && config && config.preferUnownedSkills) {
-    return getAvailableSkillRewardPool_(rarity, ownedSkills, Object.assign({}, config, { preferUnownedSkills: false }));
-  }
   return pool;
 }
 
@@ -836,6 +870,22 @@ function buildAutoSkillReward_(skill) {
     detailDescription: skill.description || '',
     rarity: rarity,
   };
+}
+
+function buildAutoSkillUpgradeReward_(skill) {
+  var rarity = normalizeRarity_(skill.rarity) || RARITIES.COMMON;
+  return buildSkillUpgradeRewardView_({
+    rewardId: 'auto_skill_upgrade_' + skill.skillId,
+    type: REWARD_TYPES.SKILL_UPGRADE,
+    targetId: skill.skillId,
+    value: 1,
+    weight: 0,
+    minFloor: 1,
+    maxFloor: GAME_RULES.FLOOR_COUNT,
+    description: '?ㅽ궗 媛뺥솕: ' + (skill.name || skill.skillId),
+    detailDescription: skill.description || '',
+    rarity: rarity,
+  });
 }
 
 function adaptRewardForChoice_(reward, ownedSkills) {

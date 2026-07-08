@@ -215,6 +215,7 @@
     var stageResultCommitCallbacks = [];
     var stageResultCommitFailureCallbacks = [];
     var currentRewardView = null;
+    var combatActionPanelHtml = '';
     var CLIENT_BASE_GUARD_SHIELD = 5;
     var MAX_QUESTION_DIFFICULTY = 5;
     var SHORT_ANSWER_TIME_MULTIPLIER = 1.2;
@@ -277,7 +278,9 @@
           applyBattleClientConfig(currentView.clientConfig);
           battleQuestionCache = (currentView.questionCache || []).slice();
           renderBattle(currentView);
-          if (currentView.battle.status === 'victory') {
+          if (isFloorIntermissionView(currentView)) {
+            startFloorIntermissionEntrance();
+          } else if (currentView.battle.status === 'victory') {
             finishBattleStartFade();
             openRewardAfterVictory();
           } else if (currentView.battle.status === 'defeat') {
@@ -308,6 +311,8 @@
       }
       bindHoverTooltips();
       bindBattleLogReveal();
+      var actionPanel = document.getElementById('actionPanel');
+      combatActionPanelHtml = actionPanel ? actionPanel.innerHTML : '';
       renderActionMode();
       if (!document.getElementById('battleStartFade')) {
         var fade = document.createElement('div');
@@ -461,6 +466,11 @@
     function getStageEntranceNarrationLines() {
       var stage = currentView && currentView.battle ? currentView.battle.stage || {} : {};
       var lines = [];
+      if (isFloorIntermissionStage(stage)) {
+        return [
+          { text: '이곳은 아무도 없습니다. 행동을 선택하세요' }
+        ];
+      }
       if (Number(stage.floor || 0) === 1 && Number(stage.stage || 0) === 1) {
         lines = lines.concat(getConfiguredFirstStageIntroLines());
       }
@@ -555,7 +565,76 @@
       }, 1200);
     }
 
+    function startFloorIntermissionEntrance() {
+      if (hasSeenStageEntranceIntro()) {
+        skipFloorIntermissionEntrance();
+        return;
+      }
+      playFloorIntermissionEntrance();
+    }
+
+    function playFloorIntermissionEntrance() {
+      if (!currentView || !currentView.battle || !isFloorIntermissionBattle(currentView.battle)) {
+        finishBattleStartFade();
+        return;
+      }
+
+      markStageEntranceIntroSeen();
+      stageIntroPlaying = true;
+      setBattleInputLocked(true);
+      setPlayerTurn(false);
+      var shell = document.getElementById('battleShell');
+      var overlay = document.getElementById('stageIntroOverlay');
+      var title = getStageEntranceTitle(currentView.battle.stage || {});
+      document.getElementById('stageIntroFloor').textContent = title.floorLine;
+      document.getElementById('stageIntroArea').textContent = title.areaLine;
+
+      if (shell) {
+        shell.classList.add('stage-entrance-playing');
+        shell.classList.remove('stage-entrance-dialogue', 'stage-entrance-monsters');
+      }
+      if (overlay) {
+        overlay.classList.remove('fade-away', 'title-visible');
+        overlay.classList.add('instant-black');
+        overlay.classList.add('active');
+        overlay.setAttribute('aria-hidden', 'false');
+      }
+      finishBattleStartFade();
+
+      window.setTimeout(function() {
+        if (overlay) overlay.classList.remove('instant-black');
+      }, 80);
+
+      window.setTimeout(function() {
+        if (overlay) overlay.classList.add('title-visible');
+      }, 360);
+
+      window.setTimeout(function() {
+        if (overlay) overlay.classList.add('fade-away');
+      }, 2500);
+
+      window.setTimeout(function() {
+        if (overlay) {
+          overlay.classList.remove('active', 'title-visible', 'fade-away');
+          overlay.setAttribute('aria-hidden', 'true');
+        }
+        beginStageEntranceNarration();
+      }, 3700);
+    }
+
+    function skipFloorIntermissionEntrance() {
+      stageIntroPlaying = false;
+      finishBattleStartFade();
+      setBattleInputLocked(false);
+      setPlayerTurn(true);
+      pushLog('이곳은 아무도 없습니다. 행동을 선택하세요');
+    }
+
     function startBattleEntrance() {
+      if (isFloorIntermissionView(currentView)) {
+        startFloorIntermissionEntrance();
+        return;
+      }
       if (hasSeenStageEntranceIntro()) {
         skipStageEntranceIntro();
         return;
@@ -610,6 +689,18 @@
         return '';
       }
       return name;
+    }
+
+    function isFloorIntermissionStage(stage) {
+      return !!(stage && Number(stage.stage || 0) === 6);
+    }
+
+    function isFloorIntermissionBattle(battle) {
+      return !!(battle && isFloorIntermissionStage(battle.stage) && !(battle.monsters || []).length);
+    }
+
+    function isFloorIntermissionView(view) {
+      return !!(view && view.battle && isFloorIntermissionBattle(view.battle));
     }
 
     function getDisplayFloorParts(progressFloor) {
@@ -680,6 +771,13 @@
     }
 
     function normalizeBattleView(view) {
+      view = view || {};
+      if (!view.battle && view.rewardView && view.rewardView.intermissionStage) {
+        view.battle = buildClientFloorIntermissionBattle(view.rewardView.intermissionStage, view.rewardView);
+      }
+      if (!view.battle) {
+        return view;
+      }
       var battle = view.battle;
       if (!battle.monsters || !battle.monsters.length) {
         battle.monsters = battle.monster ? [battle.monster] : [];
@@ -698,6 +796,35 @@
       return view;
     }
 
+    function buildClientFloorIntermissionBattle(stage, rewardView) {
+      var previousPlayer = currentView && currentView.battle && currentView.battle.player || {};
+      var maxHp = Number(rewardView && rewardView.maxHpAfterRegen || previousPlayer.maxHp || previousPlayer.stats && previousPlayer.stats.hp || 1);
+      var hp = Number(rewardView && rewardView.currentHpAfterRegen || previousPlayer.hp || maxHp);
+      return {
+        battleId: 'client_intermission_' + String(stage && stage.stageId || Date.now()),
+        status: 'victory',
+        turn: 1,
+        stage: {
+          stageId: stage && stage.stageId || '',
+          floor: Number(stage && stage.floor || 1),
+          stage: Number(stage && stage.stage || 6),
+          name: stage && stage.name || (Number(stage && stage.floor || 1) + '층 정비 구역'),
+          rewardGroupId: rewardView && rewardView.rewardGroupId || '',
+        },
+        player: Object.assign({}, previousPlayer, {
+          hp: Math.max(1, Math.min(maxHp, hp)),
+          maxHp: maxHp,
+          shield: 0,
+          currentActionPoint: 0,
+        }),
+        monsters: [],
+        monster: null,
+        pendingAction: null,
+        lastMessage: '이곳은 아무도 없습니다. 행동을 선택하세요',
+        lastTurnEvents: [],
+      };
+    }
+
     function normalizeClientActionPoints(player) {
       if (!player) return player;
       player.baseMaxActionPoint = Math.max(0, Number(player.baseMaxActionPoint || 3));
@@ -712,12 +839,17 @@
       renderBattleBackground(battle.stage);
       renderMonsters(battle.monsters);
       renderPlayerHud(battle.player);
-      renderSkills(view.availableSkills || []);
-      renderActionTooltips(battle.player);
+      if (isFloorIntermissionBattle(battle)) {
+        renderFloorIntermissionActions();
+      } else {
+        renderCombatActions();
+        renderSkills(view.availableSkills || []);
+        renderActionTooltips(battle.player);
+      }
       if (!isDefaultPlayerTurnPrompt(battle.lastMessage)) {
         pushLog(battle.lastMessage || '전투 시작!');
       }
-      setPlayerTurn(isPlayerTurn && battle.status === 'active');
+      setPlayerTurn(isFloorIntermissionBattle(battle) ? isPlayerTurn : (isPlayerTurn && battle.status === 'active'));
       updateBattleInputLockState();
     }
 
@@ -789,6 +921,7 @@
     }
 
     function renderActionTooltips(player) {
+      if (!document.getElementById('attackActionButton')) return;
       var stats = getClientEffectiveStats(player);
       var attack = Math.max(0, Math.round(Number(stats.attack || 0)));
       var defense = Math.max(0, Math.round(CLIENT_BASE_GUARD_SHIELD + Number(stats.defense || 0)));
@@ -822,7 +955,32 @@
       var panel = document.getElementById('actionPanel');
       if (!panel) return;
       panel.classList.toggle('skill-select-mode', skillPanelOpen);
-      document.getElementById('skillPanel').classList.toggle('hidden', !skillPanelOpen);
+      var skillPanel = document.getElementById('skillPanel');
+      if (skillPanel) {
+        skillPanel.classList.toggle('hidden', !skillPanelOpen);
+      }
+    }
+
+    function renderCombatActions() {
+      var panel = document.getElementById('actionPanel');
+      if (!panel || panel.getAttribute('data-action-mode') === 'combat') return;
+      panel.className = 'action-panel compact-actions';
+      panel.setAttribute('data-action-mode', 'combat');
+      panel.innerHTML = combatActionPanelHtml;
+      skillPanelOpen = false;
+      renderActionMode();
+      renderActionPointGauges(currentView && currentView.battle && currentView.battle.player || {});
+    }
+
+    function renderFloorIntermissionActions() {
+      var panel = document.getElementById('actionPanel');
+      if (!panel || panel.getAttribute('data-action-mode') === 'floor-intermission') return;
+      panel.className = 'action-panel compact-actions floor-intermission-actions';
+      panel.setAttribute('data-action-mode', 'floor-intermission');
+      panel.innerHTML =
+        '<button id="floorRestButton" type="button" onclick="chooseFloorIntermissionAction(\'rest\')">휴식</button>' +
+        '<button id="floorRewardButton" type="button" onclick="chooseFloorIntermissionAction(\'reward\')">보상</button>';
+      skillPanelOpen = false;
     }
 
     function renderMonsters(monsters) {
@@ -2620,6 +2778,7 @@
       }
       battle.player.currentActionPoint = battle.status === 'active' ? Number(battle.player.maxActionPoint || 3) : 0;
       if (battle.status === 'active') {
+        decrementClientSkillCooldowns(battle);
         applyClientTimedEffectDamage(battle.player, 'turnStart', battle, 'player');
         (battle.monsters || []).forEach(function(monster) {
           applyClientTimedEffectDamage(monster, 'turnStart', battle, 'monster');
@@ -2635,10 +2794,35 @@
         battle.usedSkillCountByTagThisTurn = {};
         assignClientMonsterIntents(battle);
       }
+      refreshClientSkillAvailabilityForLocks(nextView);
       battle.lastMessage = battle.status === 'defeat'
         ? '몬스터의 공격으로 쓰러졌습니다.'
         : (battle.status === 'victory' ? '몬스터를 처치했습니다.' : '내 턴입니다. 행동을 선택하세요.');
       return normalizeBattleView(nextView);
+    }
+
+    function decrementClientSkillCooldowns(battle) {
+      if (!battle) return;
+      battle.skillCooldowns = battle.skillCooldowns || {};
+      battle.skillCooldownStartedTurns = battle.skillCooldownStartedTurns || {};
+      var currentTurn = Number(battle.turn || 1);
+      Object.keys(battle.skillCooldowns).forEach(function(skillId) {
+        var startedTurn = Number(battle.skillCooldownStartedTurns[skillId] || 0);
+        if (startedTurn && currentTurn <= startedTurn + 1) {
+          return;
+        }
+        battle.skillCooldowns[skillId] = Math.max(0, Number(battle.skillCooldowns[skillId] || 0) - 1);
+        if (Number(battle.skillCooldowns[skillId] || 0) <= 0) {
+          delete battle.skillCooldownStartedTurns[skillId];
+        }
+      });
+    }
+
+    function refreshClientSkillAvailabilityForLocks(view) {
+      if (!view || !view.battle || !Array.isArray(view.availableSkills)) return;
+      view.availableSkills = view.availableSkills.map(function(skill) {
+        return updateClientSkillAvailabilityForLocks(skill, view.battle);
+      });
     }
 
     function assignClientMonsterIntents(battle) {
@@ -2908,6 +3092,7 @@
         battle.lastTurnEvents.push({ actor: 'player', type: 'guard', shield: shield, message: '수비로 방어막 ' + shield + '을 만들었습니다.' });
       } else if (questionView.actionType === 'skill') {
         applyOptimisticSkillAction(battle, questionView, efficiency);
+        applyClientSkillUsageLocks(nextView, questionView.skillId);
       } else {
         var attack = getClientEffectiveStat(battle.player, 'attack') || 10;
         var damage = Math.max(0, Math.round(attack * efficiency));
@@ -2925,6 +3110,52 @@
       battle.lastMessage = battle.status === 'defeat' ? '쓰러졌습니다.' : '내 턴입니다. 행동을 선택하세요.';
       nextView.battle = battle;
       return normalizeBattleView(nextView);
+    }
+
+    function applyClientSkillUsageLocks(view, skillId) {
+      if (!view || !view.battle || !skillId) return;
+      var battle = view.battle;
+      battle.skillCooldowns = battle.skillCooldowns || {};
+      battle.skillCooldownStartedTurns = battle.skillCooldownStartedTurns || {};
+      battle.skillUseCounts = battle.skillUseCounts || {};
+      var skill = findSkillInView(view, skillId) || {};
+      var cooldown = parseClientPositiveNumber(skill.cooldown);
+      if (cooldown > 0) {
+        battle.skillCooldowns[skillId] = Math.max(Number(battle.skillCooldowns[skillId] || 0), cooldown);
+        battle.skillCooldownStartedTurns[skillId] = Number(battle.turn || 1);
+      }
+      battle.skillUseCounts[skillId] = Number(battle.skillUseCounts[skillId] || 0) + 1;
+      view.availableSkills = (view.availableSkills || []).map(function(candidate) {
+        if (!candidate || candidate.skillId !== skillId) return candidate;
+        return updateClientSkillAvailabilityForLocks(candidate, battle);
+      });
+    }
+
+    function findSkillInView(view, skillId) {
+      return ((view && view.availableSkills) || []).filter(function(skill) {
+        return skill && skill.skillId === skillId;
+      })[0] || findAvailableSkill(skillId);
+    }
+
+    function updateClientSkillAvailabilityForLocks(skill, battle) {
+      var next = Object.assign({}, skill);
+      var cooldown = Number(battle && battle.skillCooldowns && battle.skillCooldowns[next.skillId] || 0);
+      if (cooldown > 0) {
+        next.available = false;
+        next.unavailableReason = '쿨타임 ' + cooldown + '턴 남았습니다.';
+        return next;
+      }
+      if (/쿨타임/.test(String(next.unavailableReason || ''))) {
+        next.available = true;
+        next.unavailableReason = '';
+      }
+      var conditions = safeJsonParseClient(next.conditionJson || next.conditionsJson || next.conditions, {});
+      var limit = Number(conditions.perBattleLimit || conditions.perStageLimit || 0);
+      if (limit > 0 && Number(battle && battle.skillUseCounts && battle.skillUseCounts[next.skillId] || 0) >= limit) {
+        next.available = false;
+        next.unavailableReason = conditions.perBattleLimit ? '이번 전투에서 더 이상 사용할 수 없습니다.' : '이 스테이지에서 더 사용할 수 없습니다.';
+      }
+      return next;
     }
 
     function applyOptimisticSkillAction(battle, questionView, efficiency) {
@@ -3167,6 +3398,8 @@
         base: base,
         baseValue: base,
         skillBaseValue: base,
+        n: Math.max(0, Math.max(1, Number(skill && skill.level || 1)) - 1),
+        upgrade: Math.max(0, Math.max(1, Number(skill && skill.level || 1)) - 1),
         atk: attack,
         attack: attack,
         def: defense,
@@ -3178,7 +3411,7 @@
       };
       var previewRange = getSkillPreviewDamageRange(skill);
       var formulaRange = getSkillFormulaDamageRange(rule, context);
-      var effectMetrics = getSkillEffectDisplayMetrics(skill, rule);
+      var effectMetrics = getSkillEffectDisplayMetrics(skill, rule, context);
       var tagMetrics = getSkillTagBonusDisplayMetrics(rule);
       var type = String(skill && skill.type || '').toLowerCase();
       var fallbackDamage = type === 'damage' ? Math.max(0, Math.round(base + attack)) : 0;
@@ -3207,15 +3440,8 @@
       };
     }
 
-    function getSkillEffectDisplayMetrics(skill, rule) {
+    function getSkillEffectDisplayMetrics(skill, rule, context) {
       var detail = skill && Array.isArray(skill.effectDetails) && skill.effectDetails.length ? skill.effectDetails[0] : null;
-      if (detail) {
-        return {
-          name: detail.name || detail.effectId || '',
-          value: detail.value !== undefined ? detail.value : '',
-          chance: detail.chance !== undefined ? detail.chance : 100,
-        };
-      }
       var effects = [];
       if (rule && Array.isArray(rule.applyEffects)) {
         effects = effects.concat(rule.applyEffects);
@@ -3227,9 +3453,18 @@
         effects = effects.concat(rule.efficiencyBonus.applyEffects);
       }
       var first = effects[0] || {};
-      var value = first.value !== undefined ? first.value : (first.valueFormula || 0);
+      if (!Object.keys(first).length && detail) {
+        return {
+          name: detail.name || detail.effectId || '',
+          value: detail.value !== undefined ? detail.value : '',
+          chance: detail.chance !== undefined ? detail.chance : 100,
+        };
+      }
+      var value = first.valueFormula !== undefined && first.valueFormula !== null && first.valueFormula !== ''
+        ? Math.round(evaluateSkillDisplayFormula(first.valueFormula, context || {}, 'max'))
+        : (first.value !== undefined ? first.value : (detail && detail.value !== undefined ? detail.value : 0));
       return {
-        name: first.name || first.effectName || first.effectId || '',
+        name: first.name || first.effectName || (detail && detail.name) || first.effectId || (detail && detail.effectId) || '',
         value: value,
         chance: first.chance !== undefined ? first.chance : 100,
       };
@@ -3670,30 +3905,18 @@
       var rewardTitle = document.getElementById('rewardTitle');
       var rewardSubtitle = document.querySelector('.reward-clear-header p');
       if (rewardTitle) {
-        rewardTitle.textContent = rewardView.floorRestChoice ? '층 정비' : '스테이지 클리어';
+        rewardTitle.textContent = rewardView.intermissionRewardOnly ? '보상' : (rewardView.floorRestChoice ? '층 정비' : '스테이지 클리어');
       }
       if (rewardSubtitle) {
-        rewardSubtitle.textContent = rewardView.floorRestChoice ? '휴식하거나 보상을 하나 고르세요' : '보상을 고르세요';
+        rewardSubtitle.textContent = rewardView.intermissionRewardOnly ? '보상을 확인하세요' : (rewardView.floorRestChoice ? '휴식하거나 보상을 하나 고르세요' : '보상을 고르세요');
       }
       rewardContainer.innerHTML = rewardView.choices.map(function(reward) {
         var iconUrl = getRewardIconUrl(reward.type);
         var rarity = normalizeRewardRarity(reward.rarity);
         var title = reward.displayTitle || getRewardDisplayTitle(reward.type);
         var name = reward.description || reward.rewardId;
-        var detail = buildRewardHoverDescription(reward);
-        var detailName = reward.skillDetail && reward.skillDetail.name || name;
-        var detailMeta = reward.skillDetail
-          ? (escapeHtml(reward.skillDetail.rarityLabel || reward.rarityLabel || getRewardRarityLabel(rarity)) + ' / Lv.' + escapeHtml(reward.skillDetail.level || 1))
-          : (reward.type === 'rest'
-            ? '회복 / HP +' + escapeHtml(reward.healAmount || 0)
-            : (escapeHtml(reward.rarityLabel || getRewardRarityLabel(rarity)) + ' / ' + escapeHtml(formatRewardMeta(reward))));
+        var detailCard = renderRewardDetailCard(reward, rarity, name);
         var rarityBadge = reward.type === 'rest' ? '회복' : (reward.rarityLabel || getRewardRarityLabel(rarity));
-        var rewardSkillUseLimitText = reward.skillDetail ? getSkillUseLimitText(reward.skillDetail) : '';
-        var rewardSkillCooldown = reward.skillDetail ? getSkillCooldownDisplayText(reward.skillDetail) : '';
-        var rewardSkillLines = reward.skillDetail
-          ? ((rewardSkillUseLimitText ? '<span class="skill-detail-line">' + escapeHtml(rewardSkillUseLimitText) + '</span>' : '') +
-            (rewardSkillCooldown ? '<span class="skill-detail-line">' + escapeHtml(rewardSkillCooldown) + '</span>' : ''))
-          : '';
         return '<button class="reward-choice-card rarity-' + escapeHtml(rarity) + '" data-reward-id="' + escapeHtml(reward.rewardId) + '">' +
           '<span class="reward-choice-heading">' + escapeHtml(title) + '</span>' +
           '<span class="reward-rarity-badge">' + escapeHtml(rarityBadge) + '</span>' +
@@ -3703,15 +3926,7 @@
           '<span class="reward-choice-body">' +
             '<strong>' + escapeHtml(name) + '</strong>' +
           '</span>' +
-          '<span class="reward-detail-card rarity-' + escapeHtml(rarity) + '" aria-hidden="true">' +
-            '<span class="skill-detail-header">' +
-              '<strong class="skill-detail-name">' + escapeHtml(detailName) + '</strong>' +
-              (reward.skillDetail ? '<span class="skill-detail-line skill-detail-ap-line">행동력 <em class="skill-detail-ap-inline">' + escapeHtml(getSkillActionPointCost(reward.skillDetail)) + '</em> 소비</span>' : '') +
-            '</span>' +
-            '<span class="skill-detail-meta">' + detailMeta + '</span>' +
-            '<span class="skill-detail-description">' + detail + '</span>' +
-            rewardSkillLines +
-          '</span>' +
+          detailCard +
         '</button>';
       }).join('');
       Array.prototype.forEach.call(rewardContainer.querySelectorAll('.reward-choice-card'), function(button) {
@@ -3738,6 +3953,128 @@
       });
     }
 
+    function chooseFloorIntermissionAction(actionType) {
+      if (!isFloorIntermissionView(currentView) || stageIntroPlaying || rewardSelectionApplying || isBattleResultLoading()) {
+        pushLog('지금은 행동할 수 없습니다.');
+        return;
+      }
+      setBattleInputLocked(true);
+      setPlayerTurn(false);
+      loadFloorIntermissionRewardView(function(rewardView) {
+        if (actionType === 'rest') {
+          var restChoice = getFloorIntermissionChoice(rewardView, 'rest');
+          if (!restChoice) {
+            setBattleInputLocked(false);
+            setPlayerTurn(true);
+            pushLog('휴식 보상을 찾을 수 없습니다.');
+            return;
+          }
+          playFloorRestEffect(restChoice);
+          currentRewardView = rewardView;
+          window.setTimeout(function() {
+            selectRewardChoice(restChoice.rewardId);
+          }, 520);
+          return;
+        }
+
+        var rewardChoices = getFloorIntermissionRewardChoices(rewardView);
+        if (!rewardChoices.length) {
+          setBattleInputLocked(false);
+          setPlayerTurn(true);
+          pushLog('보상 선택지를 찾을 수 없습니다.');
+          return;
+        }
+        currentRewardView = Object.assign({}, rewardView, {
+          floorRestChoice: false,
+          intermissionRewardOnly: false,
+          choices: rewardChoices,
+        });
+        renderRewardChoices(currentRewardView);
+      }, function(error) {
+        setBattleInputLocked(false);
+        setPlayerTurn(true);
+        pushLog(error.message || '정비 선택지를 불러오지 못했습니다.');
+      });
+    }
+
+    function loadFloorIntermissionRewardView(onSuccess, onFailure) {
+      var existing = getCurrentFloorIntermissionRewardView();
+      if (existing && existing.choices && existing.choices.length) {
+        onSuccess(existing);
+        return;
+      }
+      showLoadingModal('정비 선택지 준비 중...', '휴식과 보상을 확인하는 중...');
+      google.script.run
+        .withSuccessHandler(function(rewardView) {
+          hideLoadingModal();
+          currentRewardView = rewardView;
+          ensureClientRewardState(rewardView);
+          onSuccess(rewardView);
+        })
+        .withFailureHandler(function(error) {
+          hideLoadingModal();
+          if (onFailure) onFailure(error);
+        })
+        .previewRewardChoicesForStageResult(buildStageResultPayload(), getAuthToken());
+    }
+
+    function getCurrentFloorIntermissionRewardView() {
+      if (currentRewardView && currentRewardView.floorRestChoice) {
+        return currentRewardView;
+      }
+      var rewardState = currentView && currentView.stageState && currentView.stageState.reward;
+      if (!rewardState || !rewardState.floorRestChoice || !rewardState.choices || !rewardState.choices.length) {
+        return null;
+      }
+      return {
+        runId: currentView.runId,
+        stageId: rewardState.stageId,
+        rewardGroupId: rewardState.rewardGroupId,
+        choices: rewardState.choices,
+        currencyAmount: Number(rewardState.currencyAmount || 0),
+        floorRestChoice: true,
+        intermissionStage: rewardState.intermissionStage || (currentView.battle && currentView.battle.stage),
+        regenAmount: Number(rewardState.regenAmount || 0),
+        currentHpAfterRegen: Number(rewardState.currentHpAfterRegen || currentView.battle.player.hp || 0),
+        maxHpAfterRegen: Number(rewardState.maxHpAfterRegen || currentView.battle.player.maxHp || 0),
+      };
+    }
+
+    function getFloorIntermissionChoice(rewardView, type) {
+      return (rewardView && rewardView.choices || []).filter(function(choice) {
+        return choice && choice.type === type;
+      })[0] || null;
+    }
+
+    function getFloorIntermissionRewardChoices(rewardView) {
+      var choices = (rewardView && rewardView.choices || []).filter(function(choice) {
+        return choice && choice.type !== 'rest';
+      });
+      if (choices.length === 1 && choices[0].type === 'rewardClaim' && choices[0].claimReward) {
+        return [choices[0].claimReward];
+      }
+      return choices.filter(function(choice) {
+        return choice.type !== 'rewardClaim';
+      });
+    }
+
+    function playFloorRestEffect(restChoice) {
+      var player = currentView && currentView.battle && currentView.battle.player;
+      if (!player) return;
+      var nextHp = Number(restChoice.currentHpAfterRest || player.hp || 0);
+      var maxHp = Number(restChoice.maxHpAfterRest || player.maxHp || 1);
+      var amount = Math.max(0, Number(restChoice.healAmount || 0));
+      player.hp = Math.max(0, Math.min(maxHp, nextHp));
+      player.maxHp = maxHp;
+      renderPlayerHud(player);
+      playBattleSound('buff');
+      animatePlayerStatusEffect('buff');
+      if (amount > 0) {
+        spawnFloatingText(document.getElementById('playerHpText') || document.getElementById('playerDamageAnchor'), '+' + amount, 'heal-green');
+      }
+      pushLog(amount > 0 ? '휴식을 취해 체력을 회복했습니다.' : '휴식을 취했습니다.');
+    }
+
     function fitRewardCardText() {
       Array.prototype.forEach.call(document.querySelectorAll('.reward-choice-heading, .reward-choice-body strong'), function(element) {
         var baseSize = Number(window.getComputedStyle(element).fontSize.replace('px', '')) || 20;
@@ -3758,6 +4095,68 @@
         stars += '<span class="difficulty-star">&#9733;</span>';
       }
       return '<span class="difficulty-stars" aria-label="난이도 ' + count + '">' + stars + '</span>';
+    }
+
+    function renderRewardDetailCard(reward, rarity, fallbackName) {
+      if (reward && reward.type === 'skillUpgrade' && reward.skillDetail) {
+        return renderSkillUpgradeCompareDetailCard(reward, rarity, fallbackName);
+      }
+
+      var detail = buildRewardHoverDescription(reward);
+      var detailName = reward.skillDetail && reward.skillDetail.name || fallbackName;
+      var detailMeta = reward.skillDetail
+        ? (escapeHtml(reward.skillDetail.rarityLabel || reward.rarityLabel || getRewardRarityLabel(rarity)) + ' / Lv.' + escapeHtml(reward.skillDetail.level || 1))
+        : (reward.type === 'rest'
+          ? '회복 / HP +' + escapeHtml(reward.healAmount || 0)
+          : (escapeHtml(reward.rarityLabel || getRewardRarityLabel(rarity)) + ' / ' + escapeHtml(formatRewardMeta(reward))));
+      return '<span class="reward-detail-card rarity-' + escapeHtml(rarity) + '" aria-hidden="true">' +
+        '<span class="skill-detail-header">' +
+          '<strong class="skill-detail-name">' + escapeHtml(detailName) + '</strong>' +
+          (reward.skillDetail ? '<span class="skill-detail-line skill-detail-ap-line">행동력 <em class="skill-detail-ap-inline">' + escapeHtml(getSkillActionPointCost(reward.skillDetail)) + '</em> 소비</span>' : '') +
+        '</span>' +
+        '<span class="skill-detail-meta">' + detailMeta + '</span>' +
+        '<span class="skill-detail-description">' + detail + '</span>' +
+        buildRewardSkillDetailLines(reward.skillDetail) +
+      '</span>';
+    }
+
+    function renderSkillUpgradeCompareDetailCard(reward, rarity, fallbackName) {
+      var upgradeValue = Math.max(1, Number(reward.value || 1));
+      var afterSkill = reward.skillDetail || {};
+      var afterLevel = Math.max(1, Number(afterSkill.level || 1));
+      var beforeSkill = Object.assign({}, afterSkill, {
+        level: Math.max(1, afterLevel - upgradeValue),
+      });
+      var title = afterSkill.name || fallbackName || '스킬';
+      return '<span class="reward-detail-card reward-upgrade-compare-card rarity-' + escapeHtml(rarity) + '" aria-hidden="true">' +
+        '<span class="reward-upgrade-panel">' +
+          renderSkillUpgradeComparePanel(beforeSkill, reward, rarity, title, '현재') +
+        '</span>' +
+        '<span class="reward-upgrade-arrow" aria-hidden="true">&gt;&gt;</span>' +
+        '<span class="reward-upgrade-panel reward-upgrade-after">' +
+          renderSkillUpgradeComparePanel(afterSkill, reward, rarity, title, '강화 후') +
+        '</span>' +
+      '</span>';
+    }
+
+    function renderSkillUpgradeComparePanel(skill, reward, rarity, title, label) {
+      var meta = escapeHtml(skill.rarityLabel || reward.rarityLabel || getRewardRarityLabel(rarity)) + ' / Lv.' + escapeHtml(skill.level || 1);
+      var description = buildSkillDetailDescription(skill, skill.description || reward.detailDescription || reward.description || '-');
+      return '<span class="skill-detail-header">' +
+          '<strong class="skill-detail-name">' + escapeHtml(title) + '</strong>' +
+          '<span class="skill-detail-line skill-detail-ap-line">행동력 <em class="skill-detail-ap-inline">' + escapeHtml(getSkillActionPointCost(skill)) + '</em> 소비</span>' +
+        '</span>' +
+        '<span class="skill-detail-meta reward-upgrade-state-label">' + escapeHtml(label) + ' / ' + meta + '</span>' +
+        '<span class="skill-detail-description">' + description + '</span>' +
+        buildRewardSkillDetailLines(skill);
+    }
+
+    function buildRewardSkillDetailLines(skill) {
+      if (!skill) return '';
+      var useLimitText = getSkillUseLimitText(skill);
+      var cooldown = getSkillCooldownDisplayText(skill);
+      return (useLimitText ? '<span class="skill-detail-line">' + escapeHtml(useLimitText) + '</span>' : '') +
+        (cooldown ? '<span class="skill-detail-line">' + escapeHtml(cooldown) + '</span>' : '');
     }
 
     function buildRewardHoverDescription(reward) {
@@ -3942,9 +4341,15 @@
                 return;
               }
               if (response.showReward && response.rewardView) {
+                currentView = normalizeBattleView(response);
+                battleQuestionCache = (currentView.questionCache || []).slice();
                 currentRewardView = response.rewardView;
                 ensureClientRewardState(response.rewardView);
-                renderRewardChoices(response.rewardView);
+                clearLocalBattleCheckpoint(currentView.runId);
+                resetStageCommitState();
+                currentRewardView = response.rewardView;
+                renderBattle(currentView);
+                startFloorIntermissionEntrance();
                 return;
               }
               currentView = normalizeBattleView(response);

@@ -52,6 +52,19 @@
     };
   }
 
+  if (typeof buildFloorRestRewardViewForRun_ === 'function') {
+    BUILD_FLOOR_REST_REWARD_VIEW_ORIGINAL_FLOOR_INTERMISSION_ = buildFloorRestRewardViewForRun_;
+    buildFloorRestRewardViewForRun_ = function(run, stageState) {
+      stageState = stageState || getStageState_(run);
+      if (!stageState.battle || !isFloorIntermissionStageId_(stageState.stageId)) {
+        startFloorIntermissionStage_(run, stageState, stageState.stageId || buildStageId_(run.currentFloor, run.currentStage));
+        run = requireRun_(run.runId);
+        stageState = getStageState_(run);
+      }
+      return BUILD_FLOOR_REST_REWARD_VIEW_ORIGINAL_FLOOR_INTERMISSION_(run, stageState);
+    };
+  }
+
   if (typeof include_ === 'function') {
     INCLUDE_ORIGINAL_FLOOR_INTERMISSION_ = include_;
     include_ = function(filename) {
@@ -163,7 +176,7 @@ function startFloorIntermissionStage_(run, stageState, stageId) {
     forcedQuestionCreatorId: '',
     pendingAction: null,
     pendingAnswerLogs: [],
-    lastMessage: '정비 구역에 도착했습니다. 휴식하거나 보상을 선택하세요.',
+    lastMessage: '이곳은 아무도 없습니다. 행동을 선택하세요',
     lastTurnEvents: [],
     skillCooldowns: {},
     skillUseCounts: {},
@@ -229,6 +242,7 @@ function moveToNextStageWithFloorIntermission_(run) {
 }
 
 function getFloorIntermissionClientPatch_() {
+  return '<script>window.__floorIntermissionClientPatchInstalled = true;</script>';
   return '<script>\n' +
     '(function(){\n' +
     '  function install(){\n' +

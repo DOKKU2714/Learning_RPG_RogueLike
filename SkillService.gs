@@ -19,6 +19,7 @@ function getAvailableSkills(runState, battleState) {
       level: hydrated.level,
       baseValue: Number(hydrated.baseValue || 0),
       cooldown: hydrated.cooldown || '',
+      conditionJson: hydrated.conditionJson || '{}',
       cooldownText: buildSkillCooldownText_(hydrated),
       useLimitText: buildSkillUseLimitText_(hydrated, battleState),
       difficultyBonus: Number(hydrated.difficultyBonus || 0),
@@ -156,6 +157,12 @@ function getSkillUnavailableReason(skill, runState, battleState) {
     var count = getSkillUseCount_(battleState, skill.skillId);
     if (count >= Number(conditions.perStageLimit)) {
       return '이 스테이지에서 더 사용할 수 없습니다.';
+    }
+  }
+  if (conditions.perBattleLimit) {
+    var battleCount = getSkillUseCount_(battleState, skill.skillId);
+    if (battleCount >= Number(conditions.perBattleLimit)) {
+      return '이번 전투에서 더 이상 사용할 수 없습니다.';
     }
   }
   if (conditions.requiredStat) {

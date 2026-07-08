@@ -1502,6 +1502,17 @@
     padding: 6px 10px;
   }
 
+  .floor-intermission-actions {
+    grid-template-columns: repeat(2, minmax(96px, 1fr));
+    align-content: center;
+  }
+
+  .floor-intermission-actions button {
+    min-height: 52px;
+    font-size: 18px;
+    font-weight: 900;
+  }
+
   .skill-panel {
     grid-column: 1 / -1;
     display: grid;
@@ -2810,6 +2821,69 @@
     width: min(300px, 92vw);
     z-index: 36;
     text-align: left;
+  }
+
+  .reward-choice-card .reward-upgrade-compare-card,
+  .reward-choice-card:nth-child(3n) .reward-upgrade-compare-card {
+    right: auto;
+    left: 50%;
+    width: min(680px, 94vw);
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    align-items: stretch;
+    gap: 12px;
+    transform: translate(-50%, 8px);
+  }
+
+  .reward-choice-card:hover .reward-upgrade-compare-card,
+  .reward-choice-card:focus-visible .reward-upgrade-compare-card {
+    transform: translate(-50%, 0);
+  }
+
+  .reward-upgrade-panel {
+    display: grid;
+    align-content: start;
+    gap: 8px;
+    min-width: 0;
+    padding: 10px;
+    border: 1px solid rgba(242, 242, 242, 0.16);
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.035);
+  }
+
+  .reward-upgrade-after {
+    border-color: rgba(255, 212, 74, 0.42);
+    background: rgba(255, 212, 74, 0.075);
+  }
+
+  .reward-upgrade-arrow {
+    display: grid;
+    align-self: center;
+    place-items: center;
+    color: #ffd44a;
+    font-family: var(--font-title);
+    font-size: 24px;
+    line-height: 1;
+    text-shadow: 0 0 12px rgba(255, 212, 74, 0.42);
+    white-space: nowrap;
+  }
+
+  .reward-upgrade-state-label {
+    color: #ffd44a;
+    font-weight: 800;
+  }
+
+  @media (max-width: 720px) {
+    .reward-choice-card .reward-upgrade-compare-card,
+    .reward-choice-card:nth-child(3n) .reward-upgrade-compare-card {
+      width: min(340px, 94vw);
+      grid-template-columns: 1fr;
+      gap: 8px;
+    }
+
+    .reward-upgrade-arrow {
+      font-size: 18px;
+      transform: rotate(90deg);
+    }
   }
 
   .item-modal {

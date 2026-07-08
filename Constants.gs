@@ -215,7 +215,19 @@ var SKILL_REWARD_CONFIG = Object.freeze({
     legendary: 2,
     unique: 1,
   }),
-  preferUnownedSkills: true,
+  excludeOwnedSkills: true,
+});
+
+var SKILL_UPGRADE_REWARD_CONFIG = Object.freeze({
+  rarityWeights: Object.freeze({
+    common: 50,
+    uncommon: 25,
+    rare: 15,
+    epic: 7,
+    legendary: 2,
+    unique: 1,
+  }),
+  onlyOwnedSkills: true,
 });
 
 var REWARD_CONFIG = Object.freeze({
@@ -226,6 +238,7 @@ var REWARD_CONFIG = Object.freeze({
   typeWeights: Object.freeze({
     stat: 40,
     skill: 30,
+    skillUpgrade: 25,
     item: 20,
   }),
 });
