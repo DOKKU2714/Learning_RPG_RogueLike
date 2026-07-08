@@ -35,6 +35,28 @@ function ensureSheet_(sheetName, headers) {
   return sheet;
 }
 
+function ensureTableColumns_(sheetName, headers) {
+  var sheet = getSheet_(sheetName);
+  var currentHeaders = getHeaderRow_(sheet);
+  var existing = {};
+  currentHeaders.forEach(function(header) {
+    existing[header] = true;
+  });
+  var missing = (headers || []).filter(function(header) {
+    return header && !existing[header];
+  });
+  if (!missing.length) {
+    return currentHeaders;
+  }
+
+  if (sheet.getMaxColumns() < currentHeaders.length + missing.length) {
+    sheet.insertColumnsAfter(sheet.getMaxColumns(), currentHeaders.length + missing.length - sheet.getMaxColumns());
+  }
+  sheet.getRange(1, currentHeaders.length + 1, 1, missing.length).setValues([missing]);
+  clearTableCache_(sheetName);
+  return currentHeaders.concat(missing);
+}
+
 function readTable_(sheetName) {
   var sheet = getSheet_(sheetName);
   var lastRow = sheet.getLastRow();

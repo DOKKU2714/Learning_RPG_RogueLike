@@ -102,6 +102,10 @@
           <strong id="maxProgress">-</strong>
         </div>
         <div class="stat-box">
+          <span class="muted">최고 점수</span>
+          <strong id="bestScore">-</strong>
+        </div>
+        <div class="stat-box">
           <span class="muted">총 풀이 수</span>
           <strong id="totalAnswers">-</strong>
         </div>
@@ -177,6 +181,7 @@
       document.getElementById('correctRate').textContent = formatRate(summary.correctRate);
       document.getElementById('averageTime').textContent = formatTime(summary.averageAnswerTimeMs);
       document.getElementById('maxProgress').textContent = formatDisplayStage(summary.maxFloor, summary.maxStage);
+      document.getElementById('bestScore').textContent = formatScore(summary.bestScore);
       document.getElementById('totalAnswers').textContent = Number(summary.totalAnswerCount || 0) + '문제';
       renderQuestions(info.questionStats || []);
     }
@@ -190,7 +195,7 @@
 
       container.innerHTML =
         '<table class="question-table">' +
-          '<thead><tr><th>문제</th><th>상태</th><th>난이도</th><th>풀이</th><th>정답률</th></tr></thead>' +
+          '<thead><tr><th>문제</th><th>상태</th><th>난이도</th><th>풀이</th><th>정답률</th><th>반응</th></tr></thead>' +
           '<tbody>' + questions.map(function(question) {
             return '<tr>' +
               '<td class="question-prompt" title="' + escapeHtml(question.prompt) + '">' + escapeHtml(question.prompt) + '</td>' +
@@ -198,6 +203,7 @@
               '<td>' + renderDifficultyStars(question.difficulty || 1) + '</td>' +
               '<td>' + Number(question.correctCount || 0) + ' / ' + Number(question.totalCount || 0) + '</td>' +
               '<td>' + formatRate(question.correctRate) + '</td>' +
+              '<td>좋아요 ' + Number(question.likeCount || 0) + ' / 싫어요 ' + Number(question.dislikeCount || 0) + '</td>' +
             '</tr>';
           }).join('') + '</tbody>' +
         '</table>';
@@ -205,6 +211,10 @@
 
     function formatRate(rate) {
       return Number(rate || 0).toFixed(1).replace(/\.0$/, '') + '%';
+    }
+
+    function formatScore(score) {
+      return Number(score || 0).toLocaleString('ko-KR') + '점';
     }
 
     function renderDifficultyStars(value) {

@@ -14,6 +14,10 @@ function canStartGame(playerId, authToken) {
   if (myQuestionCount < 1) {
     reasons.push('게임 시작 전 문제를 1개 이상 만들어야 합니다.');
   }
+  var latestCompletedRunEndedAt = getLatestCompletedRunEndedAtMs_(playerId);
+  if (latestCompletedRunEndedAt > 0 && getLatestCreatedQuestionAtMs_(playerId) <= latestCompletedRunEndedAt) {
+    reasons.push('지난 게임이 끝난 뒤 새 문제를 1개 만들어야 다음 게임을 시작할 수 있습니다.');
+  }
 
   return {
     canStart: reasons.length === 0,
@@ -21,30 +25,61 @@ function canStartGame(playerId, authToken) {
   };
 }
 
-function startRun(playerId, authToken) {
-  var check = canStartGame(playerId, authToken);
-  if (!check.canStart) {
-    throw new Error(check.reasons.join('\n'));
-  }
+function getLatestCompletedRunEndedAtMs_(playerId) {
+  return readTable_(DB_SHEETS.RUNS).reduce(function(latest, run) {
+    if (run.playerId !== playerId || (run.status !== STATUS.RUN_FAILED && run.status !== STATUS.RUN_CLEARED)) {
+      return latest;
+    }
+    var endedAt = parseDateMs_(run.endedAt || run.updatedAt || run.startedAt);
+    return Math.max(latest, endedAt);
+  }, 0);
+}
 
+function getLatestCreatedQuestionAtMs_(playerId) {
+  return getQuestionsByCreator_(playerId).reduce(function(latest, question) {
+    return Math.max(latest, parseDateMs_(question.createdAt || question.updatedAt));
+  }, 0);
+}
+
+function parseDateMs_(value) {
+  if (!value) {
+    return 0;
+  }
+  var ms = new Date(value).getTime();
+  return isNaN(ms) ? 0 : ms;
+}
+
+function startRun(playerId, authToken) {
   var existingRun = getActiveRun(playerId);
   if (existingRun) {
     return toClientObject_(existingRun);
+  }
+
+  var check = canStartGame(playerId, authToken);
+  if (!check.canStart) {
+    throw new Error(check.reasons.join('\n'));
   }
 
   return createNewRun_(playerId);
 }
 
 function getActiveRunSummary(playerId, authToken) {
+  var existingRun = getActiveRun(playerId);
+  if (existingRun) {
+    return toClientObject_({
+      hasActiveRun: true,
+      run: buildRunResumeSummary_(existingRun),
+    });
+  }
+
   var check = canStartGame(playerId, authToken);
   if (!check.canStart) {
     throw new Error(check.reasons.join('\n'));
   }
 
-  var existingRun = getActiveRun(playerId);
   return toClientObject_({
-    hasActiveRun: !!existingRun,
-    run: existingRun ? buildRunResumeSummary_(existingRun) : null,
+    hasActiveRun: false,
+    run: null,
   });
 }
 
@@ -62,6 +97,7 @@ function restartRun(playerId, authToken) {
 }
 
 function createNewRun_(playerId) {
+  ensureTableColumns_(DB_SHEETS.RUNS, DB_COLUMNS.RUNS);
   var now = new Date();
   var stats = Object.assign({}, BASE_PLAYER_STATS);
   var run = {
@@ -80,12 +116,18 @@ function createNewRun_(playerId) {
       otherStudentQuestionShown: false,
       fallbackEvents: [],
       usedQuestionIds: [],
+      scoreState: {
+        floorStartedAtByFloor: {
+          1: now.toISOString(),
+        },
+      },
     }),
     startedAt: now,
     updatedAt: now,
     endedAt: '',
     clearTimeMs: '',
     currency: 0,
+    score: 0,
   };
 
   appendRowObject_(DB_SHEETS.RUNS, run);
@@ -109,6 +151,7 @@ function buildRunResumeSummary_(run) {
     currentHp: Number(run.currentHp || 0),
     currentShield: Number(run.currentShield || 0),
     currency: Number(run.currency || 0),
+    score: Number(run.score || 0),
     startedAt: run.startedAt || '',
     updatedAt: run.updatedAt || '',
   };
@@ -579,6 +622,11 @@ function submitActionAnswer(answerPayload) {
     efficiency: efficiency,
     finalDifficulty: pendingAction.finalDifficulty,
     isOtherPlayerQuestion: pendingAction.isOtherPlayerQuestion,
+    scoreDelta: calculateAnswerScore_({
+      isCorrect: isCorrect,
+      efficiency: efficiency,
+      finalDifficulty: pendingAction.finalDifficulty,
+    }),
   });
   if (battleState.status !== STATUS.BATTLE_ACTIVE) {
     flushQueuedBattleAnswerLogs_(battleState);
@@ -1279,6 +1327,8 @@ function saveRunState(runId, battleState) {
 }
 
 function commitStageResult(stagePayload, authToken) {
+  ensureTableColumns_(DB_SHEETS.RUNS, DB_COLUMNS.RUNS);
+  ensureTableColumns_(DB_SHEETS.ANSWER_LOGS, DB_COLUMNS.ANSWER_LOGS);
   var payload = stagePayload || {};
   var player = getCurrentPlayer_(authToken);
   var run = requireRun_(payload.runId);
@@ -1312,8 +1362,25 @@ function commitStageResult(stagePayload, authToken) {
     stageState.reward = clientStageState.reward;
   }
   stageState.battle = battleState;
+  stageState.scoreState = stageState.scoreState || {};
+
+  var battleIdForScore = String(battleState.battleId || '');
+  var answerScoreAlreadyAwarded = !!(battleIdForScore && stageState.scoreState.answerScoreBattleId === battleIdForScore);
+  var answerScoreDelta = 0;
+  if (battleIdForScore) {
+    stageState.scoreState.battleClearedAtByBattleId = stageState.scoreState.battleClearedAtByBattleId || {};
+    if (!stageState.scoreState.battleClearedAtByBattleId[battleIdForScore]) {
+      stageState.scoreState.battleClearedAtByBattleId[battleIdForScore] = new Date().toISOString();
+    }
+  }
 
   queuedServerAnswerLogs.forEach(function(answerPayload) {
+    if (!answerScoreAlreadyAwarded) {
+      answerPayload.scoreDelta = calculateAnswerScore_(answerPayload);
+      answerScoreDelta += Number(answerPayload.scoreDelta || 0);
+    } else {
+      answerPayload.scoreDelta = 0;
+    }
     queueBattleAnswerLog_(battleState, answerPayload);
     markQuestionUsedForRun_(stageState, battleState, answerPayload.questionId);
   });
@@ -1327,6 +1394,12 @@ function commitStageResult(stagePayload, authToken) {
     var maxMs = Math.max(1, Number(answerPayload.maxTimeMs || answerPayload.maxMs || 1));
     var isCorrect = isCorrectAnswer_(question, answerPayload.selectedAnswer, answerPayload.selectedChoiceIndex, answerPayload.selectedAnswerText);
     var efficiency = calculateEfficiency(isCorrect, Math.max(0, maxMs - elapsedMs), maxMs, Number(answerPayload.wrongCountAfterTimeout || 0), getItemQuestionModifiers_(battleState, question), question);
+    var scoreDelta = answerScoreAlreadyAwarded ? 0 : calculateAnswerScore_({
+      isCorrect: isCorrect,
+      efficiency: efficiency,
+      finalDifficulty: answerPayload.finalDifficulty,
+    });
+    answerScoreDelta += scoreDelta;
     queueBattleAnswerLog_(battleState, {
       questionId: question.questionId,
       playerId: player.playerId,
@@ -1343,9 +1416,16 @@ function commitStageResult(stagePayload, authToken) {
       efficiency: efficiency,
       finalDifficulty: answerPayload.finalDifficulty,
       isOtherPlayerQuestion: answerPayload.isOtherPlayerQuestion,
+      scoreDelta: scoreDelta,
     });
     markQuestionUsedForRun_(stageState, battleState, question.questionId);
   });
+
+  if (!answerScoreAlreadyAwarded) {
+    stageState.scoreState.answerScoreBattleId = battleIdForScore;
+    stageState.scoreState.answerScore = answerScoreDelta;
+    stageState.scoreState.answerScoreAwardedAt = new Date().toISOString();
+  }
   flushQueuedBattleAnswerLogs_(battleState);
 
   if (battleState.status === STATUS.BATTLE_VICTORY) {
@@ -1427,14 +1507,32 @@ function queueBattleAnswerLog_(battleState, answerPayload) {
 }
 
 function flushQueuedBattleAnswerLogs_(battleState) {
+  ensureTableColumns_(DB_SHEETS.ANSWER_LOGS, DB_COLUMNS.ANSWER_LOGS);
   var queuedLogs = (battleState.pendingAnswerLogs || []).slice();
   battleState.pendingAnswerLogs = [];
+  var scoreByRunId = {};
+  queuedLogs.forEach(function(answerPayload) {
+    if (!answerPayload) {
+      return;
+    }
+    if (answerPayload.scoreDelta === undefined || answerPayload.scoreDelta === null || answerPayload.scoreDelta === '') {
+      answerPayload.scoreDelta = calculateAnswerScore_(answerPayload);
+    }
+    if (answerPayload.runId) {
+      scoreByRunId[answerPayload.runId] = Number(scoreByRunId[answerPayload.runId] || 0) + Number(answerPayload.scoreDelta || 0);
+    }
+  });
   var answerLogs = queuedLogs.map(function(answerPayload) {
     return buildAnswerLog_(answerPayload);
   });
   if (answerLogs.length) {
     appendRowObjects_(DB_SHEETS.ANSWER_LOGS, answerLogs);
   }
+  Object.keys(scoreByRunId).forEach(function(runId) {
+    if (Number(scoreByRunId[runId] || 0) > 0) {
+      awardRunScore_(runId, scoreByRunId[runId]);
+    }
+  });
   queuedLogs.forEach(function(answerPayload) {
     updatePlayerAnswerCache_(answerPayload);
     if (answerPayload.questionId) {
@@ -1445,6 +1543,7 @@ function flushQueuedBattleAnswerLogs_(battleState) {
 }
 
 function logAnswer(answerPayload) {
+  ensureTableColumns_(DB_SHEETS.ANSWER_LOGS, DB_COLUMNS.ANSWER_LOGS);
   var payload = answerPayload || {};
   var answerLog = buildAnswerLog_(payload);
   appendRowObject_(DB_SHEETS.ANSWER_LOGS, answerLog);
@@ -1471,7 +1570,43 @@ function buildAnswerLog_(answerPayload) {
     efficiency: payload.efficiency,
     finalDifficulty: payload.finalDifficulty,
     isOtherPlayerQuestion: !!payload.isOtherPlayerQuestion,
+    scoreDelta: Number(payload.scoreDelta || 0),
     createdAt: new Date(),
+  };
+}
+
+function calculateAnswerScore_(answerPayload) {
+  var payload = answerPayload || {};
+  if (!payload.isCorrect) {
+    return 0;
+  }
+  var difficulty = Math.max(GAME_RULES.MIN_DIFFICULTY, Number(payload.finalDifficulty || GAME_RULES.MIN_DIFFICULTY));
+  var efficiency = Math.max(0, Number(payload.efficiency || 0));
+  return Math.max(0, Math.round(difficulty * 100 * efficiency));
+}
+
+function awardRunScore_(runId, scoreDelta) {
+  ensureTableColumns_(DB_SHEETS.RUNS, DB_COLUMNS.RUNS);
+  var delta = Math.max(0, Math.round(Number(scoreDelta || 0)));
+  var run = requireRun_(runId);
+  if (delta <= 0) {
+    return {
+      run: run,
+      previousScore: Number(run.score || 0),
+      scoreDelta: 0,
+      totalScore: Number(run.score || 0),
+    };
+  }
+  var previousScore = Number(run.score || 0);
+  var updated = updateRowByKey_(DB_SHEETS.RUNS, 'runId', runId, {
+    score: previousScore + delta,
+    updatedAt: new Date(),
+  });
+  return {
+    run: updated,
+    previousScore: previousScore,
+    scoreDelta: delta,
+    totalScore: Number(updated && updated.score || previousScore + delta),
   };
 }
 
@@ -1508,6 +1643,7 @@ function buildBattleView_(run, stageState) {
     runId: run.runId,
     playerId: run.playerId,
     currency: Number(run.currency || 0),
+    score: Number(run.score || 0),
     battle: battleState,
     clientConfig: getBattleClientConfig_(),
     availableSkills: battleState ? getAvailableSkills(runState, battleState) : [],
@@ -2007,6 +2143,8 @@ function sanitizeQuestionForClient_(question) {
     subject: question.subject,
     unit: question.unit,
     tags: question.tags,
+    likeCount: Number(question.likeCount || 0),
+    dislikeCount: Number(question.dislikeCount || 0),
   };
 }
 
@@ -2027,7 +2165,11 @@ function saveStageState_(runId, stageState, battleState) {
     createPlayerGhostForDefeat_(runId, battleState);
   }
 
-  return updateRowByKey_(DB_SHEETS.RUNS, 'runId', runId, patch);
+  var updatedRun = updateRowByKey_(DB_SHEETS.RUNS, 'runId', runId, patch);
+  if (battleState.status === STATUS.BATTLE_DEFEAT && typeof updatePlayerProgressFromRun_ === 'function') {
+    updatePlayerProgressFromRun_(updatedRun);
+  }
+  return updatedRun;
 }
 
 function createPlayerGhostForDefeat_(runId, battleState) {

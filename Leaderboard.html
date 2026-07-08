@@ -107,6 +107,7 @@
           '<thead><tr>' +
             '<th>순위</th>' +
             '<th>이름</th>' +
+            '<th>점수</th>' +
             '<th>최대 층-스테이지</th>' +
             '<th>클리어 시간</th>' +
             '<th>정답률</th>' +
@@ -115,6 +116,7 @@
             return '<tr>' +
               '<td class="leaderboard-rank">' + Number(row.rank || 0) + '</td>' +
               '<td>' + escapeHtml(row.displayName || '-') + '</td>' +
+              '<td><strong>' + escapeHtml(row.scoreText || '0점') + '</strong></td>' +
               '<td>' + escapeHtml(row.progressText || '-') + '</td>' +
               '<td>' + escapeHtml(row.clearTimeText || '없음') + '</td>' +
               '<td>' + escapeHtml(row.accuracyText || '0%') + '</td>' +

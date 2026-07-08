@@ -62,6 +62,7 @@ function getLearningRpgAudioVolumeTweaksClientPatch_() {
     '\n' +
     '  function applySfxVolume(audio){\n' +
     '    if (!isAudioElement(audio)) return;\n' +
+    '    if (audio.__learningRpgSkipSfxVolume) return;\n' +
     '    var src = String(audio.currentSrc || audio.src || "");\n' +
     '    if (!isLearningRpgSfxSource(src)) return;\n' +
     '    if (!isSoundEnabled()) {\n' +

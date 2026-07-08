@@ -1,0 +1,10 @@
+.git/**
+.agents/**
+.codex/**
+doc/**
+docs/**
+outputs/**
+resources/**
+.tmp_spreadsheet/**
+node_modules/**
+*.md

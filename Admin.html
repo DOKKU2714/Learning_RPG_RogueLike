@@ -368,7 +368,7 @@
       }
       container.innerHTML =
         '<table class="stat-table">' +
-          '<thead><tr><th>문제</th><th>출제자</th><th>상태</th><th>난이도</th><th>풀이</th><th>정답률</th></tr></thead>' +
+          '<thead><tr><th>문제</th><th>출제자</th><th>상태</th><th>난이도</th><th>풀이</th><th>정답률</th><th>반응</th></tr></thead>' +
           '<tbody>' + questions.map(function(question) {
             return '<tr>' +
               '<td class="stat-prompt" title="' + escapeHtml(question.prompt) + '">' + escapeHtml(question.prompt) + '</td>' +
@@ -377,6 +377,7 @@
               '<td>' + renderDifficultyStars(question.difficulty || 1) + '</td>' +
               '<td>' + Number(question.correctCount || 0) + ' / ' + Number(question.totalCount || 0) + '</td>' +
               '<td>' + formatRate(question.correctRate) + '</td>' +
+              '<td>좋아요 ' + Number(question.likeCount || 0) + ' / 싫어요 ' + Number(question.dislikeCount || 0) + '</td>' +
             '</tr>';
           }).join('') + '</tbody>' +
         '</table>';

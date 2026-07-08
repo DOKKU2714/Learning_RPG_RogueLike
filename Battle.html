@@ -105,6 +105,17 @@
         <p id="questionPrompt">문제 본문</p>
       </div>
 
+      <div id="questionReactionBar" class="question-reaction-bar" aria-label="문제 반응">
+        <button id="questionLikeButton" class="question-reaction-button question-like-button" type="button" onclick="chooseQuestionReaction('like')">
+          <span>좋아요</span>
+          <strong id="questionLikeCount">0</strong>
+        </button>
+        <button id="questionDislikeButton" class="question-reaction-button question-dislike-button" type="button" onclick="chooseQuestionReaction('dislike')">
+          <span>싫어요</span>
+          <strong id="questionDislikeCount">0</strong>
+        </button>
+      </div>
+
       <div class="question-frame question-answer-panel">
         <div id="questionAnswerArea"></div>
       </div>
@@ -140,6 +151,27 @@
         <button id="rewardConfirmButton" type="button" onclick="confirmRewardChoice()" disabled>확인</button>
       </div>
       <div id="rewardMessage" class="message"></div>
+    </section>
+  </div>
+
+  <div id="scoreModal" class="question-modal-overlay" aria-hidden="true">
+    <section class="question-modal score-modal" role="dialog" aria-modal="true" aria-labelledby="scoreModalTitle">
+      <div class="score-modal-header">
+        <p class="muted">SCORE</p>
+        <h2 id="scoreModalTitle">점수 획득</h2>
+      </div>
+      <div class="score-total-row">
+        <span>획득 점수</span>
+        <strong id="scoreDeltaText">0점</strong>
+      </div>
+      <div id="scoreBreakdown" class="score-breakdown"></div>
+      <div class="score-total-row score-current-row">
+        <span>현재 점수</span>
+        <strong id="scoreTotalText">0점</strong>
+      </div>
+      <div class="inline-actions" style="justify-content:flex-end; margin-top:14px;">
+        <button id="scoreModalConfirmButton" type="button" onclick="confirmScoreModal()">확인</button>
+      </div>
     </section>
   </div>
 
@@ -184,6 +216,7 @@
     var isAnimatingTurn = false;
     var skillPanelOpen = false;
     var battleQuestionCache = [];
+    var reusableQuestionCache = [];
     var BATTLE_STEP_DELAY_MS = 1000;
     var MONSTER_TURN_START_DELAY_MS = 1000;
     var ATTACK_EFFECT_DELAY_MS = 420;
@@ -228,6 +261,10 @@
     var stageResultCommittedKey = '';
     var stageResultCommitCallbacks = [];
     var stageResultCommitFailureCallbacks = [];
+    var questionReactionSaving = false;
+    var pendingScoreModalResponse = null;
+    var scoreAnimationTimers = [];
+    var scoreAnimationDone = true;
     var currentRewardView = null;
     var combatActionPanelHtml = '';
     var CLIENT_BASE_GUARD_SHIELD = 5;
@@ -298,7 +335,7 @@
           resetStageCommitState();
           restoreLocalBattleCheckpoint();
           applyBattleClientConfig(currentView.clientConfig);
-          battleQuestionCache = (currentView.questionCache || []).slice();
+          resetBattleQuestionCacheFromView(currentView, []);
           renderBattle(currentView);
           if (isFloorIntermissionView(currentView)) {
             startFloorIntermissionEntrance();
@@ -820,6 +857,7 @@
 
     function normalizeBattleView(view) {
       view = view || {};
+      view.score = Number(view.score || 0);
       if (!view.battle && view.rewardView && view.rewardView.intermissionStage) {
         view.battle = buildClientFloorIntermissionBattle(view.rewardView.intermissionStage, view.rewardView);
       }
@@ -843,7 +881,8 @@
       view.stageState.usedQuestionIds = mergeClientQuestionIds(view.stageState.usedQuestionIds, battle.usedQuestionIds);
       battle.usedQuestionIds = view.stageState.usedQuestionIds.slice();
       view.questionCache = view.questionCache || [];
-      view.questionCache = filterQuestionCacheByUsed(view.questionCache, view.stageState.usedQuestionIds);
+      view.reusableQuestionCache = getReusableQuestionCacheForView(view);
+      view.questionCache = filterQuestionCacheByUsed(view.reusableQuestionCache.slice(), view.stageState.usedQuestionIds);
       view.monsterAiRules = view.monsterAiRules || [];
       return view;
     }
@@ -876,14 +915,37 @@
     }
 
     function filterQuestionCacheByUsed(cache, usedQuestionIds) {
+      var source = cache || [];
       var used = {};
       (usedQuestionIds || []).forEach(function(questionId) {
         questionId = String(questionId || '');
         if (questionId) used[questionId] = true;
       });
-      return (cache || []).filter(function(questionView) {
+      var filtered = source.filter(function(questionView) {
         return !used[getQuestionViewId(questionView)] || questionView && questionView.fallbackReason === 'exhaustedUnusedQuestions';
       });
+      return filtered.length || !source.length ? filtered : source.slice();
+    }
+
+    function getReusableQuestionCacheForView(view) {
+      view = view || currentView || {};
+      var cache = view.reusableQuestionCache && view.reusableQuestionCache.length
+        ? view.reusableQuestionCache
+        : view.questionCache || [];
+      return cache.slice();
+    }
+
+    function resetBattleQuestionCacheFromView(view, fallbackCache) {
+      view = view || currentView || {};
+      var reusable = getReusableQuestionCacheForView(view);
+      if (reusable.length) {
+        reusableQuestionCache = reusable.slice();
+        view.reusableQuestionCache = reusable.slice();
+      }
+      var source = view.questionCache && view.questionCache.length
+        ? view.questionCache
+        : reusableQuestionCache.length ? reusableQuestionCache : fallbackCache || [];
+      battleQuestionCache = filterQuestionCacheByUsed(source.slice(), getClientUsedQuestionIds(view));
     }
 
     function markClientQuestionUsed(questionId, view) {
@@ -898,7 +960,12 @@
       if (view.battle) {
         view.battle.usedQuestionIds = usedQuestionIds.slice();
       }
-      view.questionCache = filterQuestionCacheByUsed(view.questionCache, usedQuestionIds);
+      var reusable = getReusableQuestionCacheForView(view);
+      if (reusable.length) {
+        reusableQuestionCache = reusable.slice();
+        view.reusableQuestionCache = reusable.slice();
+      }
+      view.questionCache = filterQuestionCacheByUsed((reusable.length ? reusable : view.questionCache).slice(), usedQuestionIds);
       battleQuestionCache = filterQuestionCacheByUsed(battleQuestionCache, usedQuestionIds);
     }
 
@@ -1412,16 +1479,59 @@
     }
 
     function renderStatusIcons(monster) {
+      var groupedStatuses = getDisplayStatusGroups(monster);
       var statuses = []
         .concat(Number(monster.shield || 0) > 0 ? [{ type: 'buff shield-status', label: 'DEF', tooltip: '방어막 ' + Number(monster.shield || 0) }] : [])
-        .concat((monster.buffs || []).map(function(status) { return buildStatusView(status, 'buff'); }))
-        .concat((monster.debuffs || []).map(function(status) { return buildStatusView(status, 'debuff'); }));
+        .concat(groupedStatuses.buffs.map(function(status) { return buildStatusView(status, 'buff'); }))
+        .concat(groupedStatuses.debuffs.map(function(status) { return buildStatusView(status, 'debuff'); }));
       if (!statuses.length) return '';
       return '<div class="status-row monster-status-row">' + statuses.map(function(status) {
         var statTooltip = status.statTooltip ? ' data-stat-tooltip="' + escapeHtml(status.statTooltip) + '"' : '';
         var turns = status.remainingTurns ? '<em class="status-turns">' + escapeHtml(status.remainingTurns) + '</em>' : '';
         return '<span class="status-icon ' + escapeHtml(status.type) + '" data-tooltip="' + escapeHtml(status.tooltip) + '"' + statTooltip + '>' + escapeHtml(status.label) + turns + '</span>';
       }).join('') + '</div>';
+    }
+
+    function getDisplayStatusGroups(target) {
+      var groups = { buffs: [], debuffs: [] };
+      if (!target) return groups;
+      syncClientStatusBuckets(target);
+      var seen = {};
+
+      function addStatus(status, fallbackCategory) {
+        if (!status) return;
+        var category = getDisplayStatusCategory(status, fallbackCategory);
+        if (category !== 'buff' && category !== 'debuff') return;
+        var key = category + ':' + String(status.effectId || status.id || status.name || groups.buffs.length + groups.debuffs.length);
+        var next = Object.assign({}, status, { category: category });
+        if (seen[key]) {
+          Object.assign(seen[key], next);
+          return;
+        }
+        seen[key] = next;
+        if (category === 'buff') {
+          groups.buffs.push(next);
+        } else {
+          groups.debuffs.push(next);
+        }
+      }
+
+      (target.effects || []).forEach(function(status) { addStatus(status, ''); });
+      (target.buffs || []).forEach(function(status) { addStatus(status, 'buff'); });
+      (target.debuffs || []).forEach(function(status) { addStatus(status, 'debuff'); });
+      return groups;
+    }
+
+    function getDisplayStatusCategory(status, fallbackCategory) {
+      var category = String(status && status.category || fallbackCategory || '').toLowerCase();
+      var effectId = String(status && (status.effectId || status.id) || '');
+      if (!category && /^buff_/i.test(effectId)) {
+        category = 'buff';
+      }
+      if (!category && /^debuff_/i.test(effectId)) {
+        category = 'debuff';
+      }
+      return category;
     }
 
     function buildStatusView(status, type) {
@@ -1732,6 +1842,7 @@
         ['치명타 확률', formatEffectiveStat(stats, effectiveStats, 'criticalRate', '%')],
         ['치명타 피해', formatEffectiveStat(stats, effectiveStats, 'criticalDamage', '%')],
         ['화폐', currentView ? Number(currentView.currency || 0) : 0],
+        ['점수', formatScore(currentView ? Number(currentView.score || 0) : 0)],
       ];
       panel.innerHTML = '<strong>현재 스탯</strong>' + rows.map(function(row) {
         return '<div class="battle-stat-row"><span>' + escapeHtml(row[0]) + '</span><b>' + escapeHtml(row[1]) + '</b></div>';
@@ -1754,7 +1865,7 @@
               isDummyMode = false;
               currentView = normalizeBattleView(view);
               applyBattleClientConfig(currentView.clientConfig);
-              battleQuestionCache = (currentView.questionCache || []).slice();
+              resetBattleQuestionCacheFromView(currentView, []);
               renderBattle(currentView);
               pushLog('데이터를 다시 불러왔습니다.');
             })
@@ -1805,9 +1916,10 @@
 
     function renderPlayerStatuses(player) {
       var row = document.getElementById('playerStatusRow');
+      var groupedStatuses = getDisplayStatusGroups(player);
       var statuses = []
-        .concat((player.buffs || []).map(function(status) { return buildStatusView(status, 'buff'); }))
-        .concat((player.debuffs || []).map(function(status) { return buildStatusView(status, 'debuff'); }));
+        .concat(groupedStatuses.buffs.map(function(status) { return buildStatusView(status, 'buff'); }))
+        .concat(groupedStatuses.debuffs.map(function(status) { return buildStatusView(status, 'debuff'); }));
       row.innerHTML = statuses.map(function(status) {
         var statTooltip = status.statTooltip ? ' data-stat-tooltip="' + escapeHtml(status.statTooltip) + '"' : '';
         var turns = status.remainingTurns ? '<em class="status-turns">' + escapeHtml(status.remainingTurns) + '</em>' : '';
@@ -2082,6 +2194,9 @@
       if (!battleQuestionCache.length && currentView && currentView.questionCache && currentView.questionCache.length) {
         battleQuestionCache = filterQuestionCacheByUsed(currentView.questionCache.slice(), getClientUsedQuestionIds(currentView));
       }
+      if (!battleQuestionCache.length && reusableQuestionCache.length) {
+        battleQuestionCache = filterQuestionCacheByUsed(reusableQuestionCache.slice(), getClientUsedQuestionIds(currentView));
+      }
       if (!battleQuestionCache.length) return null;
 
       var questionView = JSON.parse(JSON.stringify(battleQuestionCache.shift()));
@@ -2144,6 +2259,7 @@
       document.getElementById('questionCreatorBadge').textContent = '출제자: ' + (question.creatorName || '알 수 없음');
       document.getElementById('questionCreatorBadge').style.visibility = (questionView.isOtherPlayerQuestion || question.creatorId) ? 'visible' : 'hidden';
       document.getElementById('questionMessage').textContent = '';
+      renderQuestionReactionView(question, !!dummy);
       renderAnswerArea(question);
       document.getElementById('questionModal').classList.add('active');
       document.getElementById('questionModal').setAttribute('aria-hidden', 'false');
@@ -2193,6 +2309,91 @@
           label.querySelector('input').checked = true;
         });
       });
+    }
+
+    function renderQuestionReactionView(question, disabled) {
+      var safeQuestion = question || {};
+      safeQuestion.myReaction = safeQuestion.myReaction || '';
+      updateQuestionReactionView(safeQuestion);
+      var hasQuestionId = !!String(safeQuestion.questionId || '').trim();
+      var likeButton = document.getElementById('questionLikeButton');
+      var dislikeButton = document.getElementById('questionDislikeButton');
+      if (likeButton) likeButton.disabled = !!disabled || !hasQuestionId;
+      if (dislikeButton) dislikeButton.disabled = !!disabled || !hasQuestionId;
+    }
+
+    function chooseQuestionReaction(reaction) {
+      if (!currentQuestionView || !currentQuestionView.question || questionReactionSaving) return;
+      var question = currentQuestionView.question;
+      var questionId = String(question.questionId || '').trim();
+      if (!questionId || questionId === 'dummy-question') return;
+
+      var previousReaction = question.myReaction || '';
+      var nextReaction = previousReaction === reaction ? '' : reaction;
+      questionReactionSaving = true;
+      setQuestionReactionButtonsDisabled(true);
+      applyOptimisticQuestionReaction(question, previousReaction, nextReaction);
+      updateQuestionReactionView(question);
+
+      google.script.run
+        .withSuccessHandler(function(result) {
+          questionReactionSaving = false;
+          question.likeCount = Number(result && result.likeCount || 0);
+          question.dislikeCount = Number(result && result.dislikeCount || 0);
+          question.myReaction = result && result.myReaction || '';
+          if (isCurrentQuestionId(questionId)) {
+            setQuestionReactionButtonsDisabled(false);
+            updateQuestionReactionView(question);
+          }
+        })
+        .withFailureHandler(function(error) {
+          questionReactionSaving = false;
+          applyOptimisticQuestionReaction(question, nextReaction, previousReaction);
+          if (isCurrentQuestionId(questionId)) {
+            setQuestionReactionButtonsDisabled(false);
+            updateQuestionReactionView(question);
+            document.getElementById('questionMessage').textContent = error.message || '반응 저장에 실패했습니다.';
+            document.getElementById('questionMessage').className = 'message error';
+          }
+        })
+        .setQuestionReaction(questionId, nextReaction, getAuthToken());
+    }
+
+    function isCurrentQuestionId(questionId) {
+      return String(currentQuestionView && currentQuestionView.question && currentQuestionView.question.questionId || '') === String(questionId || '');
+    }
+
+    function applyOptimisticQuestionReaction(question, previousReaction, nextReaction) {
+      var likeCount = Number(question.likeCount || 0);
+      var dislikeCount = Number(question.dislikeCount || 0);
+      if (previousReaction === 'like') likeCount -= 1;
+      if (previousReaction === 'dislike') dislikeCount -= 1;
+      if (nextReaction === 'like') likeCount += 1;
+      if (nextReaction === 'dislike') dislikeCount += 1;
+      question.likeCount = Math.max(0, likeCount);
+      question.dislikeCount = Math.max(0, dislikeCount);
+      question.myReaction = nextReaction || '';
+    }
+
+    function updateQuestionReactionView(question) {
+      var safeQuestion = question || {};
+      var likeButton = document.getElementById('questionLikeButton');
+      var dislikeButton = document.getElementById('questionDislikeButton');
+      var likeCount = document.getElementById('questionLikeCount');
+      var dislikeCount = document.getElementById('questionDislikeCount');
+      if (likeCount) likeCount.textContent = Number(safeQuestion.likeCount || 0);
+      if (dislikeCount) dislikeCount.textContent = Number(safeQuestion.dislikeCount || 0);
+      if (likeButton) likeButton.classList.toggle('selected', safeQuestion.myReaction === 'like');
+      if (dislikeButton) dislikeButton.classList.toggle('selected', safeQuestion.myReaction === 'dislike');
+    }
+
+    function setQuestionReactionButtonsDisabled(disabled) {
+      var question = currentQuestionView && currentQuestionView.question || {};
+      var hasQuestionId = !!String(question.questionId || '').trim() && question.questionId !== 'dummy-question';
+      var likeButton = document.getElementById('questionLikeButton');
+      var dislikeButton = document.getElementById('questionDislikeButton');
+      if (likeButton) likeButton.disabled = !!disabled || !hasQuestionId;
+      if (dislikeButton) dislikeButton.disabled = !!disabled || !hasQuestionId;
     }
 
     function hideQuestionGiveUpButton() {
@@ -2539,7 +2740,7 @@
       hideLoadingModal();
       hideTurnSyncSpinner();
       currentView = normalizeBattleView(pendingServerTurnView);
-      battleQuestionCache = (currentView.questionCache || battleQuestionCache || []).slice();
+      resetBattleQuestionCacheFromView(currentView, battleQuestionCache);
       pendingServerTurnView = null;
       pendingQuestionTurnView = null;
       pendingQuestionTurnError = null;
@@ -2793,7 +2994,7 @@
       }
 
       currentView = normalizeBattleView(nextView);
-      battleQuestionCache = (currentView.questionCache || battleQuestionCache || []).slice();
+      resetBattleQuestionCacheFromView(currentView, battleQuestionCache);
       renderBattle(currentView);
       if (pendingServerTurnView && applyPendingServerTurnSync()) {
         renderBattle(currentView);
@@ -4147,7 +4348,7 @@
           clearLocalBattleCheckpoint(currentView && currentView.runId);
           if (view && view.battle) {
             currentView = normalizeBattleView(view);
-            battleQuestionCache = (currentView.questionCache || battleQuestionCache || []).slice();
+            resetBattleQuestionCacheFromView(currentView, battleQuestionCache);
           }
           callbacks.forEach(function(callback) {
             callback(currentView);
@@ -4628,29 +4829,11 @@
               rewardModal.classList.remove('stage-clear-reward-overlay');
               rewardModal.classList.remove('floor-rest-reward-overlay');
               rewardModal.classList.remove('reward-applying');
-              if (response.cleared) {
-                pushLog('1층 스테이지를 클리어했습니다. 탈출에 성공했습니다.');
-                setPlayerTurn(false);
+              if (shouldShowScoreModal(response && response.scoreSummary)) {
+                showScoreModal(response.scoreSummary, response);
                 return;
               }
-              if (response.showReward && response.rewardView) {
-                currentView = normalizeBattleView(response);
-                battleQuestionCache = (currentView.questionCache || []).slice();
-                currentRewardView = response.rewardView;
-                ensureClientRewardState(response.rewardView);
-                clearLocalBattleCheckpoint(currentView.runId);
-                resetStageCommitState();
-                currentRewardView = response.rewardView;
-                renderBattle(currentView);
-                startFloorIntermissionEntrance();
-                return;
-              }
-              currentView = normalizeBattleView(response);
-              battleQuestionCache = (currentView.questionCache || []).slice();
-              clearLocalBattleCheckpoint(currentView.runId);
-              resetStageCommitState();
-              renderBattle(currentView);
-              startBattleEntrance();
+              handleRewardSelectionResponse(response);
             })
             .withFailureHandler(function(error) {
               hideLoadingModal();
@@ -4682,6 +4865,218 @@
           document.getElementById('rewardMessage').className = 'message error';
         });
       }, 260);
+    }
+
+    function shouldShowScoreModal(scoreSummary) {
+      return !!scoreSummary && Number(scoreSummary.scoreDelta || 0) > 0;
+    }
+
+    function showScoreModal(scoreSummary, response) {
+      pendingScoreModalResponse = response || null;
+      var summary = scoreSummary || {};
+      clearScoreAnimation();
+      scoreAnimationDone = false;
+      var confirmButton = document.getElementById('scoreModalConfirmButton');
+      if (confirmButton) {
+        confirmButton.disabled = true;
+      }
+      var scoreDeltaRow = document.getElementById('scoreDeltaText').closest('.score-total-row');
+      var scoreTotalRow = document.getElementById('scoreTotalText').closest('.score-total-row');
+      if (scoreDeltaRow) scoreDeltaRow.classList.remove('score-revealed');
+      if (scoreTotalRow) scoreTotalRow.classList.remove('score-revealed');
+      document.getElementById('scoreDeltaText').textContent = '+0점';
+      document.getElementById('scoreTotalText').textContent = '0점';
+      var rows = [
+        ['문제 점수', Number(summary.answerScore || 0)],
+        ['스테이지 클리어', Number(summary.stageScore || 0)],
+        ['층 클리어', Number(summary.floorBaseScore || 0)],
+        ['속도 보너스', Number(summary.floorSpeedScore || 0)],
+        ['탈출 보너스', Number(summary.clearBonus || 0)],
+      ].filter(function(row) {
+        return row[1] > 0;
+      });
+      document.getElementById('scoreBreakdown').innerHTML = rows.map(function(row) {
+        return '<div class="score-breakdown-row score-breakdown-pending" data-score-value="' + escapeHtml(row[1]) + '">' +
+          '<span>' + escapeHtml(row[0]) + '</span>' +
+          '<b>+0점</b>' +
+        '</div>';
+      }).join('');
+      var modal = document.getElementById('scoreModal');
+      modal.classList.add('active');
+      modal.setAttribute('aria-hidden', 'false');
+      queueScoreAnimation(function() {
+        animateScoreSequence(summary);
+      }, 260);
+    }
+
+    function confirmScoreModal() {
+      if (!scoreAnimationDone) {
+        finishScoreAnimationNow();
+        return;
+      }
+      var modal = document.getElementById('scoreModal');
+      modal.classList.remove('active');
+      modal.setAttribute('aria-hidden', 'true');
+      var response = pendingScoreModalResponse;
+      pendingScoreModalResponse = null;
+      handleRewardSelectionResponse(response);
+    }
+
+    function animateScoreSequence(summary) {
+      var rows = Array.prototype.slice.call(document.querySelectorAll('#scoreBreakdown .score-breakdown-row'));
+      var index = 0;
+
+      function nextRow() {
+        if (index >= rows.length) {
+          revealScoreTotals(summary);
+          return;
+        }
+        var row = rows[index];
+        var target = Number(row.getAttribute('data-score-value') || 0);
+        row.classList.remove('score-breakdown-pending');
+        row.classList.add('score-breakdown-active');
+        animateScoreNumber(row.querySelector('b'), 0, target, 640, function(value) {
+          return '+' + formatScore(value);
+        }, function() {
+          row.classList.remove('score-breakdown-active');
+          row.classList.add('score-breakdown-complete');
+          index += 1;
+          queueScoreAnimation(nextRow, 240);
+        });
+      }
+
+      nextRow();
+    }
+
+    function revealScoreTotals(summary) {
+      var delta = Number(summary && summary.scoreDelta || 0);
+      var total = Number(summary && summary.totalScore || 0);
+      var previous = Math.max(0, Number(summary && summary.previousScore !== undefined ? summary.previousScore : total - delta));
+      var deltaRow = document.getElementById('scoreDeltaText').closest('.score-total-row');
+      var totalRow = document.getElementById('scoreTotalText').closest('.score-total-row');
+      if (deltaRow) {
+        deltaRow.classList.add('score-revealed');
+      }
+      animateScoreNumber(document.getElementById('scoreDeltaText'), 0, delta, 420, function(value) {
+        return '+' + formatScore(value);
+      }, function() {
+        queueScoreAnimation(function() {
+          if (totalRow) {
+            totalRow.classList.add('score-revealed');
+          }
+          animateScoreNumber(document.getElementById('scoreTotalText'), previous, total, 560, formatScore, function() {
+            scoreAnimationDone = true;
+            var confirmButton = document.getElementById('scoreModalConfirmButton');
+            if (confirmButton) {
+              confirmButton.disabled = false;
+              confirmButton.focus();
+            }
+          });
+        }, 260);
+      });
+    }
+
+    function animateScoreNumber(element, from, to, durationMs, formatter, onDone) {
+      if (!element) {
+        if (onDone) onDone();
+        return;
+      }
+      var start = Date.now();
+      var startValue = Number(from || 0);
+      var endValue = Number(to || 0);
+      var duration = Math.max(1, Number(durationMs || 1));
+      function tick() {
+        var elapsed = Date.now() - start;
+        var progress = Math.min(1, elapsed / duration);
+        var eased = 1 - Math.pow(1 - progress, 3);
+        var value = Math.round(startValue + ((endValue - startValue) * eased));
+        element.textContent = formatter ? formatter(value) : String(value);
+        if (progress < 1) {
+          var frameId = window.requestAnimationFrame(tick);
+          scoreAnimationTimers.push({ type: 'frame', id: frameId });
+          return;
+        }
+        element.textContent = formatter ? formatter(endValue) : String(endValue);
+        if (onDone) onDone();
+      }
+      tick();
+    }
+
+    function queueScoreAnimation(callback, delayMs) {
+      var timerId = window.setTimeout(callback, Math.max(0, Number(delayMs || 0)));
+      scoreAnimationTimers.push({ type: 'timeout', id: timerId });
+      return timerId;
+    }
+
+    function clearScoreAnimation() {
+      scoreAnimationTimers.forEach(function(timer) {
+        if (!timer) return;
+        if (timer.type === 'frame') {
+          window.cancelAnimationFrame(timer.id);
+        } else {
+          window.clearTimeout(timer.id);
+        }
+      });
+      scoreAnimationTimers = [];
+    }
+
+    function finishScoreAnimationNow() {
+      var response = pendingScoreModalResponse || {};
+      var summary = response.scoreSummary || {};
+      clearScoreAnimation();
+      Array.prototype.forEach.call(document.querySelectorAll('#scoreBreakdown .score-breakdown-row'), function(row) {
+        var target = Number(row.getAttribute('data-score-value') || 0);
+        row.classList.remove('score-breakdown-pending', 'score-breakdown-active');
+        row.classList.add('score-breakdown-complete');
+        var value = row.querySelector('b');
+        if (value) value.textContent = '+' + formatScore(target);
+      });
+      var deltaRow = document.getElementById('scoreDeltaText').closest('.score-total-row');
+      var totalRow = document.getElementById('scoreTotalText').closest('.score-total-row');
+      if (deltaRow) deltaRow.classList.add('score-revealed');
+      if (totalRow) totalRow.classList.add('score-revealed');
+      document.getElementById('scoreDeltaText').textContent = '+' + formatScore(summary.scoreDelta || 0);
+      document.getElementById('scoreTotalText').textContent = formatScore(summary.totalScore || 0);
+      scoreAnimationDone = true;
+      var confirmButton = document.getElementById('scoreModalConfirmButton');
+      if (confirmButton) {
+        confirmButton.disabled = false;
+      }
+    }
+
+    function handleRewardSelectionResponse(response) {
+      response = response || {};
+      if (response.scoreSummary && response.scoreSummary.totalScore !== undefined && currentView) {
+        currentView.score = Number(response.scoreSummary.totalScore || currentView.score || 0);
+        response.score = Number(response.scoreSummary.totalScore || response.score || 0);
+      }
+      if (response.cleared) {
+        pushLog('1층 스테이지를 클리어했습니다. 탈출에 성공했습니다.');
+        setPlayerTurn(false);
+        return;
+      }
+      if (response.showReward && response.rewardView) {
+        currentView = normalizeBattleView(response);
+        resetBattleQuestionCacheFromView(currentView, []);
+        currentRewardView = response.rewardView;
+        ensureClientRewardState(response.rewardView);
+        clearLocalBattleCheckpoint(currentView.runId);
+        resetStageCommitState();
+        currentRewardView = response.rewardView;
+        renderBattle(currentView);
+        startFloorIntermissionEntrance();
+        return;
+      }
+      currentView = normalizeBattleView(response);
+      resetBattleQuestionCacheFromView(currentView, []);
+      clearLocalBattleCheckpoint(currentView.runId);
+      resetStageCommitState();
+      renderBattle(currentView);
+      startBattleEntrance();
+    }
+
+    function formatScore(score) {
+      return Number(score || 0).toLocaleString('ko-KR') + '점';
     }
 
     async function animatePlayerAttack(monsterId) {

@@ -689,6 +689,58 @@
     color: #f0dfaa;
   }
 
+  .question-reaction-bar {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin: -2px 0 12px;
+  }
+
+  .question-reaction-button {
+    min-height: 34px;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    border: 1px solid var(--line-dark);
+    padding: 6px 12px;
+    background: #101010;
+    color: #e8e8e8;
+    font-size: 13px;
+    box-shadow: inset -2px -2px 0 rgba(0, 0, 0, 0.45);
+  }
+
+  .question-reaction-button strong {
+    min-width: 18px;
+    text-align: right;
+    font-size: 14px;
+  }
+
+  .question-like-button {
+    border-color: rgba(80, 150, 255, 0.64);
+    color: #bcd8ff;
+  }
+
+  .question-like-button:hover:not(:disabled),
+  .question-like-button:focus-visible,
+  .question-like-button.selected {
+    background: rgba(37, 99, 235, 0.34);
+    border-color: #5da2ff;
+    color: #e9f3ff;
+  }
+
+  .question-dislike-button {
+    border-color: rgba(217, 72, 72, 0.64);
+    color: #ffb8b8;
+  }
+
+  .question-dislike-button:hover:not(:disabled),
+  .question-dislike-button:focus-visible,
+  .question-dislike-button.selected {
+    background: rgba(185, 74, 72, 0.34);
+    border-color: #ff7a7a;
+    color: #ffe8e8;
+  }
+
   .question-efficiency-panel {
     display: grid;
     gap: 6px;
@@ -3118,6 +3170,126 @@
 
   .reward-confirm-row button {
     min-width: 160px;
+  }
+
+  .score-modal {
+    width: min(520px, 100%);
+  }
+
+  .score-modal-header {
+    display: grid;
+    gap: 4px;
+    margin-bottom: 16px;
+  }
+
+  .score-modal-header h2 {
+    margin: 0;
+    font-size: 30px;
+    line-height: 1.1;
+  }
+
+  .score-total-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 14px;
+    border: 1px solid var(--line);
+    background: #101010;
+    padding: 12px;
+    opacity: 0.34;
+    transform: translateY(4px) scale(0.98);
+    transition: opacity 220ms ease, transform 220ms ease, box-shadow 220ms ease;
+  }
+
+  .score-total-row.score-revealed {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    animation: scorePop 420ms ease-out;
+    box-shadow: 0 0 24px rgba(255, 216, 74, 0.18);
+  }
+
+  .score-total-row span {
+    color: var(--muted);
+  }
+
+  .score-total-row strong {
+    color: #ffd84a;
+    font-size: 28px;
+    line-height: 1;
+  }
+
+  .score-current-row {
+    margin-top: 10px;
+  }
+
+  .score-current-row strong {
+    color: #f2f2f2;
+    font-size: 22px;
+  }
+
+  .score-breakdown {
+    display: grid;
+    gap: 6px;
+    margin-top: 10px;
+  }
+
+  .score-breakdown-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    border-bottom: 1px solid rgba(180, 180, 180, 0.18);
+    padding: 7px 2px;
+    opacity: 0.5;
+    transform: translateX(-4px);
+    transition: opacity 180ms ease, transform 180ms ease, color 180ms ease;
+  }
+
+  .score-breakdown-row.score-breakdown-active {
+    opacity: 1;
+    transform: translateX(0);
+  }
+
+  .score-breakdown-row.score-breakdown-complete {
+    opacity: 1;
+    transform: translateX(0);
+  }
+
+  .score-breakdown-row.score-breakdown-active b {
+    color: #ffd84a;
+    text-shadow: 0 0 12px rgba(255, 216, 74, 0.45);
+  }
+
+  .score-breakdown-row.score-breakdown-complete b {
+    color: #f0dfaa;
+  }
+
+  .score-breakdown-row.score-breakdown-pending b {
+    color: #777;
+  }
+
+  .score-breakdown-row span {
+    color: var(--muted);
+  }
+
+  .score-breakdown-row b {
+    color: #f0dfaa;
+  }
+
+  #scoreModalConfirmButton:disabled {
+    opacity: 0.5;
+    cursor: wait;
+  }
+
+  @keyframes scorePop {
+    0% {
+      transform: translateY(6px) scale(0.94);
+    }
+    58% {
+      transform: translateY(-2px) scale(1.04);
+    }
+    100% {
+      transform: translateY(0) scale(1);
+    }
   }
 
   .player-status-row {

@@ -317,6 +317,8 @@ function previewFloorRestHeal_(run, battle) {
 }
 
 function selectReward(runId, rewardId, authToken, rewardView) {
+  ensureTableColumns_(DB_SHEETS.RUNS, DB_COLUMNS.RUNS);
+  ensureTableColumns_(DB_SHEETS.PLAYER_DATA, DB_COLUMNS.PLAYER_DATA);
   var run = requireRun_(runId);
   requireRewardRunOwner_(run, authToken);
   if (run.status !== STATUS.RUN_ACTIVE) {
@@ -413,6 +415,8 @@ function selectReward(runId, rewardId, authToken, rewardView) {
     updatedAt: new Date(),
   });
 
+  var scoreSummary = awardStageClearScoreForReward_(requireRun_(runId), stageState);
+
   var movedRun = moveToNextStageForRun_(requireRun_(runId));
   updatePlayerProgressFromRun_(requireRun_(runId));
   if (movedRun.status === STATUS.RUN_CLEARED) {
@@ -421,13 +425,16 @@ function selectReward(runId, rewardId, authToken, rewardView) {
       run: toClientObject_(movedRun),
       selectedReward: appliedReward,
       currencyAmount: isRestReward ? 0 : rewardState.currencyAmount,
+      scoreSummary: scoreSummary,
     };
   }
 
   var movedStageState = getStageState_(movedRun);
   var movedStage = loadStage(movedStageState.stageId || buildStageId_(movedRun.currentFloor, movedRun.currentStage));
   if (isFloorRestStage_(movedStage)) {
-    return buildFloorRestRewardViewForRun_(movedRun, movedStageState);
+    return Object.assign(buildFloorRestRewardViewForRun_(movedRun, movedStageState), {
+      scoreSummary: scoreSummary,
+    });
   }
 
   startBattle(runId);
@@ -436,7 +443,189 @@ function selectReward(runId, rewardId, authToken, rewardView) {
     rewardSelected: true,
     selectedReward: appliedReward,
     currencyAmount: isRestReward ? 0 : rewardState.currencyAmount,
+    scoreSummary: scoreSummary,
   });
+}
+
+function awardStageClearScoreForReward_(run, stageState) {
+  stageState = stageState || getStageState_(run);
+  var rewardState = stageState.reward || {};
+  var battleState = stageState.battle || {};
+  stageState.scoreState = stageState.scoreState || {};
+  var scoreState = stageState.scoreState;
+  var isFloorRestReward = !!rewardState.floorRestChoice || isFloorRestStage_(battleState.stage || {});
+  var battleId = String(battleState.battleId || '');
+  var answerScore = Number(scoreState.answerScore || 0);
+  if (isFloorRestReward || !battleId || scoreState.stageScoreBattleId === battleId) {
+    return buildStageScoreSummary_(run, {
+      answerScore: answerScore,
+      stageScore: 0,
+      clearBonus: 0,
+      scoreDelta: 0,
+      alreadyAwarded: scoreState.stageScoreBattleId === battleId,
+    });
+  }
+
+  var stageScore = calculateStageClearScore_(battleState.stage || {
+    floor: run.currentFloor,
+    stage: run.currentStage,
+  });
+  var floorClearScore = calculateFloorClearScore_(run, stageState, battleState.stage || {
+    floor: run.currentFloor,
+    stage: run.currentStage,
+  });
+  var clearBonus = isFinalStageForScore_(battleState.stage || run) ? 30000 : 0;
+  var scoreDelta = stageScore + floorClearScore.floorScore + clearBonus;
+  var awardResult = awardRunScore_(run.runId, scoreDelta);
+  scoreState.stageScoreBattleId = battleId;
+  scoreState.stageScore = stageScore;
+  scoreState.floorBaseScore = floorClearScore.baseScore;
+  scoreState.floorSpeedScore = floorClearScore.speedScore;
+  scoreState.floorScore = floorClearScore.floorScore;
+  scoreState.floorClearTimeMs = floorClearScore.elapsedMs;
+  scoreState.floorTargetTimeMs = floorClearScore.targetMs;
+  scoreState.clearBonus = clearBonus;
+  scoreState.stageScoreAwardedAt = new Date().toISOString();
+  stageState.scoreState = scoreState;
+  updateRowByKey_(DB_SHEETS.RUNS, 'runId', run.runId, {
+    stageStateJson: safeJsonStringify_(stageState),
+    updatedAt: new Date(),
+  });
+  return buildStageScoreSummary_(awardResult.run, {
+    previousScore: Math.max(0, Number(awardResult.previousScore || 0) - answerScore),
+    answerScore: answerScore,
+    stageScore: stageScore,
+    floorBaseScore: floorClearScore.baseScore,
+    floorSpeedScore: floorClearScore.speedScore,
+    floorScore: floorClearScore.floorScore,
+    floorClearTimeMs: floorClearScore.elapsedMs,
+    floorTargetTimeMs: floorClearScore.targetMs,
+    floorSpeedMultiplier: floorClearScore.speedMultiplier,
+    clearBonus: clearBonus,
+    scoreDelta: answerScore + scoreDelta,
+    totalScore: Number(awardResult.totalScore || 0),
+  });
+}
+
+function calculateStageClearScore_(stage) {
+  var floor = Math.max(1, Number(stage && stage.floor || 1));
+  var stageNumber = Math.max(1, Number(stage && stage.stage || 1));
+  var progressIndex = ((floor - 1) * Number(GAME_RULES.STAGES_PER_FLOOR || 5)) + Math.min(stageNumber, Number(GAME_RULES.STAGES_PER_FLOOR || 5));
+  return 500 + (progressIndex * 100);
+}
+
+function calculateFloorClearScore_(run, stageState, stage) {
+  if (!isFloorClearStageForScore_(stage)) {
+    return {
+      baseScore: 0,
+      speedScore: 0,
+      floorScore: 0,
+      elapsedMs: 0,
+      targetMs: 0,
+      speedMultiplier: 0,
+    };
+  }
+
+  var floor = Math.max(1, Number(stage && stage.floor || run.currentFloor || 1));
+  var baseScore = 3000 + (floor * 1000);
+  var targetMs = getFloorScoreTargetMs_(floor);
+  var elapsedMs = calculateFloorElapsedMsForScore_(run, stageState, floor);
+  var speedMultiplier = Math.max(0, Math.min(1, 1 - ((elapsedMs - targetMs) / Math.max(1, targetMs))));
+  var speedScore = Math.round(baseScore * speedMultiplier);
+  return {
+    baseScore: baseScore,
+    speedScore: speedScore,
+    floorScore: baseScore + speedScore,
+    elapsedMs: elapsedMs,
+    targetMs: targetMs,
+    speedMultiplier: speedMultiplier,
+  };
+}
+
+function isFloorClearStageForScore_(stage) {
+  return Number(stage && stage.stage || 1) === Number(GAME_RULES.STAGES_PER_FLOOR || 5);
+}
+
+function getFloorScoreTargetMs_(floor) {
+  var minutes = Math.max(1, Number(floor || 1) + 2);
+  return minutes * 60 * 1000;
+}
+
+function calculateFloorElapsedMsForScore_(run, stageState, floor) {
+  var now = getFloorScoreEndMs_(stageState) || new Date().getTime();
+  var startedAt = getStoredFloorStartedAtMs_(stageState, floor);
+  if (!startedAt) {
+    startedAt = getFirstFloorAnswerLogMs_(run.runId, floor);
+  }
+  if (!startedAt && Number(floor || 1) === 1 && run.startedAt) {
+    startedAt = new Date(run.startedAt).getTime();
+  }
+  if (!startedAt) {
+    startedAt = now;
+  }
+  return Math.max(0, now - startedAt);
+}
+
+function getFloorScoreEndMs_(stageState) {
+  var battleId = String(stageState && stageState.battle && stageState.battle.battleId || '');
+  if (!battleId) {
+    return 0;
+  }
+  var value = stageState && stageState.scoreState && stageState.scoreState.battleClearedAtByBattleId
+    ? stageState.scoreState.battleClearedAtByBattleId[battleId]
+    : '';
+  var ms = value ? new Date(value).getTime() : 0;
+  return isNaN(ms) ? 0 : ms;
+}
+
+function getStoredFloorStartedAtMs_(stageState, floor) {
+  var scoreState = stageState && stageState.scoreState || {};
+  var byFloor = scoreState.floorStartedAtByFloor || {};
+  var value = byFloor[String(floor)] || byFloor[Number(floor)];
+  var ms = value ? new Date(value).getTime() : 0;
+  return isNaN(ms) ? 0 : ms;
+}
+
+function getFirstFloorAnswerLogMs_(runId, floor) {
+  var earliest = 0;
+  readTable_(DB_SHEETS.ANSWER_LOGS).forEach(function(log) {
+    if (String(log.runId || '') !== String(runId || '') || Number(log.floor || 0) !== Number(floor || 0) || !log.createdAt) {
+      return;
+    }
+    var ms = new Date(log.createdAt).getTime();
+    if (!isNaN(ms) && (!earliest || ms < earliest)) {
+      earliest = ms;
+    }
+  });
+  return earliest;
+}
+
+function isFinalStageForScore_(stage) {
+  return Number(stage && stage.floor || 1) >= Number(GAME_RULES.FLOOR_COUNT || 5) &&
+    Number(stage && stage.stage || 1) >= Number(GAME_RULES.STAGES_PER_FLOOR || 5);
+}
+
+function buildStageScoreSummary_(run, summary) {
+  summary = summary || {};
+  var totalScore = summary.totalScore !== undefined
+    ? Number(summary.totalScore || 0)
+    : Number(run && run.score || 0);
+  var scoreDelta = Number(summary.scoreDelta || 0);
+  return {
+    previousScore: Math.max(0, Number(summary.previousScore !== undefined ? summary.previousScore : totalScore - scoreDelta)),
+    answerScore: Number(summary.answerScore || 0),
+    stageScore: Number(summary.stageScore || 0),
+    floorBaseScore: Number(summary.floorBaseScore || 0),
+    floorSpeedScore: Number(summary.floorSpeedScore || 0),
+    floorScore: Number(summary.floorScore || 0),
+    floorClearTimeMs: Number(summary.floorClearTimeMs || 0),
+    floorTargetTimeMs: Number(summary.floorTargetTimeMs || 0),
+    floorSpeedMultiplier: Number(summary.floorSpeedMultiplier || 0),
+    clearBonus: Number(summary.clearBonus || 0),
+    scoreDelta: scoreDelta,
+    totalScore: totalScore,
+    alreadyAwarded: !!summary.alreadyAwarded,
+  };
 }
 
 function grantCurrency(runId, rewardGroupId, authToken) {
@@ -602,6 +791,7 @@ function moveToNextStageForRun_(run) {
   var now = new Date();
   var stageState = getStageState_(run);
   var usedQuestionIds = normalizeUsedQuestionIds_(stageState, stageState.battle).slice();
+  var scoreState = stageState.scoreState || {};
 
   if (floor >= GAME_RULES.FLOOR_COUNT && stage >= GAME_RULES.STAGES_PER_FLOOR) {
     var startedAt = run.startedAt ? new Date(run.startedAt).getTime() : now.getTime();
@@ -613,6 +803,7 @@ function moveToNextStageForRun_(run) {
       stageStateJson: safeJsonStringify_({
         cleared: true,
         usedQuestionIds: usedQuestionIds,
+        scoreState: scoreState,
       }),
       updatedAt: now,
     });
@@ -626,6 +817,10 @@ function moveToNextStageForRun_(run) {
     nextFloor += 1;
     nextStage = 1;
   }
+  if (nextFloor !== floor) {
+    scoreState.floorStartedAtByFloor = scoreState.floorStartedAtByFloor || {};
+    scoreState.floorStartedAtByFloor[String(nextFloor)] = now.toISOString();
+  }
 
   return updateRowByKey_(DB_SHEETS.RUNS, 'runId', runId, {
     currentFloor: nextFloor,
@@ -636,6 +831,7 @@ function moveToNextStageForRun_(run) {
       otherStudentQuestionShown: false,
       fallbackEvents: [],
       usedQuestionIds: usedQuestionIds,
+      scoreState: scoreState,
     }),
     updatedAt: now,
   });
@@ -648,6 +844,7 @@ function updatePlayerProgressFromRun(runId, authToken) {
 }
 
 function updatePlayerProgressFromRun_(run) {
+  ensureTableColumns_(DB_SHEETS.PLAYER_DATA, DB_COLUMNS.PLAYER_DATA);
   var playerData = getPlayerData_(run.playerId) || ensurePlayerData_(run.playerId);
   var currentBestIndex = (Number(playerData.maxFloor || 1) * 100) + Number(playerData.maxStage || 1);
   var runIndex = (Number(run.currentFloor || 1) * 100) + Number(run.currentStage || 1);
@@ -667,6 +864,13 @@ function updatePlayerProgressFromRun_(run) {
     if (!bestClearTimeMs || clearTimeMs < bestClearTimeMs) {
       patch.bestClearTimeMs = clearTimeMs;
     }
+  }
+
+  var runScore = Number(run.score || 0);
+  if (runScore > Number(playerData.bestScore || 0)) {
+    patch.bestScore = runScore;
+    patch.bestScoreRunId = run.runId;
+    patch.bestScoreUpdatedAt = new Date();
   }
 
   return updateRowByKey_(DB_SHEETS.PLAYER_DATA, 'playerId', run.playerId, patch);

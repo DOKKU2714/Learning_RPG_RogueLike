@@ -30,6 +30,8 @@ function getMyQuestionStats(playerId) {
       difficulty: question.difficulty,
       correctCount: correct,
       totalCount: total,
+      likeCount: Number(question.likeCount || 0),
+      dislikeCount: Number(question.dislikeCount || 0),
       correctRate: calculateRate_(correct, total),
       createdAt: question.createdAt,
     };
@@ -49,6 +51,7 @@ function getPlayerAnswerSummary(playerId) {
     maxFloor: Number(playerData.maxFloor || 1),
     maxStage: Number(playerData.maxStage || 1),
     currency: Number(playerData.currency || 0),
+    bestScore: Number(playerData.bestScore || 0),
   };
 }
 
@@ -97,6 +100,8 @@ function getAdminQuestionStats() {
       difficulty: question.difficulty,
       correctCount: correct,
       totalCount: total,
+      likeCount: Number(question.likeCount || 0),
+      dislikeCount: Number(question.dislikeCount || 0),
       correctRate: calculateRate_(correct, total),
       createdAt: question.createdAt,
     };

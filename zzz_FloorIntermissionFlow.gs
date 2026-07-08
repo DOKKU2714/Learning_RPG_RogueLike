@@ -205,6 +205,7 @@ function moveToNextStageWithFloorIntermission_(run) {
   var now = new Date();
   var stageState = getStageState_(run);
   var usedQuestionIds = normalizeUsedQuestionIds_(stageState, stageState.battle).slice();
+  var scoreState = stageState.scoreState || {};
   var stageNumber = getFloorIntermissionStageNumber_();
   var floorCount = Number(GAME_RULES.FLOOR_COUNT || 5);
   var stagesPerFloor = Number(GAME_RULES.STAGES_PER_FLOOR || 5);
@@ -219,6 +220,7 @@ function moveToNextStageWithFloorIntermission_(run) {
       stageStateJson: safeJsonStringify_({
         cleared: true,
         usedQuestionIds: usedQuestionIds,
+        scoreState: scoreState,
       }),
       updatedAt: now,
     });
@@ -235,6 +237,10 @@ function moveToNextStageWithFloorIntermission_(run) {
     nextFloor += 1;
     nextStage = 1;
   }
+  if (nextFloor !== floor) {
+    scoreState.floorStartedAtByFloor = scoreState.floorStartedAtByFloor || {};
+    scoreState.floorStartedAtByFloor[String(nextFloor)] = now.toISOString();
+  }
 
   return updateRowByKey_(DB_SHEETS.RUNS, 'runId', runId, {
     currentFloor: nextFloor,
@@ -245,6 +251,7 @@ function moveToNextStageWithFloorIntermission_(run) {
       otherStudentQuestionShown: false,
       fallbackEvents: [],
       usedQuestionIds: usedQuestionIds,
+      scoreState: scoreState,
     }),
     updatedAt: now,
   });

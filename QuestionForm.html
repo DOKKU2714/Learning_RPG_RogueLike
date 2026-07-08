@@ -5,6 +5,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <?!= include_('UiStyles'); ?>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <style>
     .question-batch {
       display: grid;
@@ -56,10 +57,47 @@
     }
 
     .remove-question,
+    .edit-my-question,
     .delete-my-question {
       min-height: 32px;
       padding: 4px 10px;
       white-space: nowrap;
+    }
+
+    .question-item-actions {
+      display: inline-flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .question-import-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: end;
+      margin-top: 12px;
+    }
+
+    .question-import-row input[type="file"] {
+      min-height: 42px;
+      border: 1px solid var(--line);
+      background: rgba(8, 8, 8, 0.52);
+      color: var(--text);
+      padding: 8px;
+    }
+
+    .import-preview {
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    @media (max-width: 720px) {
+      .question-import-row {
+        grid-template-columns: 1fr;
+      }
     }
   </style>
 </head>
@@ -77,15 +115,28 @@
 
     <section id="formPanel" class="rpg-panel hidden" style="margin-top:14px;">
       <div class="inline-actions" style="justify-content:space-between;">
-        <h2 style="margin:0;">문제 입력</h2>
-        <button class="secondary" onclick="addQuestionForm()">+ 문제 추가</button>
+        <h2 id="formTitle" style="margin:0;">문제 입력</h2>
+        <button id="addQuestionButton" class="secondary" onclick="addQuestionForm()">+ 문제 추가</button>
       </div>
       <div id="questionForms" class="question-batch"></div>
       <div class="inline-actions" style="justify-content:flex-end; margin-top:16px;">
-        <button class="secondary" onclick="resetQuestionForms()">전체 초기화</button>
-        <button onclick="submitQuestions()">저장</button>
+        <button id="resetQuestionButton" class="secondary" onclick="resetQuestionForms()">전체 초기화</button>
+        <button id="submitQuestionButton" onclick="submitQuestions()">저장</button>
       </div>
       <div id="formMessage" class="message"></div>
+    </section>
+
+    <section id="importPanel" class="rpg-panel hidden" style="margin-top:14px;">
+      <h2 style="margin:0;">엑셀 일괄 등록</h2>
+      <div class="question-import-row">
+        <div>
+          <label for="questionImportFile">문제 파일</label>
+          <input id="questionImportFile" type="file" accept=".xlsx,.xls,.csv,.tsv" onchange="previewImportFile()">
+        </div>
+        <button id="importQuestionButton" type="button" onclick="importQuestionFile()">파일 등록</button>
+      </div>
+      <div id="importPreview" class="import-preview"></div>
+      <div id="importMessage" class="message"></div>
     </section>
 
     <section id="lockedPanel" class="rpg-panel hidden" style="margin-top:14px;">
@@ -109,6 +160,8 @@
   <script>
     var WEB_APP_URL = '<?= getWebAppUrl_() ?>';
     var formSeq = 0;
+    var editingQuestionId = '';
+    var myQuestionsCache = [];
 
     function init() {
       resetQuestionForms();
@@ -141,6 +194,7 @@
         ? state.player.displayName + '의 문제를 등록할 수 있습니다.'
         : '로그인 정보가 없습니다.';
       document.getElementById('formPanel').classList.toggle('hidden', !state.isRegistered);
+      document.getElementById('importPanel').classList.toggle('hidden', !state.isRegistered);
       document.getElementById('lockedPanel').classList.toggle('hidden', state.isRegistered);
     }
 
@@ -151,12 +205,16 @@
       var card = document.createElement('article');
       card.className = 'question-card-form';
       card.id = id;
-      card.innerHTML = renderQuestionFormHtml(id, formSeq);
+      card.innerHTML = renderQuestionFormHtml(id, formSeq, null);
       container.appendChild(card);
       updateChoiceVisibility(id);
     }
 
-    function renderQuestionFormHtml(id, index) {
+    function renderQuestionFormHtml(id, index, question) {
+      question = question || {};
+      var type = question.type === 'shortAnswer' ? 'shortAnswer' : 'multipleChoice';
+      var isShortAnswer = type === 'shortAnswer';
+      var choices = [question.choice1 || '', question.choice2 || '', question.choice3 || '', question.choice4 || ''];
       return '' +
         '<div class="question-card-top">' +
           '<strong>문제 ' + index + '</strong>' +
@@ -164,33 +222,33 @@
         '</div>' +
         '<div class="type-radio-row">' +
           '<span class="muted">문제 유형</span>' +
-          '<label><input type="radio" name="' + id + '-type" value="multipleChoice" checked onchange="updateChoiceVisibility(\'' + id + '\')"> 객관식</label>' +
-          '<label><input type="radio" name="' + id + '-type" value="shortAnswer" onchange="updateChoiceVisibility(\'' + id + '\')"> 주관식</label>' +
+          '<label><input type="radio" name="' + id + '-type" value="multipleChoice"' + (!isShortAnswer ? ' checked' : '') + ' onchange="updateChoiceVisibility(\'' + id + '\')"> 객관식</label>' +
+          '<label><input type="radio" name="' + id + '-type" value="shortAnswer"' + (isShortAnswer ? ' checked' : '') + ' onchange="updateChoiceVisibility(\'' + id + '\')"> 주관식</label>' +
         '</div>' +
         '<div style="margin-top:12px;">' +
           '<label>문제 내용</label>' +
-          '<textarea data-field="prompt" placeholder="친구가 풀 문제를 입력하세요."></textarea>' +
+          '<textarea data-field="prompt" placeholder="친구가 풀 문제를 입력하세요.">' + escapeHtml(question.prompt || '') + '</textarea>' +
         '</div>' +
         '<div data-area="choices" style="margin-top:12px;">' +
           '<label>객관식 보기 4개</label>' +
           '<div class="choice-grid">' +
-            '<input data-field="choice1" placeholder="선택지 1">' +
-            '<input data-field="choice2" placeholder="선택지 2">' +
-            '<input data-field="choice3" placeholder="선택지 3">' +
-            '<input data-field="choice4" placeholder="선택지 4">' +
+            '<input data-field="choice1" placeholder="선택지 1" value="' + escapeHtml(choices[0]) + '">' +
+            '<input data-field="choice2" placeholder="선택지 2" value="' + escapeHtml(choices[1]) + '">' +
+            '<input data-field="choice3" placeholder="선택지 3" value="' + escapeHtml(choices[2]) + '">' +
+            '<input data-field="choice4" placeholder="선택지 4" value="' + escapeHtml(choices[3]) + '">' +
           '</div>' +
         '</div>' +
         '<div class="form-grid" style="margin-top:12px;">' +
-          '<div><label>정답</label><input data-field="answer" placeholder="객관식은 정답 번호, 주관식은 정답 텍스트"></div>' +
-          '<div data-area="aliases"><label>복수 정답 / 별칭</label><input data-field="answerAliases" placeholder="쉼표 또는 줄바꿈으로 구분"></div>' +
-          '<div><label>과목</label><input data-field="subject" placeholder="예: 사회"></div>' +
-          '<div><label>단원</label><input data-field="unit" placeholder="예: 조선 전기"></div>' +
-          '<div><label>희망 난이도</label>' + difficultySelectHtml('data-field="difficulty"') + '</div>' +
-          '<div style="grid-column:1 / -1;"><label>태그</label><input data-field="tags" placeholder="쉼표로 구분"></div>' +
+          '<div><label>정답</label><input data-field="answer" placeholder="객관식은 정답 번호, 주관식은 정답 텍스트" value="' + escapeHtml(question.answer || '') + '"></div>' +
+          '<div data-area="aliases"><label>복수 정답 / 별칭</label><input data-field="answerAliases" placeholder="쉼표 또는 줄바꿈으로 구분" value="' + escapeHtml(answerAliasesText(question)) + '"></div>' +
+          '<div><label>과목</label><input data-field="subject" placeholder="예: 사회" value="' + escapeHtml(question.subject || '') + '"></div>' +
+          '<div><label>단원</label><input data-field="unit" placeholder="예: 조선 전기" value="' + escapeHtml(question.unit || '') + '"></div>' +
+          '<div><label>희망 난이도</label>' + difficultySelectHtml('data-field="difficulty"', question.difficulty || 1) + '</div>' +
+          '<div style="grid-column:1 / -1;"><label>태그</label><input data-field="tags" placeholder="쉼표로 구분" value="' + escapeHtml(question.tags || '') + '"></div>' +
         '</div>' +
         '<div style="margin-top:12px;">' +
           '<label>해설</label>' +
-          '<textarea data-field="explanation" placeholder="선택 사항"></textarea>' +
+          '<textarea data-field="explanation" placeholder="선택 사항">' + escapeHtml(question.explanation || '') + '</textarea>' +
         '</div>';
     }
 
@@ -220,20 +278,39 @@
     }
 
     function resetQuestionForms() {
+      editingQuestionId = '';
       formSeq = 0;
       document.getElementById('questionForms').innerHTML = '';
       addQuestionForm();
+      setEditingMode(false);
       setFormMessage('', '');
     }
 
     function submitQuestions() {
       var payloads = Array.prototype.map.call(document.querySelectorAll('.question-card-form'), readQuestionPayload);
       setFormMessage('저장 중입니다.', 'ok');
-      showLoadingModal('저장 중...', '문제를 승인 대기 목록에 추가하는 중...');
+      if (editingQuestionId) {
+        showLoadingModal('수정 중...', '내가 만든 문제를 수정하는 중...');
+        google.script.run
+          .withSuccessHandler(function() {
+            hideLoadingModal();
+            setFormMessage('문제를 수정했습니다.', 'ok');
+            resetQuestionForms();
+            loadMyQuestions(true);
+          })
+          .withFailureHandler(function(error) {
+            hideLoadingModal();
+            setFormMessage(error.message, 'error');
+          })
+          .updateQuestion(editingQuestionId, payloads[0], getAuthToken());
+        return;
+      }
+
+      showLoadingModal('저장 중...', '문제를 바로 등록하는 중...');
       google.script.run
         .withSuccessHandler(function() {
           hideLoadingModal();
-          setFormMessage('승인 대기 문제로 저장했습니다.', 'ok');
+          setFormMessage('문제를 등록했습니다.', 'ok');
           resetQuestionForms();
           loadMyQuestions(true);
         })
@@ -242,6 +319,173 @@
           setFormMessage(error.message, 'error');
         })
         .createQuestions(payloads, getAuthToken());
+    }
+
+    function previewImportFile() {
+      var file = getQuestionImportFile();
+      var preview = document.getElementById('importPreview');
+      setImportMessage('', '');
+      if (!file) {
+        preview.textContent = '';
+        return;
+      }
+      preview.textContent = file.name + ' / ' + Math.ceil(file.size / 1024) + 'KB';
+    }
+
+    function importQuestionFile() {
+      var file = getQuestionImportFile();
+      if (!file) {
+        setImportMessage('등록할 파일을 선택하세요.', 'error');
+        return;
+      }
+      setImportMessage('파일을 읽는 중입니다.', 'ok');
+      showLoadingModal('파일 읽는 중...', '문제 데이터를 확인하는 중...');
+      readQuestionImportRows(file, function(rows) {
+        if (!rows.length) {
+          hideLoadingModal();
+          setImportMessage('가져올 문제가 없습니다.', 'error');
+          return;
+        }
+        setImportMessage(rows.length + '개 문제를 등록하는 중입니다.', 'ok');
+        google.script.run
+          .withSuccessHandler(function(created) {
+            hideLoadingModal();
+            var count = created && created.length ? created.length : rows.length;
+            setImportMessage(count + '개 문제를 등록했습니다.', 'ok');
+            document.getElementById('questionImportFile').value = '';
+            document.getElementById('importPreview').textContent = '';
+            loadMyQuestions(true);
+          })
+          .withFailureHandler(function(error) {
+            hideLoadingModal();
+            setImportMessage(error.message, 'error');
+          })
+          .importQuestionsFromRows(rows, getAuthToken());
+      }, function(message) {
+        hideLoadingModal();
+        setImportMessage(message, 'error');
+      });
+    }
+
+    function getQuestionImportFile() {
+      var input = document.getElementById('questionImportFile');
+      return input && input.files && input.files[0] ? input.files[0] : null;
+    }
+
+    function readQuestionImportRows(file, onSuccess, onFailure) {
+      var extension = getFileExtension(file.name);
+      if (extension === 'csv' || extension === 'tsv') {
+        readTextFile(file, function(text) {
+          try {
+            onSuccess(tableArrayToObjects(parseDelimitedText(text, extension === 'tsv' ? '\t' : ',')));
+          } catch (error) {
+            onFailure(error.message);
+          }
+        }, onFailure);
+        return;
+      }
+      if (typeof XLSX === 'undefined') {
+        onFailure('엑셀 파서가 아직 로드되지 않았습니다. 잠시 후 다시 시도하거나 CSV 파일을 사용해 주세요.');
+        return;
+      }
+      var reader = new FileReader();
+      reader.onload = function(event) {
+        try {
+          var workbook = XLSX.read(new Uint8Array(event.target.result), { type: 'array' });
+          var firstSheetName = workbook.SheetNames[0];
+          if (!firstSheetName) {
+            throw new Error('첫 번째 시트를 찾을 수 없습니다.');
+          }
+          var table = XLSX.utils.sheet_to_json(workbook.Sheets[firstSheetName], {
+            header: 1,
+            defval: '',
+            raw: false,
+          });
+          onSuccess(tableArrayToObjects(table));
+        } catch (error) {
+          onFailure(error.message);
+        }
+      };
+      reader.onerror = function() {
+        onFailure('파일을 읽지 못했습니다.');
+      };
+      reader.readAsArrayBuffer(file);
+    }
+
+    function readTextFile(file, onSuccess, onFailure) {
+      var reader = new FileReader();
+      reader.onload = function(event) {
+        onSuccess(String(event.target.result || ''));
+      };
+      reader.onerror = function() {
+        onFailure('파일을 읽지 못했습니다.');
+      };
+      reader.readAsText(file, 'UTF-8');
+    }
+
+    function tableArrayToObjects(table) {
+      table = (table || []).filter(function(row) {
+        return (row || []).some(function(cell) {
+          return String(cell || '').trim() !== '';
+        });
+      });
+      if (table.length < 2) {
+        return [];
+      }
+      var headers = table[0].map(function(header) {
+        return String(header || '').trim();
+      });
+      return table.slice(1).map(function(row) {
+        return headers.reduce(function(object, header, index) {
+          if (header) {
+            object[header] = row[index] === undefined || row[index] === null ? '' : String(row[index]).trim();
+          }
+          return object;
+        }, {});
+      }).filter(function(object) {
+        return Object.keys(object).some(function(key) {
+          return String(object[key] || '').trim() !== '';
+        });
+      });
+    }
+
+    function parseDelimitedText(text, delimiter) {
+      var rows = [];
+      var row = [];
+      var cell = '';
+      var inQuotes = false;
+      var source = String(text || '').replace(/^\uFEFF/, '');
+      for (var i = 0; i < source.length; i += 1) {
+        var char = source.charAt(i);
+        var next = source.charAt(i + 1);
+        if (char === '"' && inQuotes && next === '"') {
+          cell += '"';
+          i += 1;
+        } else if (char === '"') {
+          inQuotes = !inQuotes;
+        } else if (char === delimiter && !inQuotes) {
+          row.push(cell);
+          cell = '';
+        } else if ((char === '\n' || char === '\r') && !inQuotes) {
+          if (char === '\r' && next === '\n') {
+            i += 1;
+          }
+          row.push(cell);
+          rows.push(row);
+          row = [];
+          cell = '';
+        } else {
+          cell += char;
+        }
+      }
+      row.push(cell);
+      rows.push(row);
+      return rows;
+    }
+
+    function getFileExtension(filename) {
+      var parts = String(filename || '').toLowerCase().split('.');
+      return parts.length > 1 ? parts.pop() : '';
     }
 
     function readQuestionPayload(card) {
@@ -260,10 +504,11 @@
       };
     }
 
-    function difficultySelectHtml(attributes) {
+    function difficultySelectHtml(attributes, selectedValue) {
       var options = [];
+      var selected = Math.max(1, Math.min(5, Number(selectedValue || 1)));
       for (var i = 1; i <= 5; i += 1) {
-        options.push('<option value="' + i + '">' + difficultyStarsText(i) + '</option>');
+        options.push('<option value="' + i + '"' + (i === selected ? ' selected' : '') + '>' + difficultyStarsText(i) + '</option>');
       }
       return '<select class="difficulty-select" ' + (attributes || '') + '>' + options.join('') + '</select>';
     }
@@ -315,6 +560,7 @@
 
     function renderMyQuestions(questions) {
       questions = questions || [];
+      myQuestionsCache = questions.slice();
       document.getElementById('questionCount').textContent = questions.length + '개 생성';
       var container = document.getElementById('myQuestions');
       if (!questions.length) {
@@ -327,12 +573,62 @@
         return '<article class="question-item">' +
           '<div class="question-item-top">' +
             '<strong>' + escapeHtml(question.prompt) + '</strong>' +
-            '<button class="danger delete-my-question" type="button" onclick="deleteMyQuestion(\'' + escapeJsString(questionId) + '\')">삭제</button>' +
+            '<div class="question-item-actions">' +
+              '<button class="secondary edit-my-question" type="button" onclick="startEditQuestion(\'' + escapeJsString(questionId) + '\')">수정</button>' +
+              '<button class="danger delete-my-question" type="button" onclick="deleteMyQuestion(\'' + escapeJsString(questionId) + '\')">삭제</button>' +
+            '</div>' +
           '</div>' +
           '<p class="muted">' + escapeHtml(typeLabel(question.type)) + ' | ' + escapeHtml(statusLabel(question.status)) + ' | ' + renderDifficultyStars(question.difficulty || 1) + '</p>' +
+          '<p class="muted">좋아요 ' + Number(question.likeCount || 0) + ' | 싫어요 ' + Number(question.dislikeCount || 0) + '</p>' +
           '<p>정답: ' + escapeHtml(question.answer) + '</p>' +
         '</article>';
       }).join('');
+    }
+
+    function startEditQuestion(questionId) {
+      var question = myQuestionsCache.filter(function(item) {
+        return String(item.questionId || '') === String(questionId || '');
+      })[0] || null;
+      if (!question) {
+        setFormMessage('수정할 문제를 찾을 수 없습니다. 목록을 새로고침해 주세요.', 'error');
+        return;
+      }
+
+      editingQuestionId = questionId;
+      formSeq = 1;
+      var id = 'questionForm-edit';
+      var container = document.getElementById('questionForms');
+      container.innerHTML = '';
+      var card = document.createElement('article');
+      card.className = 'question-card-form';
+      card.id = id;
+      card.innerHTML = renderQuestionFormHtml(id, 1, question);
+      container.appendChild(card);
+      updateChoiceVisibility(id);
+      setEditingMode(true);
+      setFormMessage('수정할 내용을 바꾼 뒤 저장하세요.', 'ok');
+      document.getElementById('formPanel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    function setEditingMode(isEditing) {
+      document.getElementById('formTitle').textContent = isEditing ? '문제 수정' : '문제 입력';
+      document.getElementById('addQuestionButton').classList.toggle('hidden', isEditing);
+      document.getElementById('resetQuestionButton').textContent = isEditing ? '수정 취소' : '전체 초기화';
+      document.getElementById('submitQuestionButton').textContent = isEditing ? '수정 저장' : '저장';
+      Array.prototype.forEach.call(document.querySelectorAll('.remove-question'), function(button) {
+        button.classList.toggle('hidden', isEditing);
+      });
+    }
+
+    function answerAliasesText(question) {
+      var value = question && question.answerAliases;
+      if (!value) return '';
+      if (Array.isArray(value)) return value.join(', ');
+      try {
+        var parsed = JSON.parse(value);
+        if (Array.isArray(parsed)) return parsed.join(', ');
+      } catch (error) {}
+      return String(value || '');
     }
 
     function deleteMyQuestion(questionId) {
@@ -370,6 +666,12 @@
 
     function setFormMessage(message, type) {
       var element = document.getElementById('formMessage');
+      element.textContent = message || '';
+      element.className = 'message ' + (type || '');
+    }
+
+    function setImportMessage(message, type) {
+      var element = document.getElementById('importMessage');
       element.textContent = message || '';
       element.className = 'message ' + (type || '');
     }

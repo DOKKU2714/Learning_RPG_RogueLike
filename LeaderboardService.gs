@@ -1,4 +1,5 @@
 function getLeaderboard() {
+  ensureTableColumns_(DB_SHEETS.PLAYER_DATA, DB_COLUMNS.PLAYER_DATA);
   var players = readTable_(DB_SHEETS.PLAYERS);
   var playerDataRows = readTable_(DB_SHEETS.PLAYER_DATA);
   var playerMap = {};
@@ -17,11 +18,14 @@ function getLeaderboard() {
     var displayName = player.displayName || player.studentName || player.email || '이름 없음';
     var maxFloor = Number(playerData.maxFloor || 0);
     var maxStage = Number(playerData.maxStage || 0);
+    var bestScore = Number(playerData.bestScore || 0);
 
     return {
       rank: 0,
       playerId: playerData.playerId,
       displayName: displayName,
+      bestScore: bestScore,
+      scoreText: formatScore_(bestScore),
       progressText: formatDisplayProgressText_(maxFloor, maxStage),
       maxFloor: maxFloor,
       maxStage: maxStage,
@@ -96,6 +100,9 @@ function formatClearTime(clearTimeMs) {
 
 function sortLeaderboardRows(rows) {
   return rows.sort(function(a, b) {
+    if (Number(b.bestScore || 0) !== Number(a.bestScore || 0)) {
+      return Number(b.bestScore || 0) - Number(a.bestScore || 0);
+    }
     if (Number(b.progressScore || 0) !== Number(a.progressScore || 0)) {
       return Number(b.progressScore || 0) - Number(a.progressScore || 0);
     }
@@ -116,4 +123,8 @@ function normalizeClearTimeForSort_(clearTimeMs) {
 
 function getMissingClearTimeMs_() {
   return 999999999999;
+}
+
+function formatScore_(score) {
+  return Number(score || 0).toLocaleString('ko-KR') + '점';
 }

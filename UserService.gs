@@ -195,6 +195,7 @@ function getAuthPlayerCacheKey_(authToken) {
 }
 
 function ensurePlayerData_(playerId) {
+  ensureTableColumns_(DB_SHEETS.PLAYER_DATA, DB_COLUMNS.PLAYER_DATA);
   var existing = getPlayerData_(playerId);
   if (existing) {
     return existing;
@@ -213,6 +214,9 @@ function ensurePlayerData_(playerId) {
     baseStatsJson: safeJsonStringify_(BASE_PLAYER_STATS),
     ownedSkillsJson: safeJsonStringify_([]),
     ownedItemsJson: safeJsonStringify_([]),
+    bestScore: 0,
+    bestScoreRunId: '',
+    bestScoreUpdatedAt: '',
     updatedAt: now,
   };
 

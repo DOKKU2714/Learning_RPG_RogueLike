@@ -41,7 +41,12 @@ function getLearningRpgAudioManagerClientPatch_() {
     '  var SOUND_ENABLED_KEY = "learningRpgSoundEnabled";\n' +
     '  var DEFAULT_FADE_MS = 900;\n' +
     '  var DEFAULT_VOLUME = 0.52;\n' +
+    '  var RAIN_AMBIENCE_VOLUME = 0.3;\n' +
+    '  var RAIN_AMBIENCE_MIN_FLOOR = 3;\n' +
+    '  var RAIN_AMBIENCE_PATH = "Resources/Sounds/Rain.mp3";\n' +
     '  var currentTrack = null;\n' +
+    '  var rainAmbienceAudio = null;\n' +
+    '  var rainAmbiencePending = false;\n' +
     '  var audioUnlocked = false;\n' +
     '  var pendingIntent = null;\n' +
     '\n' +
@@ -199,6 +204,72 @@ function getLearningRpgAudioManagerClientPatch_() {
     '\n' +
     '  function isBattlePage(){ return !!document.getElementById("battleShell"); }\n' +
     '\n' +
+    '  function shouldPlayRainAmbience(){\n' +
+    '    return isBattlePage() && getBattleFloor() >= RAIN_AMBIENCE_MIN_FLOOR;\n' +
+    '  }\n' +
+    '\n' +
+    '  function stopRainAmbience(fadeMs){\n' +
+    '    rainAmbiencePending = false;\n' +
+    '    var audio = rainAmbienceAudio;\n' +
+    '    if (!audio) return;\n' +
+    '    rainAmbienceAudio = null;\n' +
+    '    fadeAudio(audio, 0, fadeMs === undefined ? DEFAULT_FADE_MS : fadeMs, function(){\n' +
+    '      try { audio.pause(); audio.removeAttribute("src"); audio.load(); } catch (error) {}\n' +
+    '    });\n' +
+    '  }\n' +
+    '\n' +
+    '  function syncRainAmbience(fadeMs){\n' +
+    '    if (!shouldPlayRainAmbience()) {\n' +
+    '      stopRainAmbience(fadeMs === undefined ? DEFAULT_FADE_MS : fadeMs);\n' +
+    '      return;\n' +
+    '    }\n' +
+    '    if (!isSoundEnabled()) {\n' +
+    '      stopRainAmbience(0);\n' +
+    '      return;\n' +
+    '    }\n' +
+    '    if (rainAmbienceAudio && !rainAmbienceAudio.paused) {\n' +
+    '      rainAmbienceAudio.muted = false;\n' +
+    '      fadeAudio(rainAmbienceAudio, RAIN_AMBIENCE_VOLUME, fadeMs === undefined ? 360 : fadeMs);\n' +
+    '      return;\n' +
+    '    }\n' +
+    '    stopRainAmbience(0);\n' +
+    '    try {\n' +
+    '      var audio = new Audio(assetUrl(RAIN_AMBIENCE_PATH));\n' +
+    '      audio.loop = true;\n' +
+    '      audio.preload = "auto";\n' +
+    '      audio.volume = 0;\n' +
+    '      audio.muted = false;\n' +
+    '      audio.__learningRpgSkipSfxVolume = true;\n' +
+    '      rainAmbienceAudio = audio;\n' +
+    '      audio.addEventListener("error", function(){\n' +
+    '        if (rainAmbienceAudio === audio) {\n' +
+    '          rainAmbienceAudio = null;\n' +
+    '          rainAmbiencePending = false;\n' +
+    '        }\n' +
+    '      }, { once: true });\n' +
+    '      var playPromise = audio.play();\n' +
+    '      if (playPromise && playPromise.then) {\n' +
+    '        playPromise.then(function(){\n' +
+    '          audioUnlocked = true;\n' +
+    '          rainAmbiencePending = false;\n' +
+    '          if (!isSoundEnabled() || !shouldPlayRainAmbience()) { stopRainAmbience(0); return; }\n' +
+    '          fadeAudio(audio, RAIN_AMBIENCE_VOLUME, fadeMs === undefined ? DEFAULT_FADE_MS : fadeMs);\n' +
+    '        }).catch(function(){\n' +
+    '          if (rainAmbienceAudio === audio) {\n' +
+    '            rainAmbiencePending = true;\n' +
+    '          }\n' +
+    '        });\n' +
+    '      } else {\n' +
+    '        audioUnlocked = true;\n' +
+    '        rainAmbiencePending = false;\n' +
+    '        fadeAudio(audio, RAIN_AMBIENCE_VOLUME, fadeMs === undefined ? DEFAULT_FADE_MS : fadeMs);\n' +
+    '      }\n' +
+    '    } catch (error) {\n' +
+    '      rainAmbienceAudio = null;\n' +
+    '      rainAmbiencePending = true;\n' +
+    '    }\n' +
+    '  }\n' +
+    '\n' +
     '  function requestMainBgm(){ playIntent(makeIntent("main")); }\n' +
     '  function requestBattleBgm(){ playIntent(makeIntent("battle", { floor: getBattleFloor() })); }\n' +
     '  function requestRewardBgm(){ playIntent(makeIntent("reward")); }\n' +
@@ -208,10 +279,14 @@ function getLearningRpgAudioManagerClientPatch_() {
     '    audioUnlocked = true;\n' +
     '    if (pendingIntent) {\n' +
     '      playIntent(pendingIntent, 360);\n' +
+    '      syncRainAmbience(360);\n' +
     '      return;\n' +
     '    }\n' +
     '    if (!isBattlePage()) {\n' +
     '      requestMainBgm();\n' +
+    '    }\n' +
+    '    if (rainAmbiencePending || shouldPlayRainAmbience()) {\n' +
+    '      syncRainAmbience(360);\n' +
     '    }\n' +
     '  }\n' +
     '\n' +
@@ -243,6 +318,7 @@ function getLearningRpgAudioManagerClientPatch_() {
     '    patchFunction("transitionToBattlePage", function(original){\n' +
     '      return function(){\n' +
     '        stopCurrentTrack(DEFAULT_FADE_MS);\n' +
+    '        stopRainAmbience(DEFAULT_FADE_MS);\n' +
     '        return original.apply(this, arguments);\n' +
     '      };\n' +
     '    });\n' +
@@ -252,6 +328,7 @@ function getLearningRpgAudioManagerClientPatch_() {
     '          stopCurrentTrack(DEFAULT_FADE_MS);\n' +
     '        } else if (!isBattlePage() && isSoundEnabled()) {\n' +
     '          requestMainBgm();\n' +
+    '          stopRainAmbience(DEFAULT_FADE_MS);\n' +
     '        }\n' +
     '        return original.apply(this, arguments);\n' +
     '      };\n' +
@@ -260,6 +337,13 @@ function getLearningRpgAudioManagerClientPatch_() {
     '\n' +
     '  function installBattlePatches(){\n' +
     '    if (!isBattlePage()) return;\n' +
+    '    patchFunction("renderBattle", function(original){\n' +
+    '      return function(){\n' +
+    '        var result = original.apply(this, arguments);\n' +
+    '        syncRainAmbience(420);\n' +
+    '        return result;\n' +
+    '      };\n' +
+    '    });\n' +
     '    patchFunction("startBattleEntrance", function(original){\n' +
     '      return function(){\n' +
     '        stopCurrentTrack(DEFAULT_FADE_MS);\n' +
@@ -283,6 +367,7 @@ function getLearningRpgAudioManagerClientPatch_() {
     '    patchFunction("startFloorIntermissionEntrance", function(original){\n' +
     '      return function(){\n' +
     '        stopCurrentTrack(DEFAULT_FADE_MS);\n' +
+    '        syncRainAmbience(DEFAULT_FADE_MS);\n' +
     '        return original.apply(this, arguments);\n' +
     '      };\n' +
     '    });\n' +
@@ -290,12 +375,20 @@ function getLearningRpgAudioManagerClientPatch_() {
     '      return function(){\n' +
     '        var result = original.apply(this, arguments);\n' +
     '        requestRewardBgm();\n' +
+    '        syncRainAmbience(360);\n' +
     '        return result;\n' +
     '      };\n' +
     '    });\n' +
     '    patchFunction("showDefeatSequence", function(original){\n' +
     '      return function(){\n' +
     '        stopCurrentTrack(DEFAULT_FADE_MS);\n' +
+    '        stopRainAmbience(DEFAULT_FADE_MS);\n' +
+    '        return original.apply(this, arguments);\n' +
+    '      };\n' +
+    '    });\n' +
+    '    patchFunction("goHome", function(original){\n' +
+    '      return function(){\n' +
+    '        stopRainAmbience(DEFAULT_FADE_MS);\n' +
     '        return original.apply(this, arguments);\n' +
     '      };\n' +
     '    });\n' +
@@ -305,6 +398,7 @@ function getLearningRpgAudioManagerClientPatch_() {
     '    if (!isSoundEnabled()) return;\n' +
     '    if (isBattlePage()) {\n' +
     '      stopCurrentTrack(240);\n' +
+    '      syncRainAmbience(240);\n' +
     '      return;\n' +
     '    }\n' +
     '    requestMainBgm();\n' +
@@ -317,6 +411,7 @@ function getLearningRpgAudioManagerClientPatch_() {
     '        else pendingIntent = makeIntent(currentTrack.kind || "main");\n' +
     '      }\n' +
     '      stopCurrentTrack(0);\n' +
+    '      stopRainAmbience(0);\n' +
     '      return;\n' +
     '    }\n' +
     '    if (pendingIntent) {\n' +
@@ -324,6 +419,7 @@ function getLearningRpgAudioManagerClientPatch_() {
     '    } else if (!isBattlePage()) {\n' +
     '      requestMainBgm();\n' +
     '    }\n' +
+    '    syncRainAmbience(240);\n' +
     '  }\n' +
     '\n' +
     '  function install(){\n' +
@@ -334,6 +430,7 @@ function getLearningRpgAudioManagerClientPatch_() {
     '      playBattle: requestBattleBgm,\n' +
     '      playReward: requestRewardBgm,\n' +
     '      stop: function(ms){ stopCurrentTrack(ms === undefined ? DEFAULT_FADE_MS : ms); },\n' +
+    '      syncRainAmbience: syncRainAmbience,\n' +
     '      applySoundPreference: applySoundPreference,\n' +
     '      getCurrent: function(){ return currentTrack ? { key: currentTrack.key, kind: currentTrack.kind, path: currentTrack.path } : null; }\n' +
     '    };\n' +
