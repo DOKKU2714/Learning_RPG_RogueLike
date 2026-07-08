@@ -600,6 +600,8 @@ function moveToNextStageForRun_(run) {
   var floor = Number(run.currentFloor || 1);
   var stage = Number(run.currentStage || 1);
   var now = new Date();
+  var stageState = getStageState_(run);
+  var usedQuestionIds = normalizeUsedQuestionIds_(stageState, stageState.battle).slice();
 
   if (floor >= GAME_RULES.FLOOR_COUNT && stage >= GAME_RULES.STAGES_PER_FLOOR) {
     var startedAt = run.startedAt ? new Date(run.startedAt).getTime() : now.getTime();
@@ -608,7 +610,10 @@ function moveToNextStageForRun_(run) {
       endedAt: now,
       clearTimeMs: Math.max(0, now.getTime() - startedAt),
       currentShield: 0,
-      stageStateJson: safeJsonStringify_({ cleared: true }),
+      stageStateJson: safeJsonStringify_({
+        cleared: true,
+        usedQuestionIds: usedQuestionIds,
+      }),
       updatedAt: now,
     });
   }
@@ -630,6 +635,7 @@ function moveToNextStageForRun_(run) {
       stageId: buildStageId_(nextFloor, nextStage),
       otherStudentQuestionShown: false,
       fallbackEvents: [],
+      usedQuestionIds: usedQuestionIds,
     }),
     updatedAt: now,
   });

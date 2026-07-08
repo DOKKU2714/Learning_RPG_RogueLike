@@ -29,6 +29,18 @@
 <body>
   <? var skipIntroOnLoad = requestParams && requestParams.skipIntro === '1'; ?>
   <section id="introScreen" class="intro-screen screen <?= skipIntroOnLoad ? '' : 'active' ?>" onclick="enterApp()">
+    <button id="introSoundToggleButton" class="sound-toggle-button menu-sound-toggle" type="button" onclick="toggleSoundEnabled(event)" aria-pressed="true" aria-label="소리 켜짐" title="소리 켜짐">
+      <svg class="sound-icon-on" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M11 5 6 9H3v6h3l5 4V5z"></path>
+        <path d="M15 9a5 5 0 0 1 0 6"></path>
+        <path d="M18 6a9 9 0 0 1 0 12"></path>
+      </svg>
+      <svg class="sound-icon-off" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M11 5 6 9H3v6h3l5 4V5z"></path>
+        <path d="m16 9 5 5"></path>
+        <path d="m21 9-5 5"></path>
+      </svg>
+    </button>
     <div>
       <div id="introLogo" class="intro-logo intro-logo-image">
         <img
@@ -45,6 +57,18 @@
   </section>
 
   <main id="appScreen" class="menu-shell screen fade-in <?= skipIntroOnLoad ? 'active' : '' ?>">
+    <button id="menuSoundToggleButton" class="sound-toggle-button menu-sound-toggle" type="button" onclick="toggleSoundEnabled()" aria-pressed="true" aria-label="소리 켜짐" title="소리 켜짐">
+      <svg class="sound-icon-on" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M11 5 6 9H3v6h3l5 4V5z"></path>
+        <path d="M15 9a5 5 0 0 1 0 6"></path>
+        <path d="M18 6a9 9 0 0 1 0 12"></path>
+      </svg>
+      <svg class="sound-icon-off" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M11 5 6 9H3v6h3l5 4V5z"></path>
+        <path d="m16 9 5 5"></path>
+        <path d="m21 9-5 5"></path>
+      </svg>
+    </button>
     <section id="registerPanel" class="rpg-panel screen <?= skipIntroOnLoad ? 'active' : '' ?>">
       <h1 id="authTitle" class="rpg-title">로그인</h1>
       <p id="userSummary" class="muted" style="text-align:center;">학번, 이름, 비밀번호를 입력하세요.</p>
@@ -123,14 +147,23 @@
     var authMode = 'login';
     var SKIP_INTRO = window.location.search.indexOf('skipIntro=1') !== -1;
     var INTRO_SEEN_KEY = 'learningRpgIntroSeen';
+    var SOUND_ENABLED_KEY = 'learningRpgSoundEnabled';
     var currentUserRequestTimer = null;
     var pendingResumeRun = null;
     var pendingGameStartAt = 0;
 
     document.addEventListener('DOMContentLoaded', bootIndexPage);
+    window.addEventListener('storage', function(event) {
+      if (event.key === SOUND_ENABLED_KEY) {
+        syncSoundToggleButton();
+        applyGlobalSoundPreference();
+      }
+    });
 
     function bootIndexPage() {
       try {
+        syncSoundToggleButton();
+        applyGlobalSoundPreference();
         bindLoginEnterKey();
         showLoginForm();
         if (SKIP_INTRO || getAuthToken()) {
@@ -139,6 +172,57 @@
       } catch (error) {
         recoverIndexBoot(error);
       }
+    }
+
+    function isSoundEnabled() {
+      try {
+        return localStorage.getItem(SOUND_ENABLED_KEY) !== '0';
+      } catch (error) {
+        return true;
+      }
+    }
+
+    function setSoundEnabled(enabled) {
+      try {
+        localStorage.setItem(SOUND_ENABLED_KEY, enabled ? '1' : '0');
+      } catch (error) {}
+      syncSoundToggleButton();
+      applyGlobalSoundPreference();
+      notifySoundPreferenceChanged();
+    }
+
+    function toggleSoundEnabled(event) {
+      if (event && event.stopPropagation) {
+        event.stopPropagation();
+      }
+      setSoundEnabled(!isSoundEnabled());
+    }
+
+    function syncSoundToggleButton() {
+      var enabled = isSoundEnabled();
+      Array.prototype.forEach.call(document.querySelectorAll('.sound-toggle-button'), function(button) {
+        button.classList.toggle('sound-muted', !enabled);
+        button.setAttribute('aria-pressed', enabled ? 'true' : 'false');
+        button.setAttribute('aria-label', enabled ? '소리 켜짐' : '소리 꺼짐');
+        button.title = enabled ? '소리 켜짐' : '소리 꺼짐';
+      });
+    }
+
+    function applyGlobalSoundPreference() {
+      var enabled = isSoundEnabled();
+      Array.prototype.forEach.call(document.querySelectorAll('audio, video'), function(media) {
+        if (media.dataset.soundPreviousVolume === undefined) {
+          media.dataset.soundPreviousVolume = String(media.volume);
+        }
+        media.muted = !enabled;
+        media.volume = enabled ? Number(media.dataset.soundPreviousVolume || 1) : 0;
+      });
+    }
+
+    function notifySoundPreferenceChanged() {
+      try {
+        window.dispatchEvent(new CustomEvent('learningRpgSoundPreferenceChanged', { detail: { enabled: isSoundEnabled() } }));
+      } catch (error) {}
     }
 
     function recoverIndexBoot(error) {

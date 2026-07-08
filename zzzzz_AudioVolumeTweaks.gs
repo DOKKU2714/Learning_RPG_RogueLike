@@ -35,9 +35,11 @@ function getLearningRpgAudioVolumeTweaksClientPatch_() {
   return '<script>\n' +
     '(function(){\n' +
     '  var AUDIO_ASSET_BASE = \'' + escapeAudioVolumeTweaksJsString_(assetBase) + '\';\n' +
+    '  var SOUND_ENABLED_KEY = "learningRpgSoundEnabled";\n' +
     '  var SFX_VOLUME_MULTIPLIER = 0.7;\n' +
     '  var REWARD_ONE_SHOT_VOLUME = 0.48;\n' +
     '  var rewardOneShotAudio = null;\n' +
+    '  var lastRewardOneShotAt = 0;\n' +
     '\n' +
     '  function assetUrl(path){\n' +
     '    var base = String(AUDIO_ASSET_BASE || (window.ASSET_BASE_URL || "")).replace(/\\/+$/, "");\n' +
@@ -54,10 +56,19 @@ function getLearningRpgAudioVolumeTweaksClientPatch_() {
     '    return src.indexOf("Resources/Sounds/") !== -1 && src.indexOf("Resources/Sounds/BGM/") === -1;\n' +
     '  }\n' +
     '\n' +
+    '  function isSoundEnabled(){\n' +
+    '    try { return window.localStorage.getItem(SOUND_ENABLED_KEY) !== "0"; } catch (error) { return true; }\n' +
+    '  }\n' +
+    '\n' +
     '  function applySfxVolume(audio){\n' +
     '    if (!isAudioElement(audio)) return;\n' +
     '    var src = String(audio.currentSrc || audio.src || "");\n' +
     '    if (!isLearningRpgSfxSource(src)) return;\n' +
+    '    if (!isSoundEnabled()) {\n' +
+    '      audio.muted = true;\n' +
+    '      audio.volume = 0;\n' +
+    '      return;\n' +
+    '    }\n' +
     '    if (audio.__learningRpgSfxBaseVolume === undefined) {\n' +
     '      audio.__learningRpgSfxBaseVolume = Number(audio.volume || 1);\n' +
     '    }\n' +
@@ -86,12 +97,16 @@ function getLearningRpgAudioVolumeTweaksClientPatch_() {
     '  }\n' +
     '\n' +
     '  function playRewardOneShot(){\n' +
+    '    if (!isSoundEnabled()) return;\n' +
+    '    if (Date.now() - lastRewardOneShotAt < 1200) return;\n' +
+    '    lastRewardOneShotAt = Date.now();\n' +
     '    stopRewardOneShot();\n' +
     '    try {\n' +
     '      var audio = new Audio(assetUrl("Resources/Sounds/BGM/Battle/Reward.wav"));\n' +
     '      audio.loop = false;\n' +
     '      audio.preload = "auto";\n' +
     '      audio.volume = REWARD_ONE_SHOT_VOLUME;\n' +
+    '      audio.muted = !isSoundEnabled();\n' +
     '      rewardOneShotAudio = audio;\n' +
     '      audio.addEventListener("ended", function(){\n' +
     '        if (rewardOneShotAudio === audio) {\n' +
@@ -117,6 +132,12 @@ function getLearningRpgAudioVolumeTweaksClientPatch_() {
     '      } catch (error) {}\n' +
     '      playRewardOneShot();\n' +
     '    }, 120);\n' +
+    '  }\n' +
+    '\n' +
+    '  function applySoundPreference(){\n' +
+    '    if (!isSoundEnabled()) {\n' +
+    '      stopRewardOneShot();\n' +
+    '    }\n' +
     '  }\n' +
     '\n' +
     '  function patchFunction(name, wrapper){\n' +
@@ -164,6 +185,8 @@ function getLearningRpgAudioVolumeTweaksClientPatch_() {
     '    window.__learningRpgAudioVolumeTweaksInstalled = true;\n' +
     '    patchMediaPlayVolume();\n' +
     '    installRewardOneShotPatch();\n' +
+    '    window.addEventListener("storage", function(event){ if (event.key === SOUND_ENABLED_KEY) applySoundPreference(); });\n' +
+    '    window.addEventListener("learningRpgSoundPreferenceChanged", applySoundPreference);\n' +
     '  }\n' +
     '\n' +
     '  if (document.readyState === "loading") {\n' +

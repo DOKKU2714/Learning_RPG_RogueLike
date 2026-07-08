@@ -79,6 +79,7 @@ function createNewRun_(playerId) {
       stageId: buildStageId_(1, 1),
       otherStudentQuestionShown: false,
       fallbackEvents: [],
+      usedQuestionIds: [],
     }),
     startedAt: now,
     updatedAt: now,
@@ -240,6 +241,7 @@ function normalizePlayerActionPointFields_(player) {
 function startBattle(runId) {
   var run = requireRun_(runId);
   var stageState = getStageState_(run);
+  var usedQuestionIds = normalizeUsedQuestionIds_(stageState, null);
   var stage = loadStage(stageState.stageId || buildStageId_(run.currentFloor, run.currentStage));
   if (Number(stage.stage || 0) === GAME_RULES.FLOOR_REST_STAGE && typeof buildFloorRestRewardViewForRun_ === 'function') {
     return buildFloorRestRewardViewForRun_(run, stageState);
@@ -288,6 +290,7 @@ function startBattle(runId) {
     forcedQuestionCreatorId: playerGhostSelection.questionCreatorId || '',
     pendingAction: null,
     pendingAnswerLogs: [],
+    usedQuestionIds: usedQuestionIds.slice(),
     lastMessage: '전투가 시작되었습니다.',
     lastTurnEvents: [],
     skillCooldowns: {},
@@ -305,6 +308,7 @@ function startBattle(runId) {
   stageState.stageId = stage.stageId;
   stageState.otherStudentQuestionShown = !!stageState.otherStudentQuestionShown;
   stageState.playerGhost = playerGhostSelection.context;
+  normalizeUsedQuestionIds_(stageState, battleState);
   saveStageState_(runId, stageState, battleState);
   return toClientObject_(getRunWithStageState_(runId));
 }
@@ -335,6 +339,7 @@ function surrenderBattle(runId, authToken) {
 
   var stageState = getStageState_(run);
   var battleState = requireActiveBattle_(stageState);
+  normalizeUsedQuestionIds_(stageState, battleState);
   normalizeBattleStateEffects_(battleState);
   normalizeBattleMonsters_(battleState);
   battleState.player.hp = 0;
@@ -362,6 +367,7 @@ function passPlayerTurn(runId, authToken) {
 
   var stageState = getStageState_(run);
   var battleState = requireActiveBattle_(stageState);
+  normalizeUsedQuestionIds_(stageState, battleState);
   normalizeBattleStateEffects_(battleState);
   normalizeBattleMonsters_(battleState);
   normalizePlayerActionPoints_(battleState, false);
@@ -426,6 +432,7 @@ function selectQuestionForAction(playerId, runId, actionType, difficultyBonus, a
 
   var stageState = getStageState_(run);
   var battleState = requireActiveBattle_(stageState);
+  normalizeUsedQuestionIds_(stageState, battleState);
   normalizeBattleStateEffects_(battleState);
   normalizeBattleMonsters_(battleState);
   normalizePlayerActionPoints_(battleState, false);
@@ -437,11 +444,13 @@ function selectQuestionForAction(playerId, runId, actionType, difficultyBonus, a
     throw new Error('행동력이 부족합니다.');
   }
   if (battleState.pendingAction) {
+    markQuestionUsedForRun_(stageState, battleState, battleState.pendingAction.questionId);
+    saveStageState_(runId, stageState, battleState);
     return buildQuestionView_(battleState.pendingAction.question, battleState.pendingAction);
   }
 
   var activeEffects = getActiveEffectsForQuestion_(battleState);
-  var questionResult = pickQuestion_(playerId, battleState.stage, stageState.otherStudentQuestionShown, getForcedQuestionCreatorId_(battleState), getItemQuestionModifiers_(battleState, null));
+  var questionResult = pickQuestion_(playerId, battleState.stage, stageState.otherStudentQuestionShown, getForcedQuestionCreatorId_(battleState), getItemQuestionModifiers_(battleState, null), stageState.usedQuestionIds);
   var baseDifficulty = applyBossDifficultyBonus(battleState.stage, Number(questionResult.question.difficulty || battleState.stage.baseDifficulty) + Number(difficultyBonus || 0));
   var questionModifiers = getItemQuestionModifiers_(battleState, questionResult.question);
   var finalDifficulty = calculateFinalQuestionDifficulty(baseDifficulty, activeEffects, questionModifiers);
@@ -462,6 +471,7 @@ function selectQuestionForAction(playerId, runId, actionType, difficultyBonus, a
   };
 
   battleState.pendingAction = pendingAction;
+  markQuestionUsedForRun_(stageState, battleState, pendingAction.questionId);
   if (questionResult.isOtherPlayerQuestion) {
     stageState.otherStudentQuestionShown = true;
   }
@@ -489,10 +499,12 @@ function submitActionAnswer(answerPayload) {
 
   var stageState = getStageState_(run);
   var battleState = requireActiveBattle_(stageState);
+  normalizeUsedQuestionIds_(stageState, battleState);
   normalizeBattleStateEffects_(battleState);
   var pendingAction = battleState.pendingAction;
   if (!pendingAction && payload.questionId) {
     pendingAction = createPendingActionFromCachedPayload_(
+      stageState,
       battleState,
       payload,
       normalizeActionType_(payload.actionType || ACTION_TYPES.ATTACK),
@@ -501,6 +513,7 @@ function submitActionAnswer(answerPayload) {
       player.playerId
     );
     battleState.pendingAction = pendingAction;
+    markQuestionUsedForRun_(stageState, battleState, pendingAction.questionId);
     markCachedQuestionShown_(stageState, pendingAction);
   }
   if (!pendingAction || pendingAction.questionId !== payload.questionId) {
@@ -512,21 +525,30 @@ function submitActionAnswer(answerPayload) {
     throw new Error('문제를 찾을 수 없습니다.');
   }
 
+  markQuestionUsedForRun_(stageState, battleState, pendingAction.questionId);
   var elapsedMs = Math.max(0, Number(payload.elapsedMs || 0));
   var maxMs = Number(pendingAction.maxMs || calculateFinalQuestionTimeLimitForQuestion_(pendingAction.finalDifficulty, getActiveEffectsForQuestion_(battleState), pendingAction.question || question, getItemQuestionModifiers_(battleState, question)));
   var remainingMs = Math.max(0, maxMs - elapsedMs);
-  var isCorrect = isCorrectAnswer_(question, payload.selectedAnswer, payload.selectedChoiceIndex, payload.selectedAnswerText);
+  var gaveUp = !!payload.giveUp;
+  var isCorrect = gaveUp ? false : isCorrectAnswer_(question, payload.selectedAnswer, payload.selectedChoiceIndex, payload.selectedAnswerText);
   var wrongCountAfterTimeout = Number(payload.wrongCountAfterTimeout || 0);
-  var efficiency = calculateEfficiency(isCorrect, remainingMs, maxMs, wrongCountAfterTimeout, getItemQuestionModifiers_(battleState, question), question);
+  var efficiency = gaveUp ? 0 : calculateEfficiency(isCorrect, remainingMs, maxMs, wrongCountAfterTimeout, getItemQuestionModifiers_(battleState, question), question);
 
   battleState.lastTurnEvents = [];
   consumeActionPoint_(battleState, Number(pendingAction.actionPointCost !== undefined && pendingAction.actionPointCost !== '' ? pendingAction.actionPointCost : getActionPointCostForAction_(pendingAction.actionType, null)));
-  tickEffectsOnPlayerAction(battleState);
-  if (battleState.player.hp <= 0) {
-    battleState.status = STATUS.BATTLE_DEFEAT;
-    battleState.lastMessage = '지속 피해로 쓰러졌습니다.';
+  if (gaveUp) {
+    battleState.lastPlayerAction = { type: pendingAction.actionType, value: 0, efficiency: 0, gaveUp: true };
+    battleState.lastMessage = '문제를 포기했습니다. 행동력만 소모했습니다.';
+    battleState.lastTurnEvents.push({ actor: 'player', type: 'giveUp', message: battleState.lastMessage });
   }
-  if (battleState.player.hp > 0 && battleState.status === STATUS.BATTLE_ACTIVE) {
+  if (!gaveUp) {
+    tickEffectsOnPlayerAction(battleState);
+    if (battleState.player.hp <= 0) {
+      battleState.status = STATUS.BATTLE_DEFEAT;
+      battleState.lastMessage = '지속 피해로 쓰러졌습니다.';
+    }
+  }
+  if (!gaveUp && battleState.player.hp > 0 && battleState.status === STATUS.BATTLE_ACTIVE) {
     if (pendingAction.actionType === ACTION_TYPES.GUARD) {
       applyGuard(battleState, efficiency);
     } else {
@@ -550,7 +572,7 @@ function submitActionAnswer(answerPayload) {
     floor: battleState.stage.floor,
     stage: battleState.stage.stage,
     actionType: pendingAction.actionType,
-    selectedAnswer: payload.selectedAnswerText || payload.selectedAnswer || '',
+    selectedAnswer: gaveUp ? '[giveUp]' : payload.selectedAnswerText || payload.selectedAnswer || '',
     isCorrect: isCorrect,
     elapsedMs: elapsedMs,
     maxTimeMs: maxMs,
@@ -1120,6 +1142,9 @@ function applyMonsterSkillIntent_(battleState, monster, intent) {
   } else if (skill.type === SKILL_TYPES.SHIELD) {
     var shield = Math.max(0, Math.round(Number(skill.baseValue || 0) + Number(monsterStats.defense || 0)));
     monster.shield = Number(monster.shield || 0) + shield;
+    applyMonsterSkillEffect_(monster, skill, 'monster');
+    normalizeBattleStateEffects_(battleState);
+    syncPrimaryMonster_(battleState);
     battleState.lastTurnEvents.push({ actor: 'monster', type: ACTION_TYPES.GUARD, skillId: skill.skillId, monsterId: monster.instanceId || monster.monsterId, monsterName: monster.name, shield: shield, damage: 0, message: monster.name + '이 ' + skill.name + ' 사용!' });
   } else if (skill.type === SKILL_TYPES.HEAL) {
     var heal = Math.max(0, Math.round(Number(skill.baseValue || 0)));
@@ -1277,6 +1302,9 @@ function commitStageResult(stagePayload, authToken) {
 
   var stageState = getStageState_(run);
   var clientStageState = payload.stageState || {};
+  normalizeUsedQuestionIds_(stageState, battleState);
+  stageState.usedQuestionIds = mergeUsedQuestionIds_(stageState.usedQuestionIds, clientStageState.usedQuestionIds);
+  normalizeUsedQuestionIds_(stageState, battleState);
   stageState.otherStudentQuestionShown = !!(stageState.otherStudentQuestionShown || clientStageState.otherStudentQuestionShown);
   stageState.fallbackEvents = mergeStageFallbackEvents_(stageState.fallbackEvents, clientStageState.fallbackEvents);
   stageState.playerGhost = stageState.playerGhost || clientStageState.playerGhost || battleState.playerGhost || null;
@@ -1287,6 +1315,7 @@ function commitStageResult(stagePayload, authToken) {
 
   queuedServerAnswerLogs.forEach(function(answerPayload) {
     queueBattleAnswerLog_(battleState, answerPayload);
+    markQuestionUsedForRun_(stageState, battleState, answerPayload.questionId);
   });
 
   (Array.isArray(payload.answerLogs) ? payload.answerLogs : []).forEach(function(answerPayload) {
@@ -1315,6 +1344,7 @@ function commitStageResult(stagePayload, authToken) {
       finalDifficulty: answerPayload.finalDifficulty,
       isOtherPlayerQuestion: answerPayload.isOtherPlayerQuestion,
     });
+    markQuestionUsedForRun_(stageState, battleState, question.questionId);
   });
   flushQueuedBattleAnswerLogs_(battleState);
 
@@ -1637,8 +1667,10 @@ function preloadBattleQuestions(runId, authToken) {
 
 function buildBattleQuestionCache_(run, stageState, battleState) {
   try {
+    normalizeUsedQuestionIds_(stageState, battleState);
     var activeEffects = getActiveEffectsForQuestion_(battleState);
-    var selectedQuestions = selectQuestionCacheRows_(run.playerId, battleState.stage, stageState.otherStudentQuestionShown, getForcedQuestionCreatorId_(battleState), getItemQuestionModifiers_(battleState, null));
+    var usedIdMap = getUsedQuestionIdMap_(stageState, battleState);
+    var selectedQuestions = selectQuestionCacheRows_(run.playerId, battleState.stage, stageState.otherStudentQuestionShown, getForcedQuestionCreatorId_(battleState), getItemQuestionModifiers_(battleState, null), stageState.usedQuestionIds);
     return selectedQuestions.map(function(question) {
       var baseDifficulty = applyBossDifficultyBonus(battleState.stage, Number(question.difficulty || battleState.stage.baseDifficulty));
       var questionModifiers = getItemQuestionModifiers_(battleState, question);
@@ -1651,7 +1683,7 @@ function buildBattleQuestionCache_(run, stageState, battleState) {
         maxAnswerEfficiency: calculateMaxAnswerEfficiency_(questionModifiers),
         questionModifiers: questionModifiers,
         isOtherPlayerQuestion: question.creatorId !== run.playerId,
-        fallbackReason: '',
+        fallbackReason: usedIdMap[String(question.questionId || '')] ? 'exhaustedUnusedQuestions' : '',
       };
     });
   } catch (error) {
@@ -1659,7 +1691,7 @@ function buildBattleQuestionCache_(run, stageState, battleState) {
   }
 }
 
-function selectQuestionCacheRows_(playerId, stage, otherStudentQuestionShown, forcedCreatorId, questionModifiers) {
+function selectQuestionCacheRows_(playerId, stage, otherStudentQuestionShown, forcedCreatorId, questionModifiers, usedQuestionIds) {
   var limit = 30;
   var range = getStageDifficultyRange_(stage);
   var minDifficulty = range.minDifficulty;
@@ -1674,9 +1706,11 @@ function selectQuestionCacheRows_(playerId, stage, otherStudentQuestionShown, fo
     return !forcedCreatorId || question.creatorId === forcedCreatorId;
   });
   var rangedQuestions = allowedQuestions.filter(function(question) {
-    var difficulty = Number(question.difficulty || 0);
-    return difficulty >= minDifficulty && difficulty <= maxDifficulty;
+    return isQuestionInStageDifficultyRange_(question, minDifficulty, maxDifficulty);
   });
+  var usedIdMap = buildQuestionIdMap_(usedQuestionIds);
+  var unusedRangedQuestions = filterUnusedQuestions_(rangedQuestions, usedIdMap);
+  var primaryRangedQuestions = unusedRangedQuestions.length ? unusedRangedQuestions : rangedQuestions;
   var selected = [];
   var selectedIds = {};
 
@@ -1699,11 +1733,10 @@ function selectQuestionCacheRows_(playerId, stage, otherStudentQuestionShown, fo
     }
   }
 
-  if (!otherStudentQuestionShown && rangedQuestions.length > 0) {
-    pushQuestion(pickQuestionWithTypeBias_(rangedQuestions, questionModifiers));
+  if (!otherStudentQuestionShown && primaryRangedQuestions.length > 0) {
+    pushQuestion(pickQuestionWithTypeBias_(primaryRangedQuestions, questionModifiers));
   }
-  pushRandomFrom(rangedQuestions);
-  pushRandomFrom(allowedQuestions);
+  pushRandomFrom(primaryRangedQuestions);
   return selected;
 }
 
@@ -1714,13 +1747,18 @@ function sanitizeQuestionForBattleCache_(question) {
   return sanitized;
 }
 
-function createPendingActionFromCachedPayload_(battleState, payload, actionType, skillId, targetId, playerId) {
+function createPendingActionFromCachedPayload_(stageState, battleState, payload, actionType, skillId, targetId, playerId) {
   var question = findCachedRowByKey_(DB_SHEETS.QUESTIONS, 'questionId', payload.questionId, 120);
   if (!question) {
     throw new Error('문제를 찾을 수 없습니다.');
   }
 
   validateQuestionAllowedForBattle_(question, playerId, battleState);
+  normalizeUsedQuestionIds_(stageState, battleState);
+  var reusedQuestion = isQuestionUsedInRun_(stageState, battleState, question.questionId);
+  if (reusedQuestion && hasUnusedQuestionForBattle_(playerId, stageState, battleState)) {
+    throw new Error('This question has already appeared in this battle.');
+  }
   var activeEffects = getActiveEffectsForQuestion_(battleState);
   var skill = skillId ? findCachedRowByKey_(DB_SHEETS.SKILLS, 'skillId', skillId, 600) : null;
   var difficultyBonus = skill ? Number(skill.difficultyBonus || 0) : 0;
@@ -1741,7 +1779,7 @@ function createPendingActionFromCachedPayload_(battleState, payload, actionType,
     maxAnswerEfficiency: calculateMaxAnswerEfficiency_(questionModifiers),
     questionModifiers: questionModifiers,
     isOtherPlayerQuestion: question.creatorId !== playerId,
-    fallbackReason: payload.fallbackReason || '',
+    fallbackReason: reusedQuestion ? 'exhaustedUnusedQuestions' : payload.fallbackReason || '',
     fromCache: true,
   };
 }
@@ -1768,6 +1806,10 @@ function validateQuestionAllowedForBattle_(question, playerId, battleState) {
   if (forcedCreatorId && question.creatorId !== forcedCreatorId) {
     throw new Error('Only the player monster creator questions can appear in this battle.');
   }
+  var range = getStageDifficultyRange_(battleState && battleState.stage || {});
+  if (!isQuestionInStageDifficultyRange_(question, range.minDifficulty, range.maxDifficulty)) {
+    throw new Error('This question is outside the current stage difficulty range.');
+  }
 }
 
 function markCachedQuestionShown_(stageState, pendingAction) {
@@ -1776,7 +1818,105 @@ function markCachedQuestionShown_(stageState, pendingAction) {
   }
 }
 
-function pickQuestion_(playerId, stage, otherStudentQuestionShown, forcedCreatorId, questionModifiers) {
+function normalizeUsedQuestionIds_(stageState, battleState) {
+  stageState = stageState || {};
+  var merged = mergeUsedQuestionIds_(stageState.usedQuestionIds, battleState && battleState.usedQuestionIds);
+  stageState.usedQuestionIds = merged;
+  if (battleState) {
+    battleState.usedQuestionIds = merged.slice();
+  }
+  return stageState.usedQuestionIds;
+}
+
+function mergeUsedQuestionIds_(existing, newIds) {
+  var map = {};
+  var merged = [];
+  function add(questionId) {
+    questionId = String(questionId || '');
+    if (!questionId || map[questionId]) {
+      return;
+    }
+    map[questionId] = true;
+    merged.push(questionId);
+  }
+  (existing || []).forEach(add);
+  (newIds || []).forEach(add);
+  return merged;
+}
+
+function getUsedQuestionIdsFromAnswerLogs_(runId) {
+  runId = String(runId || '');
+  if (!runId) {
+    return [];
+  }
+  return readTable_(DB_SHEETS.ANSWER_LOGS).filter(function(log) {
+    return String(log.runId || '') === runId && log.questionId;
+  }).map(function(log) {
+    return log.questionId;
+  });
+}
+
+function getUsedQuestionIdMap_(stageState, battleState) {
+  return buildQuestionIdMap_(normalizeUsedQuestionIds_(stageState, battleState));
+}
+
+function markQuestionUsedForRun_(stageState, battleState, questionId) {
+  questionId = String(questionId || '');
+  if (!questionId) {
+    return;
+  }
+  var usedQuestionIds = normalizeUsedQuestionIds_(stageState, battleState);
+  if (!buildQuestionIdMap_(usedQuestionIds)[questionId]) {
+    usedQuestionIds.push(questionId);
+  }
+  if (battleState) {
+    battleState.usedQuestionIds = usedQuestionIds.slice();
+  }
+}
+
+function isQuestionUsedInRun_(stageState, battleState, questionId) {
+  return !!getUsedQuestionIdMap_(stageState, battleState)[String(questionId || '')];
+}
+
+function buildQuestionIdMap_(questionIds) {
+  var map = {};
+  (questionIds || []).forEach(function(questionId) {
+    questionId = String(questionId || '');
+    if (questionId) {
+      map[questionId] = true;
+    }
+  });
+  return map;
+}
+
+function filterUnusedQuestions_(questions, usedIdMap) {
+  return (questions || []).filter(function(question) {
+    return question && !usedIdMap[String(question.questionId || '')];
+  });
+}
+
+function hasUnusedQuestionForBattle_(playerId, stageState, battleState) {
+  if (!battleState || !battleState.stage) {
+    return false;
+  }
+  var forcedCreatorId = getForcedQuestionCreatorId_(battleState);
+  var range = getStageDifficultyRange_(battleState.stage);
+  var usedIdMap = getUsedQuestionIdMap_(stageState, battleState);
+  return readTableCached_(DB_SHEETS.QUESTIONS, 120).some(function(question) {
+    if (question.status !== STATUS.QUESTION_APPROVED || question.creatorId === playerId) {
+      return false;
+    }
+    if (forcedCreatorId && question.creatorId !== forcedCreatorId) {
+      return false;
+    }
+    if (!isQuestionInStageDifficultyRange_(question, range.minDifficulty, range.maxDifficulty)) {
+      return false;
+    }
+    return !usedIdMap[String(question.questionId || '')];
+  });
+}
+
+function pickQuestion_(playerId, stage, otherStudentQuestionShown, forcedCreatorId, questionModifiers, usedQuestionIds) {
   var range = getStageDifficultyRange_(stage);
   var minDifficulty = range.minDifficulty;
   var maxDifficulty = range.maxDifficulty;
@@ -1790,18 +1930,25 @@ function pickQuestion_(playerId, stage, otherStudentQuestionShown, forcedCreator
     return !forcedCreatorId || question.creatorId === forcedCreatorId;
   });
   var rangedQuestions = questionPool.filter(function(question) {
-    var difficulty = Number(question.difficulty || 0);
-    return difficulty >= minDifficulty && difficulty <= maxDifficulty;
+    return isQuestionInStageDifficultyRange_(question, minDifficulty, maxDifficulty);
   });
+  var usedIdMap = buildQuestionIdMap_(usedQuestionIds);
+  var unusedRangedQuestions = filterUnusedQuestions_(rangedQuestions, usedIdMap);
 
+  if (unusedRangedQuestions.length > 0) {
+    return questionPickResult_(pickQuestionWithTypeBias_(unusedRangedQuestions, questionModifiers), true, '');
+  }
   if (rangedQuestions.length > 0) {
-    return questionPickResult_(pickQuestionWithTypeBias_(rangedQuestions, questionModifiers), true, '');
-  }
-  if (questionPool.length > 0) {
-    return questionPickResult_(pickQuestionWithTypeBias_(questionPool, questionModifiers), true, 'noQuestionInDifficultyRange');
+    return questionPickResult_(pickQuestionWithTypeBias_(rangedQuestions, questionModifiers), true, 'exhaustedUnusedQuestions');
   }
 
-  throw new Error('No approved question is available from another player.');
+  throw new Error('No approved question is available in the current stage difficulty range.');
+}
+
+function isQuestionInStageDifficultyRange_(question, minDifficulty, maxDifficulty) {
+  var difficulty = Number(question && question.difficulty || 0);
+  return difficulty >= Number(minDifficulty || GAME_RULES.MIN_DIFFICULTY)
+    && difficulty <= Number(maxDifficulty || GAME_RULES.MAX_DIFFICULTY);
 }
 
 function pickQuestionWithTypeBias_(questions, questionModifiers) {
@@ -1864,6 +2011,7 @@ function sanitizeQuestionForClient_(question) {
 }
 
 function saveStageState_(runId, stageState, battleState) {
+  normalizeUsedQuestionIds_(stageState, battleState);
   normalizeBattleStateEffects_(battleState);
   var patch = {
     currentHp: battleState.player.hp,
@@ -2167,13 +2315,7 @@ function normalizeBattleMonsters_(battleState) {
     monster.skillIds = monster.skillIds || [];
     monster.shield = Number(monster.shield || 0);
     monster.intent = monster.intent || null;
-    monster.effects = (monster.effects || []).map(hydrateEffectDisplayFields_);
-    monster.buffs = monster.effects.filter(function(effect) {
-      return effect.category === EFFECT_CATEGORIES.BUFF;
-    });
-    monster.debuffs = monster.effects.filter(function(effect) {
-      return effect.category === EFFECT_CATEGORIES.DEBUFF;
-    });
+    normalizeTargetStatusBuckets_(monster);
     return monster;
   });
   syncPrimaryMonster_(battleState);
@@ -2290,11 +2432,17 @@ function getRunWithStageState_(runId) {
 }
 
 function getStageState_(run) {
-  return safeJsonParse_(run.stageStateJson, {
+  var stageState = safeJsonParse_(run.stageStateJson, {
     stageId: buildStageId_(run.currentFloor, run.currentStage),
     otherStudentQuestionShown: false,
     fallbackEvents: [],
+    usedQuestionIds: [],
   });
+  if (!stageState.usedQuestionIds || !stageState.usedQuestionIds.length) {
+    stageState.usedQuestionIds = mergeUsedQuestionIds_(stageState.usedQuestionIds, getUsedQuestionIdsFromAnswerLogs_(run.runId));
+  }
+  normalizeUsedQuestionIds_(stageState, stageState.battle);
+  return stageState;
 }
 
 function requireActiveBattle_(stageState) {

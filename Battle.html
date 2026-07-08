@@ -14,6 +14,18 @@
       <div id="screenDamageFlash" class="screen-damage-flash" aria-hidden="true"></div>
       <div id="turnSyncSpinner" class="turn-sync-spinner" aria-hidden="true"></div>
       <div id="turnBanner" class="turn-banner" aria-hidden="true"></div>
+      <button id="battleSoundToggleButton" class="sound-toggle-button battle-sound-toggle" type="button" onclick="toggleSoundEnabled()" aria-pressed="true" aria-label="소리 켜짐" title="소리 켜짐">
+        <svg class="sound-icon-on" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M11 5 6 9H3v6h3l5 4V5z"></path>
+          <path d="M15 9a5 5 0 0 1 0 6"></path>
+          <path d="M18 6a9 9 0 0 1 0 12"></path>
+        </svg>
+        <svg class="sound-icon-off" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M11 5 6 9H3v6h3l5 4V5z"></path>
+          <path d="m16 9 5 5"></path>
+          <path d="m21 9-5 5"></path>
+        </svg>
+      </button>
 
       <div id="monsterLayer" class="monster-layer" aria-label="몬스터 목록"></div>
       <div id="floatingLayer" class="floating-layer" aria-hidden="true"></div>
@@ -107,6 +119,7 @@
       </div>
 
       <div class="inline-actions" style="justify-content:flex-end; margin-top:14px;">
+        <button id="questionGiveUpButton" class="secondary hidden" type="button" onclick="giveUpCurrentQuestion()">포기</button>
         <button id="questionSubmitButton" onclick="submitQuestionAnswer()">확인</button>
       </div>
       <div id="questionMessage" class="message"></div>
@@ -160,6 +173,7 @@
       hpDown: 'Resources/Sounds/Hp_down.wav',
     };
     var battleSoundCache = {};
+    var activeBattleSounds = [];
     var currentView = null;
     var currentQuestionView = null;
     var questionStartedAt = 0;
@@ -221,6 +235,14 @@
     var SHORT_ANSWER_TIME_MULTIPLIER = 1.2;
     var STAGE_INTRO_SEEN_PREFIX = 'learningRpgStageIntroSeen:';
     var LOCAL_BATTLE_CHECKPOINT_PREFIX = 'learningRpgBattleCheckpoint:';
+    var SOUND_ENABLED_KEY = 'learningRpgSoundEnabled';
+
+    window.addEventListener('storage', function(event) {
+      if (event.key === SOUND_ENABLED_KEY) {
+        syncSoundToggleButton();
+        applyGlobalSoundPreference();
+      }
+    });
 
     var dummyView = {
       runId: 'dummy-run',
@@ -306,6 +328,8 @@
       window.scrollTo(0, 0);
       document.documentElement.scrollTop = 0;
       document.body.scrollTop = 0;
+      syncSoundToggleButton();
+      applyGlobalSoundPreference();
       if (window.location.search.indexOf('debug=1') !== -1) {
         document.querySelector('.battle-debug-controls').classList.add('active');
       }
@@ -716,6 +740,7 @@
     }
 
     function bindHoverTooltips() {
+      var activeTooltipTarget = null;
       var tooltip = document.getElementById('hoverTooltip');
       if (!tooltip) {
         tooltip = document.createElement('div');
@@ -734,12 +759,10 @@
       }
       document.addEventListener('mousemove', function(event) {
         if (tooltip.getAttribute('aria-hidden') !== 'true') {
-          tooltip.style.left = (event.clientX + 14) + 'px';
-          tooltip.style.top = (event.clientY + 14) + 'px';
+          positionHoverTooltip(tooltip, activeTooltipTarget, event, 0);
         }
         if (statTooltip.getAttribute('aria-hidden') !== 'true') {
-          statTooltip.style.left = (event.clientX + 22) + 'px';
-          statTooltip.style.top = (event.clientY + 78) + 'px';
+          positionHoverTooltip(statTooltip, activeTooltipTarget, event, 1);
         }
       });
       document.addEventListener('mouseover', function(event) {
@@ -747,6 +770,7 @@
         if (!target) return;
         var text = target.getAttribute('data-tooltip');
         if (!text) return;
+        activeTooltipTarget = target;
         tooltip.textContent = text;
         tooltip.setAttribute('aria-hidden', 'false');
         tooltip.classList.add('active');
@@ -759,15 +783,39 @@
           statTooltip.setAttribute('aria-hidden', 'true');
           statTooltip.classList.remove('active');
         }
+        window.requestAnimationFrame(function() {
+          positionHoverTooltip(tooltip, activeTooltipTarget, event, 0);
+          if (statTooltip.getAttribute('aria-hidden') !== 'true') {
+            positionHoverTooltip(statTooltip, activeTooltipTarget, event, 1);
+          }
+        });
       });
       document.addEventListener('mouseout', function(event) {
         if (event.target.closest && event.target.closest('[data-tooltip]')) {
+          activeTooltipTarget = null;
           tooltip.setAttribute('aria-hidden', 'true');
           tooltip.classList.remove('active');
           statTooltip.setAttribute('aria-hidden', 'true');
           statTooltip.classList.remove('active');
         }
       });
+    }
+
+    function positionHoverTooltip(tooltip, target, event, stackIndex) {
+      if (!tooltip) return;
+      var placement = target && target.getAttribute && target.getAttribute('data-tooltip-placement');
+      if (placement === 'above') {
+        var rect = target.getBoundingClientRect();
+        var width = tooltip.offsetWidth || 220;
+        var height = tooltip.offsetHeight || 40;
+        var left = rect.left + (rect.width / 2) - (width / 2);
+        var top = rect.top - height - 10 - (Number(stackIndex || 0) * (height + 6));
+        tooltip.style.left = Math.max(8, Math.min(window.innerWidth - width - 8, left)) + 'px';
+        tooltip.style.top = Math.max(8, top) + 'px';
+        return;
+      }
+      tooltip.style.left = ((event && event.clientX || 0) + (stackIndex ? 22 : 14)) + 'px';
+      tooltip.style.top = ((event && event.clientY || 0) + (stackIndex ? 78 : 14)) + 'px';
     }
 
     function normalizeBattleView(view) {
@@ -791,9 +839,67 @@
       battle.player.shield = Number(battle.player.shield || 0);
       syncClientStatusBuckets(battle.player);
       normalizeClientActionPoints(battle.player);
+      view.stageState = view.stageState || {};
+      view.stageState.usedQuestionIds = mergeClientQuestionIds(view.stageState.usedQuestionIds, battle.usedQuestionIds);
+      battle.usedQuestionIds = view.stageState.usedQuestionIds.slice();
       view.questionCache = view.questionCache || [];
+      view.questionCache = filterQuestionCacheByUsed(view.questionCache, view.stageState.usedQuestionIds);
       view.monsterAiRules = view.monsterAiRules || [];
       return view;
+    }
+
+    function mergeClientQuestionIds(existing, incoming) {
+      var seen = {};
+      var merged = [];
+      function add(questionId) {
+        questionId = String(questionId || '');
+        if (!questionId || seen[questionId]) return;
+        seen[questionId] = true;
+        merged.push(questionId);
+      }
+      (existing || []).forEach(add);
+      (incoming || []).forEach(add);
+      return merged;
+    }
+
+    function getClientUsedQuestionIds(view) {
+      view = view || currentView || {};
+      var battle = view.battle || {};
+      view.stageState = view.stageState || {};
+      view.stageState.usedQuestionIds = mergeClientQuestionIds(view.stageState.usedQuestionIds, battle.usedQuestionIds);
+      battle.usedQuestionIds = view.stageState.usedQuestionIds.slice();
+      return view.stageState.usedQuestionIds;
+    }
+
+    function getQuestionViewId(questionView) {
+      return String(questionView && questionView.question && questionView.question.questionId || '');
+    }
+
+    function filterQuestionCacheByUsed(cache, usedQuestionIds) {
+      var used = {};
+      (usedQuestionIds || []).forEach(function(questionId) {
+        questionId = String(questionId || '');
+        if (questionId) used[questionId] = true;
+      });
+      return (cache || []).filter(function(questionView) {
+        return !used[getQuestionViewId(questionView)] || questionView && questionView.fallbackReason === 'exhaustedUnusedQuestions';
+      });
+    }
+
+    function markClientQuestionUsed(questionId, view) {
+      questionId = String(questionId || '');
+      if (!questionId) return;
+      view = view || currentView;
+      if (!view) return;
+      var usedQuestionIds = getClientUsedQuestionIds(view);
+      if (usedQuestionIds.indexOf(questionId) === -1) {
+        usedQuestionIds.push(questionId);
+      }
+      if (view.battle) {
+        view.battle.usedQuestionIds = usedQuestionIds.slice();
+      }
+      view.questionCache = filterQuestionCacheByUsed(view.questionCache, usedQuestionIds);
+      battleQuestionCache = filterQuestionCacheByUsed(battleQuestionCache, usedQuestionIds);
     }
 
     function buildClientFloorIntermissionBattle(stage, rewardView) {
@@ -1119,14 +1225,95 @@
     }
 
     function playBattleSound(soundKey) {
+      if (!isSoundEnabled()) return;
       var baseAudio = getBattleSound(soundKey);
       if (!baseAudio) return;
       var audio = baseAudio.cloneNode ? baseAudio.cloneNode(true) : new Audio(baseAudio.src);
       audio.volume = 0.75;
+      audio.muted = !isSoundEnabled();
+      activeBattleSounds.push(audio);
+      audio.addEventListener('ended', function() {
+        removeActiveBattleSound(audio);
+      });
       var playPromise = audio.play();
       if (playPromise && playPromise.catch) {
-        playPromise.catch(function() {});
+        playPromise.catch(function() {
+          removeActiveBattleSound(audio);
+        });
       }
+    }
+
+    function removeActiveBattleSound(audio) {
+      activeBattleSounds = activeBattleSounds.filter(function(candidate) {
+        return candidate !== audio;
+      });
+    }
+
+    function isSoundEnabled() {
+      try {
+        return localStorage.getItem(SOUND_ENABLED_KEY) !== '0';
+      } catch (error) {
+        return true;
+      }
+    }
+
+    function setSoundEnabled(enabled) {
+      try {
+        localStorage.setItem(SOUND_ENABLED_KEY, enabled ? '1' : '0');
+      } catch (error) {}
+      syncSoundToggleButton();
+      applyGlobalSoundPreference();
+      notifySoundPreferenceChanged();
+    }
+
+    function toggleSoundEnabled() {
+      setSoundEnabled(!isSoundEnabled());
+    }
+
+    function syncSoundToggleButton() {
+      var button = document.getElementById('battleSoundToggleButton');
+      if (!button) return;
+      var enabled = isSoundEnabled();
+      button.classList.toggle('sound-muted', !enabled);
+      button.setAttribute('aria-pressed', enabled ? 'true' : 'false');
+      button.setAttribute('aria-label', enabled ? '소리 켜짐' : '소리 꺼짐');
+      button.title = enabled ? '소리 켜짐' : '소리 꺼짐';
+    }
+
+    function applyGlobalSoundPreference() {
+      var enabled = isSoundEnabled();
+      Array.prototype.forEach.call(document.querySelectorAll('audio, video'), function(media) {
+        if (media.dataset.soundPreviousVolume === undefined) {
+          media.dataset.soundPreviousVolume = String(media.volume);
+        }
+        media.muted = !enabled;
+        media.volume = enabled ? Number(media.dataset.soundPreviousVolume || 1) : 0;
+      });
+      Object.keys(battleSoundCache).forEach(function(soundKey) {
+        if (battleSoundCache[soundKey]) {
+          battleSoundCache[soundKey].muted = !enabled;
+          battleSoundCache[soundKey].volume = enabled ? 0.75 : 0;
+        }
+      });
+      activeBattleSounds = activeBattleSounds.filter(function(audio) {
+        if (!audio) return false;
+        audio.muted = !enabled;
+        audio.volume = enabled ? 0.75 : 0;
+        if (!enabled) {
+          try {
+            audio.pause();
+            audio.currentTime = 0;
+          } catch (error) {}
+          return false;
+        }
+        return !audio.ended;
+      });
+    }
+
+    function notifySoundPreferenceChanged() {
+      try {
+        window.dispatchEvent(new CustomEvent('learningRpgSoundPreferenceChanged', { detail: { enabled: isSoundEnabled() } }));
+      } catch (error) {}
     }
 
     function playStatusSound(type) {
@@ -1624,7 +1811,7 @@
       row.innerHTML = statuses.map(function(status) {
         var statTooltip = status.statTooltip ? ' data-stat-tooltip="' + escapeHtml(status.statTooltip) + '"' : '';
         var turns = status.remainingTurns ? '<em class="status-turns">' + escapeHtml(status.remainingTurns) + '</em>' : '';
-        return '<span class="status-icon ' + escapeHtml(status.type) + '" data-tooltip="' + escapeHtml(status.tooltip) + '"' + statTooltip + '>' + escapeHtml(status.label) + turns + '</span>';
+        return '<span class="status-icon ' + escapeHtml(status.type) + '" data-tooltip="' + escapeHtml(status.tooltip) + '" data-tooltip-placement="above"' + statTooltip + '>' + escapeHtml(status.label) + turns + '</span>';
       }).join('');
     }
 
@@ -1891,12 +2078,14 @@
 
     function takeCachedQuestionView(actionType, skillId, targetId) {
       battleQuestionCache = battleQuestionCache || [];
+      battleQuestionCache = filterQuestionCacheByUsed(battleQuestionCache, getClientUsedQuestionIds(currentView));
       if (!battleQuestionCache.length && currentView && currentView.questionCache && currentView.questionCache.length) {
-        battleQuestionCache = currentView.questionCache.slice();
+        battleQuestionCache = filterQuestionCacheByUsed(currentView.questionCache.slice(), getClientUsedQuestionIds(currentView));
       }
       if (!battleQuestionCache.length) return null;
 
       var questionView = JSON.parse(JSON.stringify(battleQuestionCache.shift()));
+      markClientQuestionUsed(getQuestionViewId(questionView), currentView);
       questionView.actionType = actionType || 'attack';
       questionView.skillId = skillId || '';
       questionView.targetId = targetId || '';
@@ -1944,6 +2133,7 @@
       clearInterval(questionTimerId);
       document.getElementById('questionSubmitButton').disabled = false;
       document.getElementById('questionSubmitButton').textContent = '확인';
+      hideQuestionGiveUpButton();
       setQuestionInputsDisabled(false);
 
       var question = questionView.question;
@@ -1965,6 +2155,18 @@
       var area = document.getElementById('questionAnswerArea');
       if (question.type === 'shortAnswer') {
         area.innerHTML = '<input id="shortAnswerInput" placeholder="정답 입력">';
+        var input = document.getElementById('shortAnswerInput');
+        if (input) {
+          input.addEventListener('keydown', function(event) {
+            if (event.key === 'Enter' && !event.isComposing) {
+              event.preventDefault();
+              submitQuestionAnswer();
+            }
+          });
+          window.setTimeout(function() {
+            input.focus();
+          }, 0);
+        }
         return;
       }
       var choices = [
@@ -1991,6 +2193,22 @@
           label.querySelector('input').checked = true;
         });
       });
+    }
+
+    function hideQuestionGiveUpButton() {
+      var button = document.getElementById('questionGiveUpButton');
+      if (!button) return;
+      button.classList.add('hidden');
+      button.disabled = false;
+    }
+
+    function showQuestionGiveUpButton() {
+      var question = currentQuestionView && currentQuestionView.question || {};
+      if (question.type !== 'shortAnswer') return;
+      var button = document.getElementById('questionGiveUpButton');
+      if (!button) return;
+      button.classList.remove('hidden');
+      button.disabled = false;
     }
 
     function shuffleArray(items) {
@@ -2070,6 +2288,7 @@
         currentQuestionView.lockedEfficiency = calculateWrongEfficiency(wrongCountAfterTimeout);
         updateQuestionEfficiencyMeter(currentQuestionView.lockedEfficiency);
         markSelectedAnswerResult(false);
+        showQuestionGiveUpButton();
         document.getElementById('questionMessage').textContent = wrongCountAfterTimeout === 1 ? '오답입니다. 효율이 50%로 고정됩니다.' : '오답입니다. 효율이 10% 감소했습니다.';
         document.getElementById('questionMessage').className = 'message error';
         return;
@@ -2077,6 +2296,7 @@
 
       clearInterval(questionTimerId);
       document.getElementById('questionSubmitButton').disabled = true;
+      hideQuestionGiveUpButton();
       setQuestionInputsDisabled(true);
       setBattleInputLocked(true);
       markSelectedAnswerResult(true);
@@ -2111,9 +2331,53 @@
         finalDifficulty: currentQuestionView.finalDifficulty,
         isOtherPlayerQuestion: !!currentQuestionView.isOtherPlayerQuestion,
         fallbackReason: currentQuestionView.fallbackReason || '',
+        giveUp: false,
       };
 
       submitQuestionAnswerOnServer(answerPayload, actionTypeForSubmit, skillIdForSubmit, targetIdForSubmit);
+    }
+
+    function giveUpCurrentQuestion() {
+      if (!currentQuestionView || currentQuestionView.resultHolding) return;
+      var question = currentQuestionView.question || {};
+      if (question.type !== 'shortAnswer') return;
+
+      clearInterval(questionTimerId);
+      currentQuestionView.giveUp = true;
+      currentQuestionView.efficiencyLocked = true;
+      currentQuestionView.lockedEfficiency = 0;
+      updateQuestionEfficiencyMeter(0);
+      document.getElementById('questionSubmitButton').disabled = true;
+      var giveUpButton = document.getElementById('questionGiveUpButton');
+      if (giveUpButton) {
+        giveUpButton.disabled = true;
+      }
+      setQuestionInputsDisabled(true);
+      setBattleInputLocked(true);
+      document.getElementById('questionMessage').textContent = '문제를 포기했습니다.';
+      document.getElementById('questionMessage').className = 'message error';
+      startQuestionResultHold();
+
+      var answerPayload = {
+        runId: currentView.runId,
+        authToken: getAuthToken(),
+        questionId: question.questionId,
+        selectedAnswer: '',
+        selectedChoiceIndex: '',
+        selectedAnswerText: '',
+        elapsedMs: Math.max(0, Date.now() - questionStartedAt),
+        wrongCountAfterTimeout: wrongCountAfterTimeout,
+        actionType: currentQuestionView.actionType,
+        skillId: currentQuestionView.skillId || '',
+        targetId: currentQuestionView.targetId || '',
+        maxMs: currentQuestionView.maxMs,
+        finalDifficulty: currentQuestionView.finalDifficulty,
+        isOtherPlayerQuestion: !!currentQuestionView.isOtherPlayerQuestion,
+        fallbackReason: currentQuestionView.fallbackReason || '',
+        giveUp: true,
+      };
+
+      submitQuestionAnswerOnServer(answerPayload, currentQuestionView.actionType, currentQuestionView.skillId || '', currentQuestionView.targetId || '');
     }
 
     function submitQuestionAnswerOnServer(answerPayload, actionTypeForSubmit, skillIdForSubmit, targetIdForSubmit) {
@@ -2152,6 +2416,7 @@
         isOtherPlayerQuestion: !!answerPayload.isOtherPlayerQuestion,
         fallbackReason: answerPayload.fallbackReason || '',
         wrongCountAfterTimeout: answerPayload.wrongCountAfterTimeout,
+        giveUp: !!answerPayload.giveUp,
       };
     }
 
@@ -2706,6 +2971,7 @@
           if (skillType === 'shield') {
             var skillShield = Math.max(0, Math.round(intentValue || getClientEffectiveStat(monster, 'defense') || 6));
             monster.shield = Number(monster.shield || 0) + skillShield;
+            applyClientMonsterSkillEffect(monster, intent);
             battle.lastTurnEvents.push({
               actor: 'monster',
               type: 'guard',
@@ -3065,6 +3331,7 @@
       var nextView = JSON.parse(JSON.stringify(currentView));
       var battle = nextView.battle || {};
       var questionView = currentQuestionView;
+      markClientQuestionUsed(getQuestionViewId(questionView), nextView);
       var maxMs = Number(questionView.maxMs || 10000);
       var elapsedMs = Math.max(0, Date.now() - questionStartedAt);
       var remainingMs = Math.max(0, maxMs - elapsedMs);
@@ -3077,6 +3344,14 @@
       normalizeClientActionPoints(battle.player);
       var actionCost = Number(questionView.actionPointCost !== undefined && questionView.actionPointCost !== '' ? questionView.actionPointCost : (questionView.actionType === 'skill' ? getSkillActionPointCost(findAvailableSkill(questionView.skillId)) : 1));
       battle.player.currentActionPoint = Math.max(0, Number(battle.player.currentActionPoint || 0) - actionCost);
+      if (questionView.giveUp) {
+        battle.lastPlayerAction = { type: questionView.actionType, value: 0, efficiency: 0, gaveUp: true };
+        battle.lastTurnEvents.push({ actor: 'player', type: 'giveUp', message: '문제를 포기했습니다. 행동력만 소모했습니다.' });
+        battle.status = Number(battle.player.hp || 0) <= 0 ? 'defeat' : 'active';
+        battle.lastMessage = battle.status === 'defeat' ? '쓰러졌습니다.' : '문제를 포기했습니다. 행동을 선택하세요.';
+        nextView.battle = battle;
+        return normalizeBattleView(nextView);
+      }
       applyClientTimedEffectDamage(battle.player, 'onAction', battle, 'player');
       if (Number(battle.player.hp || 0) <= 0) {
         battle.status = 'defeat';
@@ -3821,6 +4096,7 @@
     }
 
     function buildStageResultPayload() {
+      getClientUsedQuestionIds(currentView);
       return {
         runId: currentView.runId,
         battle: currentView.battle,
@@ -3918,6 +4194,7 @@
         var detailCard = renderRewardDetailCard(reward, rarity, name);
         var rarityBadge = reward.type === 'rest' ? '회복' : (reward.rarityLabel || getRewardRarityLabel(rarity));
         return '<button class="reward-choice-card rarity-' + escapeHtml(rarity) + '" data-reward-id="' + escapeHtml(reward.rewardId) + '">' +
+          renderRewardRarityGems(rarity) +
           '<span class="reward-choice-heading">' + escapeHtml(title) + '</span>' +
           '<span class="reward-rarity-badge">' + escapeHtml(rarityBadge) + '</span>' +
           '<span class="reward-choice-icon-wrap">' +
@@ -3951,6 +4228,22 @@
       window.requestAnimationFrame(function() {
         spawnStageClearBurst();
       });
+    }
+
+    function renderRewardRarityGems(rarity) {
+      var config = {
+        common: { count: 1, label: '일반' },
+        uncommon: { count: 2, label: '드문' },
+        rare: { count: 3, label: '희귀' },
+        epic: { count: 4, label: '영웅' },
+        legendary: { count: 5, label: '전설' },
+        unique: { count: 6, label: '고유' },
+      }[normalizeRewardRarity(rarity)] || { count: 1, label: '일반' };
+      var gems = [];
+      for (var i = 0; i < config.count; i += 1) {
+        gems.push('<span class="reward-rarity-gem" aria-hidden="true"></span>');
+      }
+      return '<span class="reward-rarity-gems" aria-label="' + escapeHtml(config.label + ' 등급') + '">' + gems.join('') + '</span>';
     }
 
     function chooseFloorIntermissionAction(actionType) {

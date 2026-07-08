@@ -57,14 +57,46 @@ var RULE_ENGINE_SHARED = (function() {
     return payload;
   }
 
+  function getEffectCategory(effect, fallback) {
+    var category = String(effect && effect.category || fallback || '').toLowerCase();
+    if (!category && /^buff_/i.test(String(effect && effect.effectId || ''))) {
+      category = 'buff';
+    }
+    if (!category && /^debuff_/i.test(String(effect && effect.effectId || ''))) {
+      category = 'debuff';
+    }
+    return category;
+  }
+
+  function mergeStatusEffects(target) {
+    var merged = [];
+    var seen = {};
+    function add(effect, fallbackCategory) {
+      if (!effect) return;
+      var copy = Object.assign({}, effect);
+      copy.category = getEffectCategory(copy, fallbackCategory) || copy.category || '';
+      var key = String(copy.effectId || copy.id || copy.name || merged.length);
+      if (seen[key]) {
+        Object.assign(seen[key], copy);
+        return;
+      }
+      seen[key] = copy;
+      merged.push(copy);
+    }
+    (target.effects || []).forEach(function(effect) { add(effect, ''); });
+    (target.buffs || []).forEach(function(effect) { add(effect, 'buff'); });
+    (target.debuffs || []).forEach(function(effect) { add(effect, 'debuff'); });
+    return merged;
+  }
+
   function syncStatusBuckets(target) {
     if (!target) return target;
-    target.effects = target.effects || [];
+    target.effects = mergeStatusEffects(target);
     target.buffs = target.effects.filter(function(effect) {
-      return String(effect.category || '').toLowerCase() === 'buff';
+      return getEffectCategory(effect, '') === 'buff';
     });
     target.debuffs = target.effects.filter(function(effect) {
-      return String(effect.category || '').toLowerCase() === 'debuff';
+      return getEffectCategory(effect, '') === 'debuff';
     });
     return target;
   }

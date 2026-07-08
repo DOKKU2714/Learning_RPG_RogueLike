@@ -205,6 +205,7 @@ function useSkill(runId, skillId, targetId, answerPayload) {
 
   var stageState = getStageState_(run);
   var battleState = requireActiveBattle_(stageState);
+  normalizeUsedQuestionIds_(stageState, battleState);
   normalizeBattleStateEffects_(battleState);
   normalizeBattleMonsters_(battleState);
   normalizePlayerActionPoints_(battleState, false);
@@ -223,6 +224,7 @@ function useSkill(runId, skillId, targetId, answerPayload) {
   var pendingAction = battleState.pendingAction;
   if (!pendingAction && payload.questionId) {
     pendingAction = createPendingActionFromCachedPayload_(
+      stageState,
       battleState,
       payload,
       ACTION_TYPES.SKILL,
@@ -232,6 +234,7 @@ function useSkill(runId, skillId, targetId, answerPayload) {
     );
     pendingAction.actionPointCost = getActionPointCostForAction_(ACTION_TYPES.SKILL, skill);
     battleState.pendingAction = pendingAction;
+    markQuestionUsedForRun_(stageState, battleState, pendingAction.questionId);
     markCachedQuestionShown_(stageState, pendingAction);
   }
   if (!payload.questionId) {
@@ -240,7 +243,7 @@ function useSkill(runId, skillId, targetId, answerPayload) {
     }
 
     var activeEffects = getActiveEffectsForQuestion_(battleState);
-    var questionResult = pickQuestion_(run.playerId, battleState.stage, stageState.otherStudentQuestionShown, getForcedQuestionCreatorId_(battleState), getItemQuestionModifiers_(battleState, null));
+    var questionResult = pickQuestion_(run.playerId, battleState.stage, stageState.otherStudentQuestionShown, getForcedQuestionCreatorId_(battleState), getItemQuestionModifiers_(battleState, null), stageState.usedQuestionIds);
     var baseDifficulty = applyBossDifficultyBonus(battleState.stage, Number(questionResult.question.difficulty || battleState.stage.baseDifficulty) + Number(skill.difficultyBonus || 0) + getSkillRuleQuestionDifficultyBonus_(skill));
     var questionModifiers = getItemQuestionModifiers_(battleState, questionResult.question);
     var finalDifficulty = calculateFinalQuestionDifficulty(baseDifficulty, activeEffects, questionModifiers);
@@ -262,6 +265,7 @@ function useSkill(runId, skillId, targetId, answerPayload) {
     };
 
     battleState.pendingAction = pendingAction;
+    markQuestionUsedForRun_(stageState, battleState, pendingAction.questionId);
     if (questionResult.isOtherPlayerQuestion) {
       stageState.otherStudentQuestionShown = true;
     }
@@ -288,20 +292,29 @@ function useSkill(runId, skillId, targetId, answerPayload) {
     throw new Error('문제를 찾을 수 없습니다.');
   }
 
+  markQuestionUsedForRun_(stageState, battleState, pendingAction.questionId);
   var elapsedMs = Math.max(0, Number(payload.elapsedMs || 0));
   var maxMs = Number(pendingAction.maxMs || calculateFinalQuestionTimeLimitForQuestion_(pendingAction.finalDifficulty, getActiveEffectsForQuestion_(battleState), pendingAction.question || question, getItemQuestionModifiers_(battleState, question)));
   var remainingMs = Math.max(0, maxMs - elapsedMs);
-  var isCorrect = isCorrectAnswer_(question, payload.selectedAnswer, payload.selectedChoiceIndex, payload.selectedAnswerText);
-  var efficiency = calculateEfficiency(isCorrect, remainingMs, maxMs, Number(payload.wrongCountAfterTimeout || 0), getItemQuestionModifiers_(battleState, question), question);
+  var gaveUp = !!payload.giveUp;
+  var isCorrect = gaveUp ? false : isCorrectAnswer_(question, payload.selectedAnswer, payload.selectedChoiceIndex, payload.selectedAnswerText);
+  var efficiency = gaveUp ? 0 : calculateEfficiency(isCorrect, remainingMs, maxMs, Number(payload.wrongCountAfterTimeout || 0), getItemQuestionModifiers_(battleState, question), question);
 
   battleState.lastTurnEvents = [];
   consumeActionPoint_(battleState, Number(pendingAction.actionPointCost !== undefined && pendingAction.actionPointCost !== '' ? pendingAction.actionPointCost : getActionPointCostForAction_(ACTION_TYPES.SKILL, skill)));
-  tickEffectsOnPlayerAction(battleState);
-  if (battleState.player.hp <= 0) {
-    battleState.status = STATUS.BATTLE_DEFEAT;
-    battleState.lastMessage = '지속 피해로 쓰러졌습니다.';
+  if (gaveUp) {
+    battleState.lastPlayerAction = { type: ACTION_TYPES.SKILL, skillId: skill.skillId, value: 0, efficiency: 0, gaveUp: true };
+    battleState.lastMessage = '문제를 포기했습니다. 행동력만 소모했습니다.';
+    battleState.lastTurnEvents.push({ actor: 'player', type: 'giveUp', skillId: skill.skillId, message: battleState.lastMessage });
   }
-  var skillWasUsed = battleState.player.hp > 0 && battleState.status === STATUS.BATTLE_ACTIVE;
+  if (!gaveUp) {
+    tickEffectsOnPlayerAction(battleState);
+    if (battleState.player.hp <= 0) {
+      battleState.status = STATUS.BATTLE_DEFEAT;
+      battleState.lastMessage = '지속 피해로 쓰러졌습니다.';
+    }
+  }
+  var skillWasUsed = !gaveUp && battleState.player.hp > 0 && battleState.status === STATUS.BATTLE_ACTIVE;
   if (skillWasUsed) {
     processSkillTriggers_(battleState, isCorrect ? 'onCorrect' : 'onWrong', { isCorrect: isCorrect, efficiency: efficiency });
     var blockedByPenalty = processSkillFailPenaltyAfterAnswer_(battleState, skill, isCorrect);
@@ -333,7 +346,7 @@ function useSkill(runId, skillId, targetId, answerPayload) {
     floor: battleState.stage.floor,
     stage: battleState.stage.stage,
     actionType: ACTION_TYPES.SKILL,
-    selectedAnswer: payload.selectedAnswerText || payload.selectedAnswer || '',
+    selectedAnswer: gaveUp ? '[giveUp]' : payload.selectedAnswerText || payload.selectedAnswer || '',
     isCorrect: isCorrect,
     elapsedMs: elapsedMs,
     maxTimeMs: maxMs,
@@ -1686,17 +1699,54 @@ function normalizeOwnedSkills_(skills) {
 
 function normalizeBattleStateEffects_(battleState) {
   normalizeSkillRuntimeState_(battleState);
-  battleState.player.effects = battleState.player.effects || [];
+  if (!battleState || !battleState.player) return;
   normalizeBattleMonsters_(battleState);
   (battleState.monsters || []).forEach(function(monster) {
-    monster.effects = monster.effects || [];
-    monster.effects = monster.effects.map(hydrateEffectDisplayFields_);
-    monster.buffs = monster.effects.filter(function(effect) { return effect.category === EFFECT_CATEGORIES.BUFF; });
-    monster.debuffs = monster.effects.filter(function(effect) { return effect.category === EFFECT_CATEGORIES.DEBUFF; });
+    normalizeTargetStatusBuckets_(monster);
   });
-  battleState.player.effects = battleState.player.effects.map(hydrateEffectDisplayFields_);
-  battleState.player.buffs = battleState.player.effects.filter(function(effect) { return effect.category === EFFECT_CATEGORIES.BUFF; });
-  battleState.player.debuffs = battleState.player.effects.filter(function(effect) { return effect.category === EFFECT_CATEGORIES.DEBUFF; });
+  normalizeTargetStatusBuckets_(battleState.player);
+}
+
+function normalizeTargetStatusBuckets_(target) {
+  if (!target) return target;
+  var merged = [];
+  var seen = {};
+  function addEffect(effect, fallbackCategory) {
+    if (!effect) return;
+    var next = Object.assign({}, effect);
+    next.category = normalizeEffectCategory_(next, fallbackCategory);
+    next = hydrateEffectDisplayFields_(next);
+    next.category = normalizeEffectCategory_(next, fallbackCategory);
+    var key = String(next.effectId || next.id || next.name || merged.length);
+    if (seen[key]) {
+      Object.assign(seen[key], next);
+      return;
+    }
+    seen[key] = next;
+    merged.push(next);
+  }
+  (target.effects || []).forEach(function(effect) { addEffect(effect, ''); });
+  (target.buffs || []).forEach(function(effect) { addEffect(effect, EFFECT_CATEGORIES.BUFF); });
+  (target.debuffs || []).forEach(function(effect) { addEffect(effect, EFFECT_CATEGORIES.DEBUFF); });
+  target.effects = merged;
+  target.buffs = merged.filter(function(effect) {
+    return normalizeEffectCategory_(effect, '') === EFFECT_CATEGORIES.BUFF;
+  });
+  target.debuffs = merged.filter(function(effect) {
+    return normalizeEffectCategory_(effect, '') === EFFECT_CATEGORIES.DEBUFF;
+  });
+  return target;
+}
+
+function normalizeEffectCategory_(effect, fallbackCategory) {
+  var category = String(effect && effect.category || fallbackCategory || '').toLowerCase();
+  if (!category && /^buff_/i.test(String(effect && effect.effectId || ''))) {
+    category = EFFECT_CATEGORIES.BUFF;
+  }
+  if (!category && /^debuff_/i.test(String(effect && effect.effectId || ''))) {
+    category = EFFECT_CATEGORIES.DEBUFF;
+  }
+  return category;
 }
 
 function hydrateEffectDisplayFields_(effect) {

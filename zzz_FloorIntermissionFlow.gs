@@ -132,6 +132,7 @@ function buildSyntheticFloorIntermissionStage_(floor) {
 
 function startFloorIntermissionStage_(run, stageState, stageId) {
   var runId = run.runId;
+  var usedQuestionIds = normalizeUsedQuestionIds_(stageState, stageState && stageState.battle).slice();
   var stage = loadStage(stageId || buildStageId_(run.currentFloor, getFloorIntermissionStageNumber_()));
   var baseStats = safeJsonParse_(run.statsJson, Object.assign({}, BASE_PLAYER_STATS));
   var items = normalizeOwnedItems_(safeJsonParse_(run.itemsJson, []));
@@ -176,6 +177,7 @@ function startFloorIntermissionStage_(run, stageState, stageId) {
     forcedQuestionCreatorId: '',
     pendingAction: null,
     pendingAnswerLogs: [],
+    usedQuestionIds: usedQuestionIds.slice(),
     lastMessage: '이곳은 아무도 없습니다. 행동을 선택하세요',
     lastTurnEvents: [],
     skillCooldowns: {},
@@ -191,6 +193,7 @@ function startFloorIntermissionStage_(run, stageState, stageId) {
   stageState.otherStudentQuestionShown = false;
   stageState.fallbackEvents = [];
   stageState.battle = battleState;
+  normalizeUsedQuestionIds_(stageState, battleState);
   saveStageState_(runId, stageState, battleState);
   return toClientObject_(getRunWithStageState_(runId));
 }
@@ -200,6 +203,8 @@ function moveToNextStageWithFloorIntermission_(run) {
   var floor = Number(run.currentFloor || 1);
   var stage = Number(run.currentStage || 1);
   var now = new Date();
+  var stageState = getStageState_(run);
+  var usedQuestionIds = normalizeUsedQuestionIds_(stageState, stageState.battle).slice();
   var stageNumber = getFloorIntermissionStageNumber_();
   var floorCount = Number(GAME_RULES.FLOOR_COUNT || 5);
   var stagesPerFloor = Number(GAME_RULES.STAGES_PER_FLOOR || 5);
@@ -211,7 +216,10 @@ function moveToNextStageWithFloorIntermission_(run) {
       endedAt: now,
       clearTimeMs: Math.max(0, now.getTime() - startedAt),
       currentShield: 0,
-      stageStateJson: safeJsonStringify_({ cleared: true }),
+      stageStateJson: safeJsonStringify_({
+        cleared: true,
+        usedQuestionIds: usedQuestionIds,
+      }),
       updatedAt: now,
     });
   }
@@ -236,6 +244,7 @@ function moveToNextStageWithFloorIntermission_(run) {
       stageId: buildStageId_(nextFloor, nextStage),
       otherStudentQuestionShown: false,
       fallbackEvents: [],
+      usedQuestionIds: usedQuestionIds,
     }),
     updatedAt: now,
   });

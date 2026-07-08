@@ -38,6 +38,7 @@ function getLearningRpgAudioManagerClientPatch_() {
     '(function(){\n' +
     '  var AUDIO_ASSET_BASE = \'' + escapeAudioManagerJsString_(assetBase) + '\';\n' +
     '  var STORAGE_INTENT_KEY = "learningRpgAudioIntent";\n' +
+    '  var SOUND_ENABLED_KEY = "learningRpgSoundEnabled";\n' +
     '  var DEFAULT_FADE_MS = 900;\n' +
     '  var DEFAULT_VOLUME = 0.52;\n' +
     '  var currentTrack = null;\n' +
@@ -87,6 +88,10 @@ function getLearningRpgAudioManagerClientPatch_() {
     '    try { window.localStorage.setItem(STORAGE_INTENT_KEY, JSON.stringify({ kind: intent.kind, floor: intent.floor || 0, key: intent.key || "" })); } catch (error) {}\n' +
     '  }\n' +
     '\n' +
+    '  function isSoundEnabled(){\n' +
+    '    try { return window.localStorage.getItem(SOUND_ENABLED_KEY) !== "0"; } catch (error) { return true; }\n' +
+    '  }\n' +
+    '\n' +
     '  function fadeAudio(audio, targetVolume, durationMs, onDone){\n' +
     '    if (!audio) { if (onDone) onDone(); return; }\n' +
     '    if (audio.__learningRpgFadeTimer) {\n' +
@@ -128,6 +133,10 @@ function getLearningRpgAudioManagerClientPatch_() {
     '    if (!intent.paths.length) return;\n' +
     '    pendingIntent = intent;\n' +
     '    rememberIntent(intent);\n' +
+    '    if (!isSoundEnabled()) {\n' +
+    '      stopCurrentTrack(0);\n' +
+    '      return;\n' +
+    '    }\n' +
     '    if (currentTrack && currentTrack.key === intent.key && currentTrack.audio && !currentTrack.audio.paused) {\n' +
     '      fadeAudio(currentTrack.audio, intent.volume || DEFAULT_VOLUME, fadeMs === undefined ? 300 : fadeMs);\n' +
     '      return;\n' +
@@ -138,11 +147,20 @@ function getLearningRpgAudioManagerClientPatch_() {
     '\n' +
     '  function startIntentAtPath(intent, pathIndex, fadeMs){\n' +
     '    var paths = intent.paths || [];\n' +
+    '    if (!isSoundEnabled()) { pendingIntent = intent; return; }\n' +
     '    if (pathIndex >= paths.length) { pendingIntent = intent; return; }\n' +
     '    var audio = new Audio(assetUrl(paths[pathIndex]));\n' +
-    '    audio.loop = true;\n' +
+    '    audio.loop = intent.kind !== "reward";\n' +
     '    audio.preload = "auto";\n' +
     '    audio.volume = 0;\n' +
+    '    audio.muted = !isSoundEnabled();\n' +
+    '    if (intent.kind === "reward") {\n' +
+    '      audio.addEventListener("ended", function(){\n' +
+    '        if (currentTrack && currentTrack.audio === audio) {\n' +
+    '          currentTrack = null;\n' +
+    '        }\n' +
+    '      }, { once: true });\n' +
+    '    }\n' +
     '    audio.addEventListener("error", function(){\n' +
     '      if (currentTrack && currentTrack.audio === audio) {\n' +
     '        currentTrack = null;\n' +
@@ -160,6 +178,7 @@ function getLearningRpgAudioManagerClientPatch_() {
     '      playPromise.then(function(){\n' +
     '        audioUnlocked = true;\n' +
     '        pendingIntent = null;\n' +
+    '        if (!isSoundEnabled()) { stopCurrentTrack(0); return; }\n' +
     '        fadeAudio(audio, intent.volume || DEFAULT_VOLUME, fadeMs);\n' +
     '      }).catch(function(){\n' +
     '        pendingIntent = intent;\n' +
@@ -167,6 +186,7 @@ function getLearningRpgAudioManagerClientPatch_() {
     '    } else {\n' +
     '      audioUnlocked = true;\n' +
     '      pendingIntent = null;\n' +
+    '      if (!isSoundEnabled()) { stopCurrentTrack(0); return; }\n' +
     '      fadeAudio(audio, intent.volume || DEFAULT_VOLUME, fadeMs);\n' +
     '    }\n' +
     '  }\n' +
@@ -184,6 +204,7 @@ function getLearningRpgAudioManagerClientPatch_() {
     '  function requestRewardBgm(){ playIntent(makeIntent("reward")); }\n' +
     '\n' +
     '  function unlockAudio(){\n' +
+    '    if (!isSoundEnabled()) return;\n' +
     '    audioUnlocked = true;\n' +
     '    if (pendingIntent) {\n' +
     '      playIntent(pendingIntent, 360);\n' +
@@ -229,7 +250,7 @@ function getLearningRpgAudioManagerClientPatch_() {
     '      return function(page){\n' +
     '        if (String(page || "") === "battle") {\n' +
     '          stopCurrentTrack(DEFAULT_FADE_MS);\n' +
-    '        } else if (!isBattlePage()) {\n' +
+    '        } else if (!isBattlePage() && isSoundEnabled()) {\n' +
     '          requestMainBgm();\n' +
     '        }\n' +
     '        return original.apply(this, arguments);\n' +
@@ -281,11 +302,28 @@ function getLearningRpgAudioManagerClientPatch_() {
     '  }\n' +
     '\n' +
     '  function routeInitialAudio(){\n' +
+    '    if (!isSoundEnabled()) return;\n' +
     '    if (isBattlePage()) {\n' +
     '      stopCurrentTrack(240);\n' +
     '      return;\n' +
     '    }\n' +
     '    requestMainBgm();\n' +
+    '  }\n' +
+    '\n' +
+    '  function applySoundPreference(){\n' +
+    '    if (!isSoundEnabled()) {\n' +
+    '      if (currentTrack && !pendingIntent) {\n' +
+    '        if (currentTrack.kind === "battle") pendingIntent = makeIntent("battle", { floor: getBattleFloor() });\n' +
+    '        else pendingIntent = makeIntent(currentTrack.kind || "main");\n' +
+    '      }\n' +
+    '      stopCurrentTrack(0);\n' +
+    '      return;\n' +
+    '    }\n' +
+    '    if (pendingIntent) {\n' +
+    '      playIntent(pendingIntent, 240);\n' +
+    '    } else if (!isBattlePage()) {\n' +
+    '      requestMainBgm();\n' +
+    '    }\n' +
     '  }\n' +
     '\n' +
     '  function install(){\n' +
@@ -296,8 +334,11 @@ function getLearningRpgAudioManagerClientPatch_() {
     '      playBattle: requestBattleBgm,\n' +
     '      playReward: requestRewardBgm,\n' +
     '      stop: function(ms){ stopCurrentTrack(ms === undefined ? DEFAULT_FADE_MS : ms); },\n' +
+    '      applySoundPreference: applySoundPreference,\n' +
     '      getCurrent: function(){ return currentTrack ? { key: currentTrack.key, kind: currentTrack.kind, path: currentTrack.path } : null; }\n' +
     '    };\n' +
+    '    window.addEventListener("storage", function(event){ if (event.key === SOUND_ENABLED_KEY) applySoundPreference(); });\n' +
+    '    window.addEventListener("learningRpgSoundPreferenceChanged", applySoundPreference);\n' +
     '    installUnlockListeners();\n' +
     '    installMenuPatches();\n' +
     '    installBattlePatches();\n' +
