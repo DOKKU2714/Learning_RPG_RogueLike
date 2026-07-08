@@ -18,12 +18,18 @@
       padding: 14px;
     }
 
-    .question-card-top {
+    .question-card-top,
+    .question-item-top {
       display: flex;
       justify-content: space-between;
       gap: 10px;
       align-items: center;
       margin-bottom: 12px;
+    }
+
+    .question-item-top strong {
+      min-width: 0;
+      overflow-wrap: anywhere;
     }
 
     .type-radio-row {
@@ -49,9 +55,11 @@
       margin: 0;
     }
 
-    .remove-question {
+    .remove-question,
+    .delete-my-question {
       min-height: 32px;
       padding: 4px 10px;
+      white-space: nowrap;
     }
   </style>
 </head>
@@ -307,7 +315,7 @@
 
     function renderMyQuestions(questions) {
       questions = questions || [];
-      document.getElementById('questionCount').textContent = questions.length + ' / 10개 생성';
+      document.getElementById('questionCount').textContent = questions.length + '개 생성';
       var container = document.getElementById('myQuestions');
       if (!questions.length) {
         container.innerHTML = '<p class="muted">아직 만든 문제가 없습니다.</p>';
@@ -315,12 +323,39 @@
       }
 
       container.innerHTML = questions.map(function(question) {
+        var questionId = String(question.questionId || '');
         return '<article class="question-item">' +
-          '<strong>' + escapeHtml(question.prompt) + '</strong>' +
+          '<div class="question-item-top">' +
+            '<strong>' + escapeHtml(question.prompt) + '</strong>' +
+            '<button class="danger delete-my-question" type="button" onclick="deleteMyQuestion(\'' + escapeJsString(questionId) + '\')">삭제</button>' +
+          '</div>' +
           '<p class="muted">' + escapeHtml(typeLabel(question.type)) + ' | ' + escapeHtml(statusLabel(question.status)) + ' | ' + renderDifficultyStars(question.difficulty || 1) + '</p>' +
           '<p>정답: ' + escapeHtml(question.answer) + '</p>' +
         '</article>';
       }).join('');
+    }
+
+    function deleteMyQuestion(questionId) {
+      if (!questionId) {
+        setFormMessage('삭제할 문제를 찾을 수 없습니다.', 'error');
+        return;
+      }
+      if (!window.confirm('이 문제를 삭제할까요? 삭제하면 되돌릴 수 없습니다.')) {
+        return;
+      }
+      setFormMessage('문제를 삭제하는 중입니다.', 'ok');
+      showLoadingModal('삭제 중...', '내가 만든 문제를 삭제하는 중...');
+      google.script.run
+        .withSuccessHandler(function() {
+          hideLoadingModal();
+          setFormMessage('문제를 삭제했습니다.', 'ok');
+          loadMyQuestions(true);
+        })
+        .withFailureHandler(function(error) {
+          hideLoadingModal();
+          setFormMessage(error.message, 'error');
+        })
+        .deleteQuestion(questionId, getAuthToken());
     }
 
     function typeLabel(type) {
@@ -405,6 +440,14 @@
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#039;');
+    }
+
+    function escapeJsString(value) {
+      return String(value == null ? '' : value)
+        .replace(/\\/g, '\\\\')
+        .replace(/'/g, "\\'")
+        .replace(/\r/g, '\\r')
+        .replace(/\n/g, '\\n');
     }
 
     init();
