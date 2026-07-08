@@ -1,10 +1,5 @@
 function createQuestion(questionPayload, authToken) {
   var player = getCurrentPlayer_(authToken);
-  var myQuestions = getQuestionsByCreator_(player.playerId);
-  if (myQuestions.length >= 10) {
-    throw new Error('문제는 최대 10개까지 만들 수 있습니다.');
-  }
-
   var normalizedPayload = normalizeQuestionPayload_(questionPayload);
   var now = new Date();
   var question = {
@@ -44,9 +39,6 @@ function createQuestions(questionPayloads, authToken) {
   if (!payloads.length) {
     throw new Error('저장할 문제가 없습니다.');
   }
-  if (payloads.length > 10) {
-    throw new Error('한 번에 최대 10개까지 저장할 수 있습니다.');
-  }
   return payloads.map(function(payload) {
     return createQuestion(payload, authToken);
   });
@@ -55,6 +47,22 @@ function createQuestions(questionPayloads, authToken) {
 function getMyQuestions(authToken) {
   var player = getCurrentPlayer_(authToken);
   return getQuestionsByCreator_(player.playerId).map(toClientObject_);
+}
+
+function deleteQuestion(questionId, authToken) {
+  var player = getCurrentPlayer_(authToken);
+  var targetQuestionId = String(questionId || '').trim();
+  if (!targetQuestionId) {
+    throw new Error('삭제할 문제를 찾을 수 없습니다.');
+  }
+
+  var deleted = deleteQuestionByOwner_(targetQuestionId, player.playerId);
+  if (!deleted) {
+    throw new Error('문제를 찾을 수 없습니다.');
+  }
+
+  clearTableCache_(DB_SHEETS.QUESTIONS);
+  return { ok: true, questionId: targetQuestionId };
 }
 
 function getPendingQuestions() {
@@ -111,6 +119,39 @@ function getQuestionsByCreator_(creatorId) {
   return readTable_(DB_SHEETS.QUESTIONS).filter(function(question) {
     return question.creatorId === creatorId;
   });
+}
+
+function deleteQuestionByOwner_(questionId, creatorId) {
+  var sheet = getSheet_(DB_SHEETS.QUESTIONS);
+  var headers = getHeaderRow_(sheet);
+  var questionIdIndex = headers.indexOf('questionId');
+  var creatorIdIndex = headers.indexOf('creatorId');
+  if (questionIdIndex === -1 || creatorIdIndex === -1) {
+    throw new Error('Questions 시트 구조를 확인해 주세요.');
+  }
+
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) {
+    return false;
+  }
+
+  var values = sheet.getRange(2, 1, lastRow - 1, headers.length).getValues();
+  for (var i = 0; i < values.length; i += 1) {
+    var rowQuestionId = String(values[i][questionIdIndex] || '').trim();
+    if (rowQuestionId !== questionId) {
+      continue;
+    }
+    var rowCreatorId = String(values[i][creatorIdIndex] || '').trim();
+    if (rowCreatorId !== String(creatorId || '').trim()) {
+      throw new Error('본인이 만든 문제만 삭제할 수 있습니다.');
+    }
+    sheet.deleteRow(i + 2);
+    try {
+      CacheService.getScriptCache().remove(getSheetRowNumberCacheKey_(DB_SHEETS.QUESTIONS, 'questionId', questionId));
+    } catch (error) {}
+    return true;
+  }
+  return false;
 }
 
 function normalizeQuestionPayload_(payload) {
