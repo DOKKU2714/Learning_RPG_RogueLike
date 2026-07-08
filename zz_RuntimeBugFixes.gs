@@ -3,6 +3,7 @@
  *
  * This file intentionally installs small wrappers instead of changing sheet data.
  * - Supports onUse.tagBonus buffs such as "타격의 달인" without dealing damage.
+ * - Shows active tag-bonus rules as player buff icons.
  * - Resolves legacy/custom boss IDs from the live Monsters sheet before master fallbacks.
  */
 
@@ -59,6 +60,7 @@ function registerActiveSkillTagBonus_(battleState, skill, tagBonus, context) {
     return existing && existing.sourceSkillId !== normalized.sourceSkillId;
   });
   battleState.activeTagBonuses.push(normalized);
+  upsertActiveSkillTagBonusBuffIcon_(battleState, normalized);
   battleState.lastTurnEvents = battleState.lastTurnEvents || [];
   battleState.lastTurnEvents.push({
     actor: 'player',
@@ -94,6 +96,61 @@ function normalizeActiveSkillTagBonus_(battleState, skill, tagBonus, context) {
     remainingTurns: Number(tagBonus.durationTurns || 0),
     createdAtTurn: Number(battleState.turn || 1),
   };
+}
+
+function upsertActiveSkillTagBonusBuffIcon_(battleState, bonus) {
+  if (!battleState || !battleState.player || !bonus) {
+    return;
+  }
+
+  var effectId = buildActiveTagBonusEffectId_(bonus);
+  var description = buildActiveTagBonusDescription_(bonus);
+  var effect = {
+    effectId: effectId,
+    name: bonus.sourceSkillName || '태그 강화',
+    category: EFFECT_CATEGORIES.BUFF,
+    statKey: '',
+    effectType: EFFECT_TYPES.CONTROL,
+    value: 0,
+    description: description,
+    durationType: bonus.durationType || 'battle',
+    remainingTurns: bonus.remainingTurns || '',
+    stackable: false,
+    maxStacks: 1,
+    triggerTiming: TRIGGER_TIMINGS.PASSIVE,
+    stacks: 1,
+    source: {
+      source: 'skillTagBonus',
+      skillId: bonus.sourceSkillId || '',
+      tag: bonus.tag || '',
+    },
+  };
+
+  battleState.player.effects = (battleState.player.effects || []).filter(function(existing) {
+    return existing && existing.effectId !== effectId;
+  });
+  battleState.player.effects.push(effect);
+  battleState.player.buffs = battleState.player.effects.filter(function(existing) {
+    return existing && existing.category === EFFECT_CATEGORIES.BUFF;
+  });
+  battleState.player.debuffs = battleState.player.effects.filter(function(existing) {
+    return existing && existing.category === EFFECT_CATEGORIES.DEBUFF;
+  });
+}
+
+function buildActiveTagBonusEffectId_(bonus) {
+  return 'buff_skill_tag_bonus_' + String(bonus && bonus.sourceSkillId || 'unknown').replace(/[^0-9A-Za-z_\-]/g, '_');
+}
+
+function buildActiveTagBonusDescription_(bonus) {
+  var parts = [];
+  if (bonus && bonus.damageMultiplier && Number(bonus.damageMultiplier) !== 1) {
+    parts.push(String(bonus.tag || '태그') + ' 스킬 피해 ' + Math.round((Number(bonus.damageMultiplier || 1) - 1) * 100) + '% 증가');
+  }
+  if (bonus && Number(bonus.damageAdd || 0)) {
+    parts.push(String(bonus.tag || '태그') + ' 스킬 추가 피해 +' + Number(bonus.damageAdd || 0));
+  }
+  return parts.length ? parts.join(', ') : String(bonus && bonus.tag || '태그') + ' 스킬 강화';
 }
 
 function applyActiveSkillTagBonuses_(battleState, skill, damage, context) {
