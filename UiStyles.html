@@ -1561,7 +1561,7 @@
   }
 
   .skill-button.rarity-unique {
-    border-color: rgba(255, 43, 141, 0.74);
+    border-color: rgba(255, 58, 58, 0.78);
   }
 
   .skill-button:hover,
@@ -1613,7 +1613,7 @@
   .skill-button.rarity-unique .skill-button-name,
   .skill-detail-card.rarity-unique .skill-detail-name,
   .reward-detail-card.rarity-unique .skill-detail-name {
-    color: #ff5ba9;
+    color: #ff4a4a;
   }
 
   .skill-ap-badge,
@@ -1681,10 +1681,17 @@
     left: auto;
   }
 
+  .item-card:nth-child(3n) .reward-detail-card {
+    right: 0;
+    left: auto;
+  }
+
   .skill-button:hover .skill-detail-card,
   .skill-button:focus-visible .skill-detail-card,
   .reward-choice-card:hover .reward-detail-card,
-  .reward-choice-card:focus-visible .reward-detail-card {
+  .reward-choice-card:focus-visible .reward-detail-card,
+  .item-card:hover .reward-detail-card,
+  .item-card:focus-visible .reward-detail-card {
     opacity: 1;
     transform: translateY(0);
   }
@@ -2782,20 +2789,20 @@
   }
 
   .reward-choice-card.rarity-unique {
-    border-color: rgba(255, 43, 141, 0.92);
-    color: #ff2b8d;
+    border-color: rgba(255, 58, 58, 0.94);
+    color: #ff3a3a;
   }
 
   .skill-detail-card.rarity-unique,
   .reward-detail-card.rarity-unique {
-    border-color: rgba(255, 43, 141, 0.88);
-    box-shadow: 0 16px 38px rgba(0, 0, 0, 0.52), 0 0 24px rgba(255, 43, 141, 0.18);
+    border-color: rgba(255, 58, 58, 0.88);
+    box-shadow: 0 16px 38px rgba(0, 0, 0, 0.52), 0 0 24px rgba(255, 58, 58, 0.2);
   }
 
   .reward-choice-card.rarity-unique .reward-rarity-badge,
   .reward-choice-card.rarity-unique .reward-choice-heading,
   .reward-choice-card.rarity-unique strong {
-    color: #ff2b8d;
+    color: #ff3a3a;
   }
 
   .reward-detail-card {
@@ -2803,6 +2810,130 @@
     width: min(300px, 92vw);
     z-index: 36;
     text-align: left;
+  }
+
+  .item-modal {
+    width: min(960px, 100%);
+  }
+
+  .item-modal-title {
+    margin: 0;
+    color: #f8f8f8;
+    font-family: var(--font-title);
+    font-size: 28px;
+    line-height: 1.1;
+  }
+
+  .item-modal-subtitle {
+    margin: 6px 0 0;
+    color: var(--muted);
+    font-size: 13px;
+  }
+
+  .item-list-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+    gap: 8px;
+    margin-top: 14px;
+    overflow: visible;
+  }
+
+  .item-card {
+    position: relative;
+    display: grid;
+    min-height: 72px;
+    padding: 8px 9px;
+    border: 2px solid rgba(220, 220, 220, 0.34);
+    border-radius: 6px;
+    background: rgba(10, 10, 10, 0.74);
+    color: #f8f8f8;
+    cursor: default;
+    overflow: visible;
+    z-index: 1;
+  }
+
+  .item-card:hover,
+  .item-card:focus-visible {
+    transform: translateY(-2px);
+    z-index: 40;
+  }
+
+  .item-card-body {
+    display: grid;
+    align-content: center;
+    justify-items: center;
+    gap: 4px;
+    min-width: 0;
+    min-height: 0;
+    text-align: center;
+  }
+
+  .item-card-body strong {
+    font-family: var(--font-title);
+    font-size: 16px;
+    line-height: 1.05;
+    color: inherit;
+    word-break: keep-all;
+  }
+
+  .item-card-rarity {
+    font-family: var(--font-title);
+    font-size: 10px;
+    line-height: 1;
+    color: inherit;
+  }
+
+  .item-detail-card {
+    width: min(320px, 86vw);
+  }
+
+  .item-card.rarity-common {
+    border-color: rgba(255, 255, 255, 0.62);
+    color: #f5f5f5;
+  }
+
+  .item-card.rarity-uncommon {
+    border-color: rgba(71, 255, 108, 0.78);
+    color: #47ff6c;
+  }
+
+  .item-card.rarity-rare {
+    border-color: rgba(178, 111, 255, 0.82);
+    color: #b26fff;
+  }
+
+  .item-card.rarity-epic {
+    border-color: rgba(255, 188, 82, 0.86);
+    color: #ffbc52;
+  }
+
+  .item-card.rarity-legendary {
+    border-color: rgba(255, 141, 54, 0.9);
+    color: #ff8d36;
+  }
+
+  .item-card.rarity-unique {
+    border-color: rgba(255, 58, 58, 0.92);
+    color: #ff4a4a;
+  }
+
+  .item-flavor-text {
+    display: block;
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px solid rgba(220, 220, 220, 0.16);
+    color: #9b9b9b;
+    font-size: 12px;
+    line-height: 1.55;
+  }
+
+  .item-empty {
+    grid-column: 1 / -1;
+    border: 1px solid rgba(220, 220, 220, 0.24);
+    background: rgba(8, 8, 8, 0.62);
+    color: var(--muted);
+    padding: 22px;
+    text-align: center;
   }
 
   .reward-confirm-row {

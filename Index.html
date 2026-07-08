@@ -89,6 +89,7 @@
         <button class="secondary" onclick="showMyInfo()">내 정보</button>
         <button class="secondary" onclick="goToPage('leaderboard')">리더보드</button>
         <button class="secondary" onclick="refreshCurrentUser(true)">새로고침</button>
+        <button class="secondary" onclick="reloadGameData()">데이터 다시 불러오기</button>
         <button id="adminButton" class="secondary" onclick="goToPage('admin')" style="display:none;">관리자</button>
       </div>
       <div id="mainMessage" class="message"></div>
@@ -293,6 +294,26 @@
           setRegisterMessage(error.message, 'error');
         })
         .getCurrentUser(authToken);
+    }
+
+    function reloadGameData() {
+      setMainMessage('');
+      if (typeof google === 'undefined' || !google.script || !google.script.run) {
+        setMainMessage('서버 연결을 사용할 수 없습니다.', 'error');
+        return;
+      }
+      showLoadingModal('데이터 다시 불러오는 중...', '시트 데이터 캐시를 비우는 중...');
+      google.script.run
+        .withSuccessHandler(function() {
+          hideLoadingModal();
+          setMainMessage('데이터를 다시 불러왔습니다.', 'ok');
+          refreshCurrentUser(true);
+        })
+        .withFailureHandler(function(error) {
+          hideLoadingModal();
+          setMainMessage(error && error.message ? error.message : '데이터 다시 불러오기에 실패했습니다.', 'error');
+        })
+        .clearRuntimeCaches();
     }
 
     function clearCurrentUserRequestTimer() {

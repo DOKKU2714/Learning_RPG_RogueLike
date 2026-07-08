@@ -31,9 +31,8 @@ function getItemRows_() {
   } catch (error) {
     rows = [];
   }
-  var sheetRows = readKoreanItemListRows_();
   var merged = {};
-  (rows && rows.length ? rows : MASTER_ITEMS.slice()).concat(sheetRows).forEach(function(item) {
+  MASTER_ITEMS.slice().concat(rows || []).map(normalizeItemRow_).forEach(function(item) {
     var itemId = item.itemId || item.id || '';
     if (!itemId) {
       return;
@@ -43,6 +42,75 @@ function getItemRows_() {
   return Object.keys(merged).map(function(itemId) {
     return merged[itemId];
   });
+}
+
+function normalizeItemRow_(row) {
+  var source = row || {};
+  var name = getFirstItemCell_(source, ['name', 'itemName', '아이템명', '이름']);
+  var itemId = getFirstItemCell_(source, ['itemId', 'id', '아이템ID', '아이디']);
+  if (!itemId && name) {
+    itemId = getMasterItemIdByName_(name) || buildItemIdFromName_(name);
+  }
+  var rarity = getFirstItemCell_(source, ['rarity', '등급']) || RARITIES.COMMON;
+  var description = getFirstItemCell_(source, ['description', 'flavor', 'flavorText', '플레이버/설명', '플레이버', '설명']);
+  var effects = getItemEffectsFromRow_(source);
+  return {
+    itemId: itemId,
+    id: itemId,
+    name: name || source.name || itemId,
+    type: getFirstItemCell_(source, ['type', '타입']) || 'passive',
+    target: getFirstItemCell_(source, ['target', '대상']) || 'self',
+    effectJson: safeJsonStringify_(effects),
+    triggerTiming: getFirstItemCell_(source, ['triggerTiming', '발동타이밍']) || inferItemTriggerTiming_(effects),
+    description: description || '',
+    rarity: rarity,
+  };
+}
+
+function getFirstItemCell_(row, keys) {
+  for (var i = 0; i < keys.length; i += 1) {
+    var key = keys[i];
+    if (row[key] !== undefined && row[key] !== null && row[key] !== '') {
+      return String(row[key]).trim();
+    }
+  }
+  return '';
+}
+
+function getMasterItemIdByName_(name) {
+  var match = MASTER_ITEMS.filter(function(item) {
+    return String(item.name || '').trim() === String(name || '').trim();
+  })[0];
+  return match ? match.itemId : '';
+}
+
+function getItemEffectsFromRow_(row) {
+  var effects = [];
+  var raw = row.effects || row.effectJson || '';
+  var parsed = safeJsonParse_(raw, []);
+  if (parsed && !Array.isArray(parsed) && typeof parsed === 'object') {
+    parsed = [parsed];
+  }
+  (Array.isArray(parsed) ? parsed : []).forEach(function(effect) {
+    var normalized = normalizeStructuredItemEffect_(effect, '');
+    if (normalized) {
+      effects.push(normalized);
+    }
+  });
+
+  ['effect1', 'effect2', 'effect3', 'effect4', 'effect5', 'effect 1', 'effect 2', 'effect 3', 'effect 4', 'effect 5', '효과 1', '효과 2', '효과 3', '효과 4', '효과 5', '효과1', '효과2', '효과3', '효과4', '효과5'].forEach(function(key) {
+    var value = row[key];
+    if (value === undefined || value === null || value === '') {
+      return;
+    }
+    String(value).split(/\n+/).forEach(function(part) {
+      var effect = parseItemEffectText_(part);
+      if (effect && effect.type !== 'note') {
+        effects.push(effect);
+      }
+    });
+  });
+  return effects;
 }
 
 function getItemById_(itemId) {
@@ -68,50 +136,6 @@ function getItemEffects_(item) {
     }
     return normalized;
   });
-}
-
-function readKoreanItemListRows_() {
-  var rows = [];
-  try {
-    rows = readTableCached_(DB_SHEETS.ITEM_LIST, 600);
-  } catch (error) {
-    return [];
-  }
-  return rows.map(function(row) {
-    return convertKoreanItemRow_(row);
-  }).filter(Boolean);
-}
-
-function convertKoreanItemRow_(row) {
-  var name = String(row.name || row.itemName || row['아이템명'] || '').trim();
-  if (!name) {
-    return null;
-  }
-  var no = String(row.No || row.no || row['번호'] || '').trim();
-  var itemId = String(row.id || row.itemId || row['id'] || row['ID'] || '').trim();
-  var masterItem = MASTER_ITEMS.filter(function(item) {
-    return item.name === name;
-  })[0];
-  if (!itemId) {
-    itemId = masterItem ? masterItem.itemId : (no ? 'item_sheet_' + no : buildItemIdFromName_(name));
-  }
-  var effects = [];
-  ['효과 1', '효과 2', '효과 3', '효과 4', '효과 5'].forEach(function(column) {
-    var parsed = parseItemEffectText_(row[column]);
-    if (parsed) {
-      effects.push(parsed);
-    }
-  });
-  return {
-    itemId: itemId,
-    name: name,
-    type: row.type || 'passive',
-    target: row.target || 'self',
-    effectJson: safeJsonStringify_(effects),
-    triggerTiming: row.triggerTiming || inferItemTriggerTiming_(effects),
-    description: row.description || row['플레이버/설명'] || '',
-    rarity: normalizeRarity_(row.rarity || row['등급']) || RARITIES.COMMON,
-  };
 }
 
 function buildItemIdFromName_(name) {
@@ -233,8 +257,11 @@ function parseItemEffectCompactCell_(text) {
     effect.stacks = Math.max(1, Number(parts[2] || 1));
     effect.value = 0;
   } else if (type === ITEM_EFFECT_TYPES.QUESTION_TIME) {
-    effect.questionType = normalizeQuestionTypeAlias_(parts[1] || 'all');
-    effect.value = parseSignedNumber_(parts[2]);
+    effect.questionType = parts.length > 2 ? normalizeQuestionTypeAlias_(parts[1] || 'all') : inferItemEffectQuestionType_({ type: parts[0] }) || 'all';
+    effect.value = parseSignedNumber_(parts.length > 2 ? parts[2] : parts[1]);
+  } else if (type === ITEM_EFFECT_TYPES.QUESTION_TYPE_CHANCE_PERCENT || type === ITEM_EFFECT_TYPES.ANSWER_CORRECT_EFFICIENCY_PERCENT) {
+    effect.questionType = parts.length > 2 ? normalizeQuestionTypeAlias_(parts[1] || 'all') : inferItemEffectQuestionType_({ type: parts[0] }) || 'all';
+    effect.value = parseSignedNumber_(parts.length > 2 ? parts[2] : parts[1]);
   } else {
     effect.value = parseSignedNumber_(parts[1]);
   }
@@ -281,7 +308,9 @@ function normalizeStructuredItemEffect_(effect, originalText) {
       return null;
     }
   } else if (type === ITEM_EFFECT_TYPES.QUESTION_TIME) {
-    normalized.questionType = normalizeQuestionTypeAlias_(effect.questionType || effect.question || effect.target || 'all');
+    normalized.questionType = normalizeQuestionTypeAlias_(effect.questionType || effect.question || effect.target || inferItemEffectQuestionType_(effect) || 'all');
+  } else if (type === ITEM_EFFECT_TYPES.QUESTION_TYPE_CHANCE_PERCENT || type === ITEM_EFFECT_TYPES.ANSWER_CORRECT_EFFICIENCY_PERCENT) {
+    normalized.questionType = normalizeQuestionTypeAlias_(effect.questionType || effect.question || effect.target || inferItemEffectQuestionType_(effect) || 'all');
   }
 
   if (summary) {
@@ -346,15 +375,56 @@ function normalizeItemEffectTypeAlias_(type) {
     questionmaxefficiency: ITEM_EFFECT_TYPES.QUESTION_MAX_EFFICIENCY_PERCENT,
     문제최대효율: ITEM_EFFECT_TYPES.QUESTION_MAX_EFFICIENCY_PERCENT,
     questiontime: ITEM_EFFECT_TYPES.QUESTION_TIME,
+    multiplechoicequestiontime: ITEM_EFFECT_TYPES.QUESTION_TIME,
+    shortanswerquestiontime: ITEM_EFFECT_TYPES.QUESTION_TIME,
     문제시간: ITEM_EFFECT_TYPES.QUESTION_TIME,
+    문제풀이시간: ITEM_EFFECT_TYPES.QUESTION_TIME,
+    제한시간: ITEM_EFFECT_TYPES.QUESTION_TIME,
+    객관식문제시간: ITEM_EFFECT_TYPES.QUESTION_TIME,
+    주관식문제시간: ITEM_EFFECT_TYPES.QUESTION_TIME,
+    questiontypechancepercent: ITEM_EFFECT_TYPES.QUESTION_TYPE_CHANCE_PERCENT,
+    questiontypechance: ITEM_EFFECT_TYPES.QUESTION_TYPE_CHANCE_PERCENT,
+    multiplechoicechancepercent: ITEM_EFFECT_TYPES.QUESTION_TYPE_CHANCE_PERCENT,
+    multiplechoicechance: ITEM_EFFECT_TYPES.QUESTION_TYPE_CHANCE_PERCENT,
+    객관식확률: ITEM_EFFECT_TYPES.QUESTION_TYPE_CHANCE_PERCENT,
+    객관식문제확률: ITEM_EFFECT_TYPES.QUESTION_TYPE_CHANCE_PERCENT,
+    answercorrectefficiencypercent: ITEM_EFFECT_TYPES.ANSWER_CORRECT_EFFICIENCY_PERCENT,
+    answercorrectefficiency: ITEM_EFFECT_TYPES.ANSWER_CORRECT_EFFICIENCY_PERCENT,
+    answerefficiencypercent: ITEM_EFFECT_TYPES.ANSWER_CORRECT_EFFICIENCY_PERCENT,
+    answerefficiency: ITEM_EFFECT_TYPES.ANSWER_CORRECT_EFFICIENCY_PERCENT,
+    문제풀이효율: ITEM_EFFECT_TYPES.ANSWER_CORRECT_EFFICIENCY_PERCENT,
+    문제효율: ITEM_EFFECT_TYPES.ANSWER_CORRECT_EFFICIENCY_PERCENT,
+    정답효율: ITEM_EFFECT_TYPES.ANSWER_CORRECT_EFFICIENCY_PERCENT,
+    multiplechoiceefficiency: ITEM_EFFECT_TYPES.ANSWER_CORRECT_EFFICIENCY_PERCENT,
+    multiplechoicecorrectefficiency: ITEM_EFFECT_TYPES.ANSWER_CORRECT_EFFICIENCY_PERCENT,
+    multiplechoicecorrectefficiencypercent: ITEM_EFFECT_TYPES.ANSWER_CORRECT_EFFICIENCY_PERCENT,
+    객관식효율: ITEM_EFFECT_TYPES.ANSWER_CORRECT_EFFICIENCY_PERCENT,
+    객관식정답효율: ITEM_EFFECT_TYPES.ANSWER_CORRECT_EFFICIENCY_PERCENT,
+    객관식문제정답효율: ITEM_EFFECT_TYPES.ANSWER_CORRECT_EFFICIENCY_PERCENT,
     shortanswerchancepercent: ITEM_EFFECT_TYPES.SHORT_ANSWER_CHANCE_PERCENT,
     shortanswerchance: ITEM_EFFECT_TYPES.SHORT_ANSWER_CHANCE_PERCENT,
     주관식확률: ITEM_EFFECT_TYPES.SHORT_ANSWER_CHANCE_PERCENT,
+    주관식문제확률: ITEM_EFFECT_TYPES.SHORT_ANSWER_CHANCE_PERCENT,
     shortanswercorrectefficiencypercent: ITEM_EFFECT_TYPES.SHORT_ANSWER_CORRECT_EFFICIENCY_PERCENT,
     shortanswerefficiency: ITEM_EFFECT_TYPES.SHORT_ANSWER_CORRECT_EFFICIENCY_PERCENT,
     주관식정답효율: ITEM_EFFECT_TYPES.SHORT_ANSWER_CORRECT_EFFICIENCY_PERCENT,
+    주관식문제정답효율: ITEM_EFFECT_TYPES.SHORT_ANSWER_CORRECT_EFFICIENCY_PERCENT,
   };
   return aliases[value] || aliases[lower] || '';
+}
+
+function inferItemEffectQuestionType_(effect) {
+  var text = [effect.type, effect.effectType, effect.kind, effect.summary, effect.label, effect.text].map(function(value) {
+    return String(value || '');
+  }).join(' ').toLowerCase();
+  var compact = text.replace(/[\s_-]+/g, '');
+  if (compact.indexOf('multiplechoice') !== -1 || text.indexOf('객관식') !== -1) {
+    return QUESTION_TYPES.MULTIPLE_CHOICE;
+  }
+  if (compact.indexOf('shortanswer') !== -1 || text.indexOf('주관식') !== -1) {
+    return QUESTION_TYPES.SHORT_ANSWER;
+  }
+  return '';
 }
 
 function normalizeItemStatKeyAlias_(statKey) {
@@ -481,13 +551,22 @@ function parseLegacyItemEffectText_(text) {
   if (normalized.indexOf('문제 최대 효율') !== -1) {
     return { type: ITEM_EFFECT_TYPES.QUESTION_MAX_EFFICIENCY_PERCENT, value: signedValue, summary: value };
   }
+  if (normalized.indexOf('객관식') !== -1 && normalized.indexOf('확률') !== -1) {
+    return { type: ITEM_EFFECT_TYPES.QUESTION_TYPE_CHANCE_PERCENT, questionType: QUESTION_TYPES.MULTIPLE_CHOICE, value: signedValue, summary: value };
+  }
   if (normalized.indexOf('주관식 문제 정답') !== -1 && normalized.indexOf('효율') !== -1) {
     return { type: ITEM_EFFECT_TYPES.SHORT_ANSWER_CORRECT_EFFICIENCY_PERCENT, value: signedValue, summary: value };
   }
   if (normalized.indexOf('주관식') !== -1 && normalized.indexOf('확률') !== -1) {
     return { type: ITEM_EFFECT_TYPES.SHORT_ANSWER_CHANCE_PERCENT, value: signedValue, summary: value };
   }
-  if (normalized.indexOf('문제 시간') !== -1) {
+  if (normalized.indexOf('객관식') !== -1 && normalized.indexOf('효율') !== -1) {
+    return { type: ITEM_EFFECT_TYPES.ANSWER_CORRECT_EFFICIENCY_PERCENT, questionType: QUESTION_TYPES.MULTIPLE_CHOICE, value: signedValue, summary: value };
+  }
+  if ((normalized.indexOf('문제 풀이 효율') !== -1 || normalized.indexOf('문제 효율') !== -1 || normalized.indexOf('정답 효율') !== -1) && normalized.indexOf('최대') === -1) {
+    return { type: ITEM_EFFECT_TYPES.ANSWER_CORRECT_EFFICIENCY_PERCENT, questionType: 'all', value: signedValue, summary: value };
+  }
+  if (normalized.indexOf('문제 시간') !== -1 || normalized.indexOf('문제 풀이 시간') !== -1 || normalized.indexOf('제한시간') !== -1) {
     return {
       type: ITEM_EFFECT_TYPES.QUESTION_TIME,
       questionType: normalized.indexOf('주관식') !== -1 ? QUESTION_TYPES.SHORT_ANSWER : (normalized.indexOf('객관식') !== -1 ? QUESTION_TYPES.MULTIPLE_CHOICE : 'all'),
@@ -536,6 +615,27 @@ function buildItemClientDetail_(item) {
   };
 }
 
+function buildOwnedItemClientDetails_(ownedItems) {
+  return normalizeOwnedItems_(ownedItems).map(function(owned) {
+    var detail = buildItemClientDetail_(getItemById_(owned.itemId));
+    if (!detail) {
+      return {
+        id: owned.itemId,
+        itemId: owned.itemId,
+        name: owned.itemId,
+        rarity: RARITIES.COMMON,
+        rarityLabel: getRarityLabel_(RARITIES.COMMON),
+        effects: [],
+        effectSummary: '',
+        description: '',
+        count: Number(owned.count || 1),
+      };
+    }
+    detail.count = Number(owned.count || 1);
+    return detail;
+  });
+}
+
 function buildItemEffectSummary_(item) {
   return getItemEffects_(item).map(function(effect) {
     return effect.summary || describeItemEffect_(effect);
@@ -560,6 +660,9 @@ function formatItemEffectForSheet_(effect) {
     parts.push('effectId=' + (effect.effectId || ''));
     parts.push('stacks=' + Math.max(1, Number(effect.stacks || 1)));
   } else if (effect.type === ITEM_EFFECT_TYPES.QUESTION_TIME) {
+    parts.push('questionType=' + (effect.questionType || 'all'));
+    parts.push('value=' + Number(effect.value || 0));
+  } else if (effect.type === ITEM_EFFECT_TYPES.QUESTION_TYPE_CHANCE_PERCENT || effect.type === ITEM_EFFECT_TYPES.ANSWER_CORRECT_EFFICIENCY_PERCENT) {
     parts.push('questionType=' + (effect.questionType || 'all'));
     parts.push('value=' + Number(effect.value || 0));
   } else {
@@ -603,7 +706,13 @@ function describeItemEffect_(effect) {
     return '문제 최대 효율 ' + sign + value + '%';
   }
   if (effect.type === ITEM_EFFECT_TYPES.QUESTION_TIME) {
-    return '문제 시간 ' + sign + value + '초';
+    return getQuestionTypeItemLabel_(effect.questionType) + '문제 시간 ' + sign + value + '초';
+  }
+  if (effect.type === ITEM_EFFECT_TYPES.QUESTION_TYPE_CHANCE_PERCENT) {
+    return getQuestionTypeItemLabel_(effect.questionType) + '문제 확률 ' + sign + value + '%';
+  }
+  if (effect.type === ITEM_EFFECT_TYPES.ANSWER_CORRECT_EFFICIENCY_PERCENT) {
+    return getQuestionTypeItemLabel_(effect.questionType) + '정답 효율 ' + sign + value + '%';
   }
   if (effect.type === ITEM_EFFECT_TYPES.SHORT_ANSWER_CHANCE_PERCENT) {
     return '주관식 문제 확률 ' + sign + value + '%';
@@ -628,6 +737,12 @@ function getItemStatLabel_(statKey) {
   return labels[statKey] || String(statKey || '스탯');
 }
 
+function getQuestionTypeItemLabel_(questionType) {
+  if (questionType === QUESTION_TYPES.MULTIPLE_CHOICE) return '객관식 ';
+  if (questionType === QUESTION_TYPES.SHORT_ANSWER) return '주관식 ';
+  return '';
+}
+
 function buildItemModifiers_(ownedItems) {
   var modifiers = {
     statFlat: {},
@@ -641,6 +756,9 @@ function buildItemModifiers_(ownedItems) {
     questionDifficulty: 0,
     questionMaxEfficiencyPercent: 0,
     questionTimeByType: {},
+    questionChanceByType: {},
+    answerCorrectEfficiencyPercent: 0,
+    answerCorrectEfficiencyByType: {},
     shortAnswerChancePercent: 0,
     shortAnswerCorrectEfficiencyPercent: 0,
   };
@@ -682,6 +800,16 @@ function buildItemModifiers_(ownedItems) {
       } else if (type === ITEM_EFFECT_TYPES.QUESTION_TIME) {
         var questionType = effect.questionType || 'all';
         modifiers.questionTimeByType[questionType] = Number(modifiers.questionTimeByType[questionType] || 0) + value;
+      } else if (type === ITEM_EFFECT_TYPES.QUESTION_TYPE_CHANCE_PERCENT) {
+        var chanceQuestionType = effect.questionType || 'all';
+        modifiers.questionChanceByType[chanceQuestionType] = Number(modifiers.questionChanceByType[chanceQuestionType] || 0) + value;
+      } else if (type === ITEM_EFFECT_TYPES.ANSWER_CORRECT_EFFICIENCY_PERCENT) {
+        var efficiencyQuestionType = effect.questionType || 'all';
+        if (efficiencyQuestionType === 'all') {
+          modifiers.answerCorrectEfficiencyPercent += value;
+        } else {
+          modifiers.answerCorrectEfficiencyByType[efficiencyQuestionType] = Number(modifiers.answerCorrectEfficiencyByType[efficiencyQuestionType] || 0) + value;
+        }
       } else if (type === ITEM_EFFECT_TYPES.SHORT_ANSWER_CHANCE_PERCENT) {
         modifiers.shortAnswerChancePercent += value;
       } else if (type === ITEM_EFFECT_TYPES.SHORT_ANSWER_CORRECT_EFFICIENCY_PERCENT) {
@@ -732,6 +860,16 @@ function applyBattleStartItemEffects_(battleState) {
       stackable: stacks > 1 ? true : effect.stackable,
       maxStacks: Math.max(Number(effect.maxStacks || 1), stacks),
     });
+    if (rule.effectId === 'debuff_foolish') {
+      configured.statKey = '';
+      configured.effectType = EFFECT_TYPES.CONTROL;
+      configured.value = 0;
+      configured.stackable = true;
+      configured.maxStacks = Math.max(Number(configured.maxStacks || 1), stacks);
+      configured.description = configured.description && configured.description.indexOf('난이도') === -1
+        ? configured.description
+        : '정신이 흐려진 상태입니다.';
+    }
     for (var i = 0; i < stacks; i += 1) {
       applyEffect(battleState.player, configured, { source: 'item', itemId: rule.itemId || '' });
     }
@@ -752,6 +890,7 @@ function syncBattlePlayerItemsFromRun_(battleState, run) {
   var nextMaxHp = Math.max(1, Number(nextStats.hp || 1));
   battleState.player.baseStats = baseStats;
   battleState.player.items = items;
+  battleState.player.itemDetails = buildOwnedItemClientDetails_(items);
   battleState.player.itemModifiers = buildItemModifiers_(items);
   battleState.player.stats = nextStats;
   battleState.player.maxHp = nextMaxHp;
@@ -828,6 +967,9 @@ function getItemQuestionModifiers_(battleState, question) {
     questionDifficulty: Number(modifiers.questionDifficulty || 0),
     questionMaxEfficiencyPercent: Number(modifiers.questionMaxEfficiencyPercent || 0),
     questionTimeSeconds: timeSeconds,
+    questionChanceByType: Object.assign({}, modifiers.questionChanceByType || {}),
+    answerCorrectEfficiencyPercent: Number(modifiers.answerCorrectEfficiencyPercent || 0),
+    answerCorrectEfficiencyByType: Object.assign({}, modifiers.answerCorrectEfficiencyByType || {}),
     shortAnswerChancePercent: Number(modifiers.shortAnswerChancePercent || 0),
     shortAnswerCorrectEfficiencyPercent: Number(modifiers.shortAnswerCorrectEfficiencyPercent || 0),
   };
@@ -835,11 +977,24 @@ function getItemQuestionModifiers_(battleState, question) {
 
 function applyItemQuestionEfficiencyModifiers_(efficiency, isCorrect, question, battleState, maxEfficiency) {
   var next = Number(efficiency || 0);
-  var modifiers = getItemQuestionModifiers_(battleState, question);
-  if (isCorrect && question && question.type === QUESTION_TYPES.SHORT_ANSWER) {
-    next += Number(modifiers.shortAnswerCorrectEfficiencyPercent || 0) / 100;
+  if (!isCorrect) {
+    return roundTo_(Math.max(0, Math.min(Number(maxEfficiency || next), next)), 3);
   }
+  var modifiers = getItemQuestionModifiers_(battleState, question);
+  next += getItemQuestionCorrectEfficiencyBonusPercent_(modifiers, question) / 100;
   return roundTo_(Math.max(0, Math.min(Number(maxEfficiency || next), next)), 3);
+}
+
+function getItemQuestionCorrectEfficiencyBonusPercent_(questionModifiers, question) {
+  var bonus = Number(questionModifiers && questionModifiers.answerCorrectEfficiencyPercent || 0);
+  var byType = questionModifiers && questionModifiers.answerCorrectEfficiencyByType || {};
+  if (question && question.type && byType[question.type] !== undefined) {
+    bonus += Number(byType[question.type] || 0);
+  }
+  if (question && question.type === QUESTION_TYPES.SHORT_ANSWER) {
+    bonus += Number(questionModifiers && questionModifiers.shortAnswerCorrectEfficiencyPercent || 0);
+  }
+  return bonus;
 }
 
 function addItemToOwnedItems_(ownedItems, itemId) {
@@ -852,7 +1007,7 @@ function addItemToOwnedItems_(ownedItems, itemId) {
     return item.itemId === id;
   })[0];
   if (existing) {
-    existing.count = Math.max(1, Number(existing.count || 1)) + 1;
+    return items;
   } else {
     items.push({ itemId: id, count: 1, acquiredAt: new Date().toISOString() });
   }
@@ -867,6 +1022,10 @@ function pickAutoItemReward_(ownedItems) {
     return null;
   }
   return buildAutoItemReward_(item);
+}
+
+function hasAvailableItemReward_(ownedItems) {
+  return getAvailableItemRewardPool_('', ownedItems, ITEM_REWARD_CONFIG).length > 0;
 }
 
 function buildAutoItemReward_(item) {

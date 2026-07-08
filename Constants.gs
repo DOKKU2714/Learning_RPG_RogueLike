@@ -14,9 +14,7 @@ var DB_SHEETS = Object.freeze({
   SKILLS: 'Skills',
   EFFECTS: 'Effects',
   ITEMS: 'Items',
-  ITEM_LIST: '아이템 목록',
   REWARDS: 'Rewards',
-  REWARD_GROUPS: 'RewardGroups',
   BATTLE_LOGS: 'BattleLogs',
 });
 
@@ -36,9 +34,7 @@ var DB_COLUMNS = Object.freeze({
   SKILLS: ['skillId', 'name', 'type', 'target', 'baseValue', 'hitCount', 'cooldown', 'conditionJson', 'difficultyBonus', 'effectJson', 'upgradeJson', 'description', 'actionPointCost', 'rarity', 'tags'],
   EFFECTS: ['effectId', 'name', 'category', 'statKey', 'effectType', 'value', 'durationType', 'durationTurns', 'stackable', 'maxStacks', 'triggerTiming', 'description'],
   ITEMS: ['itemId', 'name', 'type', 'target', 'effectJson', 'triggerTiming', 'description', 'rarity'],
-  ITEM_LIST: ['No', '아이템명', '등급', '효과 1', '효과 2', '효과 3', '효과 4', '효과 5', '플레이버/설명'],
   REWARDS: ['rewardId', 'type', 'targetId', 'value', 'weight', 'minFloor', 'maxFloor', 'description', 'detailDescription', 'rarity'],
-  REWARD_GROUPS: ['rewardGroupId', 'rewardIds', 'currencyMin', 'currencyMax', 'description'],
   BATTLE_LOGS: ['battleLogId', 'runId', 'playerId', 'floor', 'stage', 'result', 'summaryJson', 'createdAt'],
 });
 
@@ -58,7 +54,6 @@ var DB_SCHEMA = Object.freeze([
   { sheetName: DB_SHEETS.SKILLS, headers: DB_COLUMNS.SKILLS },
   { sheetName: DB_SHEETS.EFFECTS, headers: DB_COLUMNS.EFFECTS },
   { sheetName: DB_SHEETS.ITEMS, headers: DB_COLUMNS.ITEMS },
-  { sheetName: DB_SHEETS.ITEM_LIST, headers: DB_COLUMNS.ITEM_LIST },
   { sheetName: DB_SHEETS.REWARDS, headers: DB_COLUMNS.REWARDS },
   { sheetName: DB_SHEETS.BATTLE_LOGS, headers: DB_COLUMNS.BATTLE_LOGS },
 ]);
@@ -191,6 +186,8 @@ var ITEM_EFFECT_TYPES = Object.freeze({
   QUESTION_DIFFICULTY: 'questionDifficulty',
   QUESTION_MAX_EFFICIENCY_PERCENT: 'questionMaxEfficiencyPercent',
   QUESTION_TIME: 'questionTime',
+  QUESTION_TYPE_CHANCE_PERCENT: 'questionTypeChancePercent',
+  ANSWER_CORRECT_EFFICIENCY_PERCENT: 'answerCorrectEfficiencyPercent',
   SHORT_ANSWER_CHANCE_PERCENT: 'shortAnswerChancePercent',
   SHORT_ANSWER_CORRECT_EFFICIENCY_PERCENT: 'shortAnswerCorrectEfficiencyPercent',
 });
@@ -205,8 +202,8 @@ var ITEM_REWARD_CONFIG = Object.freeze({
     unique: 1,
   }),
   preventDuplicateUniqueItems: true,
-  allowDuplicateNonUniqueItems: true,
-  excludeOwnedItems: false,
+  allowDuplicateNonUniqueItems: false,
+  excludeOwnedItems: true,
 });
 
 var SKILL_REWARD_CONFIG = Object.freeze({
@@ -223,12 +220,13 @@ var SKILL_REWARD_CONFIG = Object.freeze({
 
 var REWARD_CONFIG = Object.freeze({
   choicesCount: 3,
+  ensureItemRewardChoice: false,
   currencyMin: 5,
   currencyMax: 15,
   typeWeights: Object.freeze({
     stat: 40,
     skill: 30,
-    item: 30,
+    item: 20,
   }),
 });
 
@@ -288,7 +286,7 @@ var MASTER_EFFECTS = Object.freeze([
   { effectId: 'debuff_weak', name: '약화', category: EFFECT_CATEGORIES.DEBUFF, statKey: STAT_KEYS.ATTACK, effectType: EFFECT_TYPES.PERCENT, value: -25, durationType: DURATION_TYPES.STAGE, durationTurns: '', stackable: false, maxStacks: 1, triggerTiming: TRIGGER_TIMINGS.PASSIVE, description: '공격력 25% 감소.' },
   { effectId: 'debuff_corrosion', name: '부식', category: EFFECT_CATEGORIES.DEBUFF, statKey: STAT_KEYS.DEFENSE, effectType: EFFECT_TYPES.PERCENT, value: -33, durationType: DURATION_TYPES.STAGE, durationTurns: '', stackable: false, maxStacks: 1, triggerTiming: TRIGGER_TIMINGS.PASSIVE, description: '방어력 33% 감소.' },
   { effectId: 'debuff_dazed', name: '멍해짐', category: EFFECT_CATEGORIES.DEBUFF, statKey: STAT_KEYS.QUESTION_TIME, effectType: EFFECT_TYPES.FLAT, value: -3, durationType: DURATION_TYPES.TURN, durationTurns: 3, stackable: false, maxStacks: 1, triggerTiming: TRIGGER_TIMINGS.PASSIVE, description: 'N턴간 문제 풀이 제한시간 -3초.' },
-  { effectId: 'debuff_foolish', name: '멍청해짐', category: EFFECT_CATEGORIES.DEBUFF, statKey: STAT_KEYS.QUESTION_DIFFICULTY, effectType: EFFECT_TYPES.FLAT, value: 1, durationType: DURATION_TYPES.TURN, durationTurns: 3, stackable: false, maxStacks: 1, triggerTiming: TRIGGER_TIMINGS.PASSIVE, description: 'N턴간 문제 난이도 +1.' },
+  { effectId: 'debuff_foolish', name: '멍청해짐', category: EFFECT_CATEGORIES.DEBUFF, statKey: '', effectType: EFFECT_TYPES.CONTROL, value: 0, durationType: DURATION_TYPES.TURN, durationTurns: 3, stackable: true, maxStacks: 99, triggerTiming: TRIGGER_TIMINGS.PASSIVE, description: '정신이 흐려진 상태입니다.' },
   { effectId: 'buff_power', name: '힘', category: EFFECT_CATEGORIES.BUFF, statKey: STAT_KEYS.ATTACK, effectType: EFFECT_TYPES.FLAT, value: 2, durationType: DURATION_TYPES.STAGE, durationTurns: '', stackable: true, maxStacks: 99, triggerTiming: TRIGGER_TIMINGS.PASSIVE, description: '공격력 n 증가. 스택 가능.' },
   { effectId: 'buff_hard', name: '단단함', category: EFFECT_CATEGORIES.BUFF, statKey: STAT_KEYS.DEFENSE, effectType: EFFECT_TYPES.FLAT, value: 2, durationType: DURATION_TYPES.STAGE, durationTurns: '', stackable: true, maxStacks: 99, triggerTiming: TRIGGER_TIMINGS.PASSIVE, description: '방어력 n 증가. 스택 가능.' },
   { effectId: 'buff_focus', name: '집중', category: EFFECT_CATEGORIES.BUFF, statKey: STAT_KEYS.CRITICAL_RATE, effectType: EFFECT_TYPES.FLAT, value: 20, durationType: DURATION_TYPES.STAGE, durationTurns: '', stackable: true, maxStacks: 99, triggerTiming: TRIGGER_TIMINGS.PASSIVE, description: '치명타 확률 n% 증가. 스택 가능.' },

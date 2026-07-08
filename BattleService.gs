@@ -453,6 +453,7 @@ function selectQuestionForAction(playerId, runId, actionType, difficultyBonus, a
     maxMs: maxMs,
     finalDifficulty: finalDifficulty,
     maxAnswerEfficiency: calculateMaxAnswerEfficiency_(questionModifiers),
+    questionModifiers: questionModifiers,
     isOtherPlayerQuestion: questionResult.isOtherPlayerQuestion,
     fallbackReason: questionResult.fallbackReason,
   };
@@ -583,18 +584,15 @@ function calculateEfficiency(isCorrect, remainingMs, maxMs, wrongCountAfterTimeo
   }
 
   if (isCorrect) {
+    var correctEfficiencyBonus = getQuestionCorrectEfficiencyBonusPercent_(questionModifiers, question) / 100;
     var ratio = Math.max(0, Math.min(1, Number(remainingMs || 0) / Math.max(1, Number(maxMs || 1))));
     if (ratio >= 0.5) {
       var highEfficiency = 1 + ((ratio - 0.5) * ((maxEfficiency - 1) / 0.5));
-      if (question && question.type === QUESTION_TYPES.SHORT_ANSWER) {
-        highEfficiency += Number(questionModifiers && questionModifiers.shortAnswerCorrectEfficiencyPercent || 0) / 100;
-      }
+      highEfficiency += correctEfficiencyBonus;
       return roundTo_(Math.min(maxEfficiency, highEfficiency), 3);
     }
     var lowEfficiency = minEfficiency + (ratio * ((1 - minEfficiency) / 0.5));
-    if (question && question.type === QUESTION_TYPES.SHORT_ANSWER) {
-      lowEfficiency += Number(questionModifiers && questionModifiers.shortAnswerCorrectEfficiencyPercent || 0) / 100;
-    }
+    lowEfficiency += correctEfficiencyBonus;
     return roundTo_(Math.min(maxEfficiency, lowEfficiency), 3);
   }
 
@@ -604,6 +602,18 @@ function calculateEfficiency(isCorrect, remainingMs, maxMs, wrongCountAfterTimeo
 function calculateMaxAnswerEfficiency_(questionModifiers, baseMaxEfficiency) {
   var base = Number(baseMaxEfficiency || getAnswerEfficiencyRules_().maxAnswerEfficiency);
   return Math.max(0, roundTo_(base * (1 + (Number(questionModifiers && questionModifiers.questionMaxEfficiencyPercent || 0) / 100)), 3));
+}
+
+function getQuestionCorrectEfficiencyBonusPercent_(questionModifiers, question) {
+  var bonus = Number(questionModifiers && questionModifiers.answerCorrectEfficiencyPercent || 0);
+  var byType = questionModifiers && questionModifiers.answerCorrectEfficiencyByType || {};
+  if (question && question.type && byType[question.type] !== undefined) {
+    bonus += Number(byType[question.type] || 0);
+  }
+  if (question && question.type === QUESTION_TYPES.SHORT_ANSWER) {
+    bonus += Number(questionModifiers && questionModifiers.shortAnswerCorrectEfficiencyPercent || 0);
+  }
+  return bonus;
 }
 
 function getAnswerEfficiencyRules_() {
@@ -1602,6 +1612,7 @@ function buildQuestionView_(question, pendingAction) {
     maxMs: pendingAction ? pendingAction.maxMs : '',
     finalDifficulty: pendingAction ? pendingAction.finalDifficulty : '',
     maxAnswerEfficiency: pendingAction ? pendingAction.maxAnswerEfficiency || '' : '',
+    questionModifiers: pendingAction ? pendingAction.questionModifiers || {} : {},
     isOtherPlayerQuestion: pendingAction ? pendingAction.isOtherPlayerQuestion : false,
     fallbackReason: pendingAction ? pendingAction.fallbackReason : '',
   });
@@ -1635,6 +1646,7 @@ function buildBattleQuestionCache_(run, stageState, battleState) {
         maxMs: maxMs,
         finalDifficulty: finalDifficulty,
         maxAnswerEfficiency: calculateMaxAnswerEfficiency_(questionModifiers),
+        questionModifiers: questionModifiers,
         isOtherPlayerQuestion: question.creatorId !== run.playerId,
         fallbackReason: '',
       };
@@ -1724,6 +1736,7 @@ function createPendingActionFromCachedPayload_(battleState, payload, actionType,
     maxMs: calculateFinalQuestionTimeLimitForQuestion_(finalDifficulty, activeEffects, question, questionModifiers),
     finalDifficulty: finalDifficulty,
     maxAnswerEfficiency: calculateMaxAnswerEfficiency_(questionModifiers),
+    questionModifiers: questionModifiers,
     isOtherPlayerQuestion: question.creatorId !== playerId,
     fallbackReason: payload.fallbackReason || '',
     fromCache: true,
@@ -1794,23 +1807,31 @@ function pickQuestionWithTypeBias_(questions, questionModifiers) {
     return null;
   }
   var shortAnswerBonus = Number(questionModifiers && questionModifiers.shortAnswerChancePercent || 0);
-  if (!shortAnswerBonus) {
+  var chanceByType = questionModifiers && questionModifiers.questionChanceByType || {};
+  var multipleChoiceBonus = Number(chanceByType[QUESTION_TYPES.MULTIPLE_CHOICE] || 0);
+  shortAnswerBonus += Number(chanceByType[QUESTION_TYPES.SHORT_ANSWER] || 0);
+  if (!shortAnswerBonus && !multipleChoiceBonus) {
     return pickRandom_(pool);
   }
   var shortAnswers = pool.filter(function(question) {
     return question.type === QUESTION_TYPES.SHORT_ANSWER;
   });
-  var others = pool.filter(function(question) {
-    return question.type !== QUESTION_TYPES.SHORT_ANSWER;
+  var multipleChoices = pool.filter(function(question) {
+    return question.type === QUESTION_TYPES.MULTIPLE_CHOICE;
   });
-  if (!shortAnswers.length || !others.length) {
+  if (!shortAnswers.length || !multipleChoices.length) {
     return pickRandom_(pool);
   }
-  var baseChance = (shortAnswers.length / pool.length) * 100;
-  if (Math.random() * 100 < Math.min(100, baseChance + shortAnswerBonus)) {
+  var shortWeight = Math.max(0, (shortAnswers.length / pool.length) * 100 + shortAnswerBonus);
+  var multipleChoiceWeight = Math.max(0, (multipleChoices.length / pool.length) * 100 + multipleChoiceBonus);
+  var totalWeight = shortWeight + multipleChoiceWeight;
+  if (totalWeight <= 0) {
+    return pickRandom_(pool);
+  }
+  if (Math.random() * totalWeight < shortWeight) {
     return pickRandom_(shortAnswers);
   }
-  return pickRandom_(others);
+  return pickRandom_(multipleChoices);
 }
 
 function questionPickResult_(question, isOtherPlayerQuestion, fallbackReason) {
@@ -2031,7 +2052,24 @@ function createMonstersForStage_(stage, playerGhostMonster) {
     monsters.push(playerGhostMonster);
   }
   if (stage.bossMonsterId) {
-    monsters.push(buildBattleMonster_(findCachedRowByKey_(DB_SHEETS.MONSTERS, 'monsterId', stage.bossMonsterId, 600), monsters.length));
+    var bossMonster = findMonsterRowById_(stage.bossMonsterId);
+    if (bossMonster) {
+      monsters.push(buildBattleMonster_(bossMonster, monsters.length));
+      return monsters.slice(0, 3);
+    }
+    var fallbackBoss = findMonsterRowById_('boss_floor_' + Number(stage.floor || 1));
+    if (fallbackBoss) {
+      monsters.push(buildBattleMonster_(fallbackBoss, monsters.length));
+      return monsters.slice(0, 3);
+    }
+  }
+
+  if (!stage.monsterGroupId) {
+    var defaultMonster = findMonsterRowById_('monster_shadow_problem');
+    if (!defaultMonster) {
+      throw new Error('몬스터를 찾을 수 없습니다.');
+    }
+    monsters.push(buildBattleMonster_(defaultMonster, monsters.length));
     return monsters.slice(0, 3);
   }
 
@@ -2043,7 +2081,7 @@ function createMonstersForStage_(stage, playerGhostMonster) {
   var monsterIds = safeJsonParse_(group.monsterIds, []);
   var weights = safeJsonParse_(group.weights, []);
   var monsterOptions = monsterIds.map(function(monsterId, index) {
-    var monster = findCachedRowByKey_(DB_SHEETS.MONSTERS, 'monsterId', monsterId, 600);
+    var monster = findMonsterRowById_(monsterId);
     return monster ? { monster: monster, weight: Number(weights[index] || 0) } : null;
   }).filter(function(option) {
     return !!option;
@@ -2058,6 +2096,35 @@ function createMonstersForStage_(stage, playerGhostMonster) {
     monsters.push(buildBattleMonster_(selectedOption.monster, i));
   }
   return monsters;
+}
+
+function findMonsterRowById_(monsterId) {
+  var id = String(monsterId || '').trim();
+  if (!id) {
+    return null;
+  }
+
+  var exact = findCachedRowByKey_(DB_SHEETS.MONSTERS, 'monsterId', id, 600);
+  if (exact) {
+    return exact;
+  }
+
+  var rows = [];
+  try {
+    rows = readTableCached_(DB_SHEETS.MONSTERS, 600);
+  } catch (error) {
+    rows = [];
+  }
+  var trimmed = rows.filter(function(monster) {
+    return String(monster.monsterId || '').trim() === id;
+  })[0];
+  if (trimmed) {
+    return trimmed;
+  }
+
+  return (MASTER_MONSTERS || []).filter(function(monster) {
+    return String(monster.monsterId || '').trim() === id;
+  })[0] || null;
 }
 
 function buildBattleMonster_(monster, index) {
@@ -2250,6 +2317,9 @@ function buildStageId_(floor, stage) {
 
 function getEffectFlatBonus_(activeEffects, statKey) {
   return (activeEffects || []).reduce(function(total, effect) {
+    if (effect.effectId === 'debuff_foolish' && statKey === STAT_KEYS.QUESTION_DIFFICULTY) {
+      return total;
+    }
     if (effect.statKey === statKey && effect.effectType === EFFECT_TYPES.FLAT) {
       return total + (Number(effect.value || 0) * Math.max(1, Number(effect.stacks || 1)));
     }

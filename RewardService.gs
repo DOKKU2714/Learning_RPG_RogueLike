@@ -27,24 +27,31 @@ function generateRewardChoices(runId, stageId, authToken) {
   var rewardGroupId = getDefaultRewardGroupId_();
   var isFloorRestChoice = shouldOfferFloorRestChoice_(stage);
   var rewardState = stageState.reward || {};
+  var ownedSkills = safeJsonParse_(run.skillsJson, []);
+  var ownedItems = safeJsonParse_(run.itemsJson, []);
   var regenResult = grantStageClearRegenForRun_(run, stageState);
   run = regenResult.run;
   stageState = regenResult.stageState;
   rewardState = stageState.reward || {};
   if (rewardState.stageId === currentStageId && rewardState.choices && rewardState.choices.length) {
-    if (!rewardState.currencyGranted && !rewardState.floorRestChoice) {
-      rewardState.currencyAmount = grantCurrencyForRun_(run, stageState, rewardGroupId).amount;
-      rewardState.currencyGranted = true;
-      stageState.reward = rewardState;
-      updateRowByKey_(DB_SHEETS.RUNS, 'runId', runId, {
-        stageStateJson: safeJsonStringify_(stageState),
-        updatedAt: new Date(),
-      });
+    if (shouldRegenerateRewardChoices_(rewardState, ownedItems)) {
+      rewardState.choices = [];
+      rewardState.selectedRewardId = '';
+    } else {
+      if (!rewardState.currencyGranted && !rewardState.floorRestChoice) {
+        rewardState.currencyAmount = grantCurrencyForRun_(run, stageState, rewardGroupId).amount;
+        rewardState.currencyGranted = true;
+        stageState.reward = rewardState;
+        updateRowByKey_(DB_SHEETS.RUNS, 'runId', runId, {
+          stageStateJson: safeJsonStringify_(stageState),
+          updatedAt: new Date(),
+        });
+      }
+      return buildRewardChoiceView_(runId, currentStageId, rewardGroupId, rewardState, ownedSkills, stageState.battle);
     }
-    return buildRewardChoiceView_(runId, currentStageId, rewardGroupId, rewardState, safeJsonParse_(run.skillsJson, []), stageState.battle);
   }
 
-  var choices = pickRewardChoices_(rewardGroupId, Number(stage.floor || run.currentFloor), safeJsonParse_(run.skillsJson, []), safeJsonParse_(run.itemsJson, []));
+  var choices = pickRewardChoices_(rewardGroupId, Number(stage.floor || run.currentFloor), ownedSkills, ownedItems);
   if (isFloorRestChoice) {
     choices = [buildFloorRestRewardChoice_(run, stageState.battle)].concat(choices);
   }
@@ -76,7 +83,7 @@ function generateRewardChoices(runId, stageId, authToken) {
     updatedAt: new Date(),
   });
 
-  return buildRewardChoiceView_(runId, currentStageId, rewardGroupId, rewardState, safeJsonParse_(run.skillsJson, []), stageState.battle);
+  return buildRewardChoiceView_(runId, currentStageId, rewardGroupId, rewardState, ownedSkills, stageState.battle);
 }
 
 function previewRewardChoicesForStageResult(stagePayload, authToken) {
@@ -98,14 +105,16 @@ function previewRewardChoicesForStageResult(stagePayload, authToken) {
   var isFloorRestChoice = shouldOfferFloorRestChoice_(stage);
   var clientStageState = payload.stageState || {};
   var rewardState = clientStageState.reward || {};
-  if (!(rewardState.stageId === currentStageId && rewardState.choices && rewardState.choices.length)) {
+  var ownedSkills = safeJsonParse_(run.skillsJson, []);
+  var ownedItems = safeJsonParse_(run.itemsJson, []);
+  if (!(rewardState.stageId === currentStageId && rewardState.choices && rewardState.choices.length) || shouldRegenerateRewardChoices_(rewardState, ownedItems)) {
     var previewRegen = previewStageClearRegen_(run, battle);
     var battleAfterPreviewRegen = Object.assign({}, battle, {
       player: Object.assign({}, battle.player || {}, {
         hp: previewRegen.nextHp,
       }),
     });
-    var choices = pickRewardChoices_(rewardGroupId, Number(stage.floor || run.currentFloor), safeJsonParse_(run.skillsJson, []), safeJsonParse_(run.itemsJson, []));
+    var choices = pickRewardChoices_(rewardGroupId, Number(stage.floor || run.currentFloor), ownedSkills, ownedItems);
     if (isFloorRestChoice) {
       choices = [buildFloorRestRewardChoice_(run, battleAfterPreviewRegen)].concat(choices);
     }
@@ -126,7 +135,7 @@ function previewRewardChoicesForStageResult(stagePayload, authToken) {
     };
   }
 
-  return buildRewardChoiceView_(run.runId, currentStageId, rewardGroupId, rewardState, safeJsonParse_(run.skillsJson, []), battle);
+  return buildRewardChoiceView_(run.runId, currentStageId, rewardGroupId, rewardState, ownedSkills, battle);
 }
 
 function previewStageClearRegen_(run, battle) {
@@ -157,9 +166,10 @@ function getRewardConfig_() {
     ? REWARD_CONFIG
     : {
       choicesCount: 3,
+      ensureItemRewardChoice: false,
       currencyMin: 5,
       currencyMax: 15,
-      typeWeights: { stat: 40, skill: 30, item: 30 },
+      typeWeights: { stat: 40, skill: 30, item: 20 },
     };
 }
 
@@ -167,12 +177,23 @@ function getDefaultRewardGroupId_() {
   return 'reward_global';
 }
 
+function shouldRegenerateRewardChoices_(rewardState, ownedItems) {
+  var config = getRewardConfig_();
+  if (!config.ensureItemRewardChoice || !rewardState || rewardState.selectedRewardId) {
+    return false;
+  }
+  var choices = rewardState.choices || [];
+  if (!choices.length || choices.some(function(choice) { return choice.type === REWARD_TYPES.ITEM; })) {
+    return false;
+  }
+  return typeof hasAvailableItemReward_ === 'function' && hasAvailableItemReward_(ownedItems);
+}
+
 function shouldOfferFloorRestChoice_(stage) {
   var floor = Number(stage && stage.floor || 1);
   var stageNumber = Number(stage && stage.stage || 1);
   return floor < GAME_RULES.FLOOR_COUNT
-    && stageNumber === GAME_RULES.STAGES_PER_FLOOR
-    && !!(stage && stage.bossMonsterId);
+    && stageNumber === GAME_RULES.STAGES_PER_FLOOR;
 }
 
 function buildFloorRestStageView_(stage) {
@@ -564,6 +585,12 @@ function pickRewardChoices_(rewardGroupId, floor, ownedSkills, ownedItems) {
   var attemptCount = 0;
   var config = getRewardConfig_();
   var choicesCount = Math.max(1, Number(config.choicesCount || 3));
+  if (config.ensureItemRewardChoice) {
+    var requiredItemReward = pickAutoItemReward_(ownedItems);
+    if (requiredItemReward) {
+      choices.push(requiredItemReward);
+    }
+  }
   while (choices.length < choicesCount && attemptCount < choicesCount * 8) {
     attemptCount += 1;
     var rewardType = pickRewardType_();
@@ -571,7 +598,7 @@ function pickRewardChoices_(rewardGroupId, floor, ownedSkills, ownedItems) {
     if (rewardType === REWARD_TYPES.SKILL) {
       picked = pickAutoSkillReward_(ownedSkills);
     } else if (rewardType === REWARD_TYPES.ITEM) {
-      picked = pickAutoItemReward_(ownedItems);
+      picked = hasItemRewardChoice_(choices) ? null : pickAutoItemReward_(ownedItems);
     } else if (candidates.length > 0) {
       picked = pickWeightedReward_(candidates);
     }
@@ -595,6 +622,12 @@ function pickRewardChoices_(rewardGroupId, floor, ownedSkills, ownedItems) {
   }
   return choices.map(function(choice) {
     return attachRewardRarity_(adaptRewardForChoice_(choice, ownedSkills));
+  });
+}
+
+function hasItemRewardChoice_(choices) {
+  return (choices || []).some(function(choice) {
+    return choice && choice.type === REWARD_TYPES.ITEM;
   });
 }
 
@@ -628,7 +661,7 @@ function pickFallbackRewardChoice_(candidates, ownedSkills, ownedItems, choices)
     return picked;
   }
 
-  picked = pickAutoItemReward_(ownedItems);
+  picked = hasItemRewardChoice_(choices) ? null : pickAutoItemReward_(ownedItems);
   if (picked && !choices.some(function(choice) { return choice.rewardId === picked.rewardId; })) {
     return picked;
   }
@@ -678,6 +711,9 @@ function getAvailableSkillRewardPool_(rarity, ownedSkills, config) {
     if (!skillId) {
       return false;
     }
+    if (isSkillExcludedFromAutoRewards_(skill)) {
+      return false;
+    }
     if (rarity && skillRarity !== rarity) {
       return false;
     }
@@ -690,6 +726,12 @@ function getAvailableSkillRewardPool_(rarity, ownedSkills, config) {
     return getAvailableSkillRewardPool_(rarity, ownedSkills, Object.assign({}, config, { preferUnownedSkills: false }));
   }
   return pool;
+}
+
+function isSkillExcludedFromAutoRewards_(skill) {
+  var skillId = String(skill && skill.skillId || '').trim();
+  var skillName = String(skill && skill.name || '').trim();
+  return skillId === 'skill_strike' || skillName === '타격';
 }
 
 function getSkillRowsForRewards_() {

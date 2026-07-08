@@ -196,6 +196,8 @@ var RULE_ENGINE_SHARED = (function() {
       hp: Number(player.hp || 0),
       maxHp: Number(player.maxHp || player.stats && player.stats.hp || 1),
       shield: Number(player.shield || 0),
+      defaultShield: Number(skill && skill.baseValue || 0) + getEffectiveStat(player, 'defense'),
+      skillShield: Number(skill && skill.baseValue || 0) + getEffectiveStat(player, 'defense'),
       enemyHp: Number(target && target.currentHp || 0),
       enemyShield: Number(target && target.shield || 0),
       efficiency: Number(efficiency || 0),
@@ -207,6 +209,13 @@ var RULE_ENGINE_SHARED = (function() {
   function evaluateFormula(formula, context, options) {
     var source = String(formula || '').replace(/\s+/g, '');
     if (!source) return 0;
+    source = source.replace(/\{([A-Za-z_.][0-9A-Za-z_.]*)\}/g, function(match, name) {
+      if (name === 'shield') {
+        if (context && context.defaultShield !== undefined) return 'defaultShield';
+        if (context && context.skillShield !== undefined) return 'skillShield';
+      }
+      return name;
+    });
     if (!/^[0-9A-Za-z_.+\-*/()%dD]+$/.test(source)) {
       warn(options, 'Unsafe formula rejected.', { formula: formula });
       return 0;
@@ -338,7 +347,7 @@ var RULE_ENGINE_SHARED = (function() {
   }
 
   function selectRuleTargets(battle, skill, rule, targetId, options) {
-    var mode = rule.targetMode || (skill && skill.target === 'self' ? 'self' : 'singleEnemy');
+    var mode = normalizeTargetMode(rule.targetMode || (skill && skill.target === 'self' ? 'self' : 'singleEnemy'));
     if (mode === 'self') return [battle.player];
     if (mode === 'allEnemies') return getAliveMonsters(battle);
     if (mode === 'enemyWithShield') {
@@ -355,6 +364,34 @@ var RULE_ENGINE_SHARED = (function() {
       warn(options, 'Unsupported targetMode: ' + mode, { targetMode: mode });
     }
     return [findMonsterById(battle, targetId) || getAliveMonsters(battle)[0]].filter(Boolean);
+  }
+
+  function normalizeTargetMode(mode) {
+    var value = String(mode || '').trim().toLowerCase().replace(/[_-]/g, '');
+    if (value === 'self') return 'self';
+    if (value === 'allenemies' || value === 'enemies') return 'allEnemies';
+    if (value === 'randomenemy') return 'randomEnemy';
+    if (value === 'randomenemies') return 'randomEnemies';
+    if (value === 'enemywithshield') return 'enemyWithShield';
+    return value === 'singleenemy' || value === 'enemy' ? 'singleEnemy' : String(mode || 'singleEnemy');
+  }
+
+  function getMonsterRuntimeId(monster) {
+    return String(monster && (monster.instanceId || monster.monsterId) || '');
+  }
+
+  function selectRandomAliveEnemyAvoiding(battle, usedTargetIds, options) {
+    var alive = getAliveMonsters(battle);
+    if (!alive.length) return null;
+    var unused = alive.filter(function(monster) {
+      var id = getMonsterRuntimeId(monster);
+      return !id || !usedTargetIds[id];
+    });
+    var pool = unused.length ? unused : alive;
+    var picked = pool[randomInt(0, pool.length - 1, options && options.random)];
+    var pickedId = getMonsterRuntimeId(picked);
+    if (pickedId) usedTargetIds[pickedId] = true;
+    return picked;
   }
 
   function applyActionPointModify(player, apRule, context, options) {
@@ -457,7 +494,7 @@ var RULE_ENGINE_SHARED = (function() {
           type: type,
           skillId: skill && skill.skillId || '',
           targetMonsterId: target && target.currentHp !== undefined ? (target.instanceId || target.monsterId || '') : '',
-          message: (skill && skill.name || 'Skill') + ' effect activated.'
+          message: (skill && skill.name || '스킬') + ' 효과가 발동했습니다.'
         });
       });
     });
@@ -488,17 +525,19 @@ var RULE_ENGINE_SHARED = (function() {
     validateSkillRule(rule, options);
     battle.lastTurnEvents = battle.lastTurnEvents || [];
     if (rule.requireCondition && rule.requireCondition.requireEfficiencyAtLeast && efficiency < Number(rule.requireCondition.requireEfficiencyAtLeast)) {
-      battle.lastTurnEvents.push({ actor: 'player', type: 'skill', skillId: skill.skillId || '', message: (skill.name || 'Skill') + ' failed efficiency condition.' });
+      battle.lastTurnEvents.push({ actor: 'player', type: 'skill', skillId: skill.skillId || '', message: (skill.name || '스킬') + ' 사용 조건을 만족하지 못했습니다.' });
       return true;
     }
     var context = buildFormulaContext(battle, skill, null, efficiency);
     applyActionPointModify(battle.player, rule.actionPointModify, context, options);
     var targets = selectRuleTargets(battle, skill, rule, args.targetId || '', options);
     var hitCount = Math.max(1, Math.round(rule.hitCount !== undefined ? evaluateFormula(rule.hitCount, context, options) : Number(skill.hitCount || 1)));
-    if (rule.targetMode === 'randomEnemies') {
+    var normalizedTargetMode = normalizeTargetMode(rule.targetMode || (skill && skill.target === 'self' ? 'self' : 'singleEnemy'));
+    if (normalizedTargetMode === 'randomEnemies') {
       targets = [];
+      var usedRandomTargetIds = {};
       for (var randomHit = 0; randomHit < hitCount; randomHit += 1) {
-        var randomTarget = selectRuleTargets(battle, skill, { targetMode: 'randomEnemy' }, '', options)[0];
+        var randomTarget = selectRandomAliveEnemyAvoiding(battle, usedRandomTargetIds, options);
         if (randomTarget) targets.push(randomTarget);
       }
     }
@@ -511,7 +550,7 @@ var RULE_ENGINE_SHARED = (function() {
       }
       shield = Math.max(0, Math.round(shield));
       battle.player.shield = Number(battle.player.shield || 0) + shield;
-      battle.lastTurnEvents.push({ actor: 'player', type: 'guard', skillId: skill.skillId || '', shield: shield, message: (skill.name || 'Skill') + ' gained shield ' + shield + '.' });
+      battle.lastTurnEvents.push({ actor: 'player', type: 'guard', skillId: skill.skillId || '', shield: shield, message: (skill.name || '스킬') + '으로 방어막 ' + shield + '을 얻었습니다.' });
     }
     if (rule.healFormula !== undefined && rule.healFormula !== null && rule.healFormula !== '') {
       var heal = evaluateFormula(rule.healFormula, context, options);
@@ -522,13 +561,16 @@ var RULE_ENGINE_SHARED = (function() {
       }
       heal = Math.max(0, Math.round(heal));
       battle.player.hp = Math.min(Number(battle.player.maxHp || battle.player.stats && battle.player.stats.hp || 1), Number(battle.player.hp || 0) + heal);
-      battle.lastTurnEvents.push({ actor: 'player', type: 'heal', skillId: skill.skillId || '', heal: heal, message: (skill.name || 'Skill') + ' healed ' + heal + '.' });
+      battle.lastTurnEvents.push({ actor: 'player', type: 'heal', skillId: skill.skillId || '', heal: heal, message: (skill.name || '스킬') + '으로 체력을 ' + heal + ' 회복했습니다.' });
     }
     targets.forEach(function(target) {
-      var perTargetHits = rule.targetMode === 'randomEnemies' ? 1 : hitCount;
+      var perTargetHits = normalizedTargetMode === 'randomEnemies' ? 1 : hitCount;
       for (var i = 0; i < perTargetHits; i += 1) {
         var targetContext = buildFormulaContext(battle, skill, target, efficiency);
         var damage = calculateRuleDamage(battle, skill, rule, targetContext, efficiency, options);
+        if (typeof args.damageModifier === 'function') {
+          damage = args.damageModifier(damage, { actionType: 'skill', skill: skill, target: target });
+        }
         if (damage <= 0 || !target) continue;
         var result = dealDamageToMonster(target, damage);
         battle.lastTurnEvents.push({
@@ -539,8 +581,8 @@ var RULE_ENGINE_SHARED = (function() {
           damage: result.damage,
           shieldDamage: result.shieldDamage,
           hpDamage: result.hpDamage,
-          simultaneousGroupId: rule.targetMode === 'allEnemies' ? (skill.skillId || 'skill') + ':allEnemies:' + i : '',
-          message: (skill.name || 'Skill') + ' dealt ' + result.damage + ' damage.'
+          simultaneousGroupId: normalizedTargetMode === 'allEnemies' ? (skill.skillId || 'skill') + ':allEnemies:' + i : '',
+          message: (skill.name || '스킬') + '으로 ' + result.damage + ' 피해를 주었습니다.'
         });
       }
     });
@@ -552,11 +594,11 @@ var RULE_ENGINE_SHARED = (function() {
       var selfDamage = Number(rule.selfDamage || 0) + Number(rule.failPenalty && rule.failPenalty.selfDamageOnUse || 0);
       selfDamage = Math.max(0, Math.round(evaluateFormula(selfDamage, context, options)));
       battle.player.hp = Math.max(0, Number(battle.player.hp || 0) - selfDamage);
-      battle.lastTurnEvents.push({ actor: 'player', type: 'selfDamage', skillId: skill.skillId || '', damage: selfDamage, hpDamage: selfDamage, message: (skill.name || 'Skill') + ' caused ' + selfDamage + ' self damage.' });
+      battle.lastTurnEvents.push({ actor: 'player', type: 'selfDamage', skillId: skill.skillId || '', damage: selfDamage, hpDamage: selfDamage, message: (skill.name || '스킬') + '의 반동으로 ' + selfDamage + ' 피해를 받았습니다.' });
     }
     trackSkillTags(battle, skill);
     if (!battle.lastTurnEvents.length) {
-      battle.lastTurnEvents.push({ actor: 'player', type: skill.type || 'skill', skillId: skill.skillId || '', message: (skill.name || 'Skill') + ' effect activated.' });
+      battle.lastTurnEvents.push({ actor: 'player', type: skill.type || 'skill', skillId: skill.skillId || '', message: (skill.name || '스킬') + ' 효과가 발동했습니다.' });
     }
     return true;
   }
@@ -564,6 +606,7 @@ var RULE_ENGINE_SHARED = (function() {
   function applyQuestionModifiers(questionView, effects) {
     if (!questionView || questionView.clientEffectsApplied) return questionView;
     var difficultyDelta = (effects || []).reduce(function(total, effect) {
+      if (effect.effectId === 'debuff_foolish') return total;
       return effect.statKey === 'questionDifficulty' && effect.effectType === 'flat'
         ? total + Number(effect.value || 0) * Math.max(1, Number(effect.stacks || 1))
         : total;

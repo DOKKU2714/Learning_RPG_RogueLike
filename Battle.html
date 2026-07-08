@@ -20,8 +20,9 @@
 
       <button id="battleMenuButton" class="battle-menu-button" type="button" onclick="toggleBattleMenu()">메뉴</button>
       <div id="battleMenuPanel" class="battle-menu-panel hidden" aria-hidden="true">
-        <button class="secondary" type="button" disabled>아이템 확인</button>
+        <button class="secondary" type="button" onclick="showBattleItems()">아이템 확인</button>
         <button class="secondary" type="button" onclick="showBattleStats()">스탯 확인</button>
+        <button class="secondary" type="button" onclick="reloadBattleData()">데이터 다시 불러오기</button>
         <button class="danger" type="button" onclick="surrenderBattle()">전투 포기</button>
         <button class="secondary" type="button" onclick="closeBattleMenu()">닫기</button>
         <div id="battleStatsPanel" class="battle-stats-panel hidden"></div>
@@ -126,6 +127,20 @@
         <button id="rewardConfirmButton" type="button" onclick="confirmRewardChoice()" disabled>확인</button>
       </div>
       <div id="rewardMessage" class="message"></div>
+    </section>
+  </div>
+
+  <div id="itemModal" class="question-modal-overlay" aria-hidden="true">
+    <section class="question-modal item-modal" role="dialog" aria-modal="true" aria-labelledby="itemModalTitle">
+      <div class="modal-topline">
+        <div>
+          <h2 id="itemModalTitle" class="item-modal-title">보유 아이템</h2>
+          <p class="item-modal-subtitle">현재 런에서 획득한 아이템</p>
+        </div>
+        <button class="secondary" type="button" onclick="closeItemModal()">닫기</button>
+      </div>
+      <div id="itemModalGrid" class="item-list-grid"></div>
+      <div id="itemModalMessage" class="message"></div>
     </section>
   </div>
 
@@ -1270,6 +1285,91 @@
       document.getElementById('battleStatsPanel').classList.add('hidden');
     }
 
+    function showBattleItems() {
+      closeBattleMenu();
+      var modal = document.getElementById('itemModal');
+      var grid = document.getElementById('itemModalGrid');
+      var message = document.getElementById('itemModalMessage');
+      var items = getOwnedItemDetailsForModal();
+      if (!items.length) {
+        grid.innerHTML = '<div class="item-empty">보유 중인 아이템이 없습니다.</div>';
+        message.textContent = '';
+      } else {
+        grid.innerHTML = items.map(function(item) {
+          return renderOwnedItemCard(item);
+        }).join('');
+        message.textContent = '아이템에 마우스를 올리면 상세 효과를 볼 수 있습니다.';
+      }
+      message.className = 'message';
+      modal.classList.add('active');
+      modal.setAttribute('aria-hidden', 'false');
+    }
+
+    function closeItemModal() {
+      var modal = document.getElementById('itemModal');
+      modal.classList.remove('active');
+      modal.setAttribute('aria-hidden', 'true');
+    }
+
+    function getOwnedItemDetailsForModal() {
+      var player = currentView && currentView.battle && currentView.battle.player || {};
+      var details = Array.isArray(player.itemDetails) ? player.itemDetails.slice() : [];
+      if (details.length) {
+        return details;
+      }
+      return (Array.isArray(player.items) ? player.items : []).map(function(item) {
+        var itemId = typeof item === 'string' ? item : (item && (item.itemId || item.id) || '');
+        return {
+          itemId: itemId,
+          id: itemId,
+          name: itemId || '알 수 없는 아이템',
+          rarity: 'common',
+          rarityLabel: '일반',
+          effectSummary: '',
+          description: '',
+          count: item && item.count || 1,
+        };
+      }).filter(function(item) {
+        return item.itemId || item.name;
+      });
+    }
+
+    function renderOwnedItemCard(item) {
+      var rarity = normalizeRewardRarity(item.rarity);
+      var rarityLabel = item.rarityLabel || getRewardRarityLabel(rarity);
+      var count = Math.max(1, Number(item.count || 1));
+      var effectHtml = buildItemEffectDescription(item);
+      var flavorHtml = item.description
+        ? '<span class="item-flavor-text">' + escapeHtml(item.description) + '</span>'
+        : '';
+      return '<article class="item-card rarity-' + escapeHtml(rarity) + '" tabindex="0">' +
+        '<span class="item-card-body">' +
+          '<strong>' + escapeHtml(item.name || item.itemId || '아이템') + '</strong>' +
+          '<span class="item-card-rarity">' + escapeHtml(rarityLabel) + '</span>' +
+        '</span>' +
+        '<span class="reward-detail-card item-detail-card rarity-' + escapeHtml(rarity) + '" aria-hidden="true">' +
+          '<span class="skill-detail-header">' +
+            '<strong class="skill-detail-name">' + escapeHtml(item.name || item.itemId || '아이템') + '</strong>' +
+          '</span>' +
+          '<span class="skill-detail-meta">' + escapeHtml(rarityLabel) + (count > 1 ? ' / 보유 ' + escapeHtml(count) + '개' : '') + '</span>' +
+          '<span class="skill-detail-description">' + effectHtml + '</span>' +
+          flavorHtml +
+        '</span>' +
+      '</article>';
+    }
+
+    function buildItemEffectDescription(item) {
+      var summary = String(item && item.effectSummary || '').trim();
+      if (!summary) {
+        return '-';
+      }
+      return summary.split(/\s*\/+\s*|\n+/).map(function(line) {
+        return String(line || '').trim();
+      }).filter(Boolean).map(function(line) {
+        return '- ' + escapeHtml(line);
+      }).join('<br>');
+    }
+
     function showBattleStats() {
       var panel = document.getElementById('battleStatsPanel');
       var player = currentView && currentView.battle ? currentView.battle.player || {} : {};
@@ -1291,6 +1391,38 @@
         return '<div class="battle-stat-row"><span>' + escapeHtml(row[0]) + '</span><b>' + escapeHtml(row[1]) + '</b></div>';
       }).join('');
       panel.classList.remove('hidden');
+    }
+
+    function reloadBattleData() {
+      closeBattleMenu();
+      if (typeof google === 'undefined' || !google.script || !google.script.run) {
+        pushLog('서버 연결을 사용할 수 없습니다.');
+        return;
+      }
+      showLoadingModal('데이터 다시 불러오는 중...', '시트 데이터 캐시를 비우고 전투 데이터를 갱신하는 중...');
+      google.script.run
+        .withSuccessHandler(function() {
+          google.script.run
+            .withSuccessHandler(function(view) {
+              hideLoadingModal();
+              isDummyMode = false;
+              currentView = normalizeBattleView(view);
+              applyBattleClientConfig(currentView.clientConfig);
+              battleQuestionCache = (currentView.questionCache || []).slice();
+              renderBattle(currentView);
+              pushLog('데이터를 다시 불러왔습니다.');
+            })
+            .withFailureHandler(function(error) {
+              hideLoadingModal();
+              pushLog(error && error.message ? error.message : '전투 데이터 갱신에 실패했습니다.');
+            })
+            .getBattleView(getAuthToken());
+        })
+        .withFailureHandler(function(error) {
+          hideLoadingModal();
+          pushLog(error && error.message ? error.message : '데이터 다시 불러오기에 실패했습니다.');
+        })
+        .clearRuntimeCaches();
     }
 
     function surrenderBattle() {
@@ -1445,6 +1577,7 @@
     function skillNeedsEnemyTarget(skill) {
       if (!skill) return true;
       if (skillTargetsAllEnemies(skill)) return false;
+      if (skillTargetsRandomEnemies(skill)) return false;
       return String(skill.target || 'enemy').toLowerCase() !== 'self';
     }
 
@@ -1457,6 +1590,43 @@
       var rule = safeJsonParseClient(skill.effectJson || skill.effectRule || skill.ruleJson, {});
       var targetMode = String(rule && rule.targetMode || '').toLowerCase();
       return targetMode === 'allenemies' || targetMode === 'all_enemies' || targetMode === 'all-enemies';
+    }
+
+    function skillTargetsRandomEnemies(skill) {
+      if (!skill) return false;
+      var target = String(skill.target || '').toLowerCase();
+      if (target === 'randomenemy' || target === 'random_enemy' || target === 'random-enemy' || target === 'randomenemies' || target === 'random_enemies' || target === 'random-enemies') {
+        return true;
+      }
+      var rule = safeJsonParseClient(skill.effectJson || skill.effectRule || skill.ruleJson, {});
+      var targetMode = String(rule && rule.targetMode || '').toLowerCase();
+      return targetMode === 'randomenemy' || targetMode === 'random_enemy' || targetMode === 'random-enemy'
+        || targetMode === 'randomenemies' || targetMode === 'random_enemies' || targetMode === 'random-enemies';
+    }
+
+    function getMonsterRuntimeId(monster) {
+      return String(monster && (monster.instanceId || monster.monsterId) || '');
+    }
+
+    function getAliveMonstersFromBattle(battle) {
+      return (battle && battle.monsters || []).filter(function(monster) {
+        return Number(monster && monster.currentHp || 0) > 0;
+      });
+    }
+
+    function pickRandomAliveMonsterFromBattle(battle, usedTargetIds) {
+      var alive = getAliveMonstersFromBattle(battle);
+      if (!alive.length) return null;
+      usedTargetIds = usedTargetIds || {};
+      var unused = alive.filter(function(monster) {
+        var id = getMonsterRuntimeId(monster);
+        return !id || !usedTargetIds[id];
+      });
+      var pool = unused.length ? unused : alive;
+      var picked = pool[Math.floor(Math.random() * pool.length)];
+      var pickedId = getMonsterRuntimeId(picked);
+      if (pickedId) usedTargetIds[pickedId] = true;
+      return picked;
     }
 
     function getAliveClientMonsters() {
@@ -2617,6 +2787,24 @@
       return RULE_ENGINE_SHARED.applyQuestionModifiers(questionView, effects);
     }
 
+    function applyClientQuestionCorrectEfficiencyModifiers(efficiency, questionView) {
+      var next = Number(efficiency || 0);
+      var question = questionView && questionView.question || {};
+      var modifiers = questionView && questionView.questionModifiers || {};
+      var bonus = Number(modifiers.answerCorrectEfficiencyPercent || 0);
+      var byType = modifiers.answerCorrectEfficiencyByType || {};
+      if (question.type && byType[question.type] !== undefined) {
+        bonus += Number(byType[question.type] || 0);
+      }
+      if (question.type === 'shortAnswer') {
+        bonus += Number(modifiers.shortAnswerCorrectEfficiencyPercent || 0);
+      }
+      if (bonus) {
+        next += bonus / 100;
+      }
+      return Math.max(0, Math.min(getQuestionMaxAnswerEfficiency(), Number(next || 0)));
+    }
+
     function normalizeClientMonsterActionType(actionType, skillId) {
       var normalized = String(actionType || '').trim().toLowerCase();
       if (normalized === 'attack' || normalized === 'guard' || normalized === 'skill') return normalized;
@@ -2705,6 +2893,9 @@
       var elapsedMs = Math.max(0, Date.now() - questionStartedAt);
       var remainingMs = Math.max(0, maxMs - elapsedMs);
       var efficiency = questionView.efficiencyLocked ? Number(questionView.lockedEfficiency || 0.5) : calculateTimedEfficiency(remainingMs, maxMs);
+      if (!questionView.efficiencyLocked) {
+        efficiency = applyClientQuestionCorrectEfficiencyModifiers(efficiency, questionView);
+      }
       battle.lastTurnEvents = [];
       battle.pendingAction = null;
       normalizeClientActionPoints(battle.player);
@@ -2758,6 +2949,12 @@
           effectResolver: function(effectId, effectRule) {
             return findClientSkillEffectPayload(skill, effectId, effectRule);
           },
+          damageModifier: function(damage, context) {
+            return applyClientOutgoingItemDamageModifiers(battle, damage, Object.assign({}, context || {}, {
+              actionType: 'skill',
+              skill: skill,
+            }));
+          },
           warn: function(message, data) {
             warnClientSkillRule(battle, skill, message, data);
           },
@@ -2770,9 +2967,10 @@
       var value = Number(skill.baseValue || 0);
       var hitCount = getSkillHitCount(skill);
       var ruleDamage = getSkillPreviewDamage(skill);
+      var usedRandomTargetIds = {};
       if (ruleDamage > 0) {
         for (var ruleHit = 0; ruleHit < hitCount; ruleHit += 1) {
-          applyOptimisticSkillDamageTargets(battle, questionView.targetId, Math.round(ruleDamage * Number(efficiency || 0)), skill, ruleHit);
+          applyOptimisticSkillDamageTargets(battle, questionView.targetId, Math.round(ruleDamage * Number(efficiency || 0)), skill, ruleHit, usedRandomTargetIds);
         }
         return;
       }
@@ -2806,7 +3004,7 @@
       var damageBase = type === 'damage' ? (value + attack) : (value || attack);
       var damage = Math.max(0, Math.round(damageBase * efficiency));
       for (var hit = 0; hit < hitCount; hit += 1) {
-        applyOptimisticSkillDamageTargets(battle, questionView.targetId, damage, skill, hit);
+        applyOptimisticSkillDamageTargets(battle, questionView.targetId, damage, skill, hit, usedRandomTargetIds);
       }
     }
 
@@ -2858,11 +3056,18 @@
       });
     }
 
-    function applyOptimisticSkillDamageTargets(battle, targetId, damage, skill, hitIndex) {
+    function applyOptimisticSkillDamageTargets(battle, targetId, damage, skill, hitIndex, usedRandomTargetIds) {
       if (skillTargetsAllEnemies(skill)) {
         getAliveOptimisticMonsters(battle).forEach(function(monster) {
           applyOptimisticMonsterDamage(battle, monster.instanceId || monster.monsterId, damage, 'skill', skill, skill.skillId + ':allEnemies:' + Number(hitIndex || 0));
         });
+        return;
+      }
+      if (skillTargetsRandomEnemies(skill)) {
+        var randomTarget = pickRandomAliveMonsterFromBattle(battle, usedRandomTargetIds);
+        if (randomTarget) {
+          applyOptimisticMonsterDamage(battle, randomTarget.instanceId || randomTarget.monsterId, damage, 'skill', skill, '');
+        }
         return;
       }
       applyOptimisticMonsterDamage(battle, targetId, damage, 'skill', skill, '');
@@ -2974,6 +3179,8 @@
         attack: attack,
         def: defense,
         defense: defense,
+        defaultShield: base + defense,
+        skillShield: base + defense,
         level: Math.max(1, Number(skill && skill.level || 1)),
         skillLevel: Math.max(1, Number(skill && skill.level || 1)),
       };
@@ -3117,6 +3324,13 @@
     function evaluateSkillDisplayFormula(formula, context, rangeMode) {
       var source = String(formula || '').replace(/\s+/g, '');
       if (!source) return 0;
+      source = source.replace(/\{([A-Za-z_.][0-9A-Za-z_.]*)\}/g, function(match, name) {
+        if (name === 'shield') {
+          if (context && context.defaultShield !== undefined) return 'defaultShield';
+          if (context && context.skillShield !== undefined) return 'skillShield';
+        }
+        return name;
+      });
       if (!/^[0-9A-Za-z_.+\-*/()%dD]+$/.test(source)) return 0;
       source = source.replace(/(\d+)[dD](\d+)/g, function(match, countText, sidesText) {
         var count = Math.max(1, Number(countText || 1));
@@ -3203,7 +3417,10 @@
       var target = findOptimisticTargetMonster(battle, targetId);
       if (!target) return;
       var critical = rollClientCriticalDamage(battle, damage);
-      var totalDamage = critical.damage;
+      var totalDamage = applyClientOutgoingItemDamageModifiers(battle, critical.damage, {
+        actionType: actionType || 'attack',
+        skill: skill,
+      });
       var shieldDamage = Math.min(Number(target.shield || 0), totalDamage);
       var hpDamage = totalDamage - shieldDamage;
       target.shield = Math.max(0, Number(target.shield || 0) - shieldDamage);
@@ -3224,6 +3441,33 @@
           ? (skill && skill.name ? skill.name + ' 치명타! ' + totalDamage + ' 피해!' : target.name + '에게 치명타! ' + totalDamage + ' 피해를 주었습니다.')
           : (skill && skill.name ? skill.name + '! ' + target.name + '에게 ' + totalDamage + ' 피해!' : target.name + '에게 ' + totalDamage + ' 피해를 주었습니다.'),
       });
+    }
+
+    function applyClientOutgoingItemDamageModifiers(battle, damage, context) {
+      var modifiers = battle && battle.player && battle.player.itemModifiers || {};
+      var next = Math.max(0, Number(damage || 0));
+      var percent = Number(modifiers.damageDealtPercent || 0);
+      var actionType = String(context && context.actionType || '');
+      if (actionType === 'attack') {
+        percent += Number(modifiers.basicAttackDamagePercent || 0);
+      }
+      if (actionType === 'skill') {
+        percent += Number(modifiers.skillDamagePercent || 0);
+        (modifiers.skillExtraDamage || []).forEach(function(rule) {
+          if (doesClientSkillMatchItemTrigger(context && context.skill, rule)) {
+            next += Number(rule.value || 0);
+          }
+        });
+      }
+      return Math.max(0, Math.round(next * (1 + (percent / 100))));
+    }
+
+    function doesClientSkillMatchItemTrigger(skill, rule) {
+      if (!skill || !rule) return false;
+      if (rule.skillId && String(skill.skillId || '') === String(rule.skillId || '')) return true;
+      if (rule.skillName && String(skill.name || '') === String(rule.skillName || '')) return true;
+      if (rule.skillTag && normalizeSkillTags(skill.tags).indexOf(String(rule.skillTag || '')) !== -1) return true;
+      return false;
     }
 
     function rollClientCriticalDamage(battle, damage) {
@@ -3551,7 +3795,7 @@
         legendary: 'legendary',
         unique: 'unique',
         '일반': 'common',
-        '전문': 'uncommon',
+        '드문': 'uncommon',
         '희귀': 'rare',
         '영웅': 'epic',
         '전설': 'legendary',
@@ -3569,7 +3813,7 @@
     function getRewardRarityLabel(rarity) {
       var labels = {
         common: '일반',
-        uncommon: '전문',
+        uncommon: '드문',
         rare: '희귀',
         epic: '영웅',
         legendary: '전설',
