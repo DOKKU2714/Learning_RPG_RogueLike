@@ -317,6 +317,11 @@ function previewFloorRestHeal_(run, battle) {
 }
 
 function selectReward(runId, rewardId, authToken, rewardView) {
+  var timingStartedAt = new Date().getTime();
+  var timingMarks = {};
+  function markTiming(label) {
+    timingMarks[label] = new Date().getTime() - timingStartedAt;
+  }
   ensureTableColumns_(DB_SHEETS.RUNS, DB_COLUMNS.RUNS);
   ensureTableColumns_(DB_SHEETS.PLAYER_DATA, DB_COLUMNS.PLAYER_DATA);
   var run = requireRun_(runId);
@@ -402,6 +407,7 @@ function selectReward(runId, rewardId, authToken, rewardView) {
   } else if (appliedReward.type === REWARD_TYPES.REST) {
     applyRestReward_(runState, appliedReward);
   }
+  markTiming('rewardApplied');
 
   rewardState.selectedRewardId = reward.rewardId;
   rewardState.selectedAt = new Date().toISOString();
@@ -414,11 +420,23 @@ function selectReward(runId, rewardId, authToken, rewardView) {
     stageStateJson: safeJsonStringify_(stageState),
     updatedAt: new Date(),
   });
+  markTiming('runUpdated');
 
-  var scoreSummary = awardStageClearScoreForReward_(requireRun_(runId), stageState);
+  var updatedRun = requireRun_(runId);
+  var scoreSummary = awardStageClearScoreForReward_(updatedRun, stageState);
+  markTiming('scoreAwarded');
 
-  var movedRun = moveToNextStageForRun_(requireRun_(runId));
-  updatePlayerProgressFromRun_(requireRun_(runId));
+  var scoredRun = requireRun_(runId);
+  var movedRun = moveToNextStageForRun_(scoredRun);
+  updatePlayerProgressFromRun_(movedRun);
+  markTiming('stageMoved');
+  var debugTimings = {
+    rewardAppliedMs: Number(timingMarks.rewardApplied || 0),
+    runUpdatedMs: Number(timingMarks.runUpdated || 0),
+    scoreAwardedMs: Number(timingMarks.scoreAwarded || 0),
+    stageMovedMs: Number(timingMarks.stageMoved || 0),
+    totalMs: new Date().getTime() - timingStartedAt,
+  };
   if (movedRun.status === STATUS.RUN_CLEARED) {
     return {
       cleared: true,
@@ -426,6 +444,7 @@ function selectReward(runId, rewardId, authToken, rewardView) {
       selectedReward: appliedReward,
       currencyAmount: isRestReward ? 0 : rewardState.currencyAmount,
       scoreSummary: scoreSummary,
+      debugTimings: debugTimings,
     };
   }
 
@@ -434,17 +453,34 @@ function selectReward(runId, rewardId, authToken, rewardView) {
   if (isFloorRestStage_(movedStage)) {
     return Object.assign(buildFloorRestRewardViewForRun_(movedRun, movedStageState), {
       scoreSummary: scoreSummary,
+      debugTimings: debugTimings,
     });
   }
 
-  startBattle(runId);
-  var nextRun = requireRun_(runId);
-  return Object.assign(buildBattleView_(nextRun, getStageState_(nextRun)), {
+  return {
+    nextBattlePending: true,
+    runId: runId,
+    run: toClientObject_(movedRun),
     rewardSelected: true,
     selectedReward: appliedReward,
     currencyAmount: isRestReward ? 0 : rewardState.currencyAmount,
     scoreSummary: scoreSummary,
-  });
+    debugTimings: debugTimings,
+  };
+}
+
+function prepareNextBattleAfterReward(runId, authToken) {
+  var run = requireRun_(runId);
+  requireRewardRunOwner_(run, authToken);
+  if (run.status !== STATUS.RUN_ACTIVE) {
+    throw new Error('진행 중인 런만 전투를 준비할 수 있습니다.');
+  }
+
+  var stageState = getStageState_(run);
+  if (stageState.battle && stageState.battle.status === STATUS.BATTLE_ACTIVE) {
+    return buildBattleView_(run, stageState);
+  }
+  return startBattle(run.runId);
 }
 
 function awardStageClearScoreForReward_(run, stageState) {
@@ -841,7 +877,8 @@ function moveToNextStageForRun_(run) {
       stageId: buildStageId_(nextFloor, nextStage),
       otherStudentQuestionShown: false,
       fallbackEvents: [],
-      usedQuestionIds: usedQuestionIds,
+      usedQuestionIds: [],
+      usedQuestionStageId: buildStageId_(nextFloor, nextStage),
       scoreState: scoreState,
     }),
     updatedAt: now,
@@ -1236,6 +1273,7 @@ function buildRewardSkillDetail_(reward, battleState) {
     target: hydrated.target,
     level: hydrated.level,
     baseValue: Number(hydrated.baseValue || 0),
+    hitCount: Number(hydrated.hitCount || 1),
     cooldown: hydrated.cooldown || '',
     cooldownText: buildSkillCooldownText_(hydrated),
     useLimitText: buildSkillUseLimitText_(hydrated, previewBattleState),
@@ -1246,6 +1284,8 @@ function buildRewardSkillDetail_(reward, battleState) {
     tags: hydrated.tags,
     description: hydrated.description,
     effectJson: hydrated.effectJson || '',
+    upgradeJson: hydrated.upgradeJson || '{}',
+    effectDetails: buildSkillEffectDetails_(hydrated),
     previewText: buildSkillPreviewText_(hydrated, previewBattleState),
   };
 }

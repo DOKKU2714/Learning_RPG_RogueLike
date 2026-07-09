@@ -125,6 +125,7 @@ function clearMasterTableCaches_() {
     DB_SHEETS.ITEMS,
     DB_SHEETS.REWARDS,
     DB_SHEETS.QUESTIONS,
+    DB_SHEETS.NOTICES,
   ].forEach(clearTableCache_);
 }
 
@@ -146,6 +147,7 @@ function warmupGameData(authToken) {
     DB_SHEETS.ITEMS,
     DB_SHEETS.REWARDS,
     DB_SHEETS.QUESTIONS,
+    DB_SHEETS.NOTICES,
   ].forEach(function(sheetName) {
     readTableCached_(sheetName, 1800);
   });

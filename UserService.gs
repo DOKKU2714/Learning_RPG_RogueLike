@@ -109,10 +109,14 @@ function isAdmin(email) {
 }
 
 function getAppSettings() {
-  return readTable_(DB_SHEETS.SETTINGS).reduce(function(settings, row) {
+  var defaults = (typeof MASTER_SETTINGS !== 'undefined' ? MASTER_SETTINGS : []).reduce(function(settings, row) {
     settings[row.key] = coerceSettingValue_(row.value, row.type);
     return settings;
   }, {});
+  return readTable_(DB_SHEETS.SETTINGS).reduce(function(settings, row) {
+    settings[row.key] = coerceSettingValue_(row.value, row.type);
+    return settings;
+  }, defaults);
 }
 
 function getCurrentPlayer_(authToken) {

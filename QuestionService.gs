@@ -1,3 +1,14 @@
+var QUESTION_TEXT_LIMITS_ = Object.freeze({
+  prompt: 200,
+  choice: 60,
+  answer: 80,
+  answerAliases: 200,
+  explanation: 300,
+  subject: 40,
+  unit: 40,
+  tags: 80,
+});
+
 function createQuestion(questionPayload, authToken) {
   ensureQuestionSchemaColumns_();
   var player = getCurrentPlayer_(authToken);
@@ -383,8 +394,8 @@ function deleteQuestionByOwner_(questionId, creatorId) {
 function normalizeQuestionPayload_(payload) {
   var source = payload || {};
   var type = source.type === QUESTION_TYPES.SHORT_ANSWER ? QUESTION_TYPES.SHORT_ANSWER : QUESTION_TYPES.MULTIPLE_CHOICE;
-  var prompt = String(source.prompt || '').trim();
-  var answer = String(source.answer || '').trim();
+  var prompt = limitQuestionText_('문제 내용', source.prompt, QUESTION_TEXT_LIMITS_.prompt).trim();
+  var answer = limitQuestionText_('정답', source.answer, QUESTION_TEXT_LIMITS_.answer).trim();
 
   if (!prompt) {
     throw new Error('문제 내용을 입력해 주세요.');
@@ -401,11 +412,11 @@ function normalizeQuestionPayload_(payload) {
     choice3: '',
     choice4: '',
     answer: answer,
-    answerAliases: splitList_(source.answerAliases),
-    explanation: String(source.explanation || '').trim(),
-    subject: String(source.subject || '').trim(),
-    unit: String(source.unit || '').trim(),
-    tags: splitList_(source.tags).join(', '),
+    answerAliases: splitList_(limitQuestionText_('복수 정답 / 별칭', source.answerAliases, QUESTION_TEXT_LIMITS_.answerAliases)),
+    explanation: limitQuestionText_('해설', source.explanation, QUESTION_TEXT_LIMITS_.explanation).trim(),
+    subject: limitQuestionText_('과목', source.subject, QUESTION_TEXT_LIMITS_.subject).trim(),
+    unit: limitQuestionText_('단원', source.unit, QUESTION_TEXT_LIMITS_.unit).trim(),
+    tags: splitList_(limitQuestionText_('태그', source.tags, QUESTION_TEXT_LIMITS_.tags)).join(', '),
     difficulty: normalizeDifficulty_(source.difficulty || GAME_RULES.MIN_DIFFICULTY),
   };
 
@@ -415,14 +426,26 @@ function normalizeQuestionPayload_(payload) {
       throw new Error('객관식 문제는 선택지 4개를 모두 입력해야 합니다.');
     }
 
-    normalizedPayload.choice1 = String(choices[0]).trim();
-    normalizedPayload.choice2 = String(choices[1]).trim();
-    normalizedPayload.choice3 = String(choices[2]).trim();
-    normalizedPayload.choice4 = String(choices[3]).trim();
+    normalizedPayload.choice1 = limitQuestionText_('선택지 1', choices[0], QUESTION_TEXT_LIMITS_.choice).trim();
+    normalizedPayload.choice2 = limitQuestionText_('선택지 2', choices[1], QUESTION_TEXT_LIMITS_.choice).trim();
+    normalizedPayload.choice3 = limitQuestionText_('선택지 3', choices[2], QUESTION_TEXT_LIMITS_.choice).trim();
+    normalizedPayload.choice4 = limitQuestionText_('선택지 4', choices[3], QUESTION_TEXT_LIMITS_.choice).trim();
+    if (!/^[1-4]$/.test(normalizedPayload.answer)) {
+      throw new Error('객관식 정답을 선택해 주세요.');
+    }
     normalizedPayload.answerAliases = [];
   }
 
   return normalizedPayload;
+}
+
+function limitQuestionText_(label, value, maxLength) {
+  var text = String(value || '');
+  var max = Number(maxLength || 0);
+  if (max > 0 && text.length > max) {
+    throw new Error(label + '은(는) ' + max + '자 이내로 입력해 주세요.');
+  }
+  return text;
 }
 
 function normalizeDifficulty_(difficulty) {

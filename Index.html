@@ -30,6 +30,77 @@
       color: var(--accent);
       font-size: 0.92rem;
     }
+
+    .notice-modal-overlay {
+      opacity: 0;
+      transition: opacity 520ms ease;
+    }
+
+    .notice-modal-overlay.notice-visible {
+      opacity: 1;
+    }
+
+    .notice-modal {
+      width: min(560px, 100%);
+      transform: translateY(14px) scale(0.98);
+      opacity: 0;
+      transition: opacity 520ms ease, transform 520ms ease;
+    }
+
+    .notice-modal-overlay.notice-visible .notice-modal {
+      transform: translateY(0) scale(1);
+      opacity: 1;
+    }
+
+    .notice-list {
+      display: grid;
+      gap: 12px;
+      margin: 16px 0;
+      max-height: min(48vh, 420px);
+      overflow: auto;
+    }
+
+    .notice-item {
+      border: 1px solid var(--line-dark);
+      background: #111;
+      padding: 12px;
+    }
+
+    .notice-item-title {
+      display: block;
+      margin-bottom: 8px;
+      color: var(--accent);
+      font-family: var(--font-title);
+      font-size: 18px;
+      line-height: 1.2;
+    }
+
+    .notice-item-body {
+      margin: 0;
+      color: #f1f1f1;
+      white-space: pre-wrap;
+      line-height: 1.55;
+    }
+
+    .notice-modal-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .notice-hide-today {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .notice-hide-today input {
+      width: auto;
+      margin: 0;
+    }
   </style>
 </head>
 <body>
@@ -144,6 +215,20 @@
     </section>
   </div>
 
+  <div id="noticeModal" class="question-modal-overlay notice-modal-overlay" aria-hidden="true">
+    <section class="question-modal notice-modal" role="dialog" aria-modal="true" aria-labelledby="noticeModalTitle">
+      <h2 id="noticeModalTitle" class="rpg-title">공지사항</h2>
+      <div id="noticeList" class="notice-list"></div>
+      <div class="notice-modal-footer">
+        <label class="notice-hide-today">
+          <input id="noticeHideToday" type="checkbox">
+          오늘 하루 열지 않기
+        </label>
+        <button type="button" onclick="confirmNoticeModal()">확인</button>
+      </div>
+    </section>
+  </div>
+
   <?!= include_('UiLoadingModal'); ?>
 
   <script>
@@ -157,6 +242,10 @@
     var currentUserRequestTimer = null;
     var pendingResumeRun = null;
     var pendingGameStartAt = 0;
+    var noticeModalTimer = null;
+    var noticeRequestToken = '';
+    var currentNoticeItems = [];
+    var NOTICE_HIDE_PREFIX = 'learningRpgNoticeHiddenDate:';
 
     document.addEventListener('DOMContentLoaded', bootIndexPage);
     window.addEventListener('storage', function(event) {
@@ -346,11 +435,12 @@
         renderCurrentUser({ isRegistered: false });
         return;
       }
+      var renderedCachedState = false;
       if (!force) {
         var cachedState = getCachedCurrentState();
         if (cachedState) {
           renderCurrentUser(cachedState);
-          return;
+          renderedCachedState = true;
         }
       }
       if (typeof google === 'undefined' || !google.script || !google.script.run) {
@@ -360,9 +450,14 @@
         setRegisterMessage('앱 실행 환경을 불러오지 못했습니다. 배포 URL로 다시 접속해 주세요.', 'error');
         return;
       }
-      showLoadingModal('로딩 중...', '사용자 정보를 확인하는 중...');
+      if (!renderedCachedState) {
+        showLoadingModal('로딩 중...', '사용자 정보를 확인하는 중...');
+      }
       clearCurrentUserRequestTimer();
       currentUserRequestTimer = window.setTimeout(function() {
+        if (renderedCachedState) {
+          return;
+        }
         hideLoadingModal();
         document.getElementById('appScreen').classList.add('active');
         document.getElementById('registerPanel').classList.add('active');
@@ -378,6 +473,9 @@
         })
         .withFailureHandler(function(error) {
           clearCurrentUserRequestTimer();
+          if (renderedCachedState) {
+            return;
+          }
           hideLoadingModal();
           document.getElementById('appScreen').classList.add('active');
           document.getElementById('registerPanel').classList.add('active');
@@ -430,6 +528,7 @@
       }
       renderPlayerBadge(state);
       document.getElementById('adminButton').style.display = state.isAdmin ? 'block' : 'none';
+      scheduleNoticeModal();
     }
 
     function renderPlayerBadge(state) {
@@ -444,6 +543,126 @@
         '<div class="starting-score-bonus">문제 생성/좋아요로 인한 시작 점수 +' + escapeHtml(formatScore(startingScore)) +
           ' <span class="muted">(문제 ' + escapeHtml(questionCount) + '개, 좋아요 ' + escapeHtml(likeCount) + '개)</span></div>';
     }
+
+    function scheduleNoticeModal() {
+      var authToken = getAuthToken();
+      if (!authToken || noticeRequestToken === authToken) {
+        return;
+      }
+      noticeRequestToken = authToken;
+      if (noticeModalTimer) {
+        window.clearTimeout(noticeModalTimer);
+      }
+      noticeModalTimer = window.setTimeout(function() {
+        loadActiveNotices(authToken);
+      }, 650);
+    }
+
+    function loadActiveNotices(authToken) {
+      if (typeof google === 'undefined' || !google.script || !google.script.run) {
+        return;
+      }
+      google.script.run
+        .withSuccessHandler(function(notices) {
+          var visible = (notices || []).filter(function(notice) {
+            return !isNoticeHiddenToday(notice.noticeId);
+          });
+          if (visible.length) {
+            showNoticeModal(visible);
+          }
+        })
+        .withFailureHandler(function() {})
+        .getActiveNotices(authToken);
+    }
+
+    function showNoticeModal(notices) {
+      currentNoticeItems = notices || [];
+      document.getElementById('noticeHideToday').checked = false;
+      document.getElementById('noticeList').innerHTML = currentNoticeItems.map(function(notice) {
+        return '<article class="notice-item">' +
+          '<strong class="notice-item-title">' + escapeHtml(notice.title || '공지사항') + '</strong>' +
+          '<p class="notice-item-body">' + escapeHtml(notice.body || '') + '</p>' +
+        '</article>';
+      }).join('');
+      var modal = document.getElementById('noticeModal');
+      modal.classList.add('active');
+      modal.setAttribute('aria-hidden', 'false');
+      window.requestAnimationFrame(function() {
+        modal.classList.add('notice-visible');
+      });
+    }
+
+    function confirmNoticeModal() {
+      if (document.getElementById('noticeHideToday').checked) {
+        hideNoticesForToday(currentNoticeItems);
+      }
+      closeNoticeModal();
+    }
+
+    function closeNoticeModal() {
+      var modal = document.getElementById('noticeModal');
+      modal.classList.remove('notice-visible');
+      modal.classList.remove('active');
+      modal.setAttribute('aria-hidden', 'true');
+      currentNoticeItems = [];
+    }
+
+    function hideNoticesForToday(notices) {
+      var today = getNoticeTodayKey();
+      (notices || []).forEach(function(notice) {
+        if (!notice || !notice.noticeId) return;
+        try {
+          localStorage.setItem(NOTICE_HIDE_PREFIX + notice.noticeId, today);
+        } catch (error) {}
+      });
+    }
+
+    function isNoticeHiddenToday(noticeId) {
+      if (!noticeId) return false;
+      try {
+        return localStorage.getItem(NOTICE_HIDE_PREFIX + noticeId) === getNoticeTodayKey();
+      } catch (error) {
+        return false;
+      }
+    }
+
+    function getNoticeTodayKey() {
+      var now = new Date();
+      var month = String(now.getMonth() + 1).padStart(2, '0');
+      var day = String(now.getDate()).padStart(2, '0');
+      return now.getFullYear() + '-' + month + '-' + day;
+    }
+
+    /*
+    function showLoginForm() {
+      authMode = 'login';
+      document.getElementById('authTitle').textContent = '로그인';
+      document.getElementById('userSummary').textContent = '학번과 비밀번호를 입력하세요.';
+      document.getElementById('studentIdField').style.gridColumn = '1 / -1';
+      document.getElementById('studentNameField').classList.add('hidden');
+      document.getElementById('avatarField').classList.add('hidden');
+      document.getElementById('loginButton').classList.remove('hidden');
+      document.getElementById('showRegisterButton').classList.remove('hidden');
+      document.getElementById('registerButton').classList.add('hidden');
+      document.getElementById('backToLoginButton').classList.add('hidden');
+      setRegisterMessage('', '');
+    }
+
+    function showRegisterForm() {
+      authMode = 'register';
+      document.getElementById('authTitle').textContent = '회원가입';
+      document.getElementById('userSummary').textContent = '학번, 이름, 비밀번호와 프로필 사진을 입력하세요.';
+      document.getElementById('studentIdField').style.gridColumn = '';
+      document.getElementById('studentNameField').classList.remove('hidden');
+      document.getElementById('avatarField').classList.remove('hidden');
+      document.getElementById('loginButton').classList.add('hidden');
+      document.getElementById('showRegisterButton').classList.add('hidden');
+      document.getElementById('registerButton').classList.remove('hidden');
+      document.getElementById('backToLoginButton').classList.remove('hidden');
+      setRegisterMessage('', '');
+    }
+
+    */
 
     function showLoginForm() {
       authMode = 'login';
@@ -649,18 +868,63 @@
       }
       var separator = baseUrl.indexOf('?') === -1 ? '?' : '&';
       var nextUrl = baseUrl + separator + 'page=' + encodeURIComponent(page);
+      navigateTop(nextUrl);
+    }
+
+    function navigateTop(url) {
+      var targetUrl = String(url || '');
       try {
-        window.top.location.assign(nextUrl);
-      } catch (error) {
-        window.location.assign(nextUrl);
+        window.open(targetUrl, '_top');
+      } catch (error) {}
+      try {
+        submitTopNavigation(targetUrl);
+      } catch (error) {}
+      try {
+        var link = document.createElement('a');
+        link.href = targetUrl;
+        link.target = '_top';
+        link.rel = 'noopener';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      } catch (error) {}
+      window.setTimeout(function() {
+        showNavigationFallback(targetUrl);
+      }, 1200);
+    }
+
+    function submitTopNavigation(url) {
+      var parsedUrl = new URL(url, window.location.href);
+      var form = document.createElement('form');
+      form.method = 'GET';
+      form.action = parsedUrl.origin + parsedUrl.pathname;
+      form.target = '_top';
+      parsedUrl.searchParams.forEach(function(value, key) {
+        var input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = key;
+        input.value = value;
+        form.appendChild(input);
+      });
+      document.body.appendChild(form);
+      form.submit();
+      document.body.removeChild(form);
+    }
+
+    function showNavigationFallback(url) {
+      var modal = document.getElementById('loadingModal');
+      var text = document.getElementById('loadingText');
+      if (!modal || !text || !modal.classList.contains('active')) {
+        return;
       }
+      text.innerHTML = '자동 이동이 막혔습니다. <a href="' + escapeHtml(url) + '" target="_top" rel="noopener">여기를 눌러 이동</a>해 주세요.';
     }
 
     function getNavigationBaseUrl() {
       var candidates = [
-        String(window.location && window.location.href || ''),
-        String(document.referrer || ''),
         String(WEB_APP_URL || ''),
+        String(document.referrer || ''),
+        String(window.location && window.location.href || ''),
       ];
       try {
         candidates.unshift(String(window.top && window.top.location && window.top.location.href || ''));
@@ -677,7 +941,7 @@
 
     function sanitizeWebAppBaseUrl(url) {
       var cleanUrl = String(url || '').split('#')[0].split('?')[0].replace(/\/+$/, '');
-      if (/^https:\/\/script\.google\.com\/macros\/s\/[^/]+\/(?:exec|dev)$/.test(cleanUrl)) {
+      if (/^https:\/\/script\.google\.com\/(?:macros\/s|a\/macros\/[^/]+\/s)\/[^/]+\/(?:exec|dev)$/.test(cleanUrl)) {
         return cleanUrl;
       }
       return '';

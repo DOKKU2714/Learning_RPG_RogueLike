@@ -78,10 +78,9 @@ function getMainScoreBonusLayoutClientPatch_() {
     '  }\n' +
     '\n' +
     '  function formatScoreLocal(value){\n' +
-    '    if (typeof window.formatScore === "function") return window.formatScore(value);\n' +
     '    var number = Number(value || 0);\n' +
     '    if (!isFinite(number)) number = 0;\n' +
-    '    return String(Math.round(number));\n' +
+    '    return Math.round(number).toLocaleString("ko-KR");\n' +
     '  }\n' +
     '\n' +
     '  function renderScoreBadge(state){\n' +

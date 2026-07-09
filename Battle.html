@@ -105,6 +105,7 @@
         </div>
         <div id="questionCreatorBadge" class="question-corner-badge creator-badge">출제자: 김OO</div>
         <h2 id="questionTitle">문제</h2>
+        <div id="questionMetadata" class="question-metadata" aria-label="문제 정보"></div>
         <p id="questionPrompt">문제 본문</p>
       </div>
 
@@ -231,6 +232,7 @@
     var MONSTER_TURN_END_DELAY_MS = 560;
     var MONSTER_ATTACK_WINDUP_MS = 140;
     var QUESTION_RESULT_HOLD_MS = 1400;
+    var QUESTION_RESULT_AUTO_CLOSE_MS = 10000;
     var QUESTION_RESULT_SKIP_ENABLE_MS = 0;
     var QUESTION_ACTION_START_DELAY_MS = 0;
     var MIN_ANSWER_EFFICIENCY = 0.5;
@@ -246,8 +248,10 @@
     var stageNarrationIndex = -1;
     var stageNarrationActive = false;
     var stageNarrationComplete = null;
+    var stageNarrationAutoTimerId = null;
     var activeAutoDelayResolver = null;
     var activeBattleLogAdvanceResolver = null;
+    var battleLogAutoAdvanceTimerId = null;
     var questionResultHoldTimerId = null;
     var questionResultSkipTimerId = null;
     var pendingQuestionTurnView = null;
@@ -273,12 +277,38 @@
     var scoreAnimationDone = true;
     var currentRewardView = null;
     var combatActionPanelHtml = '';
+    var shortAnswerEnterSubmitLock = false;
+    var loadingTimerId = null;
+    var loadingStartedAt = 0;
+    var loadingStepItems = [];
+
+    document.addEventListener('keydown', function(event) {
+      if (event.key !== 'Enter' || event.isComposing) return;
+      var modal = document.getElementById('questionModal');
+      if (!modal || !modal.classList.contains('active') || !currentQuestionView) {
+        if (advanceDescriptionByInput()) {
+          event.preventDefault();
+        }
+        return;
+      }
+      var target = event.target || {};
+      if (target.id === 'shortAnswerInput' && currentQuestionView.resultHolding && shortAnswerEnterSubmitLock) {
+        shortAnswerEnterSubmitLock = false;
+        event.preventDefault();
+        return;
+      }
+      if (target.id === 'shortAnswerInput' && !currentQuestionView.resultHolding) return;
+      if (String(target.tagName || '').toLowerCase() === 'textarea') return;
+      event.preventDefault();
+      submitQuestionAnswer();
+    });
     var CLIENT_BASE_GUARD_SHIELD = 5;
     var MAX_QUESTION_DIFFICULTY = 5;
     var SHORT_ANSWER_TIME_MULTIPLIER = 1.2;
     var STAGE_INTRO_SEEN_PREFIX = 'learningRpgStageIntroSeen:';
     var LOCAL_BATTLE_CHECKPOINT_PREFIX = 'learningRpgBattleCheckpoint:';
     var SOUND_ENABLED_KEY = 'learningRpgSoundEnabled';
+    var DESCRIPTION_AUTO_ADVANCE_MS = 2000;
 
     window.addEventListener('storage', function(event) {
       if (event.key === SOUND_ENABLED_KEY) {
@@ -587,6 +617,7 @@
     }
 
     function startManualNarration(lines, onComplete) {
+      clearStageNarrationAutoAdvance();
       stageNarrationQueue = (lines || []).slice();
       stageNarrationIndex = -1;
       stageNarrationActive = true;
@@ -596,6 +627,7 @@
 
     function advanceManualNarration() {
       if (!stageNarrationActive) return;
+      clearStageNarrationAutoAdvance();
       stageNarrationIndex += 1;
       if (stageNarrationIndex >= stageNarrationQueue.length) {
         finishManualNarration();
@@ -603,9 +635,11 @@
       }
       var line = stageNarrationQueue[stageNarrationIndex] || {};
       pushLog(line.text || '', { sparkleDot: !!line.sparkleDot });
+      scheduleStageNarrationAutoAdvance();
     }
 
     function finishManualNarration() {
+      clearStageNarrationAutoAdvance();
       var complete = stageNarrationComplete;
       stageNarrationActive = false;
       stageNarrationQueue = [];
@@ -614,6 +648,29 @@
       if (complete) {
         complete();
       }
+    }
+
+    function scheduleStageNarrationAutoAdvance() {
+      clearStageNarrationAutoAdvance();
+      if (!stageNarrationActive) return;
+      stageNarrationAutoTimerId = window.setTimeout(function() {
+        stageNarrationAutoTimerId = null;
+        if (battleLogTyping) {
+          revealBattleLog();
+          stageNarrationAutoTimerId = window.setTimeout(function() {
+            stageNarrationAutoTimerId = null;
+            advanceManualNarration();
+          }, 350);
+          return;
+        }
+        advanceManualNarration();
+      }, DESCRIPTION_AUTO_ADVANCE_MS);
+    }
+
+    function clearStageNarrationAutoAdvance() {
+      if (!stageNarrationAutoTimerId) return;
+      window.clearTimeout(stageNarrationAutoTimerId);
+      stageNarrationAutoTimerId = null;
     }
 
     function revealStageEntranceMonsters() {
@@ -864,13 +921,16 @@
     function normalizeBattleView(view) {
       view = view || {};
       view.score = Number(view.score || 0);
-      if (!view.battle && view.rewardView && view.rewardView.intermissionStage) {
+      if ((!view.battle || !view.battle.stage) && view.rewardView && view.rewardView.intermissionStage) {
         view.battle = buildClientFloorIntermissionBattle(view.rewardView.intermissionStage, view.rewardView);
       }
       if (!view.battle) {
         return view;
       }
       var battle = view.battle;
+      battle.stage = battle.stage || null;
+      battle.player = battle.player || {};
+      battle.player.stats = battle.player.stats || {};
       if (!battle.monsters || !battle.monsters.length) {
         battle.monsters = battle.monster ? [battle.monster] : [];
       }
@@ -883,13 +943,23 @@
       battle.player.shield = Number(battle.player.shield || 0);
       syncClientStatusBuckets(battle.player);
       normalizeClientActionPoints(battle.player);
+      battle.skillCooldowns = battle.skillCooldowns || {};
+      battle.skillCooldownStartedTurns = battle.skillCooldownStartedTurns || {};
+      battle.skillUseCounts = battle.skillUseCounts || {};
       view.stageState = view.stageState || {};
+      var usageStageId = String(battle.stage && battle.stage.stageId || '');
+      if (usageStageId && view.stageState.usedQuestionStageId !== usageStageId) {
+        view.stageState.usedQuestionIds = [];
+        battle.usedQuestionIds = [];
+        view.stageState.usedQuestionStageId = usageStageId;
+      }
       view.stageState.usedQuestionIds = mergeClientQuestionIds(view.stageState.usedQuestionIds, battle.usedQuestionIds);
       battle.usedQuestionIds = view.stageState.usedQuestionIds.slice();
       view.questionCache = view.questionCache || [];
       view.reusableQuestionCache = getReusableQuestionCacheForView(view);
       view.questionCache = filterQuestionCacheByUsed(view.reusableQuestionCache.slice(), view.stageState.usedQuestionIds);
       view.monsterAiRules = view.monsterAiRules || [];
+      refreshClientSkillAvailabilityForLocks(view);
       return view;
     }
 
@@ -928,9 +998,9 @@
         if (questionId) used[questionId] = true;
       });
       var filtered = source.filter(function(questionView) {
-        return !used[getQuestionViewId(questionView)] || questionView && questionView.fallbackReason === 'exhaustedUnusedQuestions';
+        return !used[getQuestionViewId(questionView)];
       });
-      return filtered.length || !source.length ? filtered : source.slice();
+      return filtered;
     }
 
     function getReusableQuestionCacheForView(view) {
@@ -1015,6 +1085,12 @@
     function renderBattle(view) {
       view = normalizeBattleView(view);
       var battle = view.battle;
+      if (!battle || !battle.stage) {
+        pushLog('전투 화면 데이터가 아직 준비되지 않았습니다.');
+        return;
+      }
+      battle.player = battle.player || {};
+      battle.monsters = battle.monsters || [];
       renderBattleBackground(battle.stage);
       renderMonsters(battle.monsters);
       renderPlayerHud(battle.player);
@@ -1045,11 +1121,13 @@
       panel.innerHTML = skills.map(function(skill) {
         var apCost = getSkillActionPointCost(skill);
         var hasAp = hasClientActionPoint(apCost);
-        var isDisabled = !skill.available || !hasAp;
+        var canUseNow = isClientSkillAvailableNow(skill, hasAp);
+        var isDisabled = !canUseNow || !hasAp;
         var disabled = isDisabled ? ' disabled' : '';
-        var reason = !hasAp ? '행동력이 부족합니다.' : (skill.unavailableReason || skill.description || '');
+        var reason = !hasAp ? '행동력이 부족합니다.' : (!canUseNow ? skill.unavailableReason : (skill.description || ''));
         var cooldown = getSkillCooldownDisplayText(skill);
         var useLimitText = getSkillUseLimitText(skill);
+        var difficultyBonusText = getSkillDifficultyBonusText(skill);
         var description = skill.description || '';
         var rarity = getRewardRarityLabel(skill.rarity || 'common');
         var rarityClass = normalizeRewardRarity(skill.rarity);
@@ -1065,6 +1143,7 @@
             '</span>' +
             '<span class="skill-detail-meta">' + escapeHtml(rarity) + ' / Lv.' + escapeHtml(skill.level || 1) + '</span>' +
             '<span class="skill-detail-description">' + detailDescription + '</span>' +
+            (difficultyBonusText ? '<span class="skill-detail-line">' + escapeHtml(difficultyBonusText) + '</span>' : '') +
             (useLimitText ? '<span class="skill-detail-line">' + escapeHtml(useLimitText) + '</span>' : '') +
             (cooldown ? '<span class="skill-detail-line">' + escapeHtml(cooldown) + '</span>' : '') +
           '</span>' +
@@ -1204,21 +1283,30 @@
       var logBox = document.querySelector('.battle-log-compact');
       if (!logBox) return;
       logBox.addEventListener('click', function() {
-        if (battleLogTyping) {
-          revealBattleLog();
-          return;
-        }
-        if (stageNarrationActive) {
-          advanceManualNarration();
-          return;
-        }
-        if (advanceBattleLogManually()) {
-          return;
-        }
+        if (advanceDescriptionByInput()) return;
         if (isAnimatingTurn) {
           skipCurrentAutoDelay();
         }
       });
+    }
+
+    function advanceDescriptionByInput() {
+      if (battleLogTyping) {
+        revealBattleLog();
+        return true;
+      }
+      if (stageNarrationActive) {
+        advanceManualNarration();
+        return true;
+      }
+      if (advanceBattleLogManually()) {
+        return true;
+      }
+      if (isAnimatingTurn && activeAutoDelayResolver) {
+        skipCurrentAutoDelay();
+        return true;
+      }
+      return false;
     }
 
     function renderBattleBackground(stage) {
@@ -1725,8 +1813,27 @@
       return Math.max(0, Math.min(3, Number(skill && skill.actionPointCost !== undefined && skill.actionPointCost !== '' ? skill.actionPointCost : 1)));
     }
 
+    function getSkillDifficultyBonusText(skill) {
+      var bonus = Number(skill && skill.difficultyBonus || 0);
+      if (!bonus) return '';
+      return '문제 난이도 ' + (bonus > 0 ? '+' : '') + bonus;
+    }
+
     function hasClientActionPoint(cost) {
       return getCurrentActionPoint() >= Number(cost || 0);
+    }
+
+    function hasClientActionPointForBattle(battle, cost) {
+      var player = battle && battle.player ? battle.player : null;
+      normalizeClientActionPoints(player);
+      return Number(player && player.currentActionPoint || 0) >= Number(cost || 0);
+    }
+
+    function isClientSkillAvailableNow(skill, hasApOverride) {
+      if (!skill) return false;
+      if (skill.available) return true;
+      var hasAp = hasApOverride !== undefined ? !!hasApOverride : hasClientActionPoint(getSkillActionPointCost(skill));
+      return hasAp && skill.unavailableReasonType === 'actionPoint';
     }
 
     function toggleBattleMenu() {
@@ -1983,7 +2090,7 @@
         openQuestionModal(cachedQuestionView, false);
         return;
       }
-      refillQuestionCacheAndOpen(actionType, '', targetId || '');
+      requestQuestionFromServer(actionType, '', targetId || '');
     }
 
     function chooseSkill(skillId) {
@@ -1993,12 +2100,13 @@
       }
       if (handlePendingTurnResolutionBeforeAction()) return;
       closeSkillPanel();
+      refreshClientSkillAvailabilityForLocks(currentView);
       var selectedSkill = findAvailableSkill(skillId);
       if (!selectedSkill) {
         pushLog('스킬 정보를 찾을 수 없습니다.');
         return;
       }
-      if (!selectedSkill.available) {
+      if (!isClientSkillAvailableNow(selectedSkill)) {
         pushLog(selectedSkill.unavailableReason || '지금은 사용할 수 없는 스킬입니다.');
         return;
       }
@@ -2027,7 +2135,7 @@
         openQuestionModal(cachedQuestionView, false);
         return;
       }
-      refillQuestionCacheAndOpen('skill', skillId, targetId);
+      requestQuestionFromServer('skill', skillId, targetId);
     }
 
     function shouldChooseTargetForAction() {
@@ -2195,13 +2303,17 @@
     }
 
     function takeCachedQuestionView(actionType, skillId, targetId) {
+      var targetDifficulty = getClientRequiredQuestionDifficulty(actionType, skillId);
       battleQuestionCache = battleQuestionCache || [];
       battleQuestionCache = filterQuestionCacheByUsed(battleQuestionCache, getClientUsedQuestionIds(currentView));
+      battleQuestionCache = filterQuestionCacheByDifficulty(battleQuestionCache, targetDifficulty);
       if (!battleQuestionCache.length && currentView && currentView.questionCache && currentView.questionCache.length) {
         battleQuestionCache = filterQuestionCacheByUsed(currentView.questionCache.slice(), getClientUsedQuestionIds(currentView));
+        battleQuestionCache = filterQuestionCacheByDifficulty(battleQuestionCache, targetDifficulty);
       }
       if (!battleQuestionCache.length && reusableQuestionCache.length) {
         battleQuestionCache = filterQuestionCacheByUsed(reusableQuestionCache.slice(), getClientUsedQuestionIds(currentView));
+        battleQuestionCache = filterQuestionCacheByDifficulty(battleQuestionCache, targetDifficulty);
       }
       if (!battleQuestionCache.length) return null;
 
@@ -2211,11 +2323,70 @@
       questionView.skillId = skillId || '';
       questionView.targetId = targetId || '';
       questionView.isCachedQuestion = true;
-      if (questionView.actionType === 'skill') {
-        applySkillDifficultyBonusToQuestionView(questionView, skillId);
-      }
-      applyClientQuestionEffectModifiers(questionView);
+      questionView.finalDifficulty = targetDifficulty;
       return questionView;
+    }
+
+    function requestQuestionFromServer(actionType, skillId, targetId) {
+      if (!currentView || !currentView.runId || currentView.runId === 'dummy-run') return;
+      var skill = skillId ? findAvailableSkill(skillId) : null;
+      var difficultyBonus = Number(skill && skill.difficultyBonus || 0);
+      showLoadingModal('문제 준비 중...', '현재 난이도에 맞는 문제를 고르는 중...');
+      google.script.run
+        .withSuccessHandler(function(questionView) {
+          hideLoadingModal();
+          openQuestionModal(normalizeServerQuestionView(questionView, actionType, skillId, targetId), false);
+        })
+        .withFailureHandler(function(error) {
+          hideLoadingModal();
+          pushLog(error.message || '현재 난이도에서 사용할 수 있는 문제가 없습니다.');
+        })
+        .selectQuestionForAction(currentView.playerId, currentView.runId, actionType || 'attack', difficultyBonus, getAuthToken(), targetId || '', skillId || '');
+    }
+
+    function normalizeServerQuestionView(questionView, actionType, skillId, targetId) {
+      questionView = questionView || {};
+      questionView.actionType = questionView.actionType || actionType || 'attack';
+      questionView.skillId = questionView.skillId || skillId || '';
+      questionView.targetId = questionView.targetId || targetId || '';
+      return questionView;
+    }
+
+    function filterQuestionCacheByDifficulty(cache, targetDifficulty) {
+      var required = Number(targetDifficulty || 0);
+      if (!required) return cache || [];
+      return (cache || []).filter(function(questionView) {
+        var questionDifficulty = Number(questionView && questionView.question && questionView.question.difficulty || 0);
+        var finalDifficulty = Number(questionView && questionView.finalDifficulty || 0);
+        return questionDifficulty === required && finalDifficulty === required;
+      });
+    }
+
+    function getClientRequiredQuestionDifficulty(actionType, skillId) {
+      var battle = currentView && currentView.battle || {};
+      var stage = battle.stage || {};
+      var value = Number(stage.baseDifficulty || 1);
+      if (stage.bossMonsterId) value += 1;
+      if (actionType === 'skill') {
+        var skill = findAvailableSkill(skillId);
+        value += Number(skill && skill.difficultyBonus || 0);
+      }
+      value += Number(battle.player && battle.player.itemModifiers && battle.player.itemModifiers.questionDifficulty || 0);
+      value += getClientQuestionDifficultyEffectDelta();
+      value = Math.max(1, Math.min(MAX_QUESTION_DIFFICULTY, Math.round(value)));
+      var min = Number(stage.minDifficulty || 1);
+      var max = Number(stage.maxDifficulty || MAX_QUESTION_DIFFICULTY);
+      if (min > max) min = max;
+      return Math.max(min, Math.min(max, value));
+    }
+
+    function getClientQuestionDifficultyEffectDelta() {
+      var effects = currentView && currentView.battle && currentView.battle.player && currentView.battle.player.effects || [];
+      return effects.reduce(function(total, effect) {
+        if (!effect || effect.effectId === 'debuff_foolish') return total;
+        if (effect.statKey !== 'questionDifficulty' || effect.effectType !== 'flat') return total;
+        return total + Number(effect.value || 0) * Math.max(1, Number(effect.stacks || 1));
+      }, 0);
     }
 
     function refillQuestionCacheAndOpen(actionType, skillId, targetId) {
@@ -2246,7 +2417,7 @@
             openQuestionModal(questionView, false);
             return;
           }
-          pushLog('현재 난이도 범위에서 사용할 수 있는 문제가 없습니다.');
+          requestQuestionFromServer(actionType, skillId || '', targetId || '');
         })
         .withFailureHandler(function(error) {
           questionCacheRefillInFlight = false;
@@ -2287,6 +2458,7 @@
       resetQuestionResultHold();
       currentQuestionView = questionView;
       currentQuestionView.isDummy = !!dummy;
+      shortAnswerEnterSubmitLock = false;
       questionStartedAt = Date.now();
       wrongCountAfterTimeout = 0;
       clearInterval(questionTimerId);
@@ -2303,6 +2475,7 @@
       document.getElementById('questionCreatorBadge').textContent = '출제자: ' + (question.creatorName || '알 수 없음');
       document.getElementById('questionCreatorBadge').style.visibility = (questionView.isOtherPlayerQuestion || question.creatorId) ? 'visible' : 'hidden';
       document.getElementById('questionMessage').textContent = '';
+      renderQuestionMetadata(question);
       renderQuestionReactionView(question, !!dummy);
       renderAnswerArea(question);
       document.getElementById('questionModal').classList.add('active');
@@ -2320,6 +2493,8 @@
           input.addEventListener('keydown', function(event) {
             if (event.key === 'Enter' && !event.isComposing) {
               event.preventDefault();
+              event.stopPropagation();
+              shortAnswerEnterSubmitLock = true;
               submitQuestionAnswer();
             }
           });
@@ -2355,6 +2530,31 @@
       });
     }
 
+    function renderQuestionMetadata(question) {
+      var metadata = document.getElementById('questionMetadata');
+      if (!metadata) return;
+      metadata.innerHTML = '';
+      var chipCount = 0;
+      function addChip(label, value) {
+        value = String(value || '').trim();
+        if (!value) return;
+        var chip = document.createElement('span');
+        chip.className = 'question-meta-chip';
+        var labelElement = document.createElement('b');
+        labelElement.textContent = label;
+        chip.appendChild(labelElement);
+        chip.appendChild(document.createTextNode(value));
+        metadata.appendChild(chip);
+        chipCount += 1;
+      }
+      addChip('과목', question && question.subject);
+      addChip('단원', question && question.unit);
+      normalizeSkillTags(question && question.tags).forEach(function(tag) {
+        addChip('#', tag);
+      });
+      metadata.classList.toggle('hidden', !chipCount);
+    }
+
     function renderQuestionReactionView(question, disabled) {
       var safeQuestion = question || {};
       safeQuestion.myReaction = safeQuestion.myReaction || '';
@@ -2385,6 +2585,7 @@
       setQuestionReactionButtonsDisabled(true);
       applyOptimisticQuestionReaction(question, previousReaction, nextReaction);
       updateQuestionReactionView(question);
+      showQuestionReactionScorePop(nextReaction, 10);
 
       google.script.run
         .withSuccessHandler(function(result) {
@@ -2396,9 +2597,6 @@
           if (isCurrentQuestionId(questionId)) {
             setQuestionReactionButtonsDisabled(false);
             updateQuestionReactionView(question);
-            if (result && Number(result.scoreDelta || 0) > 0) {
-              showQuestionReactionScorePop(nextReaction, Number(result.scoreDelta || 0));
-            }
             document.getElementById('questionMessage').textContent = result && result.alreadyReacted
               ? '이미 이 문제에 반응했습니다.'
               : '현재 점수 ' + formatScore(currentView ? currentView.score || 0 : result && result.totalScore || 0);
@@ -2661,7 +2859,7 @@
       }
       setQuestionInputsDisabled(true);
       setBattleInputLocked(true);
-      document.getElementById('questionMessage').textContent = '문제를 포기했습니다.';
+      document.getElementById('questionMessage').textContent = '문제를 포기했습니다. 정답: ' + getQuestionAnswerDisplayText(question);
       document.getElementById('questionMessage').className = 'message error';
       startQuestionResultHold();
 
@@ -2730,6 +2928,7 @@
     function startQuestionResultHold() {
       resetQuestionResultHold(false);
       if (!currentQuestionView) return;
+      var requiresManualProceed = isShortAnswerCorrectResult(currentQuestionView);
       currentQuestionView.resultHolding = true;
       pendingQuestionTurnView = null;
       pendingQuestionTurnError = null;
@@ -2750,8 +2949,14 @@
         fill.style.width = '100%';
       }
       if (button) {
-        button.disabled = true;
-        button.textContent = '결과 확인 중...';
+        button.disabled = !!requiresManualProceed ? false : true;
+        button.textContent = requiresManualProceed ? '확인' : '결과 확인 중...';
+        if (requiresManualProceed) {
+          button.focus();
+        }
+      }
+      if (requiresManualProceed) {
+        return;
       }
       questionResultHoldTimerId = window.setTimeout(requestQuestionResultProceed, QUESTION_RESULT_HOLD_MS);
     }
@@ -2902,6 +3107,17 @@
 
     function hasClientAnswer(question) {
       return question && question.answer !== undefined && question.answer !== null && question.answer !== '';
+    }
+
+    function isShortAnswerCorrectResult(questionView) {
+      var question = questionView && questionView.question || {};
+      return question.type === 'shortAnswer' && !questionView.giveUp;
+    }
+
+    function getQuestionAnswerDisplayText(question) {
+      question = question || {};
+      var answer = String(question.answer == null ? '' : question.answer).trim();
+      return answer || '정답 정보 없음';
     }
 
     function isClientCorrectAnswer(question, answer) {
@@ -3669,6 +3885,7 @@
         return normalizeBattleView(nextView);
       }
 
+      var monsterScoreSnapshot = captureClientMonsterScoreSnapshot(battle);
       if (questionView.actionType === 'guard') {
         var defense = getClientEffectiveStat(battle.player, 'defense');
         var shield = Math.max(0, Math.round((CLIENT_BASE_GUARD_SHIELD + defense) * efficiency));
@@ -3681,6 +3898,10 @@
         var attack = getClientEffectiveStat(battle.player, 'attack') || 10;
         var damage = Math.max(0, Math.round(attack * efficiency));
         applyOptimisticMonsterDamage(battle, questionView.targetId, damage, 'attack');
+      }
+      var killScore = recordClientMonsterScoreContribution(nextView, monsterScoreSnapshot, questionView, efficiency);
+      if (killScore > 0) {
+        nextView.score = Number(nextView.score || 0) + killScore;
       }
 
       if (!getFirstAliveMonster(battle)) {
@@ -3696,6 +3917,93 @@
       return normalizeBattleView(nextView);
     }
 
+    function captureClientMonsterScoreSnapshot(battle) {
+      var snapshot = {};
+      (battle && battle.monsters || []).forEach(function(monster) {
+        var monsterKey = getClientMonsterScoreKey(monster);
+        if (!monsterKey) return;
+        snapshot[monsterKey] = {
+          hp: Number(monster.currentHp || 0),
+          shield: Number(monster.shield || 0),
+        };
+      });
+      return snapshot;
+    }
+
+    function recordClientMonsterScoreContribution(view, beforeByMonsterId, questionView, efficiency) {
+      var battle = view && view.battle || {};
+      var questionId = String(questionView && questionView.question && questionView.question.questionId || '').trim();
+      var normalizedEfficiency = Math.max(0, Number(efficiency || 0));
+      var killScoreTotal = 0;
+      (battle.monsters || []).forEach(function(monster) {
+        var monsterKey = getClientMonsterScoreKey(monster);
+        if (!monsterKey) return;
+        var before = beforeByMonsterId && beforeByMonsterId[monsterKey] || {};
+        var hpBefore = Number(before.hp || 0);
+        var shieldBefore = Number(before.shield || 0);
+        var hpAfter = Number(monster.currentHp || 0);
+        var shieldAfter = Number(monster.shield || 0);
+        var tookDamage = hpAfter < hpBefore || shieldAfter < shieldBefore;
+        if (!tookDamage && !(hpBefore > 0 && hpAfter <= 0)) return;
+
+        var state = ensureClientMonsterScoreState(battle);
+        var entry = state.byMonsterId[monsterKey] || {
+          monsterId: monsterKey,
+          monsterName: monster.name || '',
+          efficiencyByQuestion: {},
+          efficiencyTotal: 0,
+          questionCount: 0,
+          scoreAwarded: 0,
+        };
+        if (questionId && normalizedEfficiency > 0 && entry.efficiencyByQuestion[questionId] === undefined) {
+          entry.efficiencyByQuestion[questionId] = normalizedEfficiency;
+          entry.efficiencyTotal = Number(entry.efficiencyTotal || 0) + normalizedEfficiency;
+          entry.questionCount = Number(entry.questionCount || 0) + 1;
+        }
+        if (hpBefore > 0 && hpAfter <= 0 && !entry.scoreAwarded) {
+          var averageEfficiency = Number(entry.questionCount || 0) > 0
+            ? Number(entry.efficiencyTotal || 0) / Number(entry.questionCount || 1)
+            : 0;
+          var killScore = calculateClientMonsterKillScore(battle.stage, averageEfficiency);
+          entry.averageEfficiency = Math.round(averageEfficiency * 1000) / 1000;
+          entry.scoreAwarded = killScore;
+          state.monsterScore = Number(state.monsterScore || 0) + killScore;
+          killScoreTotal += killScore;
+        }
+        state.byMonsterId[monsterKey] = entry;
+        battle.monsterScoreState = state;
+      });
+      return killScoreTotal;
+    }
+
+    function ensureClientMonsterScoreState(battle) {
+      var state = battle.monsterScoreState || {};
+      if (state.battleId !== battle.battleId) {
+        state = { battleId: battle.battleId || '', monsterScore: 0, byMonsterId: {}, scoreAwardedToRun: 0 };
+      }
+      state.byMonsterId = state.byMonsterId || {};
+      state.monsterScore = Number(state.monsterScore || 0);
+      state.scoreAwardedToRun = Number(state.scoreAwardedToRun || 0);
+      battle.monsterScoreState = state;
+      return state;
+    }
+
+    function getClientMonsterScoreKey(monster) {
+      return String(monster && (monster.instanceId || monster.monsterId) || '').trim();
+    }
+
+    function calculateClientMonsterKillScore(stage, averageEfficiency) {
+      var stageIndex = getClientGlobalStageIndexForScore(stage);
+      var baseScore = 100 + (10 * stageIndex);
+      return Math.max(0, Math.round(baseScore * Math.max(0, Number(averageEfficiency || 0))));
+    }
+
+    function getClientGlobalStageIndexForScore(stage) {
+      var floor = Math.max(1, Math.min(5, Number(stage && stage.floor || 1)));
+      var stageNumber = Math.max(1, Math.min(5, Number(stage && stage.stage || 1)));
+      return ((floor - 1) * 5) + stageNumber;
+    }
+
     function applyClientSkillUsageLocks(view, skillId) {
       if (!view || !view.battle || !skillId) return;
       var battle = view.battle;
@@ -3709,10 +4017,7 @@
         battle.skillCooldownStartedTurns[skillId] = Number(battle.turn || 1);
       }
       battle.skillUseCounts[skillId] = Number(battle.skillUseCounts[skillId] || 0) + 1;
-      view.availableSkills = (view.availableSkills || []).map(function(candidate) {
-        if (!candidate || candidate.skillId !== skillId) return candidate;
-        return updateClientSkillAvailabilityForLocks(candidate, battle);
-      });
+      refreshClientSkillAvailabilityForLocks(view);
     }
 
     function findSkillInView(view, skillId) {
@@ -3727,17 +4032,30 @@
       if (cooldown > 0) {
         next.available = false;
         next.unavailableReason = '쿨타임 ' + cooldown + '턴 남았습니다.';
+        next.unavailableReasonType = '';
         return next;
       }
       if (/쿨타임/.test(String(next.unavailableReason || ''))) {
         next.available = true;
         next.unavailableReason = '';
+        next.unavailableReasonType = '';
       }
       var conditions = safeJsonParseClient(next.conditionJson || next.conditionsJson || next.conditions, {});
       var limit = Number(conditions.perBattleLimit || conditions.perStageLimit || 0);
       if (limit > 0 && Number(battle && battle.skillUseCounts && battle.skillUseCounts[next.skillId] || 0) >= limit) {
         next.available = false;
         next.unavailableReason = conditions.perBattleLimit ? '이번 전투에서 더 이상 사용할 수 없습니다.' : '이 스테이지에서 더 사용할 수 없습니다.';
+        next.unavailableReasonType = '';
+        return next;
+      }
+      if (next.unavailableReasonType === 'actionPoint') {
+        if (hasClientActionPointForBattle(battle, getSkillActionPointCost(next))) {
+          next.available = true;
+          next.unavailableReason = '';
+        } else {
+          next.available = false;
+          next.unavailableReason = '행동력이 부족합니다.';
+        }
       }
       return next;
     }
@@ -3772,6 +4090,8 @@
       trackClientSkillUseTags(battle, skill);
       var type = skill.type || 'damage';
       var value = Number(skill.baseValue || 0);
+      var damageUpgrade = getClientSkillUpgradeValue(skill, 'damage');
+      var effectUpgrade = getClientSkillUpgradeValue(skill, 'effect');
       var hitCount = getSkillHitCount(skill);
       var ruleDamage = getSkillPreviewDamage(skill);
       var usedRandomTargetIds = {};
@@ -3789,7 +4109,7 @@
         return;
       }
       if (type === 'heal') {
-        var heal = Math.max(0, Math.round(value * efficiency));
+        var heal = Math.max(0, Math.round((value + damageUpgrade + effectUpgrade) * efficiency));
         battle.player.hp = Math.min(Number(battle.player.maxHp || battle.player.stats && battle.player.stats.hp || 1), Number(battle.player.hp || 0) + heal);
         battle.lastTurnEvents.push({ actor: 'player', type: 'heal', skillId: skill.skillId, heal: heal, message: skill.name + '으로 체력을 회복했습니다.' });
         return;
@@ -3977,6 +4297,10 @@
       var attack = Number(playerStats.attack || 0);
       var defense = Number(playerStats.defense || 0);
       var base = Number(skill && skill.baseValue || 0);
+      var damageUpgrade = getClientSkillUpgradeValue(skill, 'damage');
+      var effectUpgrade = getClientSkillUpgradeValue(skill, 'effect');
+      var buffValueUpgrade = getClientSkillUpgradeValue(skill, 'buffValue');
+      var debuffChanceUpgrade = getClientSkillUpgradeValue(skill, 'debuffChance');
       var rule = safeJsonParseClient(skill && skill.effectJson, {});
       var context = {
         base: base,
@@ -3992,13 +4316,17 @@
         skillShield: base + defense,
         level: Math.max(1, Number(skill && skill.level || 1)),
         skillLevel: Math.max(1, Number(skill && skill.level || 1)),
+        damageUpgrade: damageUpgrade,
+        effectUpgrade: effectUpgrade,
+        buffValueUpgrade: buffValueUpgrade,
+        debuffChanceUpgrade: debuffChanceUpgrade,
       };
       var previewRange = getSkillPreviewDamageRange(skill);
       var formulaRange = getSkillFormulaDamageRange(rule, context);
       var effectMetrics = getSkillEffectDisplayMetrics(skill, rule, context);
       var tagMetrics = getSkillTagBonusDisplayMetrics(rule);
       var type = String(skill && skill.type || '').toLowerCase();
-      var fallbackDamage = type === 'damage' ? Math.max(0, Math.round(base + attack)) : 0;
+      var fallbackDamage = type === 'damage' ? Math.max(0, Math.round(base + damageUpgrade + attack)) : 0;
       var minDamage = previewRange ? previewRange.min : (formulaRange ? formulaRange.min : fallbackDamage);
       var maxDamage = previewRange ? previewRange.max : (formulaRange ? formulaRange.max : fallbackDamage);
       var damage = maxDamage;
@@ -4047,10 +4375,15 @@
       var value = first.valueFormula !== undefined && first.valueFormula !== null && first.valueFormula !== ''
         ? Math.round(evaluateSkillDisplayFormula(first.valueFormula, context || {}, 'max'))
         : (first.value !== undefined ? first.value : (detail && detail.value !== undefined ? detail.value : 0));
+      if (first.valueFormula === undefined && first.value === undefined && detail && detail.value === undefined) {
+        value += String(first.category || detail && detail.category || '').toLowerCase() === 'buff'
+          ? Number(context && context.buffValueUpgrade || 0)
+          : Number(context && context.effectUpgrade || 0);
+      }
       return {
         name: first.name || first.effectName || (detail && detail.name) || first.effectId || (detail && detail.effectId) || '',
         value: value,
-        chance: first.chance !== undefined ? first.chance : 100,
+        chance: Math.min(100, Math.max(0, Number(first.chance !== undefined ? first.chance : (detail && detail.chance !== undefined ? detail.chance : 100)) + (first.chance === undefined && detail && detail.chance !== undefined ? 0 : (String(first.category || detail && detail.category || '').toLowerCase() === 'debuff' ? Number(context && context.debuffChanceUpgrade || 0) : 0)))),
       };
     }
 
@@ -4159,9 +4492,29 @@
         return Math.max(0, Math.round(evaluateSkillDisplayFormula(rule.healFormula, context, 'max')));
       }
       if (type === 'heal') {
-        return Math.max(0, Math.round(Number(skill && skill.baseValue || 0)));
+        return Math.max(0, Math.round(Number(skill && skill.baseValue || 0) + getClientSkillUpgradeValue(skill, 'damage') + getClientSkillUpgradeValue(skill, 'effect')));
       }
       return 0;
+    }
+
+    function getClientSkillUpgradeValue(skill, key) {
+      var upgrade = safeJsonParseClient(skill && skill.upgradeJson, {});
+      var level = Math.max(1, Number(skill && skill.level || 1));
+      var upgradeLevel = Math.max(0, level - 1);
+      var raw = upgrade[key];
+      if (raw === undefined || raw === null || raw === '') return 0;
+      if (typeof raw === 'number' || /^-?\d+(?:\.\d+)?$/.test(String(raw).trim())) {
+        return Number(raw || 0) * upgradeLevel;
+      }
+      return evaluateSkillDisplayFormula(raw, {
+        n: upgradeLevel,
+        upgrade: upgradeLevel,
+        level: level,
+        skillLevel: level,
+        base: Number(skill && skill.baseValue || 0),
+        baseValue: Number(skill && skill.baseValue || 0),
+        skillBaseValue: Number(skill && skill.baseValue || 0),
+      }, 'max');
     }
 
     function evaluateSkillDisplayFormula(formula, context, rangeMode) {
@@ -4757,7 +5110,9 @@
       if (!skill) return '';
       var useLimitText = getSkillUseLimitText(skill);
       var cooldown = getSkillCooldownDisplayText(skill);
-      return (useLimitText ? '<span class="skill-detail-line">' + escapeHtml(useLimitText) + '</span>' : '') +
+      var difficultyBonusText = getSkillDifficultyBonusText(skill);
+      return (difficultyBonusText ? '<span class="skill-detail-line">' + escapeHtml(difficultyBonusText) + '</span>' : '') +
+        (useLimitText ? '<span class="skill-detail-line">' + escapeHtml(useLimitText) + '</span>' : '') +
         (cooldown ? '<span class="skill-detail-line">' + escapeHtml(cooldown) + '</span>' : '');
     }
 
@@ -4927,10 +5282,27 @@
         return;
       }
       window.setTimeout(function() {
-        showLoadingModal('보상 적용 중...', '다음 스테이지를 준비하는 중...');
+        showLoadingModal('보상 적용 중...', '1/3 전투 결과를 저장하는 중...', {
+          progress: 8,
+          activeStep: 0,
+          steps: ['전투 결과 저장', '보상 적용 및 점수 계산', '다음 스테이지 준비'],
+        });
         commitStageResultIfNeeded(function() {
+          updateLoadingModal({
+            text: '2/3 선택한 보상을 적용하고 점수를 계산하는 중...',
+            progress: 38,
+            doneStep: 0,
+            activeStep: 1,
+          });
           google.script.run
             .withSuccessHandler(function(response) {
+              updateLoadingModal({
+                text: '보상 적용 완료. 다음 화면을 준비하는 중...',
+                progress: 76,
+                doneStep: 1,
+                activeStep: 2,
+              });
+              logRewardDebugTimings(response);
               hideLoadingModal();
               rewardSelectionApplying = false;
               rewardModal.classList.remove('active');
@@ -4975,12 +5347,29 @@
           });
           document.getElementById('rewardMessage').textContent = error.message || '전투 결과 저장에 실패했습니다.';
           document.getElementById('rewardMessage').className = 'message error';
-        });
+        }, { silent: true });
       }, 260);
     }
 
     function shouldShowScoreModal(scoreSummary) {
       return !!scoreSummary && Number(scoreSummary.scoreDelta || 0) > 0;
+    }
+
+    function logRewardDebugTimings(response) {
+      var timings = response && response.debugTimings;
+      if (!timings) return;
+      pushLog(
+        '보상 처리 시간: 총 ' + formatMsShort(timings.totalMs) +
+        ' / 보상 ' + formatMsShort(timings.rewardAppliedMs) +
+        ' / 저장 ' + formatMsShort(timings.runUpdatedMs) +
+        ' / 점수 ' + formatMsShort(timings.scoreAwardedMs) +
+        ' / 이동 ' + formatMsShort(timings.stageMovedMs),
+        { instant: true }
+      );
+    }
+
+    function formatMsShort(ms) {
+      return (Number(ms || 0) / 1000).toFixed(1) + 's';
     }
 
     function showScoreModal(scoreSummary, response) {
@@ -5193,8 +5582,87 @@
       }
     }
 
+    function loadNextBattleAfterReward(response, retryCount) {
+      response = response || {};
+      retryCount = Number(retryCount || 0);
+      var runId = response.runId || (response.run && response.run.runId) || (currentView && currentView.runId);
+      if (!runId) {
+        pushLog('다음 전투를 준비할 런을 찾을 수 없습니다.');
+        return;
+      }
+      var nextBattleLoadStartedAt = performance.now();
+      showLoadingModal('다음 스테이지 준비 중...', '1/3 새 전투 데이터를 요청하는 중...', {
+        progress: retryCount ? 12 : 10,
+        activeStep: 0,
+        steps: ['새 전투 생성 요청', '전투 데이터 수신', '화면 렌더링'],
+      });
+      google.script.run
+        .withSuccessHandler(function(view) {
+          updateLoadingModal({
+            text: '2/3 전투 데이터를 받았습니다.',
+            progress: 70,
+            doneStep: 0,
+            activeStep: 1,
+          });
+          if (view && view.showReward && view.rewardView) {
+            hideLoadingModal();
+            handleRewardSelectionResponse(view);
+            return;
+          }
+          if (!view || !view.battle) {
+            if (retryCount < 1) {
+              updateLoadingModal({
+                text: '전투 데이터가 비어 있어 한 번 더 요청합니다.',
+                progress: 35,
+                activeStep: 0,
+              });
+              loadNextBattleAfterReward(Object.assign({}, response, view || {}), retryCount + 1);
+              return;
+            }
+            hideLoadingModal();
+            pushLog('다음 전투 데이터를 아직 불러오지 못했습니다. 다시 시도해 주세요.');
+            return;
+          }
+          updateLoadingModal({
+            text: '3/3 전투 화면을 그리는 중...',
+            progress: 92,
+            doneStep: 1,
+            activeStep: 2,
+          });
+          currentView = normalizeBattleView(view);
+          applyBattleClientConfig(currentView.clientConfig);
+          resetBattleQuestionCacheFromView(currentView, []);
+          clearLocalBattleCheckpoint(currentView.runId);
+          resetStageCommitState();
+          renderBattle(currentView);
+          updateLoadingModal({
+            text: '완료',
+            progress: 100,
+            doneStep: 2,
+          });
+          pushLog('다음 전투 로딩 시간: ' + formatMsShort(performance.now() - nextBattleLoadStartedAt), { instant: true });
+          hideLoadingModal();
+          startBattleEntrance();
+        })
+        .withFailureHandler(function(error) {
+          hideLoadingModal();
+          pushLog(error.message || '다음 전투 준비에 실패했습니다.');
+        })
+        .prepareNextBattleAfterReward(runId, getAuthToken());
+    }
+
     function handleRewardSelectionResponse(response) {
       response = response || {};
+      if (isStandaloneRewardViewResponse(response)) {
+        response = {
+          showReward: true,
+          runId: response.runId || (currentView && currentView.runId) || '',
+          rewardView: response,
+          stageState: {
+            reward: response,
+          },
+        };
+      }
       if (response.scoreSummary && response.scoreSummary.totalScore !== undefined && currentView) {
         currentView.score = Number(response.scoreSummary.totalScore || currentView.score || 0);
         response.score = Number(response.scoreSummary.totalScore || response.score || 0);
@@ -5217,12 +5685,24 @@
         startFloorIntermissionEntrance();
         return;
       }
+      if (response.nextBattlePending) {
+        loadNextBattleAfterReward(response);
+        return;
+      }
       currentView = normalizeBattleView(response);
       resetBattleQuestionCacheFromView(currentView, []);
       clearLocalBattleCheckpoint(currentView.runId);
       resetStageCommitState();
       renderBattle(currentView);
       startBattleEntrance();
+    }
+
+    function isStandaloneRewardViewResponse(response) {
+      return !!(response &&
+        !response.battle &&
+        !response.rewardView &&
+        Array.isArray(response.choices) &&
+        (response.floorRestChoice || response.intermissionStage || response.stageId));
     }
 
     function formatScore(score) {
@@ -5729,6 +6209,7 @@
     function closeQuestionModal(clearPending) {
       clearInterval(questionTimerId);
       resetQuestionResultHold(clearPending);
+      shortAnswerEnterSubmitLock = false;
       currentQuestionView = null;
       document.getElementById('questionModal').classList.remove('active');
       document.getElementById('questionModal').setAttribute('aria-hidden', 'true');
@@ -6046,12 +6527,26 @@
 
     function waitForBattleLogAdvance() {
       return new Promise(function(resolve) {
+        clearBattleLogAutoAdvance();
         activeBattleLogAdvanceResolver = function() {
           if (activeBattleLogAdvanceResolver !== null) {
             activeBattleLogAdvanceResolver = null;
           }
+          clearBattleLogAutoAdvance();
           resolve();
         };
+        battleLogAutoAdvanceTimerId = window.setTimeout(function() {
+          battleLogAutoAdvanceTimerId = null;
+          if (battleLogTyping) {
+            revealBattleLog();
+            battleLogAutoAdvanceTimerId = window.setTimeout(function() {
+              battleLogAutoAdvanceTimerId = null;
+              advanceBattleLogManually();
+            }, 350);
+            return;
+          }
+          advanceBattleLogManually();
+        }, DESCRIPTION_AUTO_ADVANCE_MS);
       });
     }
 
@@ -6059,8 +6554,15 @@
       if (!activeBattleLogAdvanceResolver) return false;
       var resolver = activeBattleLogAdvanceResolver;
       activeBattleLogAdvanceResolver = null;
+      clearBattleLogAutoAdvance();
       resolver();
       return true;
+    }
+
+    function clearBattleLogAutoAdvance() {
+      if (!battleLogAutoAdvanceTimerId) return;
+      window.clearTimeout(battleLogAutoAdvanceTimerId);
+      battleLogAutoAdvanceTimerId = null;
     }
 
     function skippableAutoDelay(ms) {
@@ -6088,21 +6590,105 @@
     }
 
     function goHome() {
-      window.top.location.href = WEB_APP_URL + '?skipIntro=1';
+      navigateTop(WEB_APP_URL + '?skipIntro=1');
+    }
+
+    function navigateTop(url) {
+      var link = document.createElement('a');
+      link.href = url;
+      link.target = '_top';
+      link.rel = 'noopener';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
     }
 
     function getAuthToken() {
       return sessionStorage.getItem('learningRpgAuthToken') || '';
     }
 
-    function showLoadingModal(title, text) {
+    function showLoadingModal(title, text, options) {
+      options = options || {};
       document.getElementById('loadingTitle').textContent = title || '로딩 중...';
       document.getElementById('loadingText').textContent = text || '데이터를 불러오는 중...';
+      loadingStartedAt = performance.now();
+      loadingStepItems = (options.steps || []).map(function(step, index) {
+        return {
+          text: String(step || ''),
+          status: index < Number(options.activeStep || 0) ? 'done' : (index === Number(options.activeStep || 0) ? 'active' : ''),
+        };
+      });
+      renderLoadingSteps();
+      setLoadingProgress(options.progress !== undefined ? options.progress : 0);
+      updateLoadingElapsed();
+      if (loadingTimerId) {
+        window.clearInterval(loadingTimerId);
+      }
+      loadingTimerId = window.setInterval(updateLoadingElapsed, 100);
       document.getElementById('loadingModal').classList.add('active');
     }
 
     function hideLoadingModal() {
+      if (loadingTimerId) {
+        window.clearInterval(loadingTimerId);
+        loadingTimerId = null;
+      }
       document.getElementById('loadingModal').classList.remove('active');
+    }
+
+    function updateLoadingModal(options) {
+      options = options || {};
+      if (options.title !== undefined) {
+        document.getElementById('loadingTitle').textContent = options.title;
+      }
+      if (options.text !== undefined) {
+        document.getElementById('loadingText').textContent = options.text;
+      }
+      if (options.progress !== undefined) {
+        setLoadingProgress(options.progress);
+      }
+      if (options.activeStep !== undefined || options.doneStep !== undefined) {
+        if (options.doneStep !== undefined && loadingStepItems[options.doneStep]) {
+          loadingStepItems[options.doneStep].status = 'done';
+        }
+        if (options.activeStep !== undefined) {
+          loadingStepItems.forEach(function(step, index) {
+            if (index < options.activeStep && step.status !== 'done') step.status = 'done';
+            if (index === options.activeStep) step.status = 'active';
+            if (index > options.activeStep && step.status !== 'done') step.status = '';
+          });
+        }
+        renderLoadingSteps();
+      }
+      updateLoadingElapsed();
+    }
+
+    function setLoadingProgress(progress) {
+      var percent = Math.max(0, Math.min(100, Math.round(Number(progress || 0))));
+      var fill = document.getElementById('loadingProgressFill');
+      var text = document.getElementById('loadingProgressText');
+      if (fill) fill.style.width = percent + '%';
+      if (text) text.textContent = percent + '%';
+    }
+
+    function updateLoadingElapsed() {
+      var element = document.getElementById('loadingElapsedText');
+      if (!element || !loadingStartedAt) return;
+      element.textContent = ((performance.now() - loadingStartedAt) / 1000).toFixed(1) + 's';
+    }
+
+    function renderLoadingSteps() {
+      var list = document.getElementById('loadingSteps');
+      if (!list) return;
+      if (!loadingStepItems.length) {
+        list.classList.add('hidden');
+        list.innerHTML = '';
+        return;
+      }
+      list.classList.remove('hidden');
+      list.innerHTML = loadingStepItems.map(function(step) {
+        return '<li class="' + escapeHtml(step.status || '') + '">' + escapeHtml(step.text || '') + '</li>';
+      }).join('');
     }
 
     function cssEscape(value) {
