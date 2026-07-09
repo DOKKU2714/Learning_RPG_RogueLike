@@ -87,9 +87,12 @@
 
   <div id="defeatOverlay" class="defeat-overlay" aria-hidden="true">
     <section class="defeat-content">
-      <h1>Game Over</h1>
+      <h1 id="defeatTitle">Game Over</h1>
       <div id="defeatResult" class="defeat-result"></div>
-      <button id="defeatHomeButton" class="secondary hidden" onclick="goHome()">메인으로</button>
+      <div class="defeat-action-row">
+        <button id="defeatNextButton" type="button" class="hidden" onclick="showOutcomeScoreDetails()">다음</button>
+        <button id="defeatHomeButton" class="secondary hidden" onclick="goHome()">메인으로</button>
+      </div>
     </section>
   </div>
 
@@ -200,6 +203,7 @@
       blockSuccess: 'Resources/Sounds/Block_Success.wav',
       buff: 'Resources/Sounds/Buff.wav',
       debuff: 'Resources/Sounds/Debuff.wav',
+      escape: 'Resources/Sounds/Escape.wav',
       gameover: 'Resources/Sounds/Gameover.wav',
       hit: 'Resources/Sounds/Hit.wav',
       hpDown: 'Resources/Sounds/Hp_down.wav',
@@ -217,6 +221,7 @@
     var skillPanelOpen = false;
     var battleQuestionCache = [];
     var reusableQuestionCache = [];
+    var questionCacheRefillInFlight = false;
     var BATTLE_STEP_DELAY_MS = 1000;
     var MONSTER_TURN_START_DELAY_MS = 1000;
     var ATTACK_EFFECT_DELAY_MS = 420;
@@ -263,6 +268,7 @@
     var stageResultCommitFailureCallbacks = [];
     var questionReactionSaving = false;
     var pendingScoreModalResponse = null;
+    var currentOutcomeContext = null;
     var scoreAnimationTimers = [];
     var scoreAnimationDone = true;
     var currentRewardView = null;
@@ -1894,7 +1900,7 @@
         currentView.battle.status = 'defeat';
         currentView.battle.lastMessage = '전투를 포기했습니다.';
         renderBattle(currentView);
-        showDefeatSequence();
+        showDefeatSequence({ skipCommit: true });
         return;
       }
       showLoadingModal('전투 포기 중...', '이번 전투를 패배로 처리하는 중...');
@@ -1903,7 +1909,7 @@
           hideLoadingModal();
           currentView = normalizeBattleView(view);
           renderBattle(currentView);
-          showDefeatSequence();
+          showDefeatSequence({ skipCommit: true });
         })
         .withFailureHandler(function(error) {
           hideLoadingModal();
@@ -1977,7 +1983,7 @@
         openQuestionModal(cachedQuestionView, false);
         return;
       }
-      pushLog('전투 중에는 시트에서 문제를 새로 불러오지 않습니다. 현재 문제 캐시가 부족합니다.');
+      refillQuestionCacheAndOpen(actionType, '', targetId || '');
     }
 
     function chooseSkill(skillId) {
@@ -2021,7 +2027,7 @@
         openQuestionModal(cachedQuestionView, false);
         return;
       }
-      pushLog('전투 중에는 시트에서 문제를 새로 불러오지 않습니다. 현재 문제 캐시가 부족합니다.');
+      refillQuestionCacheAndOpen('skill', skillId, targetId);
     }
 
     function shouldChooseTargetForAction() {
@@ -2212,6 +2218,44 @@
       return questionView;
     }
 
+    function refillQuestionCacheAndOpen(actionType, skillId, targetId) {
+      if (!currentView || !currentView.runId || currentView.runId === 'dummy-run') {
+        return;
+      }
+      if (questionCacheRefillInFlight) {
+        pushLog('문제 묶음을 다시 불러오는 중입니다.');
+        return;
+      }
+      if (typeof google === 'undefined' || !google.script || !google.script.run) {
+        pushLog('서버 연결을 사용할 수 없어 문제를 다시 불러오지 못했습니다.');
+        return;
+      }
+
+      questionCacheRefillInFlight = true;
+      showLoadingModal('문제를 다시 불러오는 중...', '현재 난이도 범위의 문제 풀을 갱신하는 중...');
+      google.script.run
+        .withSuccessHandler(function(questionCache) {
+          questionCacheRefillInFlight = false;
+          hideLoadingModal();
+          var cache = Array.isArray(questionCache) ? questionCache : [];
+          currentView.reusableQuestionCache = cache.slice();
+          currentView.questionCache = cache.slice();
+          resetBattleQuestionCacheFromView(currentView, cache);
+          var questionView = takeCachedQuestionView(actionType, skillId || '', targetId || '');
+          if (questionView) {
+            openQuestionModal(questionView, false);
+            return;
+          }
+          pushLog('현재 난이도 범위에서 사용할 수 있는 문제가 없습니다.');
+        })
+        .withFailureHandler(function(error) {
+          questionCacheRefillInFlight = false;
+          hideLoadingModal();
+          pushLog(error && error.message ? error.message : '문제 묶음을 다시 불러오지 못했습니다.');
+        })
+        .preloadBattleQuestions(currentView.runId, getAuthToken());
+    }
+
     function applySkillDifficultyBonusToQuestionView(questionView, skillId) {
       var skill = findAvailableSkill(skillId);
       var bonus = Number(skill && skill.difficultyBonus || 0);
@@ -2318,8 +2362,9 @@
       var hasQuestionId = !!String(safeQuestion.questionId || '').trim();
       var likeButton = document.getElementById('questionLikeButton');
       var dislikeButton = document.getElementById('questionDislikeButton');
-      if (likeButton) likeButton.disabled = !!disabled || !hasQuestionId;
-      if (dislikeButton) dislikeButton.disabled = !!disabled || !hasQuestionId;
+      var alreadyReacted = !!safeQuestion.myReaction;
+      if (likeButton) likeButton.disabled = !!disabled || !hasQuestionId || alreadyReacted;
+      if (dislikeButton) dislikeButton.disabled = !!disabled || !hasQuestionId || alreadyReacted;
     }
 
     function chooseQuestionReaction(reaction) {
@@ -2327,9 +2372,15 @@
       var question = currentQuestionView.question;
       var questionId = String(question.questionId || '').trim();
       if (!questionId || questionId === 'dummy-question') return;
+      if (question.myReaction) {
+        setQuestionReactionButtonsDisabled(false);
+        document.getElementById('questionMessage').textContent = '이미 이 문제에 반응했습니다.';
+        document.getElementById('questionMessage').className = 'message';
+        return;
+      }
 
       var previousReaction = question.myReaction || '';
-      var nextReaction = previousReaction === reaction ? '' : reaction;
+      var nextReaction = reaction;
       questionReactionSaving = true;
       setQuestionReactionButtonsDisabled(true);
       applyOptimisticQuestionReaction(question, previousReaction, nextReaction);
@@ -2341,9 +2392,17 @@
           question.likeCount = Number(result && result.likeCount || 0);
           question.dislikeCount = Number(result && result.dislikeCount || 0);
           question.myReaction = result && result.myReaction || '';
+          applyQuestionReactionScoreResult(result);
           if (isCurrentQuestionId(questionId)) {
             setQuestionReactionButtonsDisabled(false);
             updateQuestionReactionView(question);
+            if (result && Number(result.scoreDelta || 0) > 0) {
+              showQuestionReactionScorePop(nextReaction, Number(result.scoreDelta || 0));
+            }
+            document.getElementById('questionMessage').textContent = result && result.alreadyReacted
+              ? '이미 이 문제에 반응했습니다.'
+              : '현재 점수 ' + formatScore(currentView ? currentView.score || 0 : result && result.totalScore || 0);
+            document.getElementById('questionMessage').className = 'message ok';
           }
         })
         .withFailureHandler(function(error) {
@@ -2356,7 +2415,53 @@
             document.getElementById('questionMessage').className = 'message error';
           }
         })
-        .setQuestionReaction(questionId, nextReaction, getAuthToken());
+        .setQuestionReaction(questionId, nextReaction, getAuthToken(), currentView && currentView.runId || '');
+    }
+
+    function applyQuestionReactionScoreResult(result) {
+      if (!result) return;
+      var delta = Number(result.scoreDelta || 0);
+      var totalScore = Number(result.totalScore || 0);
+      if (currentView && (delta > 0 || totalScore > 0)) {
+        currentView.score = totalScore > 0 ? totalScore : Number(currentView.score || 0) + delta;
+      }
+      if (delta > 0) {
+        addQuestionReactionScoreToCurrentBattle(delta);
+      }
+      var statsPanel = document.getElementById('battleStatsPanel');
+      if (statsPanel && !statsPanel.classList.contains('hidden')) {
+        showBattleStats();
+      }
+    }
+
+    function addQuestionReactionScoreToCurrentBattle(delta) {
+      if (!currentView || !currentView.battle || Number(delta || 0) <= 0) return;
+      var battleId = String(currentView.battle.battleId || '');
+      var state = currentView.battle.questionReactionScoreState || {};
+      if (state.battleId && battleId && String(state.battleId) !== battleId) {
+        state = {};
+      }
+      state.battleId = String(state.battleId || battleId);
+      state.score = Number(state.score || 0) + Number(delta || 0);
+      currentView.battle.questionReactionScoreState = state;
+      currentView.stageState = currentView.stageState || {};
+      currentView.stageState.scoreState = currentView.stageState.scoreState || {};
+      currentView.stageState.scoreState.questionReactionScoreBattleId = state.battleId;
+      currentView.stageState.scoreState.questionReactionScore = Number(state.score || 0);
+    }
+
+    function showQuestionReactionScorePop(reaction, scoreDelta) {
+      var button = document.getElementById(reaction === 'dislike' ? 'questionDislikeButton' : 'questionLikeButton');
+      if (!button || Number(scoreDelta || 0) <= 0) return;
+      var pop = document.createElement('span');
+      pop.className = 'reaction-score-pop';
+      pop.textContent = '+' + formatScore(scoreDelta);
+      button.appendChild(pop);
+      window.setTimeout(function() {
+        if (pop && pop.parentNode) {
+          pop.parentNode.removeChild(pop);
+        }
+      }, 950);
     }
 
     function isCurrentQuestionId(questionId) {
@@ -2390,10 +2495,11 @@
     function setQuestionReactionButtonsDisabled(disabled) {
       var question = currentQuestionView && currentQuestionView.question || {};
       var hasQuestionId = !!String(question.questionId || '').trim() && question.questionId !== 'dummy-question';
+      var alreadyReacted = !!question.myReaction;
       var likeButton = document.getElementById('questionLikeButton');
       var dislikeButton = document.getElementById('questionDislikeButton');
-      if (likeButton) likeButton.disabled = !!disabled || !hasQuestionId;
-      if (dislikeButton) dislikeButton.disabled = !!disabled || !hasQuestionId;
+      if (likeButton) likeButton.disabled = !!disabled || !hasQuestionId || alreadyReacted;
+      if (dislikeButton) dislikeButton.disabled = !!disabled || !hasQuestionId || alreadyReacted;
     }
 
     function hideQuestionGiveUpButton() {
@@ -3418,11 +3524,13 @@
     }
 
     function applyClientTimedEffectDamage(target, timing, battle, actor) {
-      return RULE_ENGINE_SHARED.applyTimedEffectDamage(target, timing, battle, actor);
+      var turn = battle ? Number(battle.turn || 1) : (currentView && currentView.battle ? Number(currentView.battle.turn || 1) : 1);
+      return RULE_ENGINE_SHARED.applyTimedEffectDamage(target, timing, battle, actor, turn);
     }
 
     function decrementClientTurnEffects(target) {
-      return RULE_ENGINE_SHARED.decrementTurnEffects(target);
+      var turn = currentView && currentView.battle ? Number(currentView.battle.turn || 1) : undefined;
+      return RULE_ENGINE_SHARED.decrementTurnEffects(target, turn);
     }
 
     function applyClientQuestionEffectModifiers(questionView) {
@@ -4829,6 +4937,10 @@
               rewardModal.classList.remove('stage-clear-reward-overlay');
               rewardModal.classList.remove('floor-rest-reward-overlay');
               rewardModal.classList.remove('reward-applying');
+              if (response && response.cleared) {
+                handleRewardSelectionResponse(response);
+                return;
+              }
               if (shouldShowScoreModal(response && response.scoreSummary)) {
                 showScoreModal(response.scoreSummary, response);
                 return;
@@ -4874,6 +4986,7 @@
     function showScoreModal(scoreSummary, response) {
       pendingScoreModalResponse = response || null;
       var summary = scoreSummary || {};
+      var detailed = !!summary.showDetailedBreakdown;
       clearScoreAnimation();
       scoreAnimationDone = false;
       var confirmButton = document.getElementById('scoreModalConfirmButton');
@@ -4886,21 +4999,26 @@
       if (scoreTotalRow) scoreTotalRow.classList.remove('score-revealed');
       document.getElementById('scoreDeltaText').textContent = '+0점';
       document.getElementById('scoreTotalText').textContent = '0점';
-      var rows = [
-        ['문제 점수', Number(summary.answerScore || 0)],
-        ['스테이지 클리어', Number(summary.stageScore || 0)],
-        ['층 클리어', Number(summary.floorBaseScore || 0)],
-        ['속도 보너스', Number(summary.floorSpeedScore || 0)],
-        ['탈출 보너스', Number(summary.clearBonus || 0)],
-      ].filter(function(row) {
-        return row[1] > 0;
+      var rows = buildScoreBreakdownRows(summary, detailed).filter(function(row) {
+        return detailed || Number(row.value || 0) > 0;
       });
       document.getElementById('scoreBreakdown').innerHTML = rows.map(function(row) {
-        return '<div class="score-breakdown-row score-breakdown-pending" data-score-value="' + escapeHtml(row[1]) + '">' +
-          '<span>' + escapeHtml(row[0]) + '</span>' +
+        return '<div class="score-breakdown-row score-breakdown-pending" data-score-value="' + escapeHtml(row.value) + '">' +
+          '<span>' + escapeHtml(row.label) + '</span>' +
           '<b>+0점</b>' +
         '</div>';
       }).join('');
+      if (detailed) {
+        var metaRows = buildScoreMetaRows(summary);
+        if (metaRows.length) {
+          document.getElementById('scoreBreakdown').insertAdjacentHTML('beforeend', metaRows.map(function(row) {
+            return '<div class="score-breakdown-row score-breakdown-note">' +
+              '<span>' + escapeHtml(row.label) + '</span>' +
+              '<b>' + escapeHtml(row.value) + '</b>' +
+            '</div>';
+          }).join(''));
+        }
+      }
       var modal = document.getElementById('scoreModal');
       modal.classList.add('active');
       modal.setAttribute('aria-hidden', 'false');
@@ -4919,7 +5037,38 @@
       modal.setAttribute('aria-hidden', 'true');
       var response = pendingScoreModalResponse;
       pendingScoreModalResponse = null;
+      if (response && response.outcomeFinal) {
+        completeOutcomeScoreDetails();
+        return;
+      }
       handleRewardSelectionResponse(response);
+    }
+
+    function buildScoreBreakdownRows(summary, detailed) {
+      var rows = [
+        { label: '몬스터 처치', value: Number(summary.monsterScore || 0) },
+        { label: '문제 평가', value: Number(summary.questionReactionScore || 0) },
+        { label: '스테이지 클리어', value: Number(summary.stageScore || 0) },
+        { label: '층 클리어 기본', value: Number(summary.floorBaseScore || 0) },
+        { label: '층 속도 보너스', value: Number(summary.floorSpeedScore || 0) },
+        { label: '탈출 보너스', value: Number(summary.clearBonus || 0) },
+      ];
+      if (detailed && Number(summary.floorScore || 0) > 0) {
+        rows.push({ label: '층 클리어 합계', value: Number(summary.floorScore || 0) });
+      }
+      return rows;
+    }
+
+    function buildScoreMetaRows(summary) {
+      var rows = [];
+      if (summary.floorClearTimeMs || summary.floorTargetTimeMs) {
+        rows.push({ label: '층 클리어 시간', value: formatDuration(summary.floorClearTimeMs || 0) });
+        rows.push({ label: '층 목표 시간', value: formatDuration(summary.floorTargetTimeMs || 0) });
+      }
+      if (summary.floorSpeedMultiplier !== undefined && summary.floorSpeedMultiplier !== null) {
+        rows.push({ label: '속도 보너스 비율', value: Math.round(Number(summary.floorSpeedMultiplier || 0) * 100) + '%' });
+      }
+      return rows;
     }
 
     function animateScoreSequence(summary) {
@@ -5051,8 +5200,9 @@
         response.score = Number(response.scoreSummary.totalScore || response.score || 0);
       }
       if (response.cleared) {
-        pushLog('1층 스테이지를 클리어했습니다. 탈출에 성공했습니다.');
+        pushLog('탈출에 성공했습니다.');
         setPlayerTurn(false);
+        showEscapeSuccessSequence(response);
         return;
       }
       if (response.showReward && response.rewardView) {
@@ -5670,6 +5820,13 @@
       return (Math.max(0, Number(ms || 0)) / 1000).toFixed(1) + 's';
     }
 
+    function formatDuration(ms) {
+      var totalSeconds = Math.max(0, Math.round(Number(ms || 0) / 1000));
+      var minutes = Math.floor(totalSeconds / 60);
+      var seconds = totalSeconds % 60;
+      return minutes + '분 ' + String(seconds).padStart(2, '0') + '초';
+    }
+
     function formatDisplayStage(progressFloor, stage, stageName) {
       var parts = getDisplayFloorParts(progressFloor);
       var configuredName = String(stageName || '').trim();
@@ -5679,32 +5836,43 @@
       return parts.floorLabel + ' ' + (configuredName || parts.areaLabel) + ' ' + Number(stage || 1) + '스테이지';
     }
 
-    function showDefeatSequence() {
+    function showDefeatSequence(options) {
       if (defeatSequenceStarted) return;
+      options = options || {};
       defeatSequenceStarted = true;
       playBattleSound('gameover');
       setBattleInputLocked(true);
       setPlayerTurn(false);
       closeQuestionModal();
-      commitStageResultIfNeeded(function() {
-        hideLoadingModal();
-      }, function(error) {
-        hideLoadingModal();
-        pushLog(error.message || '패배 결과 저장에 실패했습니다.');
-      });
+      currentOutcomeContext = buildOutcomeContext('defeat', options.response || null);
+      if (!options.skipCommit) {
+        commitStageResultIfNeeded(function() {
+          hideLoadingModal();
+          currentOutcomeContext = buildOutcomeContext('defeat', options.response || null);
+          refreshOutcomeResult();
+        }, function(error) {
+          hideLoadingModal();
+          pushLog(error.message || '패배 결과 저장에 실패했습니다.');
+        });
+      }
 
       var shell = document.getElementById('battleShell');
       var overlay = document.getElementById('defeatOverlay');
+      var title = document.getElementById('defeatTitle');
       var result = document.getElementById('defeatResult');
+      var nextButton = document.getElementById('defeatNextButton');
       var homeButton = document.getElementById('defeatHomeButton');
-      if (!overlay || !result || !homeButton) return;
+      if (!overlay || !title || !result || !nextButton || !homeButton) return;
 
       if (shell) {
         shell.classList.add('battle-defeat-fade');
       }
+      title.textContent = 'Game Over';
+      title.classList.remove('escape-success-title');
       result.classList.remove('active');
+      nextButton.classList.add('hidden');
       homeButton.classList.add('hidden');
-      result.innerHTML = buildDefeatResultHtml();
+      result.innerHTML = buildOutcomeResultHtml(currentOutcomeContext);
 
       window.setTimeout(function() {
         overlay.classList.add('active');
@@ -5716,12 +5884,96 @@
       }, 1700);
 
       window.setTimeout(function() {
-        homeButton.classList.remove('hidden');
+        nextButton.classList.remove('hidden');
       }, 2400);
     }
 
-    function buildDefeatResultHtml() {
+    function showEscapeSuccessSequence(response) {
+      if (defeatSequenceStarted) return;
+      defeatSequenceStarted = true;
+      playBattleSound('escape');
+      setBattleInputLocked(true);
+      setPlayerTurn(false);
+      closeQuestionModal();
+      currentOutcomeContext = buildOutcomeContext('escape', response || null);
+
+      var shell = document.getElementById('battleShell');
+      var overlay = document.getElementById('defeatOverlay');
+      var title = document.getElementById('defeatTitle');
+      var result = document.getElementById('defeatResult');
+      var nextButton = document.getElementById('defeatNextButton');
+      var homeButton = document.getElementById('defeatHomeButton');
+      if (!overlay || !title || !result || !nextButton || !homeButton) return;
+
+      if (shell) {
+        shell.classList.add('battle-defeat-fade');
+      }
+      title.textContent = '탈출 성공!';
+      title.classList.add('escape-success-title');
+      result.classList.remove('active');
+      nextButton.classList.add('hidden');
+      homeButton.classList.add('hidden');
+      result.innerHTML = buildOutcomeResultHtml(currentOutcomeContext);
+
+      window.setTimeout(function() {
+        overlay.classList.add('active');
+        overlay.setAttribute('aria-hidden', 'false');
+      }, 700);
+
+      window.setTimeout(function() {
+        result.classList.add('active');
+      }, 1700);
+
+      window.setTimeout(function() {
+        nextButton.classList.remove('hidden');
+      }, 2400);
+    }
+
+    function buildOutcomeContext(kind, response) {
       var battle = currentView && currentView.battle ? currentView.battle : {};
+      response = response || {};
+      var scoreSummary = response.scoreSummary || buildCurrentOutcomeScoreSummary();
+      scoreSummary.showDetailedBreakdown = true;
+      return {
+        kind: kind || 'defeat',
+        battle: battle,
+        response: response,
+        scoreSummary: scoreSummary,
+      };
+    }
+
+    function buildCurrentOutcomeScoreSummary() {
+      var total = Number(currentView && currentView.score || 0);
+      var monsterScore = Number(currentView && currentView.battle && currentView.battle.monsterScoreState && currentView.battle.monsterScoreState.monsterScore || 0);
+      var questionReactionScore = Number(currentView && currentView.battle && currentView.battle.questionReactionScoreState && currentView.battle.questionReactionScoreState.score || 0);
+      return {
+        previousScore: Math.max(0, total - monsterScore - questionReactionScore),
+        answerScore: 0,
+        monsterScore: monsterScore,
+        questionReactionScore: questionReactionScore,
+        stageScore: 0,
+        floorBaseScore: 0,
+        floorSpeedScore: 0,
+        floorScore: 0,
+        floorClearTimeMs: 0,
+        floorTargetTimeMs: 0,
+        floorSpeedMultiplier: 0,
+        clearBonus: 0,
+        scoreDelta: monsterScore + questionReactionScore,
+        totalScore: total,
+      };
+    }
+
+    function refreshOutcomeResult() {
+      var result = document.getElementById('defeatResult');
+      if (result && currentOutcomeContext) {
+        result.innerHTML = buildOutcomeResultHtml(currentOutcomeContext);
+      }
+    }
+
+    function buildOutcomeResultHtml(context) {
+      context = context || {};
+      var battle = context.battle || currentView && currentView.battle || {};
       var stage = battle.stage || {};
       var monsters = battle.monsters || [];
       var defeatedCount = monsters.filter(function(monster) {
@@ -5729,14 +5981,57 @@
       }).length;
       var aliveCount = monsters.length - defeatedCount;
       var player = battle.player || {};
-      var lastMessage = battle.lastMessage || '전투가 종료되었습니다.';
+      var response = context.response || {};
+      var scoreSummary = context.scoreSummary || buildCurrentOutcomeScoreSummary();
+      var lastMessage = context.kind === 'escape'
+        ? '모든 층을 돌파하고 탈출했습니다.'
+        : (battle.lastMessage || '전투가 종료되었습니다.');
+      var rewardName = response.selectedReward && (response.selectedReward.description || response.selectedReward.displayTitle || response.selectedReward.rewardId) || '';
       return '' +
         '<div class="defeat-result-row"><span>스테이지</span><strong>' + escapeHtml(formatDisplayStage(stage.floor, stage.stage, stage.name)) + '</strong></div>' +
         '<div class="defeat-result-row"><span>턴</span><strong>' + escapeHtml(battle.turn || 1) + '</strong></div>' +
         '<div class="defeat-result-row"><span>플레이어 체력</span><strong>' + escapeHtml(player.hp || 0) + ' / ' + escapeHtml(player.maxHp || '-') + '</strong></div>' +
         '<div class="defeat-result-row"><span>처치한 몬스터</span><strong>' + defeatedCount + ' / ' + monsters.length + '</strong></div>' +
         '<div class="defeat-result-row"><span>남은 몬스터</span><strong>' + aliveCount + '</strong></div>' +
+        '<div class="defeat-result-row"><span>이번 점수</span><strong>' + escapeHtml(formatScore(scoreSummary.scoreDelta || 0)) + '</strong></div>' +
+        '<div class="defeat-result-row"><span>총 점수</span><strong>' + escapeHtml(formatScore(scoreSummary.totalScore || currentView && currentView.score || 0)) + '</strong></div>' +
+        (rewardName ? '<div class="defeat-result-row"><span>마지막 보상</span><strong>' + escapeHtml(rewardName) + '</strong></div>' : '') +
+        (response.currencyAmount ? '<div class="defeat-result-row"><span>획득 화폐</span><strong>' + escapeHtml(response.currencyAmount) + '</strong></div>' : '') +
         '<p class="defeat-last-message">' + escapeHtml(lastMessage) + '</p>';
+    }
+
+    function showOutcomeScoreDetails() {
+      if (!currentOutcomeContext) {
+        currentOutcomeContext = buildOutcomeContext('defeat', null);
+      }
+      var overlay = document.getElementById('defeatOverlay');
+      var nextButton = document.getElementById('defeatNextButton');
+      if (nextButton) nextButton.classList.add('hidden');
+      if (overlay) {
+        overlay.classList.remove('active');
+        overlay.setAttribute('aria-hidden', 'true');
+      }
+      showScoreModal(currentOutcomeContext.scoreSummary, {
+        outcomeFinal: true,
+        scoreSummary: currentOutcomeContext.scoreSummary,
+      });
+    }
+
+    function completeOutcomeScoreDetails() {
+      var overlay = document.getElementById('defeatOverlay');
+      var result = document.getElementById('defeatResult');
+      var nextButton = document.getElementById('defeatNextButton');
+      var homeButton = document.getElementById('defeatHomeButton');
+      if (overlay) {
+        overlay.classList.add('active');
+        overlay.setAttribute('aria-hidden', 'false');
+      }
+      if (result) result.classList.add('active');
+      if (nextButton) nextButton.classList.add('hidden');
+      if (homeButton) {
+        homeButton.classList.remove('hidden');
+        homeButton.focus();
+      }
     }
 
     function delay(ms) {

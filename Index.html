@@ -24,6 +24,12 @@
       grid-template-columns: 1fr 1fr;
       gap: 10px;
     }
+
+    .starting-score-bonus {
+      margin-top: 10px;
+      color: var(--accent);
+      font-size: 0.92rem;
+    }
   </style>
 </head>
 <body>
@@ -422,8 +428,21 @@
         showLoginForm();
         return;
       }
-      document.getElementById('playerBadge').innerHTML = '';
+      renderPlayerBadge(state);
       document.getElementById('adminButton').style.display = state.isAdmin ? 'block' : 'none';
+    }
+
+    function renderPlayerBadge(state) {
+      var player = state && state.player || {};
+      var bonus = state && state.startingScoreBonus || {};
+      var displayName = player.displayName || player.studentName || '플레이어';
+      var startingScore = Number(bonus.startingScore || 0);
+      var questionCount = Number(bonus.questionCount || 0);
+      var likeCount = Number(bonus.likeCount || 0);
+      document.getElementById('playerBadge').innerHTML =
+        '<strong>' + escapeHtml(displayName) + '</strong>' +
+        '<div class="starting-score-bonus">문제 생성/좋아요로 인한 시작 점수 +' + escapeHtml(formatScore(startingScore)) +
+          ' <span class="muted">(문제 ' + escapeHtml(questionCount) + '개, 좋아요 ' + escapeHtml(likeCount) + '개)</span></div>';
     }
 
     function showLoginForm() {
@@ -760,6 +779,10 @@
       var element = document.getElementById('registerMessage');
       element.textContent = message || '';
       element.className = 'message ' + (type || '');
+    }
+
+    function formatScore(score) {
+      return Number(score || 0).toLocaleString('ko-KR') + '점';
     }
 
     function showLoadingModal(title, text) {

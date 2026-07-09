@@ -111,7 +111,7 @@ function updateQuestion(questionId, questionPayload, authToken) {
   return toClientObject_(updated);
 }
 
-function setQuestionReaction(questionId, reaction, authToken) {
+function setQuestionReaction(questionId, reaction, authToken, runId) {
   ensureQuestionSchemaColumns_();
   var player = getCurrentPlayer_(authToken);
   var targetQuestionId = String(questionId || '').trim();
@@ -120,6 +120,27 @@ function setQuestionReaction(questionId, reaction, authToken) {
   }
 
   var normalizedReaction = normalizeQuestionReaction_(reaction);
+  if (!normalizedReaction) {
+    throw new Error('좋아요 또는 싫어요를 선택해 주세요.');
+  }
+
+  var lock = null;
+  try {
+    if (typeof LockService !== 'undefined') {
+      lock = LockService.getScriptLock();
+      lock.waitLock(5000);
+    }
+    return setQuestionReactionLocked_(targetQuestionId, normalizedReaction, player, runId);
+  } finally {
+    if (lock) {
+      try {
+        lock.releaseLock();
+      } catch (error) {}
+    }
+  }
+}
+
+function setQuestionReactionLocked_(targetQuestionId, normalizedReaction, player, runId) {
   var question = findRowByKey_(DB_SHEETS.QUESTIONS, 'questionId', targetQuestionId);
   if (!question) {
     throw new Error('문제를 찾을 수 없습니다.');
@@ -132,19 +153,22 @@ function setQuestionReaction(questionId, reaction, authToken) {
 
   var playerId = String(player.playerId || '').trim();
   var previousReaction = normalizeQuestionReaction_(reactions[playerId]);
-  if (normalizedReaction) {
-    reactions[playerId] = normalizedReaction;
-  } else {
-    delete reactions[playerId];
+  if (previousReaction) {
+    return {
+      questionId: targetQuestionId,
+      likeCount: Number(question.likeCount || 0),
+      dislikeCount: Number(question.dislikeCount || 0),
+      myReaction: previousReaction,
+      alreadyReacted: true,
+      scoreDelta: 0,
+      totalScore: getQuestionReactionRunScore_(runId, playerId),
+    };
   }
+
+  reactions[playerId] = normalizedReaction;
 
   var likeCount = Number(question.likeCount || 0);
   var dislikeCount = Number(question.dislikeCount || 0);
-  if (previousReaction === 'like') {
-    likeCount -= 1;
-  } else if (previousReaction === 'dislike') {
-    dislikeCount -= 1;
-  }
   if (normalizedReaction === 'like') {
     likeCount += 1;
   } else if (normalizedReaction === 'dislike') {
@@ -158,12 +182,70 @@ function setQuestionReaction(questionId, reaction, authToken) {
     updatedAt: new Date(),
   });
   clearTableCache_(DB_SHEETS.QUESTIONS);
+  var scoreResult = awardQuestionReactionScore_(runId, playerId);
   return {
     questionId: targetQuestionId,
     likeCount: Number(updated && updated.likeCount || 0),
     dislikeCount: Number(updated && updated.dislikeCount || 0),
     myReaction: normalizedReaction,
+    alreadyReacted: false,
+    scoreDelta: Number(scoreResult.scoreDelta || 0),
+    totalScore: Number(scoreResult.totalScore || 0),
   };
+}
+
+function awardQuestionReactionScore_(runId, playerId) {
+  var targetRunId = String(runId || '').trim();
+  if (!targetRunId || typeof awardRunScore_ !== 'function') {
+    return { scoreDelta: 0, totalScore: 0 };
+  }
+  var run = findRowByKey_(DB_SHEETS.RUNS, 'runId', targetRunId);
+  if (!run || String(run.playerId || '') !== String(playerId || '') || run.status !== STATUS.RUN_ACTIVE) {
+    return { scoreDelta: 0, totalScore: Number(run && run.score || 0) };
+  }
+  var awardResult = awardRunScore_(targetRunId, 10);
+  recordQuestionReactionScoreForRun_(run, 10);
+  return awardResult;
+}
+
+function recordQuestionReactionScoreForRun_(run, scoreDelta) {
+  var delta = Number(scoreDelta || 0);
+  if (!run || !run.runId || delta <= 0) {
+    return;
+  }
+  var stageState = safeJsonParse_(run.stageStateJson, {});
+  var battleState = stageState.battle || {};
+  var battleId = String(battleState.battleId || '');
+  if (!battleId) {
+    return;
+  }
+  stageState.scoreState = stageState.scoreState || {};
+  if (stageState.scoreState.questionReactionScoreBattleId && stageState.scoreState.questionReactionScoreBattleId !== battleId) {
+    stageState.scoreState.questionReactionScore = 0;
+  }
+  stageState.scoreState.questionReactionScoreBattleId = battleId;
+  stageState.scoreState.questionReactionScore = Number(stageState.scoreState.questionReactionScore || 0) + delta;
+  battleState.questionReactionScoreState = {
+    battleId: battleId,
+    score: Number(stageState.scoreState.questionReactionScore || 0),
+  };
+  stageState.battle = battleState;
+  updateRowByKey_(DB_SHEETS.RUNS, 'runId', run.runId, {
+    stageStateJson: safeJsonStringify_(stageState),
+    updatedAt: new Date(),
+  });
+}
+
+function getQuestionReactionRunScore_(runId, playerId) {
+  var targetRunId = String(runId || '').trim();
+  if (!targetRunId) {
+    return 0;
+  }
+  var run = findRowByKey_(DB_SHEETS.RUNS, 'runId', targetRunId);
+  if (!run || String(run.playerId || '') !== String(playerId || '')) {
+    return 0;
+  }
+  return Number(run.score || 0);
 }
 
 function deleteQuestion(questionId, authToken) {
@@ -240,6 +322,29 @@ function getQuestionsByCreator_(creatorId) {
   return readTable_(DB_SHEETS.QUESTIONS).filter(function(question) {
     return question.creatorId === creatorId;
   });
+}
+
+function calculateQuestionLikeStartingScore_(playerId) {
+  return getQuestionLikeStartingScoreSummary_(playerId).startingScore;
+}
+
+function getQuestionLikeStartingScoreSummary_(playerId) {
+  var questions = getQuestionsByCreator_(playerId);
+  var questionCount = questions.length;
+  var likeCount = questions.reduce(function(total, question) {
+    return total + Math.max(0, Number(question.likeCount || 0));
+  }, 0);
+  var multiplier = 5;
+  var questionScore = questionCount * multiplier;
+  var likeScore = likeCount * multiplier;
+  return {
+    questionCount: questionCount,
+    likeCount: likeCount,
+    multiplier: multiplier,
+    questionScore: questionScore,
+    likeScore: likeScore,
+    startingScore: questionScore + likeScore,
+  };
 }
 
 function deleteQuestionByOwner_(questionId, creatorId) {

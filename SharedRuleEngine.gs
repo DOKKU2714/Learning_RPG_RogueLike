@@ -71,13 +71,20 @@ var RULE_ENGINE_SHARED = (function() {
   function mergeStatusEffects(target) {
     var merged = [];
     var seen = {};
+    function fillMissingStatusFields(targetEffect, sourceEffect) {
+      Object.keys(sourceEffect).forEach(function(key) {
+        if (targetEffect[key] === undefined || targetEffect[key] === null || targetEffect[key] === '') {
+          targetEffect[key] = sourceEffect[key];
+        }
+      });
+    }
     function add(effect, fallbackCategory) {
       if (!effect) return;
       var copy = Object.assign({}, effect);
       copy.category = getEffectCategory(copy, fallbackCategory) || copy.category || '';
       var key = String(copy.effectId || copy.id || copy.name || merged.length);
       if (seen[key]) {
-        Object.assign(seen[key], copy);
+        fillMissingStatusFields(seen[key], copy);
         return;
       }
       seen[key] = copy;
@@ -160,11 +167,12 @@ var RULE_ENGINE_SHARED = (function() {
     });
   }
 
-  function applyTimedEffectDamage(target, timing, battle, actor) {
+  function applyTimedEffectDamage(target, timing, battle, actor, currentTurn) {
     if (!target) return 0;
     var totalDamage = 0;
     (target.effects || []).forEach(function(effect) {
       if (effect.triggerTiming !== timing || effect.statKey !== 'hp' || effect.effectType !== 'flat' || Number(effect.value || 0) >= 0) return;
+      if (currentTurn !== undefined && effect.appliedAtTurn !== undefined && Number(effect.appliedAtTurn || 0) === Number(currentTurn || 0)) return;
       var damage = Math.abs(Number(effect.value || 0)) * Math.max(1, Number(effect.stacks || 1));
       if (target.currentHp !== undefined) {
         target.currentHp = Math.max(0, Number(target.currentHp || 0) - damage);
@@ -189,16 +197,24 @@ var RULE_ENGINE_SHARED = (function() {
     return totalDamage;
   }
 
-  function decrementTurnEffects(target) {
+  function decrementTurnEffects(target, currentTurn) {
     if (!target) return target;
+    if (!Array.isArray(target.effects) || !target.effects.length) {
+      syncStatusBuckets(target);
+    }
     target.effects = (target.effects || []).map(function(effect) {
       if (effect.durationType === 'turn') {
+        if (currentTurn !== undefined && effect.appliedAtTurn !== undefined && Number(effect.appliedAtTurn || 0) === Number(currentTurn || 0)) {
+          return effect;
+        }
         effect.remainingTurns = Number(effect.remainingTurns || 0) - 1;
       }
       return effect;
     }).filter(function(effect) {
       return effect.durationType !== 'turn' || Number(effect.remainingTurns || 0) > 0;
     });
+    target.buffs = [];
+    target.debuffs = [];
     return syncStatusBuckets(target);
   }
 

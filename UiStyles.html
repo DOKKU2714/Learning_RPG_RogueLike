@@ -697,6 +697,7 @@
   }
 
   .question-reaction-button {
+    position: relative;
     min-height: 34px;
     display: inline-flex;
     align-items: center;
@@ -707,6 +708,7 @@
     color: #e8e8e8;
     font-size: 13px;
     box-shadow: inset -2px -2px 0 rgba(0, 0, 0, 0.45);
+    overflow: visible;
   }
 
   .question-reaction-button strong {
@@ -739,6 +741,35 @@
     background: rgba(185, 74, 72, 0.34);
     border-color: #ff7a7a;
     color: #ffe8e8;
+  }
+
+  .reaction-score-pop {
+    position: absolute;
+    right: 8px;
+    top: -18px;
+    z-index: 3;
+    color: #ffd83d;
+    font-size: 16px;
+    font-weight: 900;
+    line-height: 1;
+    pointer-events: none;
+    text-shadow: 0 2px 0 #2d2100, 0 0 8px rgba(255, 216, 61, 0.55);
+    animation: reaction-score-pop 900ms ease-out forwards;
+  }
+
+  @keyframes reaction-score-pop {
+    0% {
+      opacity: 0;
+      transform: translateY(6px) scale(0.9);
+    }
+    18% {
+      opacity: 1;
+      transform: translateY(0) scale(1.05);
+    }
+    100% {
+      opacity: 0;
+      transform: translateY(-24px) scale(1.16);
+    }
   }
 
   .question-efficiency-panel {
@@ -1667,11 +1698,11 @@
   }
 
   .skill-button.rarity-legendary {
-    border-color: rgba(255, 159, 64, 0.7);
+    border-color: rgba(255, 141, 54, 0.9);
   }
 
   .skill-button.rarity-unique {
-    border-color: rgba(255, 58, 58, 0.78);
+    border-color: rgba(255, 58, 58, 0.92);
   }
 
   .skill-button:hover,
@@ -1717,7 +1748,7 @@
   .skill-button.rarity-legendary .skill-button-name,
   .skill-detail-card.rarity-legendary .skill-detail-name,
   .reward-detail-card.rarity-legendary .skill-detail-name {
-    color: #ffb25a;
+    color: #ff8d36;
   }
 
   .skill-button.rarity-unique .skill-button-name,
@@ -2321,6 +2352,11 @@
     text-shadow: 0 0 18px rgba(170, 0, 0, 0.62), 0 2px 0 #260000;
   }
 
+  .defeat-content h1.escape-success-title {
+    color: #37e86f;
+    text-shadow: 0 0 20px rgba(55, 232, 111, 0.66), 0 2px 0 #052b14;
+  }
+
   .defeat-result {
     width: 100%;
     display: grid;
@@ -2348,6 +2384,19 @@
   .defeat-result-row strong {
     color: #f0f0f0;
     font-weight: 700;
+  }
+
+  .defeat-action-row {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    min-height: 42px;
+  }
+
+  .defeat-last-message {
+    margin: 10px 0 0;
+    color: #bdbdbd;
+    line-height: 1.55;
   }
 
   .player-ghost-photo {
@@ -2856,116 +2905,116 @@
   }
 
   .reward-choice-card.rarity-common {
-    --reward-gem-color: #ffffff;
+    --reward-gem-color: #f1f1f1;
     --reward-gem-glow: rgba(255, 255, 255, 0.32);
-    border-color: rgba(255, 255, 255, 0.78);
-    color: #ffffff;
+    border-color: rgba(255, 255, 255, 0.54);
+    color: #f1f1f1;
   }
 
   .skill-detail-card.rarity-common,
   .reward-detail-card.rarity-common {
-    border-color: rgba(255, 255, 255, 0.72);
+    border-color: rgba(255, 255, 255, 0.54);
   }
 
   .reward-choice-card.rarity-common .reward-rarity-badge,
   .reward-choice-card.rarity-common .reward-choice-heading,
   .reward-choice-card.rarity-common strong {
-    color: #ffffff;
+    color: #f1f1f1;
   }
 
   .reward-choice-card.rarity-uncommon {
-    --reward-gem-color: #70ff89;
+    --reward-gem-color: #77f08c;
     --reward-gem-glow: rgba(112, 255, 137, 0.34);
-    border-color: rgba(112, 255, 137, 0.82);
-    color: #70ff89;
+    border-color: rgba(112, 255, 137, 0.62);
+    color: #77f08c;
   }
 
   .skill-detail-card.rarity-uncommon,
   .reward-detail-card.rarity-uncommon {
-    border-color: rgba(112, 255, 137, 0.76);
+    border-color: rgba(112, 255, 137, 0.62);
     box-shadow: 0 16px 38px rgba(0, 0, 0, 0.52), 0 0 18px rgba(112, 255, 137, 0.12);
   }
 
   .reward-choice-card.rarity-uncommon .reward-rarity-badge,
   .reward-choice-card.rarity-uncommon .reward-choice-heading,
   .reward-choice-card.rarity-uncommon strong {
-    color: #70ff89;
+    color: #77f08c;
   }
 
   .reward-choice-card.rarity-rare {
-    --reward-gem-color: #4b9cff;
+    --reward-gem-color: #63a8ff;
     --reward-gem-glow: rgba(75, 156, 255, 0.36);
-    border-color: rgba(75, 156, 255, 0.86);
-    color: #4b9cff;
+    border-color: rgba(75, 156, 255, 0.66);
+    color: #63a8ff;
   }
 
   .skill-detail-card.rarity-rare,
   .reward-detail-card.rarity-rare {
-    border-color: rgba(75, 156, 255, 0.8);
+    border-color: rgba(75, 156, 255, 0.66);
     box-shadow: 0 16px 38px rgba(0, 0, 0, 0.52), 0 0 20px rgba(75, 156, 255, 0.14);
   }
 
   .reward-choice-card.rarity-rare .reward-rarity-badge,
   .reward-choice-card.rarity-rare .reward-choice-heading,
   .reward-choice-card.rarity-rare strong {
-    color: #4b9cff;
+    color: #63a8ff;
   }
 
   .reward-choice-card.rarity-epic {
-    --reward-gem-color: #e069ff;
+    --reward-gem-color: #df72ff;
     --reward-gem-glow: rgba(224, 105, 255, 0.38);
-    border-color: rgba(224, 105, 255, 0.88);
-    color: #e069ff;
+    border-color: rgba(224, 105, 255, 0.68);
+    color: #df72ff;
   }
 
   .skill-detail-card.rarity-epic,
   .reward-detail-card.rarity-epic {
-    border-color: rgba(224, 105, 255, 0.82);
+    border-color: rgba(224, 105, 255, 0.68);
     box-shadow: 0 16px 38px rgba(0, 0, 0, 0.52), 0 0 22px rgba(224, 105, 255, 0.16);
   }
 
   .reward-choice-card.rarity-epic .reward-rarity-badge,
   .reward-choice-card.rarity-epic .reward-choice-heading,
   .reward-choice-card.rarity-epic strong {
-    color: #e069ff;
+    color: #df72ff;
   }
 
   .reward-choice-card.rarity-legendary {
-    --reward-gem-color: #ff9f40;
-    --reward-gem-glow: rgba(255, 159, 64, 0.4);
-    border-color: rgba(255, 159, 64, 0.9);
-    color: #ff9f40;
+    --reward-gem-color: #ff8d36;
+    --reward-gem-glow: rgba(255, 141, 54, 0.4);
+    border-color: rgba(255, 141, 54, 0.9);
+    color: #ff8d36;
   }
 
   .skill-detail-card.rarity-legendary,
   .reward-detail-card.rarity-legendary {
-    border-color: rgba(255, 159, 64, 0.86);
-    box-shadow: 0 16px 38px rgba(0, 0, 0, 0.52), 0 0 24px rgba(255, 159, 64, 0.18);
+    border-color: rgba(255, 141, 54, 0.9);
+    box-shadow: 0 16px 38px rgba(0, 0, 0, 0.52), 0 0 24px rgba(255, 141, 54, 0.18);
   }
 
   .reward-choice-card.rarity-legendary .reward-rarity-badge,
   .reward-choice-card.rarity-legendary .reward-choice-heading,
   .reward-choice-card.rarity-legendary strong {
-    color: #ff9f40;
+    color: #ff8d36;
   }
 
   .reward-choice-card.rarity-unique {
-    --reward-gem-color: #ff3a3a;
+    --reward-gem-color: #ff4a4a;
     --reward-gem-glow: rgba(255, 58, 58, 0.44);
-    border-color: rgba(255, 58, 58, 0.94);
-    color: #ff3a3a;
+    border-color: rgba(255, 58, 58, 0.92);
+    color: #ff4a4a;
   }
 
   .skill-detail-card.rarity-unique,
   .reward-detail-card.rarity-unique {
-    border-color: rgba(255, 58, 58, 0.88);
+    border-color: rgba(255, 58, 58, 0.92);
     box-shadow: 0 16px 38px rgba(0, 0, 0, 0.52), 0 0 24px rgba(255, 58, 58, 0.2);
   }
 
   .reward-choice-card.rarity-unique .reward-rarity-badge,
   .reward-choice-card.rarity-unique .reward-choice-heading,
   .reward-choice-card.rarity-unique strong {
-    color: #ff3a3a;
+    color: #ff4a4a;
   }
 
   .reward-detail-card {
@@ -3114,23 +3163,23 @@
   }
 
   .item-card.rarity-common {
-    border-color: rgba(255, 255, 255, 0.62);
-    color: #f5f5f5;
+    border-color: rgba(255, 255, 255, 0.54);
+    color: #f1f1f1;
   }
 
   .item-card.rarity-uncommon {
-    border-color: rgba(71, 255, 108, 0.78);
-    color: #47ff6c;
+    border-color: rgba(112, 255, 137, 0.62);
+    color: #77f08c;
   }
 
   .item-card.rarity-rare {
-    border-color: rgba(178, 111, 255, 0.82);
-    color: #b26fff;
+    border-color: rgba(75, 156, 255, 0.66);
+    color: #63a8ff;
   }
 
   .item-card.rarity-epic {
-    border-color: rgba(255, 188, 82, 0.86);
-    color: #ffbc52;
+    border-color: rgba(224, 105, 255, 0.68);
+    color: #df72ff;
   }
 
   .item-card.rarity-legendary {
@@ -3261,6 +3310,16 @@
 
   .score-breakdown-row.score-breakdown-complete b {
     color: #f0dfaa;
+  }
+
+  .score-breakdown-row.score-breakdown-note {
+    opacity: 1;
+    transform: none;
+    border-bottom-style: dashed;
+  }
+
+  .score-breakdown-row.score-breakdown-note b {
+    color: #d7d7d7;
   }
 
   .score-breakdown-row.score-breakdown-pending b {

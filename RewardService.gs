@@ -455,10 +455,17 @@ function awardStageClearScoreForReward_(run, stageState) {
   var scoreState = stageState.scoreState;
   var isFloorRestReward = !!rewardState.floorRestChoice || isFloorRestStage_(battleState.stage || {});
   var battleId = String(battleState.battleId || '');
-  var answerScore = Number(scoreState.answerScore || 0);
+  var monsterScore = battleId && scoreState.monsterScoreBattleId === battleId
+    ? Number(scoreState.monsterScore || 0)
+    : Number(battleState.monsterScoreState && battleState.monsterScoreState.monsterScore || 0);
+  var questionReactionScore = battleId && scoreState.questionReactionScoreBattleId === battleId
+    ? Number(scoreState.questionReactionScore || 0)
+    : Number(battleState.questionReactionScoreState && battleState.questionReactionScoreState.score || 0);
   if (isFloorRestReward || !battleId || scoreState.stageScoreBattleId === battleId) {
     return buildStageScoreSummary_(run, {
-      answerScore: answerScore,
+      answerScore: 0,
+      monsterScore: monsterScore,
+      questionReactionScore: questionReactionScore,
       stageScore: 0,
       clearBonus: 0,
       scoreDelta: 0,
@@ -474,7 +481,7 @@ function awardStageClearScoreForReward_(run, stageState) {
     floor: run.currentFloor,
     stage: run.currentStage,
   });
-  var clearBonus = isFinalStageForScore_(battleState.stage || run) ? 30000 : 0;
+  var clearBonus = isFinalStageForScore_(battleState.stage || run) ? 20000 : 0;
   var scoreDelta = stageScore + floorClearScore.floorScore + clearBonus;
   var awardResult = awardRunScore_(run.runId, scoreDelta);
   scoreState.stageScoreBattleId = battleId;
@@ -492,8 +499,10 @@ function awardStageClearScoreForReward_(run, stageState) {
     updatedAt: new Date(),
   });
   return buildStageScoreSummary_(awardResult.run, {
-    previousScore: Math.max(0, Number(awardResult.previousScore || 0) - answerScore),
-    answerScore: answerScore,
+    previousScore: Math.max(0, Number(awardResult.previousScore || 0) - monsterScore - questionReactionScore),
+    answerScore: 0,
+    monsterScore: monsterScore,
+    questionReactionScore: questionReactionScore,
     stageScore: stageScore,
     floorBaseScore: floorClearScore.baseScore,
     floorSpeedScore: floorClearScore.speedScore,
@@ -502,7 +511,7 @@ function awardStageClearScoreForReward_(run, stageState) {
     floorTargetTimeMs: floorClearScore.targetMs,
     floorSpeedMultiplier: floorClearScore.speedMultiplier,
     clearBonus: clearBonus,
-    scoreDelta: answerScore + scoreDelta,
+    scoreDelta: monsterScore + questionReactionScore + scoreDelta,
     totalScore: Number(awardResult.totalScore || 0),
   });
 }
@@ -614,6 +623,8 @@ function buildStageScoreSummary_(run, summary) {
   return {
     previousScore: Math.max(0, Number(summary.previousScore !== undefined ? summary.previousScore : totalScore - scoreDelta)),
     answerScore: Number(summary.answerScore || 0),
+    monsterScore: Number(summary.monsterScore || 0),
+    questionReactionScore: Number(summary.questionReactionScore || 0),
     stageScore: Number(summary.stageScore || 0),
     floorBaseScore: Number(summary.floorBaseScore || 0),
     floorSpeedScore: Number(summary.floorSpeedScore || 0),
@@ -1053,12 +1064,39 @@ function getAvailableSkillRewardPool_(rarity, ownedSkills, config) {
 function isSkillExcludedFromAutoRewards_(skill) {
   var skillId = String(skill && skill.skillId || '').trim();
   var skillName = String(skill && skill.name || '').trim();
-  return skillId === 'skill_strike' || skillName === '타격';
+  return skillId === 'skill_strike' || skillName === '타격' || !isSkillRewardEnabled_(skill);
+}
+
+function isSkillRewardEnabled_(skill) {
+  var value = skill && skill.rewardEnabled;
+  if (value === undefined || value === null || value === '') {
+    return true;
+  }
+  var normalized = String(value).trim().toLowerCase().replace(/\s+/g, '');
+  var disabledValues = [
+    'false',
+    '0',
+    'no',
+    'n',
+    'off',
+    'x',
+    '아니오',
+    '아니요',
+    '비활성',
+    '제외',
+    '보상제외',
+    '몬스터전용',
+    'monster',
+    'monsteronly',
+    'monster_only',
+  ];
+  return disabledValues.indexOf(normalized) === -1;
 }
 
 function getSkillRowsForRewards_() {
   var rows = [];
   try {
+    ensureTableColumns_(DB_SHEETS.SKILLS, DB_COLUMNS.SKILLS);
     rows = readTableCached_(DB_SHEETS.SKILLS, 600);
   } catch (error) {
     rows = [];

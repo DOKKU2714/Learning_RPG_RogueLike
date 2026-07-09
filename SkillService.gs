@@ -205,6 +205,7 @@ function useSkill(runId, skillId, targetId, answerPayload) {
 
   var stageState = getStageState_(run);
   var battleState = requireActiveBattle_(stageState);
+  battleState.runId = battleState.runId || run.runId;
   normalizeUsedQuestionIds_(stageState, battleState);
   normalizeBattleStateEffects_(battleState);
   normalizeBattleMonsters_(battleState);
@@ -254,7 +255,7 @@ function useSkill(runId, skillId, targetId, answerPayload) {
       targetId: targetId || '',
       actionPointCost: getActionPointCostForAction_(ACTION_TYPES.SKILL, skill),
       questionId: questionResult.question.questionId,
-      question: sanitizeQuestionForClient_(questionResult.question),
+      question: sanitizeQuestionForClient_(questionResult.question, player.playerId),
       issuedAt: new Date().getTime(),
       maxMs: maxMs,
       finalDifficulty: finalDifficulty,
@@ -316,11 +317,13 @@ function useSkill(runId, skillId, targetId, answerPayload) {
   }
   var skillWasUsed = !gaveUp && battleState.player.hp > 0 && battleState.status === STATUS.BATTLE_ACTIVE;
   if (skillWasUsed) {
+    setActiveMonsterScoreContext_(battleState, pendingAction.questionId, efficiency);
     processSkillTriggers_(battleState, isCorrect ? 'onCorrect' : 'onWrong', { isCorrect: isCorrect, efficiency: efficiency });
     var blockedByPenalty = processSkillFailPenaltyAfterAnswer_(battleState, skill, isCorrect);
     if (!blockedByPenalty && battleState.player.hp > 0 && battleState.status === STATUS.BATTLE_ACTIVE) {
       applySkillEffect(battleState, Object.assign({}, skill, { targetId: pendingAction.targetId || '' }), efficiency, isCorrect);
     }
+    clearActiveMonsterScoreContext_(battleState);
   }
   if (areAllMonstersDefeated_(battleState)) {
     battleState.status = STATUS.BATTLE_VICTORY;
@@ -485,7 +488,7 @@ function applySkillEffect(battleState, skill, efficiency, isCorrect) {
     var shield = Math.max(0, Math.round((Number(skill.baseValue || 0) + Number(effectiveStats.defense || 0)) * Number(efficiency || 0)));
     battleState.player.shield = Number(battleState.player.shield || 0) + shield;
     events.push({ actor: 'player', type: ACTION_TYPES.GUARD, shield: shield, message: skill.name + '으로 방어막 ' + shield + ' 생성!' });
-    applySkillLinkedEffect_(battleState.player, skill, 'self');
+    applySkillLinkedEffect_(battleState.player, skill, 'self', battleState);
     battleState.lastMessage = skill.name + '으로 방어막을 만들었습니다.';
   } else if (skill.type === SKILL_TYPES.HEAL) {
     var heal = value;
@@ -493,12 +496,12 @@ function applySkillEffect(battleState, skill, efficiency, isCorrect) {
     events.push({ actor: 'player', type: 'heal', heal: heal, message: skill.name + '으로 ' + heal + ' 회복!' });
     battleState.lastMessage = skill.name + '으로 회복했습니다.';
   } else if (skill.type === SKILL_TYPES.BUFF) {
-    applySkillLinkedEffect_(battleState.player, skill, 'self');
+    applySkillLinkedEffect_(battleState.player, skill, 'self', battleState);
     events.push({ actor: 'player', type: 'buff', message: skill.name + ' 효과를 얻었습니다.' });
     battleState.lastMessage = skill.name + ' 효과를 얻었습니다.';
   } else if (skill.type === SKILL_TYPES.DEBUFF) {
     if (target) {
-      var appliedDebuff = applySkillLinkedEffect_(target, skill, 'enemy');
+      var appliedDebuff = applySkillLinkedEffect_(target, skill, 'enemy', battleState);
       events.push({ actor: 'player', type: 'debuff', targetMonsterId: target.instanceId || target.monsterId, message: target.name + '에게 ' + skill.name + ' 효과!' });
     }
     battleState.lastMessage = skill.name + '을 사용했습니다.';
@@ -1137,7 +1140,7 @@ function applySkillEffectRule_(battleState, skill, effectRule, targets, context)
   if (effectRule.maxStacks !== undefined) applied.maxStacks = Number(effectRule.maxStacks || 1);
 
   getTargetsForEffectRule_(battleState, effectRule, targets).forEach(function(target) {
-    var appliedEffect = applyEffect(target, applied, { source: effectRule.target || 'rule', skillId: skill.skillId });
+    var appliedEffect = applyEffect(target, applied, { source: effectRule.target || 'rule', skillId: skill.skillId, turn: battleState && battleState.turn });
     var effectType = String(appliedEffect && appliedEffect.category || applied.category || '').toLowerCase() === 'debuff' ? 'debuff' : 'buff';
     battleState.lastTurnEvents = battleState.lastTurnEvents || [];
     if (target && target.currentHp !== undefined) {
@@ -1490,9 +1493,9 @@ function tickEffectsAtTurnEnd(battleState) {
   applyTimedEffectDamage_(battleState.player, TRIGGER_TIMINGS.TURN_END, battleState, 'player');
   getAliveMonsters_(battleState).forEach(function(monster) {
     applyTimedEffectDamage_(monster, TRIGGER_TIMINGS.TURN_END, battleState, 'monster');
-    decrementTurnEffects_(monster);
+    decrementTurnEffects_(monster, battleState);
   });
-  decrementTurnEffects_(battleState.player);
+  decrementTurnEffects_(battleState.player, battleState);
   return battleState;
 }
 
@@ -1711,6 +1714,13 @@ function normalizeTargetStatusBuckets_(target) {
   if (!target) return target;
   var merged = [];
   var seen = {};
+  function fillMissingStatusFields_(targetEffect, sourceEffect) {
+    Object.keys(sourceEffect).forEach(function(key) {
+      if (targetEffect[key] === undefined || targetEffect[key] === null || targetEffect[key] === '') {
+        targetEffect[key] = sourceEffect[key];
+      }
+    });
+  }
   function addEffect(effect, fallbackCategory) {
     if (!effect) return;
     var next = Object.assign({}, effect);
@@ -1719,7 +1729,7 @@ function normalizeTargetStatusBuckets_(target) {
     next.category = normalizeEffectCategory_(next, fallbackCategory);
     var key = String(next.effectId || next.id || next.name || merged.length);
     if (seen[key]) {
-      Object.assign(seen[key], next);
+      fillMissingStatusFields_(seen[key], next);
       return;
     }
     seen[key] = next;
@@ -1756,10 +1766,9 @@ function hydrateEffectDisplayFields_(effect) {
     effect.statKey = '';
     effect.effectType = EFFECT_TYPES.CONTROL;
     effect.value = 0;
-    effect.description = '정신이 흐려진 상태입니다.';
-    return effect;
+    effect.description = effect.description || '정신이 흐려진 상태입니다.';
   }
-  if (!effect || !effect.effectId || effect.description) {
+  if (!effect || !effect.effectId) {
     return effect;
   }
   var master = findCachedRowByKey_(DB_SHEETS.EFFECTS, 'effectId', effect.effectId, 600);
@@ -1767,10 +1776,16 @@ function hydrateEffectDisplayFields_(effect) {
     return effect;
   }
   effect.name = effect.name || master.name || '';
-  effect.description = master.description || '';
+  effect.description = effect.description || master.description || '';
   effect.category = effect.category || master.category || '';
   effect.statKey = effect.statKey || master.statKey || '';
   effect.effectType = effect.effectType || master.effectType || '';
+  effect.value = effect.value !== undefined && effect.value !== '' ? effect.value : master.value;
+  effect.durationType = effect.durationType || master.durationType || '';
+  effect.durationTurns = effect.durationTurns !== undefined && effect.durationTurns !== '' ? effect.durationTurns : master.durationTurns;
+  effect.stackable = effect.stackable !== undefined && effect.stackable !== '' ? effect.stackable : master.stackable;
+  effect.maxStacks = effect.maxStacks || master.maxStacks || 1;
+  effect.triggerTiming = effect.triggerTiming || master.triggerTiming || '';
   return effect;
 }
 
@@ -1823,7 +1838,7 @@ function isRandomEnemiesSkill_(skill) {
     || targetMode === 'randomenemies' || targetMode === 'random_enemies' || targetMode === 'random-enemies';
 }
 
-function applySkillLinkedEffect_(target, skill, source) {
+function applySkillLinkedEffect_(target, skill, source, battleState) {
   var config = safeJsonParse_(skill.effectJson, {});
   applyActionPointEffectConfig_(target, config);
   if (!config.effectId) {
@@ -1860,7 +1875,7 @@ function applySkillLinkedEffect_(target, skill, source) {
   if (config.maxStacks !== undefined) {
     upgraded.maxStacks = Number(config.maxStacks || 1);
   }
-  return applyEffect(target, upgraded, { source: source, skillId: skill.skillId });
+  return applyEffect(target, upgraded, { source: source, skillId: skill.skillId, turn: battleState && battleState.turn });
 }
 
 function buildEffectInstance_(effect, source) {
@@ -1883,7 +1898,7 @@ function buildEffectInstance_(effect, source) {
 }
 
 function applyTimedEffectDamage_(target, timing, battleState, actor) {
-  return getSharedRuleEngine_().applyTimedEffectDamage(target, timing, battleState, actor);
+  return getSharedRuleEngine_().applyTimedEffectDamage(target, timing, battleState, actor, battleState && battleState.turn);
   target.effects = target.effects || [];
   target.effects.forEach(function(effect) {
     if (effect.triggerTiming !== timing || effect.statKey !== STAT_KEYS.HP || effect.effectType !== EFFECT_TYPES.FLAT || Number(effect.value || 0) >= 0) {
@@ -1907,8 +1922,8 @@ function applyTimedEffectDamage_(target, timing, battleState, actor) {
   });
 }
 
-function decrementTurnEffects_(target) {
-  return getSharedRuleEngine_().decrementTurnEffects(target);
+function decrementTurnEffects_(target, battleState) {
+  return getSharedRuleEngine_().decrementTurnEffects(target, battleState && battleState.turn);
   target.effects = (target.effects || []).map(function(effect) {
     if (effect.durationType === DURATION_TYPES.TURN) {
       effect.remainingTurns = Number(effect.remainingTurns || 0) - 1;

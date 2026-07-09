@@ -100,6 +100,9 @@ function createNewRun_(playerId) {
   ensureTableColumns_(DB_SHEETS.RUNS, DB_COLUMNS.RUNS);
   var now = new Date();
   var stats = Object.assign({}, BASE_PLAYER_STATS);
+  var startingScore = typeof calculateQuestionLikeStartingScore_ === 'function'
+    ? calculateQuestionLikeStartingScore_(playerId)
+    : 0;
   var run = {
     runId: generateId_('run'),
     playerId: playerId,
@@ -127,7 +130,7 @@ function createNewRun_(playerId) {
     endedAt: '',
     clearTimeMs: '',
     currency: 0,
-    score: 0,
+    score: Math.max(0, Math.round(Number(startingScore || 0))),
   };
 
   appendRowObject_(DB_SHEETS.RUNS, run);
@@ -296,6 +299,7 @@ function startBattle(runId) {
   var items = normalizeOwnedItems_(safeJsonParse_(run.itemsJson, []));
   var stats = calculateStatsWithItemEffects_(baseStats, items);
   var battleState = {
+    runId: run.runId,
     battleId: battleId,
     status: STATUS.BATTLE_ACTIVE,
     turn: 1,
@@ -333,6 +337,11 @@ function startBattle(runId) {
     forcedQuestionCreatorId: playerGhostSelection.questionCreatorId || '',
     pendingAction: null,
     pendingAnswerLogs: [],
+    monsterScoreState: {
+      battleId: battleId,
+      monsterScore: 0,
+      byMonsterId: {},
+    },
     usedQuestionIds: usedQuestionIds.slice(),
     lastMessage: '전투가 시작되었습니다.',
     lastTurnEvents: [],
@@ -351,6 +360,10 @@ function startBattle(runId) {
   stageState.stageId = stage.stageId;
   stageState.otherStudentQuestionShown = !!stageState.otherStudentQuestionShown;
   stageState.playerGhost = playerGhostSelection.context;
+  stageState.scoreState = stageState.scoreState || {};
+  stageState.scoreState.monsterScoreBattleId = battleId;
+  stageState.scoreState.monsterScore = 0;
+  stageState.scoreState.answerScore = 0;
   normalizeUsedQuestionIds_(stageState, battleState);
   saveStageState_(runId, stageState, battleState);
   return toClientObject_(getRunWithStageState_(runId));
@@ -382,6 +395,7 @@ function surrenderBattle(runId, authToken) {
 
   var stageState = getStageState_(run);
   var battleState = requireActiveBattle_(stageState);
+  battleState.runId = battleState.runId || run.runId;
   normalizeUsedQuestionIds_(stageState, battleState);
   normalizeBattleStateEffects_(battleState);
   normalizeBattleMonsters_(battleState);
@@ -489,7 +503,7 @@ function selectQuestionForAction(playerId, runId, actionType, difficultyBonus, a
   if (battleState.pendingAction) {
     markQuestionUsedForRun_(stageState, battleState, battleState.pendingAction.questionId);
     saveStageState_(runId, stageState, battleState);
-    return buildQuestionView_(battleState.pendingAction.question, battleState.pendingAction);
+    return buildQuestionView_(battleState.pendingAction.question, battleState.pendingAction, playerId);
   }
 
   var activeEffects = getActiveEffectsForQuestion_(battleState);
@@ -503,7 +517,7 @@ function selectQuestionForAction(playerId, runId, actionType, difficultyBonus, a
     targetId: normalizedAction === ACTION_TYPES.ATTACK ? targetId || '' : '',
     actionPointCost: actionCost,
     questionId: questionResult.question.questionId,
-    question: sanitizeQuestionForClient_(questionResult.question),
+    question: sanitizeQuestionForClient_(questionResult.question, playerId),
     issuedAt: new Date().getTime(),
     maxMs: maxMs,
     finalDifficulty: finalDifficulty,
@@ -529,7 +543,7 @@ function selectQuestionForAction(playerId, runId, actionType, difficultyBonus, a
   }
 
   saveStageState_(runId, stageState, battleState);
-  return buildQuestionView_(pendingAction.question, pendingAction);
+  return buildQuestionView_(pendingAction.question, pendingAction, playerId);
 }
 
 function submitActionAnswer(answerPayload) {
@@ -592,11 +606,13 @@ function submitActionAnswer(answerPayload) {
     }
   }
   if (!gaveUp && battleState.player.hp > 0 && battleState.status === STATUS.BATTLE_ACTIVE) {
+    setActiveMonsterScoreContext_(battleState, pendingAction.questionId, efficiency);
     if (pendingAction.actionType === ACTION_TYPES.GUARD) {
       applyGuard(battleState, efficiency);
     } else {
       applyAttack(battleState, efficiency, pendingAction.targetId || payload.targetId || '');
     }
+    clearActiveMonsterScoreContext_(battleState);
   }
   if (areAllMonstersDefeated_(battleState)) {
     battleState.status = STATUS.BATTLE_VICTORY;
@@ -622,11 +638,7 @@ function submitActionAnswer(answerPayload) {
     efficiency: efficiency,
     finalDifficulty: pendingAction.finalDifficulty,
     isOtherPlayerQuestion: pendingAction.isOtherPlayerQuestion,
-    scoreDelta: calculateAnswerScore_({
-      isCorrect: isCorrect,
-      efficiency: efficiency,
-      finalDifficulty: pendingAction.finalDifficulty,
-    }),
+    scoreDelta: 0,
   });
   if (battleState.status !== STATUS.BATTLE_ACTIVE) {
     flushQueuedBattleAnswerLogs_(battleState);
@@ -1179,18 +1191,18 @@ function applyMonsterSkillIntent_(battleState, monster, intent) {
       message: monster.name + '이 ' + skill.name + ' 사용!',
     });
   } else if (skill.type === SKILL_TYPES.DEBUFF) {
-    applyMonsterSkillEffect_(battleState.player, skill, 'player');
+    applyMonsterSkillEffect_(battleState.player, skill, 'player', battleState);
     normalizeBattleStateEffects_(battleState);
     battleState.lastTurnEvents.push({ actor: 'monster', type: 'debuff', skillId: skill.skillId, monsterId: monster.instanceId || monster.monsterId, monsterName: monster.name, damage: 0, message: monster.name + '이 ' + skill.name + ' 사용!' });
   } else if (skill.type === SKILL_TYPES.BUFF) {
-    applyMonsterSkillEffect_(monster, skill, 'monster');
+    applyMonsterSkillEffect_(monster, skill, 'monster', battleState);
     normalizeBattleStateEffects_(battleState);
     syncPrimaryMonster_(battleState);
     battleState.lastTurnEvents.push({ actor: 'monster', type: 'buff', skillId: skill.skillId, monsterId: monster.instanceId || monster.monsterId, monsterName: monster.name, damage: 0, message: monster.name + '이 ' + skill.name + ' 사용!' });
   } else if (skill.type === SKILL_TYPES.SHIELD) {
     var shield = Math.max(0, Math.round(Number(skill.baseValue || 0) + Number(monsterStats.defense || 0)));
     monster.shield = Number(monster.shield || 0) + shield;
-    applyMonsterSkillEffect_(monster, skill, 'monster');
+    applyMonsterSkillEffect_(monster, skill, 'monster', battleState);
     normalizeBattleStateEffects_(battleState);
     syncPrimaryMonster_(battleState);
     battleState.lastTurnEvents.push({ actor: 'monster', type: ACTION_TYPES.GUARD, skillId: skill.skillId, monsterId: monster.instanceId || monster.monsterId, monsterName: monster.name, shield: shield, damage: 0, message: monster.name + '이 ' + skill.name + ' 사용!' });
@@ -1205,7 +1217,7 @@ function applyMonsterSkillIntent_(battleState, monster, intent) {
   return battleState;
 }
 
-function applyMonsterSkillEffect_(target, skill, source) {
+function applyMonsterSkillEffect_(target, skill, source, battleState) {
   var config = safeJsonParse_(skill.effectJson, {});
   applyActionPointEffectConfig_(target, config);
   if (!config.effectId || Math.random() * 100 > Number(config.chance || 100)) {
@@ -1233,7 +1245,7 @@ function applyMonsterSkillEffect_(target, skill, source) {
   if (config.maxStacks !== undefined) {
     configured.maxStacks = Number(config.maxStacks || 1);
   }
-  return applyEffect(target, configured, { source: source, skillId: skill.skillId });
+  return applyEffect(target, configured, { source: source, skillId: skill.skillId, turn: battleState && battleState.turn });
 }
 
 function dealDamageToPlayer_(battleState, damage) {
@@ -1264,12 +1276,88 @@ function dealDamageToMonster_(battleState, monster, damage) {
   }, monster.effects || []);
   var totalDamage = Math.max(0, Math.round(Number(damage || 0) - Number(monsterStats.defense || 0)));
   var shieldBefore = Number(monster.shield || 0);
+  var hpBefore = Number(monster.currentHp || 0);
   var shieldDamage = Math.min(shieldBefore, totalDamage);
   var hpDamage = totalDamage - shieldDamage;
   monster.shield = Math.max(0, shieldBefore - shieldDamage);
-  monster.currentHp = Math.max(0, Number(monster.currentHp || 0) - hpDamage);
+  monster.currentHp = Math.max(0, hpBefore - hpDamage);
+  var killScore = recordMonsterScoreContribution_(battleState, monster, hpBefore, monster.currentHp, totalDamage);
   syncPrimaryMonster_(battleState);
-  return { damage: totalDamage, shieldDamage: shieldDamage, hpDamage: hpDamage };
+  return { damage: totalDamage, shieldDamage: shieldDamage, hpDamage: hpDamage, killScore: killScore };
+}
+
+function setActiveMonsterScoreContext_(battleState, questionId, efficiency) {
+  if (!battleState) return;
+  battleState.activeMonsterScoreContext = {
+    questionId: String(questionId || '').trim(),
+    efficiency: Math.max(0, Number(efficiency || 0)),
+  };
+}
+
+function clearActiveMonsterScoreContext_(battleState) {
+  if (battleState && battleState.activeMonsterScoreContext) {
+    delete battleState.activeMonsterScoreContext;
+  }
+}
+
+function recordMonsterScoreContribution_(battleState, monster, hpBefore, hpAfter, damageAmount) {
+  if (!battleState || !monster) return 0;
+  var monsterKey = String(monster.instanceId || monster.monsterId || '').trim();
+  if (!monsterKey) return 0;
+  var state = ensureMonsterScoreState_(battleState);
+  var entry = state.byMonsterId[monsterKey] || {
+    monsterId: monsterKey,
+    monsterName: monster.name || '',
+    efficiencyByQuestion: {},
+    efficiencyTotal: 0,
+    questionCount: 0,
+    scoreAwarded: 0,
+  };
+  var context = battleState.activeMonsterScoreContext || {};
+  var questionKey = String(context.questionId || '').trim();
+  var efficiency = Math.max(0, Number(context.efficiency || 0));
+  if (Number(damageAmount || 0) > 0 && questionKey && efficiency > 0 && entry.efficiencyByQuestion[questionKey] === undefined) {
+    entry.efficiencyByQuestion[questionKey] = efficiency;
+    entry.efficiencyTotal = Number(entry.efficiencyTotal || 0) + efficiency;
+    entry.questionCount = Number(entry.questionCount || 0) + 1;
+  }
+  var killScore = 0;
+  if (Number(hpBefore || 0) > 0 && Number(hpAfter || 0) <= 0 && !entry.scoreAwarded) {
+    var averageEfficiency = entry.questionCount > 0 ? Number(entry.efficiencyTotal || 0) / Number(entry.questionCount || 1) : 0;
+    killScore = calculateMonsterKillScore_(battleState.stage, averageEfficiency);
+    if (killScore > 0 && battleState.runId) {
+      awardRunScore_(battleState.runId, killScore);
+    }
+    entry.averageEfficiency = roundTo_(averageEfficiency, 3);
+    entry.scoreAwarded = killScore;
+    state.monsterScore = Number(state.monsterScore || 0) + killScore;
+  }
+  state.byMonsterId[monsterKey] = entry;
+  battleState.monsterScoreState = state;
+  return killScore;
+}
+
+function ensureMonsterScoreState_(battleState) {
+  var state = battleState.monsterScoreState || {};
+  if (state.battleId !== battleState.battleId) {
+    state = { battleId: battleState.battleId || '', monsterScore: 0, byMonsterId: {} };
+  }
+  state.byMonsterId = state.byMonsterId || {};
+  state.monsterScore = Number(state.monsterScore || 0);
+  battleState.monsterScoreState = state;
+  return state;
+}
+
+function calculateMonsterKillScore_(stage, averageEfficiency) {
+  var stageIndex = getGlobalStageIndexForScore_(stage);
+  var baseScore = 100 + (10 * stageIndex);
+  return Math.max(0, Math.round(baseScore * Math.max(0, Number(averageEfficiency || 0))));
+}
+
+function getGlobalStageIndexForScore_(stage) {
+  var floor = Math.max(1, Math.min(Number(GAME_RULES.FLOOR_COUNT || 5), Number(stage && stage.floor || 1)));
+  var stageNumber = Math.max(1, Math.min(Number(GAME_RULES.STAGES_PER_FLOOR || 5), Number(stage && stage.stage || 1)));
+  return ((floor - 1) * Number(GAME_RULES.STAGES_PER_FLOOR || 5)) + stageNumber;
 }
 
 function clearPlayerTurnShield_(battleState) {
@@ -1322,6 +1410,7 @@ function applyBossDifficultyBonus(stage, questionDifficulty) {
 function saveRunState(runId, battleState) {
   var run = requireRun_(runId);
   var stageState = getStageState_(run);
+  battleState.runId = battleState.runId || runId;
   stageState.battle = battleState;
   return saveStageState_(runId, stageState, battleState);
 }
@@ -1340,6 +1429,7 @@ function commitStageResult(stagePayload, authToken) {
   }
 
   var battleState = payload.battle || {};
+  battleState.runId = battleState.runId || run.runId;
   if (battleState.status !== STATUS.BATTLE_VICTORY && battleState.status !== STATUS.BATTLE_DEFEAT) {
     throw new Error('종료된 전투 결과만 저장할 수 있습니다.');
   }
@@ -1351,7 +1441,10 @@ function commitStageResult(stagePayload, authToken) {
   battleState.pendingAnswerLogs = [];
 
   var stageState = getStageState_(run);
+  var serverBattleState = stageState.battle || {};
   var clientStageState = payload.stageState || {};
+  mergeMonsterScoreStateForCommit_(battleState, serverBattleState, stageState.scoreState || {});
+  mergeQuestionReactionScoreStateForCommit_(battleState, serverBattleState, stageState.scoreState || {});
   normalizeUsedQuestionIds_(stageState, battleState);
   stageState.usedQuestionIds = mergeUsedQuestionIds_(stageState.usedQuestionIds, clientStageState.usedQuestionIds);
   normalizeUsedQuestionIds_(stageState, battleState);
@@ -1376,7 +1469,7 @@ function commitStageResult(stagePayload, authToken) {
 
   queuedServerAnswerLogs.forEach(function(answerPayload) {
     if (!answerScoreAlreadyAwarded) {
-      answerPayload.scoreDelta = calculateAnswerScore_(answerPayload);
+      answerPayload.scoreDelta = 0;
       answerScoreDelta += Number(answerPayload.scoreDelta || 0);
     } else {
       answerPayload.scoreDelta = 0;
@@ -1394,11 +1487,7 @@ function commitStageResult(stagePayload, authToken) {
     var maxMs = Math.max(1, Number(answerPayload.maxTimeMs || answerPayload.maxMs || 1));
     var isCorrect = isCorrectAnswer_(question, answerPayload.selectedAnswer, answerPayload.selectedChoiceIndex, answerPayload.selectedAnswerText);
     var efficiency = calculateEfficiency(isCorrect, Math.max(0, maxMs - elapsedMs), maxMs, Number(answerPayload.wrongCountAfterTimeout || 0), getItemQuestionModifiers_(battleState, question), question);
-    var scoreDelta = answerScoreAlreadyAwarded ? 0 : calculateAnswerScore_({
-      isCorrect: isCorrect,
-      efficiency: efficiency,
-      finalDifficulty: answerPayload.finalDifficulty,
-    });
+    var scoreDelta = 0;
     answerScoreDelta += scoreDelta;
     queueBattleAnswerLog_(battleState, {
       questionId: question.questionId,
@@ -1434,6 +1523,80 @@ function commitStageResult(stagePayload, authToken) {
 
   var updatedRun = saveStageState_(run.runId, stageState, battleState);
   return buildBattleView_(updatedRun, getStageState_(updatedRun));
+}
+
+function mergeMonsterScoreStateForCommit_(clientBattleState, serverBattleState, scoreState) {
+  clientBattleState = clientBattleState || {};
+  serverBattleState = serverBattleState || {};
+  scoreState = scoreState || {};
+  var battleId = String(clientBattleState.battleId || serverBattleState.battleId || '');
+  var clientState = normalizeMonsterScoreStateForMerge_(clientBattleState.monsterScoreState, battleId);
+  var serverState = normalizeMonsterScoreStateForMerge_(serverBattleState.monsterScoreState, battleId);
+  var storedState = normalizeMonsterScoreStateForMerge_({
+    battleId: scoreState.monsterScoreBattleId || battleId,
+    monsterScore: scoreState.monsterScore || 0,
+    byMonsterId: scoreState.monsterScoreDetails || {},
+  }, battleId);
+  var bestState = [clientState, serverState, storedState].reduce(function(best, candidate) {
+    if (!candidate) return best;
+    if (!best || Number(candidate.monsterScore || 0) > Number(best.monsterScore || 0)) {
+      return candidate;
+    }
+    return best;
+  }, null);
+  if (bestState && Number(bestState.monsterScore || 0) > 0) {
+    clientBattleState.monsterScoreState = bestState;
+  }
+  return clientBattleState.monsterScoreState || null;
+}
+
+function normalizeMonsterScoreStateForMerge_(state, battleId) {
+  if (!state) return null;
+  var stateBattleId = String(state.battleId || battleId || '');
+  if (battleId && stateBattleId && stateBattleId !== battleId) {
+    return null;
+  }
+  return {
+    battleId: stateBattleId || battleId || '',
+    monsterScore: Number(state.monsterScore || 0),
+    byMonsterId: state.byMonsterId || state.monsterScoreDetails || {},
+  };
+}
+
+function mergeQuestionReactionScoreStateForCommit_(clientBattleState, serverBattleState, scoreState) {
+  clientBattleState = clientBattleState || {};
+  serverBattleState = serverBattleState || {};
+  scoreState = scoreState || {};
+  var battleId = String(clientBattleState.battleId || serverBattleState.battleId || '');
+  var clientState = normalizeQuestionReactionScoreStateForMerge_(clientBattleState.questionReactionScoreState, battleId);
+  var serverState = normalizeQuestionReactionScoreStateForMerge_(serverBattleState.questionReactionScoreState, battleId);
+  var storedState = normalizeQuestionReactionScoreStateForMerge_({
+    battleId: scoreState.questionReactionScoreBattleId || battleId,
+    score: scoreState.questionReactionScore || 0,
+  }, battleId);
+  var bestState = [clientState, serverState, storedState].reduce(function(best, candidate) {
+    if (!candidate) return best;
+    if (!best || Number(candidate.score || 0) > Number(best.score || 0)) {
+      return candidate;
+    }
+    return best;
+  }, null);
+  if (bestState && Number(bestState.score || 0) > 0) {
+    clientBattleState.questionReactionScoreState = bestState;
+  }
+  return clientBattleState.questionReactionScoreState || null;
+}
+
+function normalizeQuestionReactionScoreStateForMerge_(state, battleId) {
+  if (!state) return null;
+  var stateBattleId = String(state.battleId || battleId || '');
+  if (battleId && stateBattleId && stateBattleId !== battleId) {
+    return null;
+  }
+  return {
+    battleId: stateBattleId || battleId || '',
+    score: Number(state.score || state.questionReactionScore || 0),
+  };
 }
 
 function mergeStageFallbackEvents_(serverEvents, clientEvents) {
@@ -1515,9 +1678,7 @@ function flushQueuedBattleAnswerLogs_(battleState) {
     if (!answerPayload) {
       return;
     }
-    if (answerPayload.scoreDelta === undefined || answerPayload.scoreDelta === null || answerPayload.scoreDelta === '') {
-      answerPayload.scoreDelta = calculateAnswerScore_(answerPayload);
-    }
+    answerPayload.scoreDelta = 0;
     if (answerPayload.runId) {
       scoreByRunId[answerPayload.runId] = Number(scoreByRunId[answerPayload.runId] || 0) + Number(answerPayload.scoreDelta || 0);
     }
@@ -1576,13 +1737,7 @@ function buildAnswerLog_(answerPayload) {
 }
 
 function calculateAnswerScore_(answerPayload) {
-  var payload = answerPayload || {};
-  if (!payload.isCorrect) {
-    return 0;
-  }
-  var difficulty = Math.max(GAME_RULES.MIN_DIFFICULTY, Number(payload.finalDifficulty || GAME_RULES.MIN_DIFFICULTY));
-  var efficiency = Math.max(0, Number(payload.efficiency || 0));
-  return Math.max(0, Math.round(difficulty * 100 * efficiency));
+  return 0;
 }
 
 function awardRunScore_(runId, scoreDelta) {
@@ -1771,13 +1926,13 @@ function clampClientDelay_(value, fallback, min, max) {
   return Math.max(Number(min || 0), Math.min(Number(max || number), Math.round(number)));
 }
 
-function buildQuestionView_(question, pendingAction) {
+function buildQuestionView_(question, pendingAction, playerId) {
   return toClientObject_({
     actionType: pendingAction ? pendingAction.actionType : '',
     skillId: pendingAction ? pendingAction.skillId || '' : '',
     targetId: pendingAction ? pendingAction.targetId || '' : '',
     actionPointCost: pendingAction ? Number(pendingAction.actionPointCost !== undefined && pendingAction.actionPointCost !== '' ? pendingAction.actionPointCost : getActionPointCostForAction_(pendingAction.actionType, null)) : '',
-    question: question,
+    question: hydrateQuestionReactionForClient_(question, playerId),
     maxMs: pendingAction ? pendingAction.maxMs : '',
     finalDifficulty: pendingAction ? pendingAction.finalDifficulty : '',
     maxAnswerEfficiency: pendingAction ? pendingAction.maxAnswerEfficiency || '' : '',
@@ -1813,7 +1968,7 @@ function buildBattleQuestionCache_(run, stageState, battleState) {
       var finalDifficulty = calculateFinalQuestionDifficulty(baseDifficulty, activeEffects, questionModifiers);
       var maxMs = calculateFinalQuestionTimeLimitForQuestion_(finalDifficulty, activeEffects, question, questionModifiers);
       return {
-        question: sanitizeQuestionForBattleCache_(question),
+        question: sanitizeQuestionForBattleCache_(question, run.playerId),
         maxMs: maxMs,
         finalDifficulty: finalDifficulty,
         maxAnswerEfficiency: calculateMaxAnswerEfficiency_(questionModifiers),
@@ -1876,8 +2031,8 @@ function selectQuestionCacheRows_(playerId, stage, otherStudentQuestionShown, fo
   return selected;
 }
 
-function sanitizeQuestionForBattleCache_(question) {
-  var sanitized = sanitizeQuestionForClient_(question);
+function sanitizeQuestionForBattleCache_(question, playerId) {
+  var sanitized = sanitizeQuestionForClient_(question, playerId);
   sanitized.answer = question.answer;
   sanitized.answerAliases = question.answerAliases || '[]';
   return sanitized;
@@ -1908,7 +2063,7 @@ function createPendingActionFromCachedPayload_(stageState, battleState, payload,
     targetId: targetId || payload.targetId || '',
     actionPointCost: actionPointCost,
     questionId: question.questionId,
-    question: sanitizeQuestionForClient_(question),
+    question: sanitizeQuestionForClient_(question, playerId),
     issuedAt: new Date().getTime() - Math.max(0, Number(payload.elapsedMs || 0)),
     maxMs: calculateFinalQuestionTimeLimitForQuestion_(finalDifficulty, activeEffects, question, questionModifiers),
     finalDifficulty: finalDifficulty,
@@ -2128,7 +2283,7 @@ function questionPickResult_(question, isOtherPlayerQuestion, fallbackReason) {
   };
 }
 
-function sanitizeQuestionForClient_(question) {
+function sanitizeQuestionForClient_(question, playerId) {
   return {
     questionId: question.questionId,
     type: question.type,
@@ -2145,12 +2300,54 @@ function sanitizeQuestionForClient_(question) {
     tags: question.tags,
     likeCount: Number(question.likeCount || 0),
     dislikeCount: Number(question.dislikeCount || 0),
+    myReaction: getQuestionReactionForPlayer_(question, playerId),
   };
+}
+
+function hydrateQuestionReactionForClient_(question, playerId) {
+  var clientQuestion = Object.assign({}, question || {});
+  if (!clientQuestion.questionId) {
+    return clientQuestion;
+  }
+  if (clientQuestion.myReaction === undefined || clientQuestion.myReaction === '') {
+    var sourceQuestion = question || {};
+    if (sourceQuestion.reactionJson === undefined) {
+      sourceQuestion = findCachedRowByKey_(DB_SHEETS.QUESTIONS, 'questionId', clientQuestion.questionId, 120) || sourceQuestion;
+    }
+    clientQuestion.myReaction = getQuestionReactionForPlayer_(sourceQuestion, playerId);
+  }
+  clientQuestion.likeCount = Number(clientQuestion.likeCount || 0);
+  clientQuestion.dislikeCount = Number(clientQuestion.dislikeCount || 0);
+  return clientQuestion;
+}
+
+function getQuestionReactionForPlayer_(question, playerId) {
+  var targetPlayerId = String(playerId || '').trim();
+  if (!targetPlayerId) {
+    return '';
+  }
+  var reactions = safeJsonParse_(question && question.reactionJson, {});
+  if (!reactions || Array.isArray(reactions) || typeof reactions !== 'object') {
+    return '';
+  }
+  return normalizeQuestionReaction_(reactions[targetPlayerId]);
 }
 
 function saveStageState_(runId, stageState, battleState) {
   normalizeUsedQuestionIds_(stageState, battleState);
   normalizeBattleStateEffects_(battleState);
+  battleState.runId = battleState.runId || runId;
+  if (battleState.monsterScoreState) {
+    stageState.scoreState = stageState.scoreState || {};
+    stageState.scoreState.monsterScoreBattleId = battleState.battleId || '';
+    stageState.scoreState.monsterScore = Number(battleState.monsterScoreState.monsterScore || 0);
+    stageState.scoreState.monsterScoreDetails = battleState.monsterScoreState.byMonsterId || {};
+  }
+  if (battleState.questionReactionScoreState) {
+    stageState.scoreState = stageState.scoreState || {};
+    stageState.scoreState.questionReactionScoreBattleId = battleState.questionReactionScoreState.battleId || battleState.battleId || '';
+    stageState.scoreState.questionReactionScore = Number(battleState.questionReactionScoreState.score || 0);
+  }
   var patch = {
     currentHp: battleState.player.hp,
     currentShield: battleState.player.shield,
@@ -2372,18 +2569,44 @@ function createMonstersForStage_(stage, playerGhostMonster) {
   }
 
   var monsterIds = safeJsonParse_(group.monsterIds, []);
+  if (!Array.isArray(monsterIds)) {
+    monsterIds = [];
+  }
   var weights = safeJsonParse_(group.weights, []);
+  if (!Array.isArray(weights)) {
+    weights = [];
+  }
+  var fixedMonsterIds = safeJsonParse_(group.fixedMonsterIds, []);
+  if (!Array.isArray(fixedMonsterIds)) {
+    fixedMonsterIds = [];
+  }
+  var requestedMonsterCount = Math.round(Number(group.monsterCount || 1));
+  if (!isFinite(requestedMonsterCount)) {
+    requestedMonsterCount = 1;
+  }
+  var monsterCount = Math.min(3, Math.max(1, requestedMonsterCount, monsters.length + fixedMonsterIds.length));
+
+  for (var fixedIndex = 0; fixedIndex < fixedMonsterIds.length && monsters.length < monsterCount; fixedIndex += 1) {
+    var fixedMonsterId = String(fixedMonsterIds[fixedIndex] || '').trim();
+    if (!fixedMonsterId) {
+      continue;
+    }
+    var fixedMonster = findMonsterRowById_(fixedMonsterId);
+    if (!fixedMonster) {
+      throw new Error('Fixed monster not found in group ' + stage.monsterGroupId + ': ' + fixedMonsterId);
+    }
+    monsters.push(buildBattleMonster_(fixedMonster, monsters.length));
+  }
   var monsterOptions = monsterIds.map(function(monsterId, index) {
     var monster = findMonsterRowById_(monsterId);
     return monster ? { monster: monster, weight: Number(weights[index] || 0) } : null;
   }).filter(function(option) {
     return !!option;
   });
-  if (!monsterOptions.length) {
+  if (!monsterOptions.length && monsters.length < monsterCount) {
     throw new Error('몬스터 그룹에 사용 가능한 몬스터가 없습니다: ' + stage.monsterGroupId);
   }
 
-  var monsterCount = Math.min(3, Math.max(1, Math.round(Number(group.monsterCount || 1))));
   for (var i = monsters.length; i < monsterCount; i += 1) {
     var selectedOption = pickWeighted_(monsterOptions, monsterOptions.map(function(option) { return option.weight; }));
     monsters.push(buildBattleMonster_(selectedOption.monster, i));
@@ -2506,11 +2729,19 @@ function findReplacementMonsterForLegacy_(battleState) {
 
   if (groupId) {
     var group = findCachedRowByKey_(DB_SHEETS.MONSTER_GROUPS, 'monsterGroupId', groupId, 600);
-    var monsterIds = safeJsonParse_(group && group.monsterIds, []).filter(function(monsterId) {
+    var fixedMonsterIds = safeJsonParse_(group && group.fixedMonsterIds, []);
+    var monsterIds = safeJsonParse_(group && group.monsterIds, []);
+    if (!Array.isArray(fixedMonsterIds)) {
+      fixedMonsterIds = [];
+    }
+    if (!Array.isArray(monsterIds)) {
+      monsterIds = [];
+    }
+    var candidateMonsterIds = fixedMonsterIds.concat(monsterIds).filter(function(monsterId) {
       return monsterId && monsterId !== 'monster_training_dummy';
     });
-    for (var i = 0; i < monsterIds.length; i += 1) {
-      var groupedMonster = findCachedRowByKey_(DB_SHEETS.MONSTERS, 'monsterId', monsterIds[i], 600);
+    for (var i = 0; i < candidateMonsterIds.length; i += 1) {
+      var groupedMonster = findCachedRowByKey_(DB_SHEETS.MONSTERS, 'monsterId', candidateMonsterIds[i], 600);
       if (groupedMonster) {
         return groupedMonster;
       }

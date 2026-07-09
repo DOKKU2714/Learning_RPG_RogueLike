@@ -9,6 +9,9 @@ function getCurrentUser(authToken) {
     isAdmin: isAdmin(email),
     player: toClientObject_(player),
     playerData: player ? getPlayerData(player.playerId) : null,
+    startingScoreBonus: player && typeof getQuestionLikeStartingScoreSummary_ === 'function'
+      ? getQuestionLikeStartingScoreSummary_(player.playerId)
+      : { likeCount: 0, multiplier: 5, startingScore: 0 },
     settings: getAppSettings(),
   };
 }
