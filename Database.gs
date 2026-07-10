@@ -10,6 +10,43 @@ function getSpreadsheet_() {
   return spreadsheet;
 }
 
+function getQuestionsSpreadsheetId_() {
+  var configId = String(CONFIG.QUESTIONS_SPREADSHEET_ID || '').trim();
+  if (configId) {
+    return configId;
+  }
+
+  var settingsId = getRawSettingValue_('questionsSpreadsheetId');
+  if (settingsId) {
+    return settingsId;
+  }
+
+  throw new Error('문제 전용 스프레드시트 ID가 설정되지 않았습니다.');
+}
+
+function getQuestionsSpreadsheet_() {
+  return SpreadsheetApp.openById(getQuestionsSpreadsheetId_());
+}
+
+function getRawSettingValue_(key) {
+  var targetKey = String(key || '').trim();
+  if (!targetKey) {
+    return '';
+  }
+
+  try {
+    var rows = readTable_(DB_SHEETS.SETTINGS);
+    for (var i = 0; i < rows.length; i += 1) {
+      if (String(rows[i].key || '').trim() === targetKey) {
+        return String(rows[i].value || '').trim();
+      }
+    }
+  } catch (error) {
+    return '';
+  }
+  return '';
+}
+
 function getSheet_(sheetName) {
   var sheet = getSpreadsheet_().getSheetByName(sheetName);
   if (!sheet) {
@@ -117,6 +154,7 @@ function clearTableCache_(sheetName) {
 function clearMasterTableCaches_() {
   [
     DB_SHEETS.SETTINGS,
+    DB_SHEETS.WORKBOOKS,
     DB_SHEETS.STAGES,
     DB_SHEETS.MONSTER_GROUPS,
     DB_SHEETS.MONSTERS,
@@ -124,6 +162,7 @@ function clearMasterTableCaches_() {
     DB_SHEETS.EFFECTS,
     DB_SHEETS.ITEMS,
     DB_SHEETS.REWARDS,
+    // Legacy Questions remains supported during the workbook migration.
     DB_SHEETS.QUESTIONS,
   ].forEach(clearTableCache_);
 }
@@ -137,6 +176,7 @@ function warmupGameData(authToken) {
   var startedAt = new Date().getTime();
   [
     DB_SHEETS.SETTINGS,
+    DB_SHEETS.WORKBOOKS,
     DB_SHEETS.STAGES,
     DB_SHEETS.MONSTER_GROUPS,
     DB_SHEETS.MONSTERS,
@@ -330,6 +370,14 @@ function setupDatabase() {
   });
 }
 
+function setupQuestionSpreadsheet() {
+  getQuestionsSpreadsheet_();
+  return {
+    ok: true,
+    spreadsheetId: getQuestionsSpreadsheetId_(),
+  };
+}
+
 function seedMasterData() {
   setupDatabase();
 
@@ -424,6 +472,215 @@ function rowToObject_(headers, row) {
     object[header] = row[index];
     return object;
   }, {});
+}
+
+function getDefaultWorkbookId_() {
+  return String(getRawSettingValue_('defaultWorkbookId') || '').trim();
+}
+
+function getRunWorkbookId_(run) {
+  return String(run && run.workbookId || '').trim() || getDefaultWorkbookId_();
+}
+
+function getRunWorkbookName_(run) {
+  return String(run && run.workbookName || '').trim();
+}
+
+function getWorkbooks_() {
+  ensureTableColumns_(DB_SHEETS.WORKBOOKS, DB_COLUMNS.WORKBOOKS);
+  return readTable_(DB_SHEETS.WORKBOOKS);
+}
+
+function getActiveWorkbooks_() {
+  return getWorkbooks_().filter(function(workbook) {
+    return String(workbook.status || STATUS.WORKBOOK_ACTIVE) === STATUS.WORKBOOK_ACTIVE;
+  }).sort(function(a, b) {
+    return Number(a.sortOrder || 0) - Number(b.sortOrder || 0);
+  });
+}
+
+function findWorkbookById_(workbookId) {
+  var targetWorkbookId = String(workbookId || '').trim();
+  if (!targetWorkbookId) {
+    return null;
+  }
+  return findRowByKey_(DB_SHEETS.WORKBOOKS, 'workbookId', targetWorkbookId);
+}
+
+function requireWorkbook_(workbookId) {
+  var workbook = findWorkbookById_(workbookId);
+  if (!workbook) {
+    throw new Error('문제집을 찾을 수 없습니다: ' + workbookId);
+  }
+  return workbook;
+}
+
+function buildQuestionSheetNameForWorkbook_(workbookId) {
+  var normalizedWorkbookId = String(workbookId || '').trim();
+  if (!normalizedWorkbookId) {
+    throw new Error('문제집 ID가 필요합니다.');
+  }
+  return 'Question_' + normalizedWorkbookId.replace(/[^A-Za-z0-9_]/g, '_');
+}
+
+function getWorkbookQuestionSheet_(workbookId) {
+  var workbook = requireWorkbook_(workbookId);
+  var sheetName = String(workbook.questionSheetName || '').trim() || buildQuestionSheetNameForWorkbook_(workbook.workbookId);
+  var sheet = getQuestionsSpreadsheet_().getSheetByName(sheetName);
+  if (!sheet) {
+    throw new Error('문제집 문제 시트를 찾을 수 없습니다: ' + sheetName);
+  }
+  return sheet;
+}
+
+function ensureWorkbookQuestionSheet_(workbook) {
+  workbook = workbook || {};
+  var workbookId = String(workbook.workbookId || '').trim();
+  if (!workbookId) {
+    throw new Error('문제집 ID가 필요합니다.');
+  }
+  var sheetName = String(workbook.questionSheetName || '').trim() || buildQuestionSheetNameForWorkbook_(workbookId);
+  var spreadsheet = getQuestionsSpreadsheet_();
+  var sheet = spreadsheet.getSheetByName(sheetName);
+  if (!sheet) {
+    sheet = spreadsheet.insertSheet(sheetName);
+  }
+  if (sheet.getMaxColumns() < DB_COLUMNS.QUESTIONS.length) {
+    sheet.insertColumnsAfter(sheet.getMaxColumns(), DB_COLUMNS.QUESTIONS.length - sheet.getMaxColumns());
+  }
+
+  var now = new Date();
+  var metadata = [
+    'workbookId', workbookId,
+    'workbookName', workbook.workbookName || '',
+    'subject', workbook.subject || '',
+    'status', workbook.status || STATUS.WORKBOOK_ACTIVE,
+    'updatedAt', now,
+  ];
+  sheet.getRange(1, 1, 1, metadata.length).setValues([metadata]);
+  sheet.getRange(2, 1, 1, DB_COLUMNS.QUESTIONS.length).setValues([DB_COLUMNS.QUESTIONS]);
+  sheet.setFrozenRows(2);
+  return sheet;
+}
+
+function readWorkbookQuestionTable_(workbookId) {
+  var sheet = getWorkbookQuestionSheet_(workbookId);
+  return readTableWithHeaderRow_(sheet, 2, 3);
+}
+
+function readWorkbookQuestionTableCached_(workbookId, ttlSeconds) {
+  var targetWorkbookId = String(workbookId || '').trim();
+  var ttl = Number(ttlSeconds || 120);
+  var cacheKey = 'workbookQuestions:' + targetWorkbookId;
+  try {
+    var cached = CacheService.getScriptCache().get(cacheKey);
+    if (cached) {
+      return safeJsonParse_(cached, []);
+    }
+  } catch (error) {
+    return readWorkbookQuestionTable_(targetWorkbookId);
+  }
+
+  var rows = readWorkbookQuestionTable_(targetWorkbookId);
+  try {
+    CacheService.getScriptCache().put(cacheKey, safeJsonStringify_(rows), ttl);
+  } catch (error) {
+    // Cache is an optimization only.
+  }
+  return rows;
+}
+
+function appendWorkbookQuestion_(workbookId, question) {
+  var sheet = getWorkbookQuestionSheet_(workbookId);
+  var headers = getHeaderRowAt_(sheet, 2);
+  var row = headers.map(function(header) {
+    return question[header] !== undefined ? question[header] : '';
+  });
+  sheet.appendRow(row);
+  clearWorkbookQuestionCache_(workbookId);
+  return question;
+}
+
+function findWorkbookQuestionById_(workbookId, questionId) {
+  var targetQuestionId = String(questionId || '').trim();
+  if (!targetQuestionId) {
+    return null;
+  }
+  return readWorkbookQuestionTableCached_(workbookId, 120).filter(function(question) {
+    return String(question.questionId || '').trim() === targetQuestionId;
+  })[0] || null;
+}
+
+function updateWorkbookQuestionById_(workbookId, questionId, patchObject) {
+  var sheet = getWorkbookQuestionSheet_(workbookId);
+  var headers = getHeaderRowAt_(sheet, 2);
+  var questionIdIndex = headers.indexOf('questionId');
+  if (questionIdIndex === -1) {
+    throw new Error('Question sheet header is missing questionId.');
+  }
+
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 3) {
+    return null;
+  }
+
+  var targetQuestionId = String(questionId || '').trim();
+  var values = sheet.getRange(3, questionIdIndex + 1, lastRow - 2, 1).getValues();
+  for (var i = 0; i < values.length; i += 1) {
+    if (String(values[i][0] || '').trim() !== targetQuestionId) {
+      continue;
+    }
+    var rowNumber = i + 3;
+    var currentRow = sheet.getRange(rowNumber, 1, 1, headers.length).getValues()[0];
+    var currentObject = rowToObject_(headers, currentRow);
+    var updatedObject = Object.assign({}, currentObject, patchObject || {});
+    var updatedRow = headers.map(function(header) {
+      return updatedObject[header] !== undefined ? updatedObject[header] : '';
+    });
+    sheet.getRange(rowNumber, 1, 1, headers.length).setValues([updatedRow]);
+    clearWorkbookQuestionCache_(workbookId);
+    return updatedObject;
+  }
+  return null;
+}
+
+function clearWorkbookQuestionCache_(workbookId) {
+  try {
+    CacheService.getScriptCache().remove('workbookQuestions:' + String(workbookId || '').trim());
+  } catch (error) {}
+}
+
+function readTableWithHeaderRow_(sheet, headerRowNumber, dataStartRowNumber) {
+  var lastRow = sheet.getLastRow();
+  var lastColumn = sheet.getLastColumn();
+  if (lastRow < headerRowNumber || lastColumn < 1) {
+    return [];
+  }
+
+  var headers = getHeaderRowAt_(sheet, headerRowNumber);
+  if (lastRow < dataStartRowNumber || !headers.length) {
+    return [];
+  }
+
+  var values = sheet.getRange(dataStartRowNumber, 1, lastRow - dataStartRowNumber + 1, headers.length).getValues();
+  return values.filter(function(row) {
+    return row.some(function(value) {
+      return value !== '';
+    });
+  }).map(function(row) {
+    return rowToObject_(headers, row);
+  });
+}
+
+function getHeaderRowAt_(sheet, rowNumber) {
+  var lastColumn = sheet.getLastColumn();
+  if (lastColumn < 1) {
+    return [];
+  }
+
+  return sheet.getRange(rowNumber, 1, 1, lastColumn).getValues()[0].filter(function(header) {
+    return header !== '';
+  });
 }
 
 function buildStageSeedData_() {

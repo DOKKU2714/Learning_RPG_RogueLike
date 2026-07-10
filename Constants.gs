@@ -3,6 +3,8 @@ var DB_SHEETS = Object.freeze({
   ADMINS: 'Admins',
   PLAYERS: 'Players',
   PLAYER_DATA: 'PlayerData',
+  WORKBOOKS: 'Workbooks',
+  WORKBOOK_PLAYER_DATA: 'WorkbookPlayerData',
   RUNS: 'Runs',
   PLAYER_GHOSTS: 'PlayerGhosts',
   QUESTIONS: 'Questions',
@@ -19,12 +21,14 @@ var DB_SHEETS = Object.freeze({
 });
 
 var DB_COLUMNS = Object.freeze({
-  SETTINGS: ['key', 'value', 'type', 'description', 'updatedAt'],
+  SETTINGS: ['key', 'value', 'type', 'description', 'updatedAt', 'questionsSpreadsheetId', 'defaultWorkbookId'],
   ADMINS: ['email', 'name', 'role', 'active', 'createdAt'],
-  PLAYERS: ['playerId', 'studentId', 'studentName', 'passwordHash', 'passwordSalt', 'email', 'displayName', 'avatarType', 'avatarKey', 'createdAt', 'lastLoginAt', 'isActive'],
+  PLAYERS: ['playerId', 'studentId', 'studentName', 'passwordHash', 'passwordSalt', 'email', 'displayName', 'avatarType', 'avatarKey', 'createdAt', 'lastLoginAt', 'isActive', 'role', 'approvalStatus', 'approvedBy', 'approvedAt', 'rejectedReason'],
   PLAYER_DATA: ['playerId', 'maxFloor', 'maxStage', 'bestClearTimeMs', 'totalAnswerCount', 'correctAnswerCount', 'averageAnswerTimeMs', 'currency', 'baseStatsJson', 'ownedSkillsJson', 'ownedItemsJson', 'bestScore', 'bestScoreRunId', 'bestScoreUpdatedAt', 'updatedAt'],
-  RUNS: ['runId', 'playerId', 'status', 'currentFloor', 'currentStage', 'currentHp', 'currentShield', 'statsJson', 'skillsJson', 'itemsJson', 'stageStateJson', 'startedAt', 'updatedAt', 'endedAt', 'clearTimeMs', 'currency', 'score'],
-  PLAYER_GHOSTS: ['ghostId', 'sourceRunId', 'sourcePlayerId', 'sourceDisplayName', 'sourceAvatarType', 'sourceAvatarKey', 'floor', 'stage', 'status', 'spawnedRunId', 'spawnedPlayerId', 'spawnedBattleId', 'spawnedAt', 'createdAt'],
+  WORKBOOKS: ['workbookId', 'workbookName', 'description', 'subject', 'questionSheetName', 'createdBy', 'createdByName', 'status', 'sortOrder', 'createdAt', 'updatedAt'],
+  WORKBOOK_PLAYER_DATA: ['workbookId', 'playerId', 'maxFloor', 'maxStage', 'bestClearTimeMs', 'totalAnswerCount', 'correctAnswerCount', 'averageAnswerTimeMs', 'currency', 'bestScore', 'bestScoreRunId', 'bestScoreUpdatedAt', 'updatedAt'],
+  RUNS: ['runId', 'playerId', 'status', 'currentFloor', 'currentStage', 'currentHp', 'currentShield', 'statsJson', 'skillsJson', 'itemsJson', 'stageStateJson', 'startedAt', 'updatedAt', 'endedAt', 'clearTimeMs', 'currency', 'score', 'workbookId', 'workbookName'],
+  PLAYER_GHOSTS: ['ghostId', 'sourceRunId', 'sourcePlayerId', 'sourceDisplayName', 'sourceAvatarType', 'sourceAvatarKey', 'floor', 'stage', 'status', 'spawnedRunId', 'spawnedPlayerId', 'spawnedBattleId', 'spawnedAt', 'createdAt', 'workbookId', 'workbookName'],
   QUESTIONS: ['questionId', 'type', 'prompt', 'choice1', 'choice2', 'choice3', 'choice4', 'answer', 'answerAliases', 'explanation', 'difficulty', 'creatorId', 'creatorName', 'subject', 'unit', 'tags', 'status', 'reviewComment', 'approvedBy', 'approvedAt', 'createdAt', 'updatedAt', 'correctCount', 'totalCount', 'likeCount', 'dislikeCount', 'reactionJson'],
   ANSWER_LOGS: ['answerLogId', 'questionId', 'playerId', 'creatorId', 'runId', 'battleId', 'floor', 'stage', 'actionType', 'selectedAnswer', 'isCorrect', 'elapsedMs', 'maxTimeMs', 'efficiency', 'finalDifficulty', 'isOtherPlayerQuestion', 'scoreDelta', 'createdAt'],
   STAGES: ['stageId', 'floor', 'stage', 'name', 'baseDifficulty', 'minDifficulty', 'maxDifficulty', 'monsterGroupId', 'bossMonsterId', 'rewardGroupId', 'requiredOtherQuestionCount'],
@@ -43,6 +47,8 @@ var DB_SCHEMA = Object.freeze([
   { sheetName: DB_SHEETS.ADMINS, headers: DB_COLUMNS.ADMINS },
   { sheetName: DB_SHEETS.PLAYERS, headers: DB_COLUMNS.PLAYERS },
   { sheetName: DB_SHEETS.PLAYER_DATA, headers: DB_COLUMNS.PLAYER_DATA },
+  { sheetName: DB_SHEETS.WORKBOOKS, headers: DB_COLUMNS.WORKBOOKS },
+  { sheetName: DB_SHEETS.WORKBOOK_PLAYER_DATA, headers: DB_COLUMNS.WORKBOOK_PLAYER_DATA },
   { sheetName: DB_SHEETS.RUNS, headers: DB_COLUMNS.RUNS },
   { sheetName: DB_SHEETS.PLAYER_GHOSTS, headers: DB_COLUMNS.PLAYER_GHOSTS },
   { sheetName: DB_SHEETS.QUESTIONS, headers: DB_COLUMNS.QUESTIONS },
@@ -74,6 +80,9 @@ var STATUS = Object.freeze({
   QUESTION_PENDING: 'pending',
   QUESTION_APPROVED: 'approved',
   QUESTION_REJECTED: 'rejected',
+  WORKBOOK_ACTIVE: 'active',
+  WORKBOOK_INACTIVE: 'inactive',
+  WORKBOOK_ARCHIVED: 'archived',
 });
 
 var AVATAR_TYPES = Object.freeze({
@@ -273,6 +282,8 @@ var PLAYER_GHOST_FLOOR_CONFIGS = Object.freeze({
 var MASTER_SETTINGS = Object.freeze([
   { key: 'appVersion', value: '0.5', type: 'string', description: 'Current app data version.' },
   { key: 'gameEnabled', value: 'false', type: 'boolean', description: 'Whether students can start the game.' },
+  { key: 'questionsSpreadsheetId', value: '13K3vG0XPy0OzANKUfAJ8jztmlXLyWLKa3i2VYvAibyE', type: 'string', description: 'Spreadsheet ID for workbook question sheets.' },
+  { key: 'defaultWorkbookId', value: '', type: 'string', description: 'Fallback workbook ID for legacy runs without workbookId.' },
   { key: 'floorCount', value: '5', type: 'number', description: 'Total number of floors.' },
   { key: 'stagesPerFloor', value: '5', type: 'number', description: 'Number of stages per floor.' },
   { key: 'baseQuestionTimeSec', value: '10', type: 'number', description: 'Base question time in seconds.' },

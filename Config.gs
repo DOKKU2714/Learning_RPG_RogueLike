@@ -6,6 +6,7 @@
  */
 var CONFIG = Object.freeze({
   SPREADSHEET_ID: '1FgaAkjv-2h-bBqBgC9SzmOqjLJDgyFOoqBxKwdaIUF4',
+  QUESTIONS_SPREADSHEET_ID: '13K3vG0XPy0OzANKUfAJ8jztmlXLyWLKa3i2VYvAibyE',
   TIMEZONE: 'Asia/Seoul',
   APP_VERSION: '0.5',
   ASSET_BASE_URL: 'https://dokku2714.github.io/Learning_RPG_LogueLike_Assets',

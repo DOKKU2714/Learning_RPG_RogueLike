@@ -1,6 +1,6 @@
 function getCurrentUser(authToken) {
   var email = getCurrentUserEmail_();
-  var player = authToken ? getPlayerByAuthToken_(authToken) : null;
+  var player = authToken ? normalizePlayerAccountDefaults_(getPlayerByAuthToken_(authToken)) : null;
 
   return {
     email: email,
@@ -23,6 +23,7 @@ function registerPlayer(signupPayload) {
   var studentName = normalizeStudentName_(payload.studentName);
   var password = normalizePassword_(payload.password);
   var avatarDataUrl = normalizeAvatarDataUrl_(payload.avatarDataUrl);
+  var role = normalizeAccountRole_(payload.role);
 
   if (findPlayerByStudentId_(studentId)) {
     throw new Error('이미 등록된 학번입니다. 로그인해 주세요.');
@@ -44,11 +45,20 @@ function registerPlayer(signupPayload) {
     createdAt: now,
     lastLoginAt: now,
     isActive: true,
+    role: role,
+    approvalStatus: 'pending',
+    approvedBy: '',
+    approvedAt: '',
+    rejectedReason: '',
   };
 
   appendRowObject_(DB_SHEETS.PLAYERS, player);
   ensurePlayerData_(player.playerId);
-  return buildAuthResponse_(player);
+  return {
+    ok: true,
+    approvalStatus: player.approvalStatus,
+    message: '가입 신청이 완료되었습니다. 관리자 승인 후 로그인할 수 있습니다.',
+  };
 }
 
 function loginPlayer(loginPayload) {
@@ -56,11 +66,12 @@ function loginPlayer(loginPayload) {
   var payload = loginPayload || {};
   var studentId = normalizeStudentId_(payload.studentId);
   var password = normalizePassword_(payload.password);
-  var player = findPlayerByStudentId_(studentId);
+  var player = normalizePlayerAccountDefaults_(findPlayerByStudentId_(studentId));
 
   if (!player || !isTruthy_(player.isActive)) {
     throw new Error('등록된 학번을 찾을 수 없습니다.');
   }
+  requireApprovedPlayerForLogin_(player);
   if (!verifyPassword_(password, player.passwordSalt, player.passwordHash)) {
     throw new Error('비밀번호가 올바르지 않습니다.');
   }
@@ -81,7 +92,7 @@ function logoutPlayer(authToken) {
 }
 
 function getPlayerByEmail(email) {
-  return toClientObject_(findPlayerByEmail_(email));
+  return toClientObject_(normalizePlayerAccountDefaults_(findPlayerByEmail_(email)));
 }
 
 function getPlayerData(playerId) {
@@ -108,6 +119,75 @@ function isAdmin(email) {
   return !!admin && isTruthy_(admin.active);
 }
 
+function requireAdminUser_() {
+  var email = requireCurrentUserEmail_();
+  if (!isAdmin(email)) {
+    throw new Error('관리자 권한이 필요합니다.');
+  }
+  return email;
+}
+
+function getPendingPlayerApprovals() {
+  requireAdminUser_();
+  requirePlayerAuthSchema_();
+  return readTable_(DB_SHEETS.PLAYERS).map(normalizePlayerAccountDefaults_).filter(function(player) {
+    return player.approvalStatus === 'pending';
+  }).map(function(player) {
+    return toClientObject_({
+      playerId: player.playerId,
+      studentId: player.studentId,
+      studentName: player.studentName,
+      displayName: player.displayName,
+      role: player.role,
+      approvalStatus: player.approvalStatus,
+      createdAt: player.createdAt,
+    });
+  });
+}
+
+function approvePlayerRegistration(playerId) {
+  var adminEmail = requireAdminUser_();
+  requirePlayerAuthSchema_();
+  var targetPlayerId = String(playerId || '').trim();
+  if (!targetPlayerId) {
+    throw new Error('승인할 계정을 찾을 수 없습니다.');
+  }
+  var player = findRowByKey_(DB_SHEETS.PLAYERS, 'playerId', targetPlayerId);
+  if (!player) {
+    throw new Error('승인할 계정을 찾을 수 없습니다.');
+  }
+  var updated = updateRowByKey_(DB_SHEETS.PLAYERS, 'playerId', targetPlayerId, {
+    role: normalizeAccountRole_(player.role),
+    approvalStatus: 'approved',
+    approvedBy: adminEmail,
+    approvedAt: new Date(),
+    rejectedReason: '',
+  });
+  return toClientObject_(normalizePlayerAccountDefaults_(updated));
+}
+
+function rejectPlayerRegistration(playerId, rejectedReason) {
+  var adminEmail = requireAdminUser_();
+  requirePlayerAuthSchema_();
+  var targetPlayerId = String(playerId || '').trim();
+  if (!targetPlayerId) {
+    throw new Error('반려할 계정을 찾을 수 없습니다.');
+  }
+  var player = findRowByKey_(DB_SHEETS.PLAYERS, 'playerId', targetPlayerId);
+  if (!player) {
+    throw new Error('반려할 계정을 찾을 수 없습니다.');
+  }
+  var reason = String(rejectedReason || '').trim();
+  var updated = updateRowByKey_(DB_SHEETS.PLAYERS, 'playerId', targetPlayerId, {
+    role: normalizeAccountRole_(player.role),
+    approvalStatus: 'rejected',
+    approvedBy: adminEmail,
+    approvedAt: new Date(),
+    rejectedReason: reason,
+  });
+  return toClientObject_(normalizePlayerAccountDefaults_(updated));
+}
+
 function getAppSettings() {
   return readTable_(DB_SHEETS.SETTINGS).reduce(function(settings, row) {
     settings[row.key] = coerceSettingValue_(row.value, row.type);
@@ -116,11 +196,42 @@ function getAppSettings() {
 }
 
 function getCurrentPlayer_(authToken) {
-  var player = getPlayerByAuthToken_(authToken);
+  var player = normalizePlayerAccountDefaults_(getPlayerByAuthToken_(authToken));
   if (!player) {
     throw new Error('먼저 학번과 비밀번호로 로그인해 주세요.');
   }
   return player;
+}
+
+function normalizePlayerAccountDefaults_(player) {
+  if (!player) {
+    return null;
+  }
+  return Object.assign({}, player, {
+    role: String(player.role || '').trim() || 'student',
+    approvalStatus: String(player.approvalStatus || '').trim() || 'approved',
+    approvedBy: player.approvedBy || '',
+    approvedAt: player.approvedAt || '',
+    rejectedReason: player.rejectedReason || '',
+  });
+}
+
+function requireApprovedPlayerForLogin_(player) {
+  var approvalStatus = String(player && player.approvalStatus || '').trim() || 'approved';
+  if (approvalStatus === 'approved') {
+    return;
+  }
+  if (approvalStatus === 'pending') {
+    throw new Error('관리자 승인 대기 중입니다.');
+  }
+  if (approvalStatus === 'rejected') {
+    throw new Error('가입이 반려되었습니다.');
+  }
+  throw new Error('가입 승인 상태를 확인할 수 없습니다.');
+}
+
+function normalizeAccountRole_(role) {
+  return String(role || '').trim() === 'teacher' ? 'teacher' : 'student';
 }
 
 function findPlayerByEmail_(email) {
@@ -142,6 +253,7 @@ function findPlayerByStudentId_(studentId) {
 }
 
 function requirePlayerAuthSchema_() {
+  ensureTableColumns_(DB_SHEETS.PLAYERS, DB_COLUMNS.PLAYERS);
   var headers = getHeaderRow_(getSheet_(DB_SHEETS.PLAYERS));
   var requiredHeaders = ['playerId', 'studentId', 'studentName', 'passwordHash', 'passwordSalt', 'displayName'];
   var missingHeaders = requiredHeaders.filter(function(header) {

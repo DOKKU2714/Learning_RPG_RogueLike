@@ -199,6 +199,12 @@
 
     <section id="adminPanel" class="hidden">
       <div class="panel topline">
+        <h2>가입 대기 계정</h2>
+        <button class="secondary" onclick="loadPendingPlayerApprovals()">새로고침</button>
+      </div>
+      <div id="pendingPlayerList"></div>
+
+      <div class="panel topline">
         <h2>승인 대기 문제</h2>
         <button class="secondary" onclick="loadPendingQuestions()">새로고침</button>
       </div>
@@ -228,12 +234,64 @@
           document.getElementById('deniedPanel').classList.toggle('hidden', state.isAdmin);
           document.getElementById('adminPanel').classList.toggle('hidden', !state.isAdmin);
           if (state.isAdmin) {
+            loadPendingPlayerApprovals();
             loadPendingQuestions();
             loadAdminStats();
           }
         })
         .withFailureHandler(showAdminError)
         .getCurrentUser();
+    }
+
+    function loadPendingPlayerApprovals() {
+      setAdminMessage('가입 대기 계정을 불러오는 중입니다.', 'ok');
+      google.script.run
+        .withSuccessHandler(renderPendingPlayerApprovals)
+        .withFailureHandler(showAdminError)
+        .getPendingPlayerApprovals();
+    }
+
+    function renderPendingPlayerApprovals(players) {
+      var list = document.getElementById('pendingPlayerList');
+      if (!players.length) {
+        list.innerHTML = '<section class="panel"><p class="muted">가입 대기 계정이 없습니다.</p></section>';
+        return;
+      }
+
+      list.innerHTML = players.map(function(player) {
+        var playerId = escapeHtml(player.playerId);
+        return '<article class="question-card" id="player-card-' + playerId + '">' +
+          '<div class="grid">' +
+            '<strong>이름</strong><span>' + escapeHtml(player.displayName || ((player.studentId || '') + ' ' + (player.studentName || ''))) + '</span>' +
+            '<strong>학번</strong><span>' + escapeHtml(player.studentId || '-') + '</span>' +
+            '<strong>역할</strong><span>' + escapeHtml(getRoleLabel(player.role)) + '</span>' +
+            '<strong>상태</strong><span>' + escapeHtml(player.approvalStatus || '-') + '</span>' +
+            '<strong>신청일</strong><span>' + escapeHtml(formatDateTime(player.createdAt)) + '</span>' +
+          '</div>' +
+          '<div class="actions">' +
+            '<div></div>' +
+            '<div><label for="reject-reason-' + playerId + '">반려 사유</label><textarea id="reject-reason-' + playerId + '" placeholder="반려 시 사유를 입력"></textarea></div>' +
+            '<button onclick="approvePlayerItem(\'' + escapeJs(player.playerId) + '\')">승인</button>' +
+            '<button class="danger" onclick="rejectPlayerItem(\'' + escapeJs(player.playerId) + '\')">반려</button>' +
+          '</div>' +
+        '</article>';
+      }).join('');
+    }
+
+    function approvePlayerItem(playerId) {
+      google.script.run
+        .withSuccessHandler(loadPendingPlayerApprovals)
+        .withFailureHandler(showAdminError)
+        .approvePlayerRegistration(playerId);
+    }
+
+    function rejectPlayerItem(playerId) {
+      var reasonInput = document.getElementById('reject-reason-' + playerId);
+      var reason = reasonInput ? reasonInput.value : '';
+      google.script.run
+        .withSuccessHandler(loadPendingPlayerApprovals)
+        .withFailureHandler(showAdminError)
+        .rejectPlayerRegistration(playerId, reason);
     }
 
     function loadPendingQuestions() {
@@ -385,6 +443,25 @@
 
     function formatRate(rate) {
       return Number(rate || 0).toFixed(1).replace(/\.0$/, '') + '%';
+    }
+
+    function getRoleLabel(role) {
+      return role === 'teacher' ? '교사' : '학생';
+    }
+
+    function formatDateTime(value) {
+      if (!value) {
+        return '-';
+      }
+      var date = new Date(value);
+      if (isNaN(date.getTime())) {
+        return String(value || '-');
+      }
+      return date.getFullYear() + '-' +
+        String(date.getMonth() + 1).padStart(2, '0') + '-' +
+        String(date.getDate()).padStart(2, '0') + ' ' +
+        String(date.getHours()).padStart(2, '0') + ':' +
+        String(date.getMinutes()).padStart(2, '0');
     }
 
     function formatDisplayStage(progressFloor, stage) {

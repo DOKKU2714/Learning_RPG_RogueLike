@@ -50,20 +50,24 @@ function parseDateMs_(value) {
 }
 
 function startRun(playerId, authToken) {
-  var existingRun = getActiveRun(playerId);
-  if (existingRun) {
-    return toClientObject_(existingRun);
-  }
+  return withRunStartLock_(function() {
+    validatePlayerRequest_(playerId, authToken);
+    var existingRun = getActiveRun(playerId);
+    if (existingRun) {
+      return toClientObject_(existingRun);
+    }
 
-  var check = canStartGame(playerId, authToken);
-  if (!check.canStart) {
-    throw new Error(check.reasons.join('\n'));
-  }
+    var check = canStartGame(playerId, authToken);
+    if (!check.canStart) {
+      throw new Error(check.reasons.join('\n'));
+    }
 
-  return createNewRun_(playerId);
+    return createNewRun_(playerId);
+  });
 }
 
 function getActiveRunSummary(playerId, authToken) {
+  validatePlayerRequest_(playerId, authToken);
   var existingRun = getActiveRun(playerId);
   if (existingRun) {
     return toClientObject_({
@@ -84,16 +88,36 @@ function getActiveRunSummary(playerId, authToken) {
 }
 
 function restartRun(playerId, authToken) {
-  var check = canStartGame(playerId, authToken);
-  if (!check.canStart) {
-    throw new Error(check.reasons.join('\n'));
-  }
+  return withRunStartLock_(function() {
+    validatePlayerRequest_(playerId, authToken);
+    var check = canStartGame(playerId, authToken);
+    if (!check.canStart) {
+      throw new Error(check.reasons.join('\n'));
+    }
 
-  var existingRun = getActiveRun(playerId);
-  if (existingRun) {
-    abandonActiveRun_(existingRun);
+    getActiveRunsForPlayer_(playerId).forEach(function(run) {
+      abandonActiveRun_(run);
+    });
+    return createNewRun_(playerId);
+  });
+}
+
+function validatePlayerRequest_(playerId, authToken) {
+  var player = getCurrentPlayer_(authToken);
+  if (player.playerId !== playerId) {
+    throw new Error('Invalid player request.');
   }
-  return createNewRun_(playerId);
+  return player;
+}
+
+function withRunStartLock_(callback) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(5000);
+  try {
+    return callback();
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function createNewRun_(playerId) {
@@ -134,6 +158,7 @@ function createNewRun_(playerId) {
   };
 
   appendRowObject_(DB_SHEETS.RUNS, run);
+  cacheRun_(run);
   return startBattle(run.runId);
 }
 
@@ -170,14 +195,41 @@ function abandonActiveRun_(run) {
 }
 
 function getActiveRun(playerId) {
-  var activeRun = readTable_(DB_SHEETS.RUNS).filter(function(run) {
-    return run.playerId === playerId && run.status === STATUS.RUN_ACTIVE;
-  })[0] || null;
+  var activeRun = getActiveRunsForPlayer_(playerId)[0] || null;
   if (!activeRun) {
     return null;
   }
 
-  return getCachedRun_(activeRun.runId) || cacheRun_(activeRun);
+  var cachedRun = getCachedRun_(activeRun.runId);
+  if (isCachedRunFreshForRow_(cachedRun, activeRun)) {
+    return cachedRun;
+  }
+  return cacheRun_(activeRun);
+}
+
+function getActiveRunsForPlayer_(playerId) {
+  return readTable_(DB_SHEETS.RUNS).map(function(run, index) {
+    return { run: run, index: index };
+  }).filter(function(entry) {
+    return entry.run.playerId === playerId && entry.run.status === STATUS.RUN_ACTIVE;
+  }).sort(function(a, b) {
+    return (getRunUpdatedAtMs_(b.run) - getRunUpdatedAtMs_(a.run)) || (b.index - a.index);
+  }).map(function(entry) {
+    return entry.run;
+  });
+}
+
+function getRunUpdatedAtMs_(run) {
+  return parseDateMs_(run && (run.updatedAt || run.startedAt)) || 0;
+}
+
+function isCachedRunFreshForRow_(cachedRun, sheetRun) {
+  if (!cachedRun || !sheetRun || cachedRun.status !== sheetRun.status) {
+    return false;
+  }
+  var sheetUpdatedAt = getRunUpdatedAtMs_(sheetRun);
+  var cachedUpdatedAt = getRunUpdatedAtMs_(cachedRun);
+  return !sheetUpdatedAt || cachedUpdatedAt >= sheetUpdatedAt;
 }
 
 function loadStage(stageId) {

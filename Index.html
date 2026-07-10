@@ -96,6 +96,19 @@
           <label for="avatarFile">프로필 사진</label>
           <input id="avatarFile" type="file" accept="image/png,image/jpeg,image/webp">
         </div>
+        <div id="roleField" style="grid-column:1 / -1;">
+          <label>역할</label>
+          <div style="display:flex; gap:14px; flex-wrap:wrap; align-items:center;">
+            <label style="display:inline-flex; gap:6px; align-items:center; margin:0;">
+              <input type="radio" name="accountRole" value="student" checked>
+              학생
+            </label>
+            <label style="display:inline-flex; gap:6px; align-items:center; margin:0;">
+              <input type="radio" name="accountRole" value="teacher">
+              교사
+            </label>
+          </div>
+        </div>
       </div>
 
       <div class="vertical-menu">
@@ -452,6 +465,7 @@
       document.getElementById('studentIdField').style.gridColumn = '1 / -1';
       document.getElementById('studentNameField').classList.add('hidden');
       document.getElementById('avatarField').classList.add('hidden');
+      document.getElementById('roleField').classList.add('hidden');
       document.getElementById('loginButton').classList.remove('hidden');
       document.getElementById('showRegisterButton').classList.remove('hidden');
       document.getElementById('registerButton').classList.add('hidden');
@@ -466,6 +480,7 @@
       document.getElementById('studentIdField').style.gridColumn = '';
       document.getElementById('studentNameField').classList.remove('hidden');
       document.getElementById('avatarField').classList.remove('hidden');
+      document.getElementById('roleField').classList.remove('hidden');
       document.getElementById('loginButton').classList.add('hidden');
       document.getElementById('showRegisterButton').classList.add('hidden');
       document.getElementById('registerButton').classList.remove('hidden');
@@ -480,11 +495,8 @@
         google.script.run
           .withSuccessHandler(function(response) {
             hideLoadingModal();
-            saveAuthToken(response.authToken);
-            saveCurrentState(response.user);
-            warmupGameDataSilently();
-            setRegisterMessage('회원가입되었습니다.', 'ok');
-            renderCurrentUser(response.user);
+            showLoginForm();
+            setRegisterMessage((response && response.message) || '가입 신청이 완료되었습니다. 관리자 승인 후 로그인할 수 있습니다.', 'ok');
           })
           .withFailureHandler(function(error) {
             hideLoadingModal();
@@ -688,7 +700,13 @@
         studentId: document.getElementById('studentId').value,
         studentName: document.getElementById('studentName').value,
         password: document.getElementById('password').value,
+        role: getSelectedAccountRole(),
       };
+    }
+
+    function getSelectedAccountRole() {
+      var selected = document.querySelector('input[name="accountRole"]:checked');
+      return selected && selected.value === 'teacher' ? 'teacher' : 'student';
     }
 
     function buildSignupPayload(onSuccess, onFailure) {
