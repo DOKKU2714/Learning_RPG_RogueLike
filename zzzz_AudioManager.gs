@@ -94,7 +94,7 @@ function getLearningRpgAudioManagerClientPatch_() {
     '  }\n' +
     '\n' +
     '  function isSoundEnabled(){\n' +
-    '    try { return window.localStorage.getItem(SOUND_ENABLED_KEY) !== "0"; } catch (error) { return true; }\n' +
+    '    try { return window.localStorage.getItem(SOUND_ENABLED_KEY) === "1"; } catch (error) { return false; }\n' +
     '  }\n' +
     '\n' +
     '  function fadeAudio(audio, targetVolume, durationMs, onDone){\n' +
@@ -418,6 +418,8 @@ function getLearningRpgAudioManagerClientPatch_() {
     '      playIntent(pendingIntent, 240);\n' +
     '    } else if (!isBattlePage()) {\n' +
     '      requestMainBgm();\n' +
+    '    } else {\n' +
+    '      requestBattleBgm();\n' +
     '    }\n' +
     '    syncRainAmbience(240);\n' +
     '  }\n' +

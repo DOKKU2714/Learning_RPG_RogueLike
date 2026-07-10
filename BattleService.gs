@@ -181,6 +181,7 @@ function getActiveRun(playerId) {
 }
 
 function loadStage(stageId) {
+  ensureTableColumns_(DB_SHEETS.STAGES, DB_COLUMNS.STAGES);
   var stage = findCachedRowByKey_(DB_SHEETS.STAGES, 'stageId', stageId, 600);
   if (!stage) {
     throw new Error('스테이지를 찾을 수 없습니다: ' + stageId);
@@ -191,16 +192,39 @@ function loadStage(stageId) {
 function normalizeStageDifficulty_(stage) {
   var normalized = Object.assign({}, stage || {});
   var seededBaseDifficulty = getSeededStageBaseDifficulty_(normalized);
-  var baseDifficulty = clampDifficulty_(Math.max(Number(normalized.baseDifficulty || GAME_RULES.MIN_DIFFICULTY), seededBaseDifficulty));
-  var minDifficulty = clampDifficulty_(Math.max(Number(normalized.minDifficulty || baseDifficulty), Math.max(GAME_RULES.MIN_DIFFICULTY, seededBaseDifficulty - 1)));
-  var maxDifficulty = clampDifficulty_(Math.max(Number(normalized.maxDifficulty || baseDifficulty), baseDifficulty));
+  var baseDifficulty = getStageDifficultyNumber_(normalized.baseDifficulty, seededBaseDifficulty);
+  var minDifficulty = getStageDifficultyNumber_(normalized.minDifficulty, baseDifficulty);
+  var maxDifficulty = getStageDifficultyNumber_(normalized.maxDifficulty, baseDifficulty);
   if (minDifficulty > maxDifficulty) {
     minDifficulty = maxDifficulty;
   }
   normalized.baseDifficulty = baseDifficulty;
   normalized.minDifficulty = minDifficulty;
   normalized.maxDifficulty = maxDifficulty;
+  normalized.questionDifficultyBonus = getStageDifficultyBonusNumber_(normalized.questionDifficultyBonus, 0);
   return normalized;
+}
+
+function getStageDifficultyNumber_(value, fallback) {
+  if (value === null || value === undefined || value === '') {
+    return clampDifficulty_(fallback || GAME_RULES.MIN_DIFFICULTY);
+  }
+  var number = Number(value);
+  if (!isFinite(number)) {
+    return clampDifficulty_(fallback || GAME_RULES.MIN_DIFFICULTY);
+  }
+  return clampDifficulty_(number);
+}
+
+function getStageDifficultyBonusNumber_(value, fallback) {
+  if (value === null || value === undefined || value === '') {
+    return Number(fallback || 0);
+  }
+  var number = Number(value);
+  if (!isFinite(number)) {
+    return Number(fallback || 0);
+  }
+  return Math.max(-GAME_RULES.MAX_DIFFICULTY, Math.min(GAME_RULES.MAX_DIFFICULTY, Math.round(number)));
 }
 
 function getSeededStageBaseDifficulty_(stage) {
@@ -324,6 +348,7 @@ function startBattle(runId) {
       baseDifficulty: Number(stage.baseDifficulty),
       minDifficulty: Number(stage.minDifficulty),
       maxDifficulty: Number(stage.maxDifficulty),
+      questionDifficultyBonus: Number(stage.questionDifficultyBonus || 0),
       monsterGroupId: stage.monsterGroupId || '',
       bossMonsterId: stage.bossMonsterId || '',
       bossConfig: {},
@@ -678,8 +703,9 @@ function calculateFinalQuestionDifficulty(baseDifficulty, activeEffects, questio
 
 function calculateRequiredQuestionDifficulty_(stage, difficultyBonus, activeEffects, questionModifiers) {
   var stageBase = Number(stage && stage.baseDifficulty || GAME_RULES.MIN_DIFFICULTY);
-  var bossAdjustedBase = applyBossDifficultyBonus(stage, stageBase + Number(difficultyBonus || 0));
-  return clampDifficultyToStageRange_(calculateFinalQuestionDifficulty(bossAdjustedBase, activeEffects, questionModifiers), stage);
+  var stageBonus = getStageQuestionDifficultyBonus_(stage);
+  var adjustedBase = stageBase + stageBonus + Number(difficultyBonus || 0);
+  return clampDifficultyToStageRange_(calculateFinalQuestionDifficulty(adjustedBase, activeEffects, questionModifiers), stage);
 }
 
 function clampDifficultyToStageRange_(difficulty, stage) {
@@ -1435,8 +1461,12 @@ function pickWeightedAiRow_(rows) {
   return rows[rows.length - 1];
 }
 
-function applyBossDifficultyBonus(stage, questionDifficulty) {
-  return Number(questionDifficulty || GAME_RULES.MIN_DIFFICULTY) + (stage && stage.bossMonsterId ? 1 : 0);
+function getStageQuestionDifficultyBonus_(stage) {
+  return getStageDifficultyBonusNumber_(stage && stage.questionDifficultyBonus, 0);
+}
+
+function applyStageQuestionDifficultyBonus_(stage, questionDifficulty) {
+  return Number(questionDifficulty || GAME_RULES.MIN_DIFFICULTY) + getStageQuestionDifficultyBonus_(stage);
 }
 
 function saveRunState(runId, battleState) {
@@ -2976,7 +3006,7 @@ function getStageState_(run) {
     usedQuestionIds: [],
   });
   if (!Array.isArray(stageState.usedQuestionIds)) {
-    stageState.usedQuestionIds = mergeUsedQuestionIds_(stageState.usedQuestionIds, getUsedQuestionIdsFromAnswerLogs_(run.runId));
+    stageState.usedQuestionIds = [];
   }
   normalizeUsedQuestionIds_(stageState, stageState.battle);
   return stageState;

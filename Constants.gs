@@ -28,7 +28,7 @@ var DB_COLUMNS = Object.freeze({
   PLAYER_GHOSTS: ['ghostId', 'sourceRunId', 'sourcePlayerId', 'sourceDisplayName', 'sourceAvatarType', 'sourceAvatarKey', 'floor', 'stage', 'status', 'spawnedRunId', 'spawnedPlayerId', 'spawnedBattleId', 'spawnedAt', 'createdAt'],
   QUESTIONS: ['questionId', 'type', 'prompt', 'choice1', 'choice2', 'choice3', 'choice4', 'answer', 'answerAliases', 'explanation', 'difficulty', 'creatorId', 'creatorName', 'subject', 'unit', 'tags', 'status', 'reviewComment', 'approvedBy', 'approvedAt', 'createdAt', 'updatedAt', 'correctCount', 'totalCount', 'likeCount', 'dislikeCount', 'reactionJson'],
   ANSWER_LOGS: ['answerLogId', 'questionId', 'playerId', 'creatorId', 'runId', 'battleId', 'floor', 'stage', 'actionType', 'selectedAnswer', 'isCorrect', 'elapsedMs', 'maxTimeMs', 'efficiency', 'finalDifficulty', 'isOtherPlayerQuestion', 'scoreDelta', 'createdAt'],
-  STAGES: ['stageId', 'floor', 'stage', 'name', 'baseDifficulty', 'minDifficulty', 'maxDifficulty', 'monsterGroupId', 'bossMonsterId', 'rewardGroupId', 'requiredOtherQuestionCount'],
+  STAGES: ['stageId', 'floor', 'stage', 'name', 'baseDifficulty', 'minDifficulty', 'maxDifficulty', 'questionDifficultyBonus', 'monsterGroupId', 'bossMonsterId', 'rewardGroupId', 'requiredOtherQuestionCount'],
   MONSTER_GROUPS: ['monsterGroupId', 'name', 'monsterIds', 'weights', 'monsterCount', 'fixedMonsterIds'],
   MONSTERS: ['monsterId', 'name', 'type', 'hp', 'attack', 'hpRegen', 'evasion', 'criticalRate', 'criticalDamage', 'defense', 'aiId', 'skillIds', 'description'],
   MONSTER_AI: ['aiId', 'patternName', 'actionType', 'conditionJson', 'probability', 'skillId', 'intentIcon', 'intentTextTemplate'],

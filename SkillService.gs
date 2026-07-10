@@ -274,7 +274,7 @@ function useSkill(runId, skillId, targetId, answerPayload) {
 
     var activeEffects = getActiveEffectsForQuestion_(battleState);
     var questionResult = pickQuestion_(run.playerId, battleState.stage, stageState.otherStudentQuestionShown, getForcedQuestionCreatorId_(battleState), getItemQuestionModifiers_(battleState, null), stageState.usedQuestionIds);
-    var baseDifficulty = applyBossDifficultyBonus(battleState.stage, Number(questionResult.question.difficulty || battleState.stage.baseDifficulty) + Number(skill.difficultyBonus || 0) + getSkillRuleQuestionDifficultyBonus_(skill));
+    var baseDifficulty = applyStageQuestionDifficultyBonus_(battleState.stage, Number(questionResult.question.difficulty || battleState.stage.baseDifficulty) + Number(skill.difficultyBonus || 0) + getSkillRuleQuestionDifficultyBonus_(skill));
     var questionModifiers = getItemQuestionModifiers_(battleState, questionResult.question);
     var finalDifficulty = calculateFinalQuestionDifficulty(baseDifficulty, activeEffects, questionModifiers);
     var maxMs = calculateFinalQuestionTimeLimitForQuestion_(finalDifficulty, activeEffects, questionResult.question, questionModifiers);

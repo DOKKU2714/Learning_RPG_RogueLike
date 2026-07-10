@@ -101,12 +101,17 @@
       width: auto;
       margin: 0;
     }
+
+    #loadingModal .loading-progress,
+    #loadingModal .loading-meta {
+      display: none;
+    }
   </style>
 </head>
 <body>
   <? var skipIntroOnLoad = requestParams && requestParams.skipIntro === '1'; ?>
   <section id="introScreen" class="intro-screen screen <?= skipIntroOnLoad ? '' : 'active' ?>" onclick="enterApp()">
-    <button id="introSoundToggleButton" class="sound-toggle-button menu-sound-toggle" type="button" onclick="toggleSoundEnabled(event)" aria-pressed="true" aria-label="소리 켜짐" title="소리 켜짐">
+    <button id="introSoundToggleButton" class="sound-toggle-button menu-sound-toggle sound-muted" type="button" onclick="toggleSoundEnabled(event)" aria-pressed="false" aria-label="&#49548;&#47532; &#44732;&#51664;" title="&#49548;&#47532; &#44732;&#51664;">
       <svg class="sound-icon-on" viewBox="0 0 24 24" aria-hidden="true">
         <path d="M11 5 6 9H3v6h3l5 4V5z"></path>
         <path d="M15 9a5 5 0 0 1 0 6"></path>
@@ -134,7 +139,7 @@
   </section>
 
   <main id="appScreen" class="menu-shell screen fade-in <?= skipIntroOnLoad ? 'active' : '' ?>">
-    <button id="menuSoundToggleButton" class="sound-toggle-button menu-sound-toggle" type="button" onclick="toggleSoundEnabled()" aria-pressed="true" aria-label="소리 켜짐" title="소리 켜짐">
+    <button id="menuSoundToggleButton" class="sound-toggle-button menu-sound-toggle sound-muted" type="button" onclick="toggleSoundEnabled()" aria-pressed="false" aria-label="&#49548;&#47532; &#44732;&#51664;" title="&#49548;&#47532; &#44732;&#51664;">
       <svg class="sound-icon-on" viewBox="0 0 24 24" aria-hidden="true">
         <path d="M11 5 6 9H3v6h3l5 4V5z"></path>
         <path d="M15 9a5 5 0 0 1 0 6"></path>
@@ -271,26 +276,27 @@
 
     function isSoundEnabled() {
       try {
-        return localStorage.getItem(SOUND_ENABLED_KEY) !== '0';
+        return localStorage.getItem(SOUND_ENABLED_KEY) === '1';
       } catch (error) {
-        return true;
+        return false;
       }
     }
 
-    function setSoundEnabled(enabled) {
+    function setSoundEnabled(enabled, options) {
+      options = options || {};
       try {
         localStorage.setItem(SOUND_ENABLED_KEY, enabled ? '1' : '0');
       } catch (error) {}
       syncSoundToggleButton();
       applyGlobalSoundPreference();
-      notifySoundPreferenceChanged();
+      notifySoundPreferenceChanged(options);
     }
 
     function toggleSoundEnabled(event) {
       if (event && event.stopPropagation) {
         event.stopPropagation();
       }
-      setSoundEnabled(!isSoundEnabled());
+      setSoundEnabled(!isSoundEnabled(), { userInitiated: true });
     }
 
     function syncSoundToggleButton() {
@@ -298,8 +304,8 @@
       Array.prototype.forEach.call(document.querySelectorAll('.sound-toggle-button'), function(button) {
         button.classList.toggle('sound-muted', !enabled);
         button.setAttribute('aria-pressed', enabled ? 'true' : 'false');
-        button.setAttribute('aria-label', enabled ? '소리 켜짐' : '소리 꺼짐');
-        button.title = enabled ? '소리 켜짐' : '소리 꺼짐';
+        button.setAttribute('aria-label', enabled ? '\uC18C\uB9AC \uCF1C\uC9D0' : '\uC18C\uB9AC \uAEBC\uC9D0');
+        button.title = enabled ? '\uC18C\uB9AC \uCF1C\uC9D0' : '\uC18C\uB9AC \uAEBC\uC9D0';
       });
     }
 
@@ -314,9 +320,12 @@
       });
     }
 
-    function notifySoundPreferenceChanged() {
+    function notifySoundPreferenceChanged(options) {
+      options = options || {};
       try {
-        window.dispatchEvent(new CustomEvent('learningRpgSoundPreferenceChanged', { detail: { enabled: isSoundEnabled() } }));
+        window.dispatchEvent(new CustomEvent('learningRpgSoundPreferenceChanged', {
+          detail: { enabled: isSoundEnabled(), userInitiated: !!options.userInitiated }
+        }));
       } catch (error) {}
     }
 

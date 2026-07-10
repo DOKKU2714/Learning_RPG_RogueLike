@@ -14,7 +14,7 @@
       <div id="screenDamageFlash" class="screen-damage-flash" aria-hidden="true"></div>
       <div id="turnSyncSpinner" class="turn-sync-spinner" aria-hidden="true"></div>
       <div id="turnBanner" class="turn-banner" aria-hidden="true"></div>
-      <button id="battleSoundToggleButton" class="sound-toggle-button battle-sound-toggle" type="button" onclick="toggleSoundEnabled()" aria-pressed="true" aria-label="소리 켜짐" title="소리 켜짐">
+      <button id="battleSoundToggleButton" class="sound-toggle-button battle-sound-toggle sound-muted" type="button" onclick="toggleSoundEnabled()" aria-pressed="false" aria-label="소리 꺼짐" title="소리 꺼짐">
         <svg class="sound-icon-on" viewBox="0 0 24 24" aria-hidden="true">
           <path d="M11 5 6 9H3v6h3l5 4V5z"></path>
           <path d="M15 9a5 5 0 0 1 0 6"></path>
@@ -211,6 +211,7 @@
     };
     var battleSoundCache = {};
     var activeBattleSounds = [];
+    var pendingBattleSoundKeys = [];
     var currentView = null;
     var currentQuestionView = null;
     var questionStartedAt = 0;
@@ -315,6 +316,9 @@
         syncSoundToggleButton();
         applyGlobalSoundPreference();
       }
+    });
+    ['pointerdown', 'click', 'keydown', 'touchstart'].forEach(function(eventName) {
+      document.addEventListener(eventName, flushPendingBattleSounds, { passive: true });
     });
 
     var dummyView = {
@@ -981,6 +985,12 @@
       view = view || currentView || {};
       var battle = view.battle || {};
       view.stageState = view.stageState || {};
+      var usageStageId = String(battle.stage && battle.stage.stageId || view.stageState.stageId || '');
+      if (usageStageId && view.stageState.usedQuestionStageId !== usageStageId) {
+        view.stageState.usedQuestionIds = [];
+        battle.usedQuestionIds = [];
+        view.stageState.usedQuestionStageId = usageStageId;
+      }
       view.stageState.usedQuestionIds = mergeClientQuestionIds(view.stageState.usedQuestionIds, battle.usedQuestionIds);
       battle.usedQuestionIds = view.stageState.usedQuestionIds.slice();
       return view.stageState.usedQuestionIds;
@@ -1396,12 +1406,33 @@
       audio.addEventListener('ended', function() {
         removeActiveBattleSound(audio);
       });
+      audio.addEventListener('error', function() {
+        removeActiveBattleSound(audio);
+      }, { once: true });
       var playPromise = audio.play();
       if (playPromise && playPromise.catch) {
         playPromise.catch(function() {
+          queuePendingBattleSound(soundKey);
           removeActiveBattleSound(audio);
         });
       }
+    }
+
+    function queuePendingBattleSound(soundKey) {
+      if (!soundKey || pendingBattleSoundKeys.indexOf(soundKey) !== -1) return;
+      pendingBattleSoundKeys.push(soundKey);
+      if (pendingBattleSoundKeys.length > 4) {
+        pendingBattleSoundKeys.shift();
+      }
+    }
+
+    function flushPendingBattleSounds() {
+      if (!isSoundEnabled() || !pendingBattleSoundKeys.length) return;
+      var soundKeys = pendingBattleSoundKeys.slice();
+      pendingBattleSoundKeys = [];
+      soundKeys.forEach(function(soundKey) {
+        playBattleSound(soundKey);
+      });
     }
 
     function removeActiveBattleSound(audio) {
@@ -1412,23 +1443,24 @@
 
     function isSoundEnabled() {
       try {
-        return localStorage.getItem(SOUND_ENABLED_KEY) !== '0';
+        return localStorage.getItem(SOUND_ENABLED_KEY) === '1';
       } catch (error) {
-        return true;
+        return false;
       }
     }
 
-    function setSoundEnabled(enabled) {
+    function setSoundEnabled(enabled, options) {
+      options = options || {};
       try {
         localStorage.setItem(SOUND_ENABLED_KEY, enabled ? '1' : '0');
       } catch (error) {}
       syncSoundToggleButton();
       applyGlobalSoundPreference();
-      notifySoundPreferenceChanged();
+      notifySoundPreferenceChanged(options);
     }
 
     function toggleSoundEnabled() {
-      setSoundEnabled(!isSoundEnabled());
+      setSoundEnabled(!isSoundEnabled(), { userInitiated: true });
     }
 
     function syncSoundToggleButton() {
@@ -1469,11 +1501,19 @@
         }
         return !audio.ended;
       });
+      if (enabled) {
+        flushPendingBattleSounds();
+      } else {
+        pendingBattleSoundKeys = [];
+      }
     }
 
-    function notifySoundPreferenceChanged() {
+    function notifySoundPreferenceChanged(options) {
+      options = options || {};
       try {
-        window.dispatchEvent(new CustomEvent('learningRpgSoundPreferenceChanged', { detail: { enabled: isSoundEnabled() } }));
+        window.dispatchEvent(new CustomEvent('learningRpgSoundPreferenceChanged', {
+          detail: { enabled: isSoundEnabled(), userInitiated: !!options.userInitiated }
+        }));
       } catch (error) {}
     }
 
@@ -4201,10 +4241,8 @@
     }
 
     function getSkillPreviewDamage(skill) {
-      if (!skill || !skill.previewText) return 0;
       if (String(skill.type || '').toLowerCase() !== 'damage') return 0;
-      var match = String(skill.previewText).match(/(?:Damage\s*)?(\d+)/i) || String(skill.previewText).match(/\d+/);
-      return match ? Number(match[1] || match[0] || 0) : 0;
+      return getSkillDisplayMetrics(skill).damage;
     }
 
     function buildSkillDetailDescription(skill, fallbackText) {
@@ -4327,8 +4365,8 @@
       var tagMetrics = getSkillTagBonusDisplayMetrics(rule);
       var type = String(skill && skill.type || '').toLowerCase();
       var fallbackDamage = type === 'damage' ? Math.max(0, Math.round(base + damageUpgrade + attack)) : 0;
-      var minDamage = previewRange ? previewRange.min : (formulaRange ? formulaRange.min : fallbackDamage);
-      var maxDamage = previewRange ? previewRange.max : (formulaRange ? formulaRange.max : fallbackDamage);
+      var minDamage = formulaRange ? formulaRange.min : (fallbackDamage || (previewRange ? previewRange.min : 0));
+      var maxDamage = formulaRange ? formulaRange.max : (fallbackDamage || (previewRange ? previewRange.max : 0));
       var damage = maxDamage;
       var shield = getSkillDisplayShield(skill, rule, context);
       var heal = getSkillDisplayHeal(skill, rule, context);
@@ -5297,27 +5335,28 @@
           google.script.run
             .withSuccessHandler(function(response) {
               updateLoadingModal({
-                text: '보상 적용 완료. 다음 화면을 준비하는 중...',
-                progress: 76,
-                doneStep: 1,
-                activeStep: 2,
+                text: '완료',
+                progress: 100,
+                doneStep: 2,
               });
-              logRewardDebugTimings(response);
-              hideLoadingModal();
-              rewardSelectionApplying = false;
-              rewardModal.classList.remove('active');
-              rewardModal.classList.remove('stage-clear-reward-overlay');
-              rewardModal.classList.remove('floor-rest-reward-overlay');
-              rewardModal.classList.remove('reward-applying');
-              if (response && response.cleared) {
+              window.setTimeout(function() {
+                logRewardDebugTimings(response);
+                hideLoadingModal();
+                rewardSelectionApplying = false;
+                rewardModal.classList.remove('active');
+                rewardModal.classList.remove('stage-clear-reward-overlay');
+                rewardModal.classList.remove('floor-rest-reward-overlay');
+                rewardModal.classList.remove('reward-applying');
+                if (response && response.cleared) {
+                  handleRewardSelectionResponse(response);
+                  return;
+                }
+                if (shouldShowScoreModal(response && response.scoreSummary)) {
+                  showScoreModal(response.scoreSummary, response);
+                  return;
+                }
                 handleRewardSelectionResponse(response);
-                return;
-              }
-              if (shouldShowScoreModal(response && response.scoreSummary)) {
-                showScoreModal(response.scoreSummary, response);
-                return;
-              }
-              handleRewardSelectionResponse(response);
+              }, 1000);
             })
             .withFailureHandler(function(error) {
               hideLoadingModal();
@@ -5366,6 +5405,12 @@
         ' / 이동 ' + formatMsShort(timings.stageMovedMs),
         { instant: true }
       );
+      if (Array.isArray(timings.steps) && timings.steps.length) {
+        var detail = timings.steps.map(function(step) {
+          return step.label + ' ' + formatMsShort(step.deltaMs);
+        }).join(' / ');
+        pushLog('보상 처리 상세: ' + detail, { instant: true });
+      }
     }
 
     function formatMsShort(ms) {
@@ -5640,9 +5685,11 @@
             progress: 100,
             doneStep: 2,
           });
-          pushLog('다음 전투 로딩 시간: ' + formatMsShort(performance.now() - nextBattleLoadStartedAt), { instant: true });
-          hideLoadingModal();
-          startBattleEntrance();
+          window.setTimeout(function() {
+            pushLog('다음 전투 로딩 시간: ' + formatMsShort(performance.now() - nextBattleLoadStartedAt), { instant: true });
+            hideLoadingModal();
+            startBattleEntrance();
+          }, 1000);
         })
         .withFailureHandler(function(error) {
           hideLoadingModal();
