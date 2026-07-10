@@ -43,7 +43,7 @@ function registerPlayer(signupPayload) {
     avatarType: avatarDataUrl ? AVATAR_TYPES.PHOTO : AVATAR_TYPES.INITIAL,
     avatarKey: avatarDataUrl || studentName.charAt(0) || '?',
     createdAt: now,
-    lastLoginAt: now,
+    lastLoginAt: '',
     isActive: true,
     role: role,
     approvalStatus: 'pending',
@@ -167,7 +167,7 @@ function approvePlayerRegistration(playerId) {
 }
 
 function rejectPlayerRegistration(playerId, rejectedReason) {
-  var adminEmail = requireAdminUser_();
+  requireAdminUser_();
   requirePlayerAuthSchema_();
   var targetPlayerId = String(playerId || '').trim();
   if (!targetPlayerId) {
@@ -181,8 +181,8 @@ function rejectPlayerRegistration(playerId, rejectedReason) {
   var updated = updateRowByKey_(DB_SHEETS.PLAYERS, 'playerId', targetPlayerId, {
     role: normalizeAccountRole_(player.role),
     approvalStatus: 'rejected',
-    approvedBy: adminEmail,
-    approvedAt: new Date(),
+    approvedBy: '',
+    approvedAt: '',
     rejectedReason: reason,
   });
   return toClientObject_(normalizePlayerAccountDefaults_(updated));
