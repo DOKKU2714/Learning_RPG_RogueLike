@@ -2,6 +2,14 @@
   <div class="loading-box" role="status" aria-live="polite">
     <div class="spinner" aria-hidden="true"></div>
     <h2 id="loadingTitle" class="rpg-title">로딩 중...</h2>
-    <p id="loadingText" class="muted" style="text-align:center;">데이터를 불러오는 중...</p>
+    <p id="loadingText" class="muted loading-text">데이터를 불러오는 중...</p>
+    <div class="loading-progress" aria-hidden="true">
+      <span id="loadingProgressFill"></span>
+    </div>
+    <div class="loading-meta">
+      <span id="loadingProgressText">0%</span>
+      <span id="loadingElapsedText">0.0s</span>
+    </div>
+    <ol id="loadingSteps" class="loading-steps hidden"></ol>
   </div>
 </div>

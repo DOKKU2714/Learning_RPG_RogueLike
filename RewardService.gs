@@ -317,10 +317,46 @@ function previewFloorRestHeal_(run, battle) {
 }
 
 function selectReward(runId, rewardId, authToken, rewardView) {
+  var timingStartedAt = new Date().getTime();
+  var timingMarks = {};
+  function markTiming(label) {
+    timingMarks[label] = new Date().getTime() - timingStartedAt;
+  }
+  function buildTimingSteps() {
+    var order = [
+      ['columnsChecked', 'columns'],
+      ['runLoaded', 'run'],
+      ['ownerChecked', 'owner'],
+      ['rewardResolved', 'reward'],
+      ['currencyGranted', 'currency'],
+      ['rewardApplied', 'apply'],
+      ['scoreAwarded', 'score'],
+      ['stageMoved', 'moveStage'],
+      ['runUpdated', 'saveRun'],
+      ['progressUpdated', 'progress'],
+    ];
+    var previous = 0;
+    return order.filter(function(entry) {
+      return timingMarks[entry[0]] !== undefined;
+    }).map(function(entry) {
+      var elapsed = Number(timingMarks[entry[0]] || 0);
+      var step = {
+        key: entry[0],
+        label: entry[1],
+        elapsedMs: elapsed,
+        deltaMs: Math.max(0, elapsed - previous),
+      };
+      previous = elapsed;
+      return step;
+    });
+  }
   ensureTableColumns_(DB_SHEETS.RUNS, DB_COLUMNS.RUNS);
   ensureTableColumns_(DB_SHEETS.PLAYER_DATA, DB_COLUMNS.PLAYER_DATA);
+  markTiming('columnsChecked');
   var run = requireRun_(runId);
+  markTiming('runLoaded');
   requireRewardRunOwner_(run, authToken);
+  markTiming('ownerChecked');
   if (run.status !== STATUS.RUN_ACTIVE) {
     throw new Error('진행 중인 런에서만 보상을 선택할 수 있습니다.');
   }
@@ -369,15 +405,23 @@ function selectReward(runId, rewardId, authToken, rewardView) {
     throw new Error('보상 후보에 없는 보상입니다.');
   }
 
+  markTiming('rewardResolved');
+
   var isRestReward = reward.type === REWARD_TYPES.REST;
   var appliedReward = reward.type === 'rewardClaim' && reward.claimReward ? reward.claimReward : reward;
+  var currencyDelta = 0;
+  var nextRunCurrency = Number(run.currency || 0);
   if (!isRestReward && !rewardState.currencyGranted) {
-    var currencyResult = grantCurrencyForRun_(run, stageState, rewardState.rewardGroupId, rewardState.currencyAmount);
+    var currencyResult = calculateCurrencyRewardForRun_(run, stageState, rewardState.rewardGroupId, rewardState.currencyAmount);
     rewardState.currencyGranted = true;
     rewardState.currencyAmount = currencyResult.amount;
+    currencyDelta = Number(currencyResult.delta || 0);
+    nextRunCurrency = Number(currencyResult.total || nextRunCurrency);
   } else if (isRestReward) {
     rewardState.currencyAmount = 0;
   }
+
+  markTiming('currencyGranted');
 
   var runState = {
     run: run,
@@ -402,23 +446,54 @@ function selectReward(runId, rewardId, authToken, rewardView) {
   } else if (appliedReward.type === REWARD_TYPES.REST) {
     applyRestReward_(runState, appliedReward);
   }
+  markTiming('rewardApplied');
 
   rewardState.selectedRewardId = reward.rewardId;
   rewardState.selectedAt = new Date().toISOString();
   stageState.reward = rewardState;
-  updateRowByKey_(DB_SHEETS.RUNS, 'runId', runId, {
+  var runRewardPatch = {
     currentHp: Math.min(Number(calculateStatsWithItemEffects_(runState.stats, runState.items).hp || BASE_PLAYER_STATS.hp), Number(runState.currentHp || 0)),
+    currency: nextRunCurrency,
     statsJson: safeJsonStringify_(runState.stats),
     skillsJson: safeJsonStringify_(runState.skills),
     itemsJson: safeJsonStringify_(runState.items),
     stageStateJson: safeJsonStringify_(stageState),
-    updatedAt: new Date(),
+  };
+  var runAfterReward = Object.assign({}, run, runRewardPatch);
+
+  var scoreResult = calculateStageClearScoreForReward_(runAfterReward, stageState);
+  var scoreSummary = scoreResult.summary;
+  markTiming('scoreAwarded');
+  var runAfterScore = Object.assign({}, runAfterReward, {
+    score: Number(runAfterReward.score || 0) + Number(scoreResult.runScoreDelta || 0),
+    stageStateJson: safeJsonStringify_(stageState),
   });
 
-  var scoreSummary = awardStageClearScoreForReward_(requireRun_(runId), stageState);
-
-  var movedRun = moveToNextStageForRun_(requireRun_(runId));
-  updatePlayerProgressFromRun_(requireRun_(runId));
+  var moveResult = buildNextStageMoveForRun_(runAfterScore, stageState);
+  markTiming('stageMoved');
+  var movedRun = updateRowByKey_(DB_SHEETS.RUNS, 'runId', runId, Object.assign(
+    {},
+    runRewardPatch,
+    {
+      score: Number(runAfterScore.score || 0),
+    },
+    moveResult.patch,
+    {
+      updatedAt: new Date(),
+    }
+  ));
+  markTiming('runUpdated');
+  updatePlayerProgressFromRun_(movedRun, currencyDelta);
+  markTiming('progressUpdated');
+  var debugTimings = {
+    rewardAppliedMs: Number(timingMarks.rewardApplied || 0),
+    runUpdatedMs: Number(timingMarks.runUpdated || 0),
+    scoreAwardedMs: Number(timingMarks.scoreAwarded || 0),
+    stageMovedMs: Number(timingMarks.stageMoved || 0),
+    progressUpdatedMs: Number(timingMarks.progressUpdated || 0),
+    totalMs: new Date().getTime() - timingStartedAt,
+    steps: buildTimingSteps(),
+  };
   if (movedRun.status === STATUS.RUN_CLEARED) {
     return {
       cleared: true,
@@ -426,6 +501,7 @@ function selectReward(runId, rewardId, authToken, rewardView) {
       selectedReward: appliedReward,
       currencyAmount: isRestReward ? 0 : rewardState.currencyAmount,
       scoreSummary: scoreSummary,
+      debugTimings: debugTimings,
     };
   }
 
@@ -434,20 +510,50 @@ function selectReward(runId, rewardId, authToken, rewardView) {
   if (isFloorRestStage_(movedStage)) {
     return Object.assign(buildFloorRestRewardViewForRun_(movedRun, movedStageState), {
       scoreSummary: scoreSummary,
+      debugTimings: debugTimings,
     });
   }
 
-  startBattle(runId);
-  var nextRun = requireRun_(runId);
-  return Object.assign(buildBattleView_(nextRun, getStageState_(nextRun)), {
+  return {
+    nextBattlePending: true,
+    runId: runId,
+    run: toClientObject_(movedRun),
     rewardSelected: true,
     selectedReward: appliedReward,
     currencyAmount: isRestReward ? 0 : rewardState.currencyAmount,
     scoreSummary: scoreSummary,
-  });
+    debugTimings: debugTimings,
+  };
+}
+
+function prepareNextBattleAfterReward(runId, authToken) {
+  var run = requireRun_(runId);
+  requireRewardRunOwner_(run, authToken);
+  if (run.status !== STATUS.RUN_ACTIVE) {
+    throw new Error('진행 중인 런만 전투를 준비할 수 있습니다.');
+  }
+
+  var stageState = getStageState_(run);
+  if (stageState.battle && stageState.battle.status === STATUS.BATTLE_ACTIVE) {
+    return buildBattleView_(run, stageState);
+  }
+  return startBattle(run.runId);
 }
 
 function awardStageClearScoreForReward_(run, stageState) {
+  var result = calculateStageClearScoreForReward_(run, stageState);
+  if (Number(result.runScoreDelta || 0) > 0 || result.stageStateChanged) {
+    var updatedRun = updateRowByKey_(DB_SHEETS.RUNS, 'runId', run.runId, {
+      score: Number(run.score || 0) + Number(result.runScoreDelta || 0),
+      stageStateJson: safeJsonStringify_(result.stageState),
+      updatedAt: new Date(),
+    });
+    result.summary.totalScore = Number(updatedRun && updatedRun.score || result.summary.totalScore || 0);
+  }
+  return result.summary;
+}
+
+function calculateStageClearScoreForReward_(run, stageState) {
   stageState = stageState || getStageState_(run);
   var rewardState = stageState.reward || {};
   var battleState = stageState.battle || {};
@@ -462,15 +568,20 @@ function awardStageClearScoreForReward_(run, stageState) {
     ? Number(scoreState.questionReactionScore || 0)
     : Number(battleState.questionReactionScoreState && battleState.questionReactionScoreState.score || 0);
   if (isFloorRestReward || !battleId || scoreState.stageScoreBattleId === battleId) {
-    return buildStageScoreSummary_(run, {
-      answerScore: 0,
-      monsterScore: monsterScore,
-      questionReactionScore: questionReactionScore,
-      stageScore: 0,
-      clearBonus: 0,
-      scoreDelta: 0,
-      alreadyAwarded: scoreState.stageScoreBattleId === battleId,
-    });
+    return {
+      runScoreDelta: 0,
+      stageState: stageState,
+      stageStateChanged: false,
+      summary: buildStageScoreSummary_(run, {
+        answerScore: 0,
+        monsterScore: monsterScore,
+        questionReactionScore: questionReactionScore,
+        stageScore: 0,
+        clearBonus: 0,
+        scoreDelta: 0,
+        alreadyAwarded: scoreState.stageScoreBattleId === battleId,
+      }),
+    };
   }
 
   var stageScore = calculateStageClearScore_(battleState.stage || {
@@ -483,7 +594,6 @@ function awardStageClearScoreForReward_(run, stageState) {
   });
   var clearBonus = isFinalStageForScore_(battleState.stage || run) ? 20000 : 0;
   var scoreDelta = stageScore + floorClearScore.floorScore + clearBonus;
-  var awardResult = awardRunScore_(run.runId, scoreDelta);
   scoreState.stageScoreBattleId = battleId;
   scoreState.stageScore = stageScore;
   scoreState.floorBaseScore = floorClearScore.baseScore;
@@ -494,12 +604,14 @@ function awardStageClearScoreForReward_(run, stageState) {
   scoreState.clearBonus = clearBonus;
   scoreState.stageScoreAwardedAt = new Date().toISOString();
   stageState.scoreState = scoreState;
-  updateRowByKey_(DB_SHEETS.RUNS, 'runId', run.runId, {
-    stageStateJson: safeJsonStringify_(stageState),
-    updatedAt: new Date(),
-  });
-  return buildStageScoreSummary_(awardResult.run, {
-    previousScore: Math.max(0, Number(awardResult.previousScore || 0) - monsterScore - questionReactionScore),
+  return {
+    runScoreDelta: scoreDelta,
+    stageState: stageState,
+    stageStateChanged: true,
+    summary: buildStageScoreSummary_(Object.assign({}, run, {
+      score: Number(run.score || 0) + scoreDelta,
+    }), {
+    previousScore: Math.max(0, Number(run.score || 0) - monsterScore - questionReactionScore),
     answerScore: 0,
     monsterScore: monsterScore,
     questionReactionScore: questionReactionScore,
@@ -512,8 +624,9 @@ function awardStageClearScoreForReward_(run, stageState) {
     floorSpeedMultiplier: floorClearScore.speedMultiplier,
     clearBonus: clearBonus,
     scoreDelta: monsterScore + questionReactionScore + scoreDelta,
-    totalScore: Number(awardResult.totalScore || 0),
-  });
+    totalScore: Number(run.score || 0) + scoreDelta,
+  }),
+  };
 }
 
 function calculateStageClearScore_(stage) {
@@ -680,9 +793,35 @@ function grantStageClearRegenForRun_(run, stageState) {
 
 function grantCurrencyForRun_(run, stageState, rewardGroupId, fixedAmount) {
   var runId = run.runId;
+  var currencyResult = calculateCurrencyRewardForRun_(run, stageState, rewardGroupId, fixedAmount);
+  if (Number(currencyResult.delta || 0) <= 0) {
+    return currencyResult;
+  }
+  updateRowByKey_(DB_SHEETS.RUNS, 'runId', runId, {
+    currency: currencyResult.total,
+    stageStateJson: safeJsonStringify_(stageState),
+    updatedAt: new Date(),
+  });
+
+  var playerData = getPlayerData_(run.playerId);
+  if (playerData) {
+    updateRowByKey_(DB_SHEETS.PLAYER_DATA, 'playerId', run.playerId, {
+      currency: Number(playerData.currency || 0) + Number(currencyResult.delta || 0),
+      updatedAt: new Date(),
+    });
+  }
+
+  return currencyResult;
+}
+
+function calculateCurrencyRewardForRun_(run, stageState, rewardGroupId, fixedAmount) {
   var rewardState = stageState.reward || {};
   if (rewardState.rewardGroupId === rewardGroupId && rewardState.currencyGranted) {
-    return { amount: Number(rewardState.currencyAmount || 0), total: Number(run.currency || 0) };
+    return {
+      amount: Number(rewardState.currencyAmount || 0),
+      delta: 0,
+      total: Number(run.currency || 0),
+    };
   }
 
   var config = getRewardConfig_();
@@ -691,26 +830,15 @@ function grantCurrencyForRun_(run, stageState, rewardGroupId, fixedAmount) {
   var amount = fixedAmount !== undefined && fixedAmount !== ''
     ? Math.max(0, Math.round(Number(fixedAmount || 0)))
     : randomInt_(Math.min(min, max), Math.max(min, max));
-  var nextRunCurrency = Number(run.currency || 0) + amount;
   rewardState.rewardGroupId = rewardGroupId;
   rewardState.currencyGranted = true;
   rewardState.currencyAmount = amount;
   stageState.reward = rewardState;
-  updateRowByKey_(DB_SHEETS.RUNS, 'runId', runId, {
-    currency: nextRunCurrency,
-    stageStateJson: safeJsonStringify_(stageState),
-    updatedAt: new Date(),
-  });
-
-  var playerData = getPlayerData_(run.playerId);
-  if (playerData) {
-    updateRowByKey_(DB_SHEETS.PLAYER_DATA, 'playerId', run.playerId, {
-      currency: Number(playerData.currency || 0) + amount,
-      updatedAt: new Date(),
-    });
-  }
-
-  return { amount: amount, total: nextRunCurrency };
+  return {
+    amount: amount,
+    delta: amount,
+    total: Number(run.currency || 0) + amount,
+  };
 }
 
 function applyStatReward(runState, reward) {
@@ -796,17 +924,24 @@ function moveToNextStage(runId, authToken) {
 }
 
 function moveToNextStageForRun_(run) {
+  var result = buildNextStageMoveForRun_(run);
+  return updateRowByKey_(DB_SHEETS.RUNS, 'runId', run.runId, Object.assign({}, result.patch, {
+    updatedAt: new Date(),
+  }));
+}
+
+function buildNextStageMoveForRun_(run, stageState) {
   var runId = run.runId;
   var floor = Number(run.currentFloor || 1);
   var stage = Number(run.currentStage || 1);
   var now = new Date();
-  var stageState = getStageState_(run);
+  stageState = stageState || getStageState_(run);
   var usedQuestionIds = normalizeUsedQuestionIds_(stageState, stageState.battle).slice();
   var scoreState = stageState.scoreState || {};
 
   if (floor >= GAME_RULES.FLOOR_COUNT && stage >= GAME_RULES.STAGES_PER_FLOOR) {
     var startedAt = run.startedAt ? new Date(run.startedAt).getTime() : now.getTime();
-    return updateRowByKey_(DB_SHEETS.RUNS, 'runId', runId, {
+    var clearPatch = {
       status: STATUS.RUN_CLEARED,
       endedAt: now,
       clearTimeMs: Math.max(0, now.getTime() - startedAt),
@@ -816,8 +951,11 @@ function moveToNextStageForRun_(run) {
         usedQuestionIds: usedQuestionIds,
         scoreState: scoreState,
       }),
-      updatedAt: now,
-    });
+    };
+    return {
+      patch: clearPatch,
+      run: Object.assign({}, run, clearPatch),
+    };
   }
 
   var nextFloor = floor;
@@ -833,7 +971,7 @@ function moveToNextStageForRun_(run) {
     scoreState.floorStartedAtByFloor[String(nextFloor)] = now.toISOString();
   }
 
-  return updateRowByKey_(DB_SHEETS.RUNS, 'runId', runId, {
+  var patch = {
     currentFloor: nextFloor,
     currentStage: nextStage,
     currentShield: 0,
@@ -841,11 +979,15 @@ function moveToNextStageForRun_(run) {
       stageId: buildStageId_(nextFloor, nextStage),
       otherStudentQuestionShown: false,
       fallbackEvents: [],
-      usedQuestionIds: usedQuestionIds,
+      usedQuestionIds: [],
+      usedQuestionStageId: buildStageId_(nextFloor, nextStage),
       scoreState: scoreState,
     }),
-    updatedAt: now,
-  });
+  };
+  return {
+    patch: patch,
+    run: Object.assign({}, run, patch),
+  };
 }
 
 function updatePlayerProgressFromRun(runId, authToken) {
@@ -854,13 +996,19 @@ function updatePlayerProgressFromRun(runId, authToken) {
   return updatePlayerProgressFromRun_(run);
 }
 
-function updatePlayerProgressFromRun_(run) {
+function updatePlayerProgressFromRun_(run, currencyDelta) {
   ensureTableColumns_(DB_SHEETS.PLAYER_DATA, DB_COLUMNS.PLAYER_DATA);
   var playerData = getPlayerData_(run.playerId) || ensurePlayerData_(run.playerId);
+  var patch = buildPlayerProgressPatch_(run, playerData, currencyDelta);
+  return updateRowByKey_(DB_SHEETS.PLAYER_DATA, 'playerId', run.playerId, patch);
+}
+
+function buildPlayerProgressPatch_(run, playerData, currencyDelta) {
+  playerData = playerData || {};
   var currentBestIndex = (Number(playerData.maxFloor || 1) * 100) + Number(playerData.maxStage || 1);
   var runIndex = (Number(run.currentFloor || 1) * 100) + Number(run.currentStage || 1);
   var patch = {
-    currency: Number(playerData.currency || 0),
+    currency: Number(playerData.currency || 0) + Math.max(0, Math.round(Number(currencyDelta || 0))),
     updatedAt: new Date(),
   };
 
@@ -884,7 +1032,7 @@ function updatePlayerProgressFromRun_(run) {
     patch.bestScoreUpdatedAt = new Date();
   }
 
-  return updateRowByKey_(DB_SHEETS.PLAYER_DATA, 'playerId', run.playerId, patch);
+  return patch;
 }
 
 function pickRewardChoices_(rewardGroupId, floor, ownedSkills, ownedItems) {
@@ -1236,6 +1384,7 @@ function buildRewardSkillDetail_(reward, battleState) {
     target: hydrated.target,
     level: hydrated.level,
     baseValue: Number(hydrated.baseValue || 0),
+    hitCount: Number(hydrated.hitCount || 1),
     cooldown: hydrated.cooldown || '',
     cooldownText: buildSkillCooldownText_(hydrated),
     useLimitText: buildSkillUseLimitText_(hydrated, previewBattleState),
@@ -1246,6 +1395,8 @@ function buildRewardSkillDetail_(reward, battleState) {
     tags: hydrated.tags,
     description: hydrated.description,
     effectJson: hydrated.effectJson || '',
+    upgradeJson: hydrated.upgradeJson || '{}',
+    effectDetails: buildSkillEffectDetails_(hydrated),
     previewText: buildSkillPreviewText_(hydrated, previewBattleState),
   };
 }

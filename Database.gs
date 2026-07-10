@@ -164,6 +164,7 @@ function clearMasterTableCaches_() {
     DB_SHEETS.REWARDS,
     // Legacy Questions remains supported during the workbook migration.
     DB_SHEETS.QUESTIONS,
+    DB_SHEETS.NOTICES,
   ].forEach(clearTableCache_);
 }
 
@@ -186,6 +187,7 @@ function warmupGameData(authToken) {
     DB_SHEETS.ITEMS,
     DB_SHEETS.REWARDS,
     DB_SHEETS.QUESTIONS,
+    DB_SHEETS.NOTICES,
   ].forEach(function(sheetName) {
     readTableCached_(sheetName, 1800);
   });
@@ -700,6 +702,7 @@ function buildStageSeedData_() {
         baseDifficulty: baseDifficulty,
         minDifficulty: Math.max(GAME_RULES.MIN_DIFFICULTY, baseDifficulty - 1),
         maxDifficulty: Math.min(GAME_RULES.MAX_DIFFICULTY, baseDifficulty + 1),
+        questionDifficultyBonus: 0,
         monsterGroupId: 'group_floor_' + floor,
         bossMonsterId: isBossStage ? 'boss_floor_' + floor : '',
         rewardGroupId: 'reward_group_default',
@@ -715,6 +718,7 @@ function buildStageSeedData_() {
       baseDifficulty: GAME_RULES.MIN_DIFFICULTY,
       minDifficulty: GAME_RULES.MIN_DIFFICULTY,
       maxDifficulty: GAME_RULES.MIN_DIFFICULTY,
+      questionDifficultyBonus: 0,
       monsterGroupId: '',
       bossMonsterId: '',
       rewardGroupId: 'reward_group_default',

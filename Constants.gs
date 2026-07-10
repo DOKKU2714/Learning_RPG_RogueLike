@@ -18,6 +18,7 @@ var DB_SHEETS = Object.freeze({
   ITEMS: 'Items',
   REWARDS: 'Rewards',
   BATTLE_LOGS: 'BattleLogs',
+  NOTICES: 'Notices',
 });
 
 var DB_COLUMNS = Object.freeze({
@@ -31,7 +32,7 @@ var DB_COLUMNS = Object.freeze({
   PLAYER_GHOSTS: ['ghostId', 'sourceRunId', 'sourcePlayerId', 'sourceDisplayName', 'sourceAvatarType', 'sourceAvatarKey', 'floor', 'stage', 'status', 'spawnedRunId', 'spawnedPlayerId', 'spawnedBattleId', 'spawnedAt', 'createdAt', 'workbookId', 'workbookName'],
   QUESTIONS: ['questionId', 'type', 'prompt', 'choice1', 'choice2', 'choice3', 'choice4', 'answer', 'answerAliases', 'explanation', 'difficulty', 'creatorId', 'creatorName', 'subject', 'unit', 'tags', 'status', 'reviewComment', 'approvedBy', 'approvedAt', 'createdAt', 'updatedAt', 'correctCount', 'totalCount', 'likeCount', 'dislikeCount', 'reactionJson'],
   ANSWER_LOGS: ['answerLogId', 'questionId', 'playerId', 'creatorId', 'runId', 'battleId', 'floor', 'stage', 'actionType', 'selectedAnswer', 'isCorrect', 'elapsedMs', 'maxTimeMs', 'efficiency', 'finalDifficulty', 'isOtherPlayerQuestion', 'scoreDelta', 'createdAt'],
-  STAGES: ['stageId', 'floor', 'stage', 'name', 'baseDifficulty', 'minDifficulty', 'maxDifficulty', 'monsterGroupId', 'bossMonsterId', 'rewardGroupId', 'requiredOtherQuestionCount'],
+  STAGES: ['stageId', 'floor', 'stage', 'name', 'baseDifficulty', 'minDifficulty', 'maxDifficulty', 'questionDifficultyBonus', 'monsterGroupId', 'bossMonsterId', 'rewardGroupId', 'requiredOtherQuestionCount'],
   MONSTER_GROUPS: ['monsterGroupId', 'name', 'monsterIds', 'weights', 'monsterCount', 'fixedMonsterIds'],
   MONSTERS: ['monsterId', 'name', 'type', 'hp', 'attack', 'hpRegen', 'evasion', 'criticalRate', 'criticalDamage', 'defense', 'aiId', 'skillIds', 'description'],
   MONSTER_AI: ['aiId', 'patternName', 'actionType', 'conditionJson', 'probability', 'skillId', 'intentIcon', 'intentTextTemplate'],
@@ -40,6 +41,7 @@ var DB_COLUMNS = Object.freeze({
   ITEMS: ['itemId', 'name', 'type', 'target', 'effectJson', 'triggerTiming', 'description', 'rarity'],
   REWARDS: ['rewardId', 'type', 'targetId', 'value', 'weight', 'minFloor', 'maxFloor', 'description', 'detailDescription', 'rarity'],
   BATTLE_LOGS: ['battleLogId', 'runId', 'playerId', 'floor', 'stage', 'result', 'summaryJson', 'createdAt'],
+  NOTICES: ['noticeId', 'title', 'body', 'active', 'priority', 'startAt', 'endAt', 'updatedAt'],
 });
 
 var DB_SCHEMA = Object.freeze([
@@ -62,6 +64,7 @@ var DB_SCHEMA = Object.freeze([
   { sheetName: DB_SHEETS.ITEMS, headers: DB_COLUMNS.ITEMS },
   { sheetName: DB_SHEETS.REWARDS, headers: DB_COLUMNS.REWARDS },
   { sheetName: DB_SHEETS.BATTLE_LOGS, headers: DB_COLUMNS.BATTLE_LOGS },
+  { sheetName: DB_SHEETS.NOTICES, headers: DB_COLUMNS.NOTICES },
 ]);
 
 var STATUS = Object.freeze({
@@ -288,6 +291,7 @@ var MASTER_SETTINGS = Object.freeze([
   { key: 'stagesPerFloor', value: '5', type: 'number', description: 'Number of stages per floor.' },
   { key: 'baseQuestionTimeSec', value: '10', type: 'number', description: 'Base question time in seconds.' },
   { key: 'questionTimePerDifficultySec', value: '2', type: 'number', description: 'Additional seconds per difficulty above 1.' },
+  { key: 'maxQuestionTimeSec', value: '20', type: 'number', description: 'Maximum final question time in seconds. Leave empty or 0 for no maximum.' },
   { key: 'questionResultHoldMs', value: '1400', type: 'number', description: 'Milliseconds to keep the correct-answer result visible before battle resolution continues.' },
   { key: 'questionActionStartDelayMs', value: '0', type: 'number', description: 'Milliseconds to wait after closing the question modal before playing the battle action.' },
   { key: 'firstStageIntroLinesJson', value: JSON.stringify([

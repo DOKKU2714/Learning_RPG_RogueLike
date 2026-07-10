@@ -11,6 +11,8 @@ function getAvailableSkills(runState, battleState) {
 
     var hydrated = hydrateSkill_(skill, ownedSkill.level);
     var reason = getSkillUnavailableReason(hydrated, runState, battleState);
+    var actionPointCost = Number(hydrated.actionPointCost !== undefined && hydrated.actionPointCost !== '' ? hydrated.actionPointCost : 1);
+    var unavailableReasonType = getSkillUnavailableReasonType_(hydrated, runState, battleState, reason, actionPointCost);
     return {
       skillId: hydrated.skillId,
       name: hydrated.name,
@@ -23,7 +25,7 @@ function getAvailableSkills(runState, battleState) {
       cooldownText: buildSkillCooldownText_(hydrated),
       useLimitText: buildSkillUseLimitText_(hydrated, battleState),
       difficultyBonus: Number(hydrated.difficultyBonus || 0),
-      actionPointCost: Number(hydrated.actionPointCost !== undefined && hydrated.actionPointCost !== '' ? hydrated.actionPointCost : 1),
+      actionPointCost: actionPointCost,
       rarity: hydrated.rarity,
       rarityLabel: getRarityLabel_(hydrated.rarity),
       tags: hydrated.tags,
@@ -34,8 +36,21 @@ function getAvailableSkills(runState, battleState) {
       previewText: buildSkillPreviewText_(hydrated, battleState),
       available: !reason,
       unavailableReason: reason,
+      unavailableReasonType: unavailableReasonType,
     };
   }).filter(Boolean);
+}
+
+function getSkillUnavailableReasonType_(skill, runState, battleState, reason, actionPointCost) {
+  if (!reason || !battleState || !battleState.player || hasEnoughActionPoint_(battleState, actionPointCost)) {
+    return '';
+  }
+  var previousActionPoint = battleState.player.currentActionPoint;
+  battleState.player.currentActionPoint = Math.max(Number(previousActionPoint || 0), Number(actionPointCost || 0));
+  var reasonWithEnoughActionPoint = getSkillUnavailableReason(skill, runState, battleState);
+  battleState.player.currentActionPoint = previousActionPoint;
+  normalizePlayerActionPoints_(battleState, false);
+  return reasonWithEnoughActionPoint ? '' : 'actionPoint';
 }
 
 function buildClientSkillEffects_(skill) {
@@ -86,6 +101,13 @@ function buildClientSkillEffects_(skill) {
 
 function buildSkillEffectDetails_(skill) {
   var rule = getSkillExecutionRule_(skill);
+  var previewBattleState = {
+    player: { stats: Object.assign({}, BASE_PLAYER_STATS), effects: [] },
+    monsters: [],
+    usedSkillCountByTagThisBattle: {},
+    usedSkillCountByTagThisTurn: {},
+  };
+  var context = buildSkillFormulaContext_(previewBattleState, skill, null, 1);
   var effects = [];
   if (rule.effectId) {
     effects.push(rule);
@@ -98,17 +120,24 @@ function buildSkillEffectDetails_(skill) {
   }
   return effects.map(function(effectRule) {
     var effect = effectRule.effectId ? findCachedRowByKey_(DB_SHEETS.EFFECTS, 'effectId', effectRule.effectId, 600) : null;
-    var value = effectRule.value !== undefined ? Number(effectRule.value || 0) : Number(effect && effect.value || 0);
+    var value = effectRule.valueFormula !== undefined && effectRule.valueFormula !== null && effectRule.valueFormula !== ''
+      ? evaluateSkillFormula_(effectRule.valueFormula, context, null, skill)
+      : (effectRule.value !== undefined ? Number(effectRule.value || 0) : Number(effect && effect.value || 0));
     if (effect && effect.effectType === EFFECT_TYPES.FLAT) {
       value += getSkillUpgradeValue(skill, effect.category === EFFECT_CATEGORIES.BUFF ? 'buffValue' : 'effect');
     }
+    var category = effectRule.category || effect && effect.category || '';
+    var chance = Number(effectRule.chance !== undefined ? effectRule.chance : 100);
+    chance += String(category).toLowerCase() === String(EFFECT_CATEGORIES.DEBUFF).toLowerCase()
+      ? getSkillUpgradeValue(skill, 'debuffChance')
+      : getSkillUpgradeValue(skill, 'chance');
     return {
       effectId: effectRule.effectId || '',
       name: effectRule.name || effectRule.effectName || effect && effect.name || effectRule.effectId || '',
       value: value,
       effectType: effectRule.effectType || effect && effect.effectType || '',
-      category: effectRule.category || effect && effect.category || '',
-      chance: Math.min(100, Math.max(0, Number(effectRule.chance !== undefined ? effectRule.chance : 100))),
+      category: category,
+      chance: Math.min(100, Math.max(0, chance)),
       durationTurns: effectRule.durationTurns !== undefined ? effectRule.durationTurns : effect && effect.durationTurns || '',
     };
   });
@@ -245,7 +274,7 @@ function useSkill(runId, skillId, targetId, answerPayload) {
 
     var activeEffects = getActiveEffectsForQuestion_(battleState);
     var questionResult = pickQuestion_(run.playerId, battleState.stage, stageState.otherStudentQuestionShown, getForcedQuestionCreatorId_(battleState), getItemQuestionModifiers_(battleState, null), stageState.usedQuestionIds);
-    var baseDifficulty = applyBossDifficultyBonus(battleState.stage, Number(questionResult.question.difficulty || battleState.stage.baseDifficulty) + Number(skill.difficultyBonus || 0) + getSkillRuleQuestionDifficultyBonus_(skill));
+    var baseDifficulty = applyStageQuestionDifficultyBonus_(battleState.stage, Number(questionResult.question.difficulty || battleState.stage.baseDifficulty) + Number(skill.difficultyBonus || 0) + getSkillRuleQuestionDifficultyBonus_(skill));
     var questionModifiers = getItemQuestionModifiers_(battleState, questionResult.question);
     var finalDifficulty = calculateFinalQuestionDifficulty(baseDifficulty, activeEffects, questionModifiers);
     var maxMs = calculateFinalQuestionTimeLimitForQuestion_(finalDifficulty, activeEffects, questionResult.question, questionModifiers);
@@ -1516,16 +1545,53 @@ function calculateFinalQuestionTimeLimit(baseDifficulty, activeEffects, question
   var finalDifficulty = clampDifficulty_(Number(baseDifficulty || GAME_RULES.MIN_DIFFICULTY));
   var extraSeconds = getEffectFlatBonus_(activeEffects, STAT_KEYS.QUESTION_TIME);
   extraSeconds += Number(questionModifiers && questionModifiers.questionTimeSeconds || 0);
-  var seconds = GAME_RULES.BASE_QUESTION_TIME_SEC + ((finalDifficulty - 1) * GAME_RULES.QUESTION_TIME_PER_DIFFICULTY_SEC) + extraSeconds;
-  return Math.max(3000, seconds * 1000);
+  var timeSettings = getQuestionTimeSettings_();
+  var seconds = timeSettings.baseQuestionTimeSec + ((finalDifficulty - 1) * timeSettings.questionTimePerDifficultySec) + extraSeconds;
+  return clampQuestionTimeMs_(seconds * 1000, timeSettings);
 }
 
 function calculateFinalQuestionTimeLimitForQuestion_(baseDifficulty, activeEffects, question, questionModifiers) {
   var maxMs = calculateFinalQuestionTimeLimit(baseDifficulty, activeEffects, questionModifiers);
   if (isShortAnswerQuestion_(question)) {
-    return Math.round(maxMs * Number(GAME_RULES.SHORT_ANSWER_TIME_MULTIPLIER || 1.2));
+    return clampQuestionTimeMs_(Math.round(maxMs * Number(GAME_RULES.SHORT_ANSWER_TIME_MULTIPLIER || 1.2)), getQuestionTimeSettings_());
   }
   return maxMs;
+}
+
+function getQuestionTimeSettings_() {
+  var settings = {};
+  try {
+    settings = getAppSettings();
+  } catch (error) {
+    settings = {};
+  }
+  return {
+    baseQuestionTimeSec: getNumberSettingByKeys_(settings, ['baseQuestionTimeSec', 'questionBaseTimeSec', '기본문제시간', '기본 문제 시간', '기본 문제 시간(초)'], GAME_RULES.BASE_QUESTION_TIME_SEC),
+    questionTimePerDifficultySec: getNumberSettingByKeys_(settings, ['questionTimePerDifficultySec', 'questionTimePerDifficulty', '난이도당문제시간', '난이도당 문제 시간', '난이도당 문제 시간(초)'], GAME_RULES.QUESTION_TIME_PER_DIFFICULTY_SEC),
+    maxQuestionTimeSec: getNumberSettingByKeys_(settings, ['maxQuestionTimeSec', 'questionMaxTimeSec', 'maximumQuestionTimeSec', 'maxQuestionTime', 'questionTimeMaxSec', '최대문제시간', '최대 문제 시간', '최대 문제 시간(초)'], 0),
+  };
+}
+
+function getNumberSettingByKeys_(settings, keys, fallback) {
+  for (var i = 0; i < keys.length; i += 1) {
+    var key = keys[i];
+    if (settings && settings[key] !== undefined && settings[key] !== '') {
+      var number = Number(settings[key]);
+      if (isFinite(number)) {
+        return number;
+      }
+    }
+  }
+  return Number(fallback || 0);
+}
+
+function clampQuestionTimeMs_(ms, timeSettings) {
+  var value = Math.max(3000, Math.round(Number(ms || 0)));
+  var maxSeconds = Number(timeSettings && timeSettings.maxQuestionTimeSec || 0);
+  if (isFinite(maxSeconds) && maxSeconds > 0) {
+    value = Math.min(value, Math.max(3000, Math.round(maxSeconds * 1000)));
+  }
+  return value;
 }
 
 function isShortAnswerQuestion_(question) {
@@ -1535,7 +1601,27 @@ function isShortAnswerQuestion_(question) {
 function getSkillUpgradeValue(skill, key) {
   var upgrade = safeJsonParse_(skill.upgradeJson, {});
   var level = Math.max(1, Number(skill.level || 1));
-  return Number(upgrade[key] || 0) * Math.max(0, level - 1);
+  var upgradeLevel = Math.max(0, level - 1);
+  var raw = upgrade[key];
+  if (raw === undefined || raw === null || raw === '') {
+    return 0;
+  }
+  if (typeof raw === 'number' || /^-?\d+(?:\.\d+)?$/.test(String(raw).trim())) {
+    return Number(raw || 0) * upgradeLevel;
+  }
+  return getSharedRuleEngine_().evaluateFormula(String(raw), {
+    n: upgradeLevel,
+    upgrade: upgradeLevel,
+    level: level,
+    skillLevel: level,
+    base: Number(skill.baseValue || 0),
+    baseValue: Number(skill.baseValue || 0),
+    skillBaseValue: Number(skill.baseValue || 0),
+  }, {
+    warn: function(message, data) {
+      warnSkillRule_(null, skill, 'Invalid upgradeJson formula for ' + key + ': ' + message, data || {});
+    },
+  });
 }
 
 function buildSkillPreviewText_(skill, battleState) {

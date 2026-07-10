@@ -56,6 +56,33 @@
       margin: 0;
     }
 
+    .choice-answer-grid {
+      display: grid;
+      gap: 8px;
+    }
+
+    .choice-answer-row {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: 8px;
+      align-items: center;
+      color: var(--text);
+    }
+
+    .choice-answer-row input[type="radio"] {
+      width: 16px;
+      height: 16px;
+      margin: 0;
+    }
+
+    .field-limit-hint {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
     .remove-question,
     .edit-my-question,
     .delete-my-question {
@@ -162,6 +189,16 @@
     var formSeq = 0;
     var editingQuestionId = '';
     var myQuestionsCache = [];
+    var QUESTION_LIMITS = {
+      prompt: 200,
+      choice: 60,
+      answer: 80,
+      answerAliases: 200,
+      explanation: 300,
+      subject: 40,
+      unit: 40,
+      tags: 80,
+    };
 
     function init() {
       resetQuestionForms();
@@ -215,6 +252,7 @@
       var type = question.type === 'shortAnswer' ? 'shortAnswer' : 'multipleChoice';
       var isShortAnswer = type === 'shortAnswer';
       var choices = [question.choice1 || '', question.choice2 || '', question.choice3 || '', question.choice4 || ''];
+      var answerIndex = normalizeMultipleChoiceAnswer(question.answer);
       return '' +
         '<div class="question-card-top">' +
           '<strong>문제 ' + index + '</strong>' +
@@ -227,29 +265,43 @@
         '</div>' +
         '<div style="margin-top:12px;">' +
           '<label>문제 내용</label>' +
-          '<textarea data-field="prompt" placeholder="친구가 풀 문제를 입력하세요.">' + escapeHtml(question.prompt || '') + '</textarea>' +
+          '<textarea data-field="prompt" maxlength="' + QUESTION_LIMITS.prompt + '" placeholder="친구가 풀 문제를 입력하세요.">' + escapeHtml(question.prompt || '') + '</textarea>' +
+          '<span class="field-limit-hint">최대 ' + QUESTION_LIMITS.prompt + '자</span>' +
         '</div>' +
         '<div data-area="choices" style="margin-top:12px;">' +
           '<label>객관식 보기 4개</label>' +
-          '<div class="choice-grid">' +
-            '<input data-field="choice1" placeholder="선택지 1" value="' + escapeHtml(choices[0]) + '">' +
-            '<input data-field="choice2" placeholder="선택지 2" value="' + escapeHtml(choices[1]) + '">' +
-            '<input data-field="choice3" placeholder="선택지 3" value="' + escapeHtml(choices[2]) + '">' +
-            '<input data-field="choice4" placeholder="선택지 4" value="' + escapeHtml(choices[3]) + '">' +
+          '<div class="choice-answer-grid">' +
+            renderChoiceAnswerRowHtml(id, 1, choices[0], answerIndex) +
+            renderChoiceAnswerRowHtml(id, 2, choices[1], answerIndex) +
+            renderChoiceAnswerRowHtml(id, 3, choices[2], answerIndex) +
+            renderChoiceAnswerRowHtml(id, 4, choices[3], answerIndex) +
           '</div>' +
         '</div>' +
         '<div class="form-grid" style="margin-top:12px;">' +
-          '<div><label>정답</label><input data-field="answer" placeholder="객관식은 정답 번호, 주관식은 정답 텍스트" value="' + escapeHtml(question.answer || '') + '"></div>' +
-          '<div data-area="aliases"><label>복수 정답 / 별칭</label><input data-field="answerAliases" placeholder="쉼표 또는 줄바꿈으로 구분" value="' + escapeHtml(answerAliasesText(question)) + '"></div>' +
-          '<div><label>과목</label><input data-field="subject" placeholder="예: 사회" value="' + escapeHtml(question.subject || '') + '"></div>' +
-          '<div><label>단원</label><input data-field="unit" placeholder="예: 조선 전기" value="' + escapeHtml(question.unit || '') + '"></div>' +
+          '<div data-area="shortAnswer"><label>정답</label><input data-field="answer" maxlength="' + QUESTION_LIMITS.answer + '" placeholder="주관식 정답 텍스트" value="' + escapeHtml(question.answer || '') + '"><span class="field-limit-hint">최대 ' + QUESTION_LIMITS.answer + '자</span></div>' +
+          '<div data-area="aliases"><label>복수 정답 / 별칭</label><input data-field="answerAliases" maxlength="' + QUESTION_LIMITS.answerAliases + '" placeholder="쉼표 또는 줄바꿈으로 구분" value="' + escapeHtml(answerAliasesText(question)) + '"><span class="field-limit-hint">최대 ' + QUESTION_LIMITS.answerAliases + '자</span></div>' +
+          '<div><label>과목</label><input data-field="subject" maxlength="' + QUESTION_LIMITS.subject + '" placeholder="예: 사회" value="' + escapeHtml(question.subject || '') + '"><span class="field-limit-hint">최대 ' + QUESTION_LIMITS.subject + '자</span></div>' +
+          '<div><label>단원</label><input data-field="unit" maxlength="' + QUESTION_LIMITS.unit + '" placeholder="예: 조선 전기" value="' + escapeHtml(question.unit || '') + '"><span class="field-limit-hint">최대 ' + QUESTION_LIMITS.unit + '자</span></div>' +
           '<div><label>희망 난이도</label>' + difficultySelectHtml('data-field="difficulty"', question.difficulty || 1) + '</div>' +
-          '<div style="grid-column:1 / -1;"><label>태그</label><input data-field="tags" placeholder="쉼표로 구분" value="' + escapeHtml(question.tags || '') + '"></div>' +
+          '<div style="grid-column:1 / -1;"><label>태그</label><input data-field="tags" maxlength="' + QUESTION_LIMITS.tags + '" placeholder="쉼표로 구분" value="' + escapeHtml(question.tags || '') + '"><span class="field-limit-hint">최대 ' + QUESTION_LIMITS.tags + '자</span></div>' +
         '</div>' +
         '<div style="margin-top:12px;">' +
           '<label>해설</label>' +
-          '<textarea data-field="explanation" placeholder="선택 사항">' + escapeHtml(question.explanation || '') + '</textarea>' +
+          '<textarea data-field="explanation" maxlength="' + QUESTION_LIMITS.explanation + '" placeholder="선택 사항">' + escapeHtml(question.explanation || '') + '</textarea>' +
+          '<span class="field-limit-hint">최대 ' + QUESTION_LIMITS.explanation + '자</span>' +
         '</div>';
+    }
+
+    function renderChoiceAnswerRowHtml(id, index, value, answerIndex) {
+      return '<div class="choice-answer-row">' +
+        '<input type="radio" name="' + id + '-answer" value="' + index + '"' + (Number(answerIndex || 1) === index ? ' checked' : '') + ' aria-label="' + index + '번 선택지를 정답으로 지정">' +
+        '<input data-field="choice' + index + '" maxlength="' + QUESTION_LIMITS.choice + '" placeholder="선택지 ' + index + ' (최대 ' + QUESTION_LIMITS.choice + '자)" value="' + escapeHtml(value || '') + '">' +
+      '</div>';
+    }
+
+    function normalizeMultipleChoiceAnswer(answer) {
+      var numberValue = Number(answer || 1);
+      return numberValue >= 1 && numberValue <= 4 ? numberValue : 1;
     }
 
     function updateChoiceVisibility(id) {
@@ -257,6 +309,10 @@
       if (!card) return;
       var type = getQuestionType(card);
       card.querySelector('[data-area="choices"]').classList.toggle('hidden', type === 'shortAnswer');
+      var shortAnswer = card.querySelector('[data-area="shortAnswer"]');
+      if (shortAnswer) {
+        shortAnswer.classList.toggle('hidden', type === 'multipleChoice');
+      }
       var aliases = card.querySelector('[data-area="aliases"]');
       if (aliases) {
         aliases.classList.toggle('hidden', type === 'multipleChoice');
@@ -294,6 +350,7 @@
         google.script.run
           .withSuccessHandler(function() {
             hideLoadingModal();
+            syncCurrentStateAfterQuestionChange();
             setFormMessage('문제를 수정했습니다.', 'ok');
             resetQuestionForms();
             loadMyQuestions(true);
@@ -310,6 +367,7 @@
       google.script.run
         .withSuccessHandler(function() {
           hideLoadingModal();
+          syncCurrentStateAfterQuestionChange();
           setFormMessage('문제를 등록했습니다.', 'ok');
           resetQuestionForms();
           loadMyQuestions(true);
@@ -350,6 +408,7 @@
         google.script.run
           .withSuccessHandler(function(created) {
             hideLoadingModal();
+            syncCurrentStateAfterQuestionChange();
             var count = created && created.length ? created.length : rows.length;
             setImportMessage(count + '개 문제를 등록했습니다.', 'ok');
             document.getElementById('questionImportFile').value = '';
@@ -494,7 +553,7 @@
         type: type,
         prompt: valueOf(card, 'prompt'),
         choices: [valueOf(card, 'choice1'), valueOf(card, 'choice2'), valueOf(card, 'choice3'), valueOf(card, 'choice4')],
-        answer: valueOf(card, 'answer'),
+        answer: type === 'multipleChoice' ? selectedMultipleChoiceAnswer(card) : valueOf(card, 'answer'),
         answerAliases: type === 'multipleChoice' ? '' : valueOf(card, 'answerAliases'),
         explanation: valueOf(card, 'explanation'),
         subject: valueOf(card, 'subject'),
@@ -502,6 +561,11 @@
         tags: valueOf(card, 'tags'),
         difficulty: valueOf(card, 'difficulty') || '1',
       };
+    }
+
+    function selectedMultipleChoiceAnswer(card) {
+      var checked = card.querySelector('input[name="' + card.id + '-answer"]:checked');
+      return checked ? checked.value : '';
     }
 
     function difficultySelectHtml(attributes, selectedValue) {
@@ -644,6 +708,7 @@
       google.script.run
         .withSuccessHandler(function() {
           hideLoadingModal();
+          syncCurrentStateAfterQuestionChange();
           setFormMessage('문제를 삭제했습니다.', 'ok');
           loadMyQuestions(true);
         })
@@ -686,11 +751,40 @@
     }
 
     function goHome() {
-      window.top.location.href = WEB_APP_URL + '?skipIntro=1';
+      navigateTop(WEB_APP_URL + '?skipIntro=1');
+    }
+
+    function navigateTop(url) {
+      var link = document.createElement('a');
+      link.href = url;
+      link.target = '_top';
+      link.rel = 'noopener';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
     }
 
     function getAuthToken() {
       return sessionStorage.getItem('learningRpgAuthToken') || '';
+    }
+
+    function syncCurrentStateAfterQuestionChange() {
+      invalidateCurrentStateCache();
+      if (typeof google === 'undefined' || !google.script || !google.script.run) {
+        return;
+      }
+      google.script.run
+        .withSuccessHandler(cacheCurrentState)
+        .withFailureHandler(function() {})
+        .getCurrentUser(getAuthToken());
+    }
+
+    function invalidateCurrentStateCache() {
+      try {
+        sessionStorage.removeItem('learningRpgCurrentState');
+      } catch (error) {
+        // Ignore storage failures.
+      }
     }
 
     function getCachedCurrentState() {

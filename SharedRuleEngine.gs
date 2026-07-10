@@ -233,10 +233,10 @@ var RULE_ENGINE_SHARED = (function() {
       base: Number(skill && skill.baseValue || 0),
       baseValue: Number(skill && skill.baseValue || 0),
       skillBaseValue: Number(skill && skill.baseValue || 0),
-      damageUpgrade: Number(upgradeJson.damage || 0) * upgradeLevel,
-      effectUpgrade: Number(upgradeJson.effect || 0) * upgradeLevel,
-      buffValueUpgrade: Number(upgradeJson.buffValue || 0) * upgradeLevel,
-      debuffChanceUpgrade: Number(upgradeJson.debuffChance || 0) * upgradeLevel,
+      damageUpgrade: getUpgradeValue(skill, upgradeJson, 'damage', upgradeLevel, level),
+      effectUpgrade: getUpgradeValue(skill, upgradeJson, 'effect', upgradeLevel, level),
+      buffValueUpgrade: getUpgradeValue(skill, upgradeJson, 'buffValue', upgradeLevel, level),
+      debuffChanceUpgrade: getUpgradeValue(skill, upgradeJson, 'debuffChance', upgradeLevel, level),
       atk: getEffectiveStat(player, 'attack'),
       attack: getEffectiveStat(player, 'attack'),
       def: getEffectiveStat(player, 'defense'),
@@ -252,6 +252,23 @@ var RULE_ENGINE_SHARED = (function() {
       usedStrikeSkillCountThisBattle: Number(tagCounts.strike || tagCounts['타격'] || 0),
       usedStrikeSkillCountThisTurn: Number(turnTagCounts.strike || turnTagCounts['타격'] || 0)
     };
+  }
+
+  function getUpgradeValue(skill, upgradeJson, key, upgradeLevel, level) {
+    var raw = upgradeJson && upgradeJson[key];
+    if (raw === undefined || raw === null || raw === '') return 0;
+    if (typeof raw === 'number' || /^-?\d+(?:\.\d+)?$/.test(String(raw).trim())) {
+      return Number(raw || 0) * upgradeLevel;
+    }
+    return evaluateFormula(String(raw), {
+      n: upgradeLevel,
+      upgrade: upgradeLevel,
+      level: level,
+      skillLevel: level,
+      base: Number(skill && skill.baseValue || 0),
+      baseValue: Number(skill && skill.baseValue || 0),
+      skillBaseValue: Number(skill && skill.baseValue || 0)
+    }, {});
   }
 
   function evaluateFormula(formula, context, options) {

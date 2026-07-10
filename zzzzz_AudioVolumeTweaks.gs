@@ -57,7 +57,7 @@ function getLearningRpgAudioVolumeTweaksClientPatch_() {
     '  }\n' +
     '\n' +
     '  function isSoundEnabled(){\n' +
-    '    try { return window.localStorage.getItem(SOUND_ENABLED_KEY) !== "0"; } catch (error) { return true; }\n' +
+    '    try { return window.localStorage.getItem(SOUND_ENABLED_KEY) === "1"; } catch (error) { return false; }\n' +
     '  }\n' +
     '\n' +
     '  function applySfxVolume(audio){\n' +
@@ -74,6 +74,7 @@ function getLearningRpgAudioVolumeTweaksClientPatch_() {
     '      audio.__learningRpgSfxBaseVolume = Number(audio.volume || 1);\n' +
     '    }\n' +
     '    audio.volume = Math.max(0, Math.min(1, Number(audio.__learningRpgSfxBaseVolume || 1) * SFX_VOLUME_MULTIPLIER));\n' +
+    '    audio.muted = false;\n' +
     '  }\n' +
     '\n' +
     '  function patchMediaPlayVolume(){\n' +
