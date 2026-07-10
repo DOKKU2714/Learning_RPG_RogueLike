@@ -168,6 +168,39 @@
       text-overflow: ellipsis;
     }
 
+    .check-list {
+      display: grid;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .check-row {
+      display: grid;
+      grid-template-columns: 90px 1fr;
+      gap: 10px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 10px;
+      background: #ffffff;
+    }
+
+    .check-status {
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+
+    .check-status.ok {
+      color: var(--ok);
+    }
+
+    .check-status.warning {
+      color: #b54708;
+    }
+
+    .check-status.error {
+      color: var(--danger);
+    }
+
     @media (max-width: 760px) {
       .shell {
         padding: 16px;
@@ -206,9 +239,27 @@
 
       <div class="panel topline">
         <h2>승인 대기 문제</h2>
+        <div style="min-width:240px;">
+          <label for="adminWorkbookSelect">문제집</label>
+          <select id="adminWorkbookSelect" onchange="handleAdminWorkbookChange()"></select>
+        </div>
         <button class="secondary" onclick="loadPendingQuestions()">새로고침</button>
       </div>
       <div id="pendingList"></div>
+
+      <div class="panel">
+        <div class="topline">
+          <div>
+            <h2>Workbook System</h2>
+            <p class="muted">Check workbook settings and migrate legacy Questions into the selected workbook.</p>
+          </div>
+          <div>
+            <button class="secondary" onclick="loadWorkbookSystemCheck()">Check Settings</button>
+            <button onclick="migrateLegacyQuestions()">Migrate Legacy Questions</button>
+          </div>
+        </div>
+        <div id="workbookSystemResult" class="check-list"></div>
+      </div>
 
       <div class="panel topline">
         <h2>학생 통계</h2>
@@ -226,6 +277,8 @@
   <script>
     var WEB_APP_URL = '<?= getWebAppUrl_() ?>';
     var MAX_QUESTION_DIFFICULTY = 5;
+    var adminWorkbooks = [];
+    var selectedAdminWorkbookId = '';
 
     function init() {
       google.script.run
@@ -235,8 +288,9 @@
           document.getElementById('adminPanel').classList.toggle('hidden', !state.isAdmin);
           if (state.isAdmin) {
             loadPendingPlayerApprovals();
-            loadPendingQuestions();
+            loadAdminQuestionWorkbooks();
             loadAdminStats();
+            loadWorkbookSystemCheck();
           }
         })
         .withFailureHandler(showAdminError)
@@ -294,12 +348,128 @@
         .rejectPlayerRegistration(playerId, reason);
     }
 
+    function loadAdminQuestionWorkbooks() {
+      setAdminMessage('문제집 목록을 불러오는 중입니다.', 'ok');
+      google.script.run
+        .withSuccessHandler(function(workbooks) {
+          adminWorkbooks = Array.isArray(workbooks) ? workbooks : [];
+          renderAdminWorkbookSelect();
+          loadPendingQuestions();
+        })
+        .withFailureHandler(showAdminError)
+        .getAdminQuestionWorkbooks();
+    }
+
+    function loadWorkbookSystemCheck() {
+      var container = document.getElementById('workbookSystemResult');
+      if (container) {
+        container.innerHTML = '<p class="muted">Checking workbook system settings...</p>';
+      }
+      google.script.run
+        .withSuccessHandler(renderWorkbookSystemCheck)
+        .withFailureHandler(showAdminError)
+        .checkWorkbookSystemSettings();
+    }
+
+    function renderWorkbookSystemCheck(result) {
+      var container = document.getElementById('workbookSystemResult');
+      if (!container) return;
+      var checks = result && Array.isArray(result.checks) ? result.checks : [];
+      var summary = '<section class="panel">' +
+        '<strong>Status: ' + escapeHtml(result && result.ok ? 'OK' : 'Needs attention') + '</strong>' +
+        '<p class="muted">Active workbooks: ' + Number(result && result.activeWorkbookCount || 0) +
+        ' / defaultWorkbookId: ' + escapeHtml(result && result.defaultWorkbookId || '-') + '</p>' +
+      '</section>';
+      if (!checks.length) {
+        container.innerHTML = summary + '<p class="muted">No check result.</p>';
+        return;
+      }
+      container.innerHTML = summary + checks.map(function(check) {
+        var status = String(check.status || 'warning');
+        return '<div class="check-row">' +
+          '<span class="check-status ' + escapeHtml(status) + '">' + escapeHtml(status) + '</span>' +
+          '<span><strong>' + escapeHtml(check.key || '-') + '</strong><br>' +
+          escapeHtml(check.message || '') +
+          (check.detail ? '<br><span class="muted">' + escapeHtml(check.detail) + '</span>' : '') +
+          '</span>' +
+        '</div>';
+      }).join('');
+    }
+
+    function migrateLegacyQuestions() {
+      var select = document.getElementById('adminWorkbookSelect');
+      selectedAdminWorkbookId = select ? select.value : selectedAdminWorkbookId;
+      if (!selectedAdminWorkbookId) {
+        setAdminMessage('Select a target workbook first.', 'error');
+        return;
+      }
+      if (!confirm('Copy legacy Questions into the selected workbook? Existing questionIds will be skipped.')) {
+        return;
+      }
+      setAdminMessage('Migrating legacy Questions...', 'ok');
+      google.script.run
+        .withSuccessHandler(function(result) {
+          renderMigrationResult(result);
+          loadPendingQuestions();
+          loadWorkbookSystemCheck();
+        })
+        .withFailureHandler(showAdminError)
+        .migrateLegacyQuestionsToWorkbook(selectedAdminWorkbookId);
+    }
+
+    function renderMigrationResult(result) {
+      var container = document.getElementById('workbookSystemResult');
+      var message = 'Migration complete: total ' + Number(result && result.totalCount || 0) +
+        ', copied ' + Number(result && result.copiedCount || 0) +
+        ', skipped ' + Number(result && result.skippedCount || 0) +
+        ', failed ' + Number(result && result.failedCount || 0) + '.';
+      setAdminMessage(message, result && result.failedCount ? 'error' : 'ok');
+      if (!container) return;
+      var failed = result && Array.isArray(result.failedQuestions) ? result.failedQuestions : [];
+      container.innerHTML = '<section class="panel">' +
+        '<h3>Migration Result</h3>' +
+        '<p>' + escapeHtml(message) + '</p>' +
+        '<p class="muted">Target: ' + escapeHtml(result && result.workbookName || selectedAdminWorkbookId) + '</p>' +
+        (failed.length ? '<pre>' + escapeHtml(JSON.stringify(failed, null, 2)) + '</pre>' : '') +
+      '</section>';
+    }
+
+    function renderAdminWorkbookSelect() {
+      var select = document.getElementById('adminWorkbookSelect');
+      if (!select) return;
+      select.innerHTML = '';
+      adminWorkbooks.forEach(function(workbook) {
+        var option = document.createElement('option');
+        option.value = workbook.workbookId;
+        option.textContent = workbook.workbookName + (workbook.subject ? ' (' + workbook.subject + ')' : '');
+        select.appendChild(option);
+      });
+      if (!selectedAdminWorkbookId && adminWorkbooks.length) {
+        selectedAdminWorkbookId = adminWorkbooks[0].workbookId;
+      }
+      if (selectedAdminWorkbookId) {
+        select.value = selectedAdminWorkbookId;
+      }
+    }
+
+    function handleAdminWorkbookChange() {
+      var select = document.getElementById('adminWorkbookSelect');
+      selectedAdminWorkbookId = select ? select.value : '';
+      loadPendingQuestions();
+    }
+
     function loadPendingQuestions() {
+      var select = document.getElementById('adminWorkbookSelect');
+      selectedAdminWorkbookId = select ? select.value : selectedAdminWorkbookId;
+      if (!selectedAdminWorkbookId) {
+        document.getElementById('pendingList').innerHTML = '<section class="panel"><p class="muted">문제집을 먼저 선택해 주세요.</p></section>';
+        return;
+      }
       setAdminMessage('목록을 불러오는 중입니다.', 'ok');
       google.script.run
         .withSuccessHandler(renderPendingQuestions)
         .withFailureHandler(showAdminError)
-        .getPendingQuestions();
+        .getPendingQuestions(selectedAdminWorkbookId);
     }
 
     function renderPendingQuestions(questions) {
@@ -314,6 +484,7 @@
         return '<article class="question-card" id="card-' + escapeHtml(question.questionId) + '">' +
           '<div class="grid">' +
             '<strong>출제자</strong><span>' + escapeHtml(question.creatorName) + '</span>' +
+            '<strong>문제집</strong><span>' + escapeHtml(question.workbookName || selectedAdminWorkbookId || '-') + '</span>' +
             '<strong>유형</strong><span>' + escapeHtml(question.type) + '</span>' +
             '<strong>문제</strong><span>' + escapeHtml(question.prompt) + '</span>' +
             '<strong>선택지</strong><span>' + renderChoices(question) + '</span>' +
@@ -374,7 +545,7 @@
       google.script.run
         .withSuccessHandler(loadPendingQuestions)
         .withFailureHandler(showAdminError)
-        .approveQuestion(questionId, difficulty);
+        .approveQuestion(questionId, difficulty, selectedAdminWorkbookId);
     }
 
     function rejectQuestionItem(questionId) {
@@ -382,7 +553,7 @@
       google.script.run
         .withSuccessHandler(loadPendingQuestions)
         .withFailureHandler(showAdminError)
-        .rejectQuestion(questionId, comment);
+        .rejectQuestion(questionId, comment, selectedAdminWorkbookId);
     }
 
     function loadAdminStats() {

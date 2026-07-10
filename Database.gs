@@ -646,6 +646,37 @@ function updateWorkbookQuestionById_(workbookId, questionId, patchObject) {
   return null;
 }
 
+function deleteWorkbookQuestionByOwner_(workbookId, questionId, creatorId) {
+  var sheet = getWorkbookQuestionSheet_(workbookId);
+  var headers = getHeaderRowAt_(sheet, 2);
+  var questionIdIndex = headers.indexOf('questionId');
+  var creatorIdIndex = headers.indexOf('creatorId');
+  if (questionIdIndex === -1 || creatorIdIndex === -1) {
+    throw new Error('Question workbook sheet header is missing questionId or creatorId.');
+  }
+
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 3) {
+    return false;
+  }
+
+  var values = sheet.getRange(3, 1, lastRow - 2, headers.length).getValues();
+  for (var i = 0; i < values.length; i += 1) {
+    var rowQuestionId = String(values[i][questionIdIndex] || '').trim();
+    if (rowQuestionId !== String(questionId || '').trim()) {
+      continue;
+    }
+    var rowCreatorId = String(values[i][creatorIdIndex] || '').trim();
+    if (rowCreatorId !== String(creatorId || '').trim()) {
+      throw new Error('본인이 만든 문제만 삭제할 수 있습니다.');
+    }
+    sheet.deleteRow(i + 3);
+    clearWorkbookQuestionCache_(workbookId);
+    return true;
+  }
+  return false;
+}
+
 function clearWorkbookQuestionCache_(workbookId) {
   try {
     CacheService.getScriptCache().remove('workbookQuestions:' + String(workbookId || '').trim());

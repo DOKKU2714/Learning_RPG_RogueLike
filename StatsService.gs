@@ -173,12 +173,132 @@ function updatePlayerAnswerCache_(answerPayload) {
   var average = Number(playerData.averageAnswerTimeMs || 0);
   var elapsed = Number(answerPayload.elapsedMs || 0);
   var nextTotal = total + 1;
-  return updateRowByKey_(DB_SHEETS.PLAYER_DATA, 'playerId', playerId, {
+  var updatedPlayerData = updateRowByKey_(DB_SHEETS.PLAYER_DATA, 'playerId', playerId, {
     totalAnswerCount: nextTotal,
     correctAnswerCount: correct + (answerPayload.isCorrect ? 1 : 0),
     averageAnswerTimeMs: Math.round(((average * total) + elapsed) / nextTotal),
     updatedAt: new Date(),
   });
+  updateWorkbookPlayerAnswerCache_(answerPayload);
+  return updatedPlayerData;
+}
+
+function updateWorkbookPlayerAnswerCache_(answerPayload) {
+  var payload = answerPayload || {};
+  if (!payload.runId || typeof requireRun_ !== 'function') {
+    return null;
+  }
+
+  var run = requireRun_(payload.runId);
+  var workbookId = getRunWorkbookId_(run);
+  if (!workbookId) {
+    return null;
+  }
+  if (payload.playerId && String(payload.playerId) !== String(run.playerId)) {
+    throw new Error('Answer player does not match the run player.');
+  }
+
+  var playerId = run.playerId;
+  var workbookData = getWorkbookPlayerData_(workbookId, playerId) || ensureWorkbookPlayerData_(workbookId, playerId);
+  var total = Number(workbookData.totalAnswerCount || 0);
+  var correct = Number(workbookData.correctAnswerCount || 0);
+  var average = Number(workbookData.averageAnswerTimeMs || 0);
+  var elapsed = Number(payload.elapsedMs || 0);
+  var nextTotal = total + 1;
+  return updateWorkbookPlayerData_(workbookId, playerId, {
+    totalAnswerCount: nextTotal,
+    correctAnswerCount: correct + (payload.isCorrect ? 1 : 0),
+    averageAnswerTimeMs: Math.round(((average * total) + elapsed) / nextTotal),
+    updatedAt: new Date(),
+  });
+}
+
+function getWorkbookPlayerData_(workbookId, playerId) {
+  var rowInfo = findWorkbookPlayerDataRow_(workbookId, playerId);
+  return rowInfo ? rowInfo.data : null;
+}
+
+function ensureWorkbookPlayerData_(workbookId, playerId) {
+  var existing = getWorkbookPlayerData_(workbookId, playerId);
+  if (existing) {
+    return existing;
+  }
+  var initialData = buildInitialWorkbookPlayerData_(workbookId, playerId);
+  appendRowObject_(DB_SHEETS.WORKBOOK_PLAYER_DATA, initialData);
+  return initialData;
+}
+
+function updateWorkbookPlayerData_(workbookId, playerId, patchObject) {
+  ensureTableColumns_(DB_SHEETS.WORKBOOK_PLAYER_DATA, DB_COLUMNS.WORKBOOK_PLAYER_DATA);
+  var sheet = getSheet_(DB_SHEETS.WORKBOOK_PLAYER_DATA);
+  var headers = getHeaderRow_(sheet);
+  var rowInfo = findWorkbookPlayerDataRow_(workbookId, playerId, sheet, headers);
+  var updatedObject;
+
+  if (!rowInfo) {
+    updatedObject = Object.assign(buildInitialWorkbookPlayerData_(workbookId, playerId), patchObject || {});
+    appendRowObject_(DB_SHEETS.WORKBOOK_PLAYER_DATA, updatedObject);
+    return updatedObject;
+  }
+
+  updatedObject = Object.assign({}, rowInfo.data, patchObject || {});
+  var updatedRow = headers.map(function(header) {
+    return updatedObject[header] !== undefined ? updatedObject[header] : '';
+  });
+  sheet.getRange(rowInfo.rowNumber, 1, 1, headers.length).setValues([updatedRow]);
+  return updatedObject;
+}
+
+function findWorkbookPlayerDataRow_(workbookId, playerId, sheet, headers) {
+  ensureTableColumns_(DB_SHEETS.WORKBOOK_PLAYER_DATA, DB_COLUMNS.WORKBOOK_PLAYER_DATA);
+  sheet = sheet || getSheet_(DB_SHEETS.WORKBOOK_PLAYER_DATA);
+  headers = headers || getHeaderRow_(sheet);
+  var workbookIndex = headers.indexOf('workbookId');
+  var playerIndex = headers.indexOf('playerId');
+  if (workbookIndex === -1 || playerIndex === -1) {
+    throw new Error('WorkbookPlayerData sheet is missing workbookId or playerId.');
+  }
+
+  var targetWorkbookId = String(workbookId || '').trim();
+  var targetPlayerId = String(playerId || '').trim();
+  if (!targetWorkbookId || !targetPlayerId) {
+    return null;
+  }
+
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) {
+    return null;
+  }
+
+  var values = sheet.getRange(2, 1, lastRow - 1, headers.length).getValues();
+  for (var i = 0; i < values.length; i += 1) {
+    if (String(values[i][workbookIndex] || '').trim() === targetWorkbookId &&
+        String(values[i][playerIndex] || '').trim() === targetPlayerId) {
+      return {
+        rowNumber: i + 2,
+        data: rowToObject_(headers, values[i]),
+      };
+    }
+  }
+  return null;
+}
+
+function buildInitialWorkbookPlayerData_(workbookId, playerId) {
+  return {
+    workbookId: String(workbookId || '').trim(),
+    playerId: String(playerId || '').trim(),
+    maxFloor: 1,
+    maxStage: 1,
+    bestClearTimeMs: '',
+    totalAnswerCount: 0,
+    correctAnswerCount: 0,
+    averageAnswerTimeMs: 0,
+    currency: 0,
+    bestScore: 0,
+    bestScoreRunId: '',
+    bestScoreUpdatedAt: '',
+    updatedAt: new Date(),
+  };
 }
 
 function calculateRate_(correct, total) {

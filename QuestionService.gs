@@ -9,9 +9,9 @@ var QUESTION_TEXT_LIMITS_ = Object.freeze({
   tags: 80,
 });
 
-function createQuestion(questionPayload, authToken) {
-  ensureQuestionSchemaColumns_();
+function createQuestion(questionPayload, authToken, workbookId) {
   var player = getCurrentPlayer_(authToken);
+  var workbook = requireQuestionWorkbook_(workbookId);
   var normalizedPayload = normalizeQuestionPayload_(questionPayload);
   var now = new Date();
   var question = {
@@ -44,22 +44,21 @@ function createQuestion(questionPayload, authToken) {
     reactionJson: '{}',
   };
 
-  appendRowObject_(DB_SHEETS.QUESTIONS, question);
-  clearTableCache_(DB_SHEETS.QUESTIONS);
+  appendWorkbookQuestion_(workbook.workbookId, question);
   return toClientObject_(question);
 }
 
-function createQuestions(questionPayloads, authToken) {
+function createQuestions(questionPayloads, authToken, workbookId) {
   var payloads = Array.isArray(questionPayloads) ? questionPayloads : [];
   if (!payloads.length) {
     throw new Error('저장할 문제가 없습니다.');
   }
   return payloads.map(function(payload) {
-    return createQuestion(payload, authToken);
+    return createQuestion(payload, authToken, workbookId);
   });
 }
 
-function importQuestionsFromRows(questionRows, authToken) {
+function importQuestionsFromRows(questionRows, authToken, workbookId) {
   var rows = Array.isArray(questionRows) ? questionRows : [];
   if (!rows.length) {
     throw new Error('가져올 문제가 없습니다.');
@@ -72,24 +71,24 @@ function importQuestionsFromRows(questionRows, authToken) {
       throw new Error((index + 2) + '행: ' + error.message);
     }
   });
-  return createQuestions(payloads, authToken);
+  return createQuestions(payloads, authToken, workbookId);
 }
 
-function getMyQuestions(authToken) {
-  ensureQuestionSchemaColumns_();
+function getMyQuestions(authToken, workbookId) {
   var player = getCurrentPlayer_(authToken);
-  return getQuestionsByCreator_(player.playerId).map(toClientObject_);
+  var workbook = requireQuestionWorkbook_(workbookId);
+  return getWorkbookQuestionsByCreatorForQuestionService_(workbook.workbookId, player.playerId).map(toClientObject_);
 }
 
-function updateQuestion(questionId, questionPayload, authToken) {
-  ensureQuestionSchemaColumns_();
+function updateQuestion(questionId, questionPayload, authToken, workbookId) {
   var player = getCurrentPlayer_(authToken);
+  var workbook = requireQuestionWorkbook_(workbookId);
   var targetQuestionId = String(questionId || '').trim();
   if (!targetQuestionId) {
     throw new Error('수정할 문제를 찾을 수 없습니다.');
   }
 
-  var existing = findRowByKey_(DB_SHEETS.QUESTIONS, 'questionId', targetQuestionId);
+  var existing = findWorkbookQuestionById_(workbook.workbookId, targetQuestionId);
   if (!existing) {
     throw new Error('문제를 찾을 수 없습니다.');
   }
@@ -98,7 +97,7 @@ function updateQuestion(questionId, questionPayload, authToken) {
   }
 
   var normalizedPayload = normalizeQuestionPayload_(questionPayload);
-  var updated = updateRowByKey_(DB_SHEETS.QUESTIONS, 'questionId', targetQuestionId, {
+  var updated = updateWorkbookQuestionById_(workbook.workbookId, targetQuestionId, {
     type: normalizedPayload.type,
     prompt: normalizedPayload.prompt,
     choice1: normalizedPayload.choice1,
@@ -118,12 +117,13 @@ function updateQuestion(questionId, questionPayload, authToken) {
     approvedAt: existing.approvedAt || new Date(),
     updatedAt: new Date(),
   });
-  clearTableCache_(DB_SHEETS.QUESTIONS);
   return toClientObject_(updated);
 }
 
 function setQuestionReaction(questionId, reaction, authToken, runId) {
-  ensureQuestionSchemaColumns_();
+  if (!String(runId || '').trim()) {
+    ensureQuestionSchemaColumns_();
+  }
   var player = getCurrentPlayer_(authToken);
   var targetQuestionId = String(questionId || '').trim();
   if (!targetQuestionId) {
@@ -152,7 +152,9 @@ function setQuestionReaction(questionId, reaction, authToken, runId) {
 }
 
 function setQuestionReactionLocked_(targetQuestionId, normalizedReaction, player, runId) {
-  var question = findRowByKey_(DB_SHEETS.QUESTIONS, 'questionId', targetQuestionId);
+  var run = getReactionRunForQuestion_(runId, player);
+  var workbookId = run ? getRunWorkbookContext_(run).workbookId : '';
+  var question = run ? findRunQuestionById_(run, targetQuestionId) : findRowByKey_(DB_SHEETS.QUESTIONS, 'questionId', targetQuestionId);
   if (!question) {
     throw new Error('문제를 찾을 수 없습니다.');
   }
@@ -186,13 +188,20 @@ function setQuestionReactionLocked_(targetQuestionId, normalizedReaction, player
     dislikeCount += 1;
   }
 
-  var updated = updateRowByKey_(DB_SHEETS.QUESTIONS, 'questionId', targetQuestionId, {
+  var patch = {
     likeCount: Math.max(0, likeCount),
     dislikeCount: Math.max(0, dislikeCount),
     reactionJson: safeJsonStringify_(reactions) || '{}',
     updatedAt: new Date(),
-  });
-  clearTableCache_(DB_SHEETS.QUESTIONS);
+  };
+  var updated = workbookId
+    ? updateWorkbookQuestionById_(workbookId, targetQuestionId, patch)
+    : updateRowByKey_(DB_SHEETS.QUESTIONS, 'questionId', targetQuestionId, patch);
+  if (workbookId) {
+    clearWorkbookQuestionCache_(workbookId);
+  } else {
+    clearTableCache_(DB_SHEETS.QUESTIONS);
+  }
   var scoreResult = awardQuestionReactionScore_(runId, playerId);
   return {
     questionId: targetQuestionId,
@@ -203,6 +212,18 @@ function setQuestionReactionLocked_(targetQuestionId, normalizedReaction, player
     scoreDelta: Number(scoreResult.scoreDelta || 0),
     totalScore: Number(scoreResult.totalScore || 0),
   };
+}
+
+function getReactionRunForQuestion_(runId, player) {
+  var targetRunId = String(runId || '').trim();
+  if (!targetRunId) {
+    return null;
+  }
+  var run = requireRun_(targetRunId);
+  if (!run || String(run.playerId || '') !== String(player && player.playerId || '') || run.status !== STATUS.RUN_ACTIVE) {
+    throw new Error('진행 중인 전투의 문제만 평가할 수 있습니다.');
+  }
+  return run;
 }
 
 function awardQuestionReactionScore_(runId, playerId) {
@@ -259,41 +280,45 @@ function getQuestionReactionRunScore_(runId, playerId) {
   return Number(run.score || 0);
 }
 
-function deleteQuestion(questionId, authToken) {
-  ensureQuestionSchemaColumns_();
+function deleteQuestion(questionId, authToken, workbookId) {
   var player = getCurrentPlayer_(authToken);
+  var workbook = requireQuestionWorkbook_(workbookId);
   var targetQuestionId = String(questionId || '').trim();
   if (!targetQuestionId) {
     throw new Error('삭제할 문제를 찾을 수 없습니다.');
   }
 
-  var deleted = deleteQuestionByOwner_(targetQuestionId, player.playerId);
+  var deleted = deleteWorkbookQuestionByOwner_(workbook.workbookId, targetQuestionId, player.playerId);
   if (!deleted) {
     throw new Error('문제를 찾을 수 없습니다.');
   }
 
-  clearTableCache_(DB_SHEETS.QUESTIONS);
   return { ok: true, questionId: targetQuestionId };
 }
 
-function getPendingQuestions() {
-  ensureQuestionSchemaColumns_();
+function getPendingQuestions(workbookId) {
   requireAdmin_();
-  return readTable_(DB_SHEETS.QUESTIONS).filter(function(question) {
+  var workbook = requireQuestionWorkbook_(workbookId);
+  return readWorkbookQuestionTable_(workbook.workbookId).filter(function(question) {
     return question.status === STATUS.QUESTION_PENDING;
-  }).map(toClientObject_);
+  }).map(function(question) {
+    return toClientObject_(Object.assign({}, question, {
+      workbookId: workbook.workbookId,
+      workbookName: workbook.workbookName || workbook.workbookId,
+    }));
+  });
 }
 
-function approveQuestion(questionId, difficulty) {
-  ensureQuestionSchemaColumns_();
+function approveQuestion(questionId, difficulty, workbookId) {
   var adminEmail = requireAdmin_();
+  var workbook = requireQuestionWorkbook_(workbookId);
   var normalizedDifficulty = normalizeDifficulty_(difficulty);
-  var question = findRowByKey_(DB_SHEETS.QUESTIONS, 'questionId', questionId);
+  var question = findWorkbookQuestionById_(workbook.workbookId, questionId);
   if (!question) {
     throw new Error('문제를 찾을 수 없습니다.');
   }
 
-  var updated = updateRowByKey_(DB_SHEETS.QUESTIONS, 'questionId', questionId, {
+  var updated = updateWorkbookQuestionById_(workbook.workbookId, questionId, {
     difficulty: normalizedDifficulty,
     status: STATUS.QUESTION_APPROVED,
     reviewComment: '',
@@ -301,31 +326,29 @@ function approveQuestion(questionId, difficulty) {
     approvedAt: new Date(),
     updatedAt: new Date(),
   });
-  clearTableCache_(DB_SHEETS.QUESTIONS);
   return toClientObject_(updated);
 }
 
-function rejectQuestion(questionId, reviewComment) {
-  ensureQuestionSchemaColumns_();
+function rejectQuestion(questionId, reviewComment, workbookId) {
   var adminEmail = requireAdmin_();
+  var workbook = requireQuestionWorkbook_(workbookId);
   var comment = String(reviewComment || '').trim();
   if (!comment) {
     throw new Error('반려 사유를 입력해 주세요.');
   }
 
-  var question = findRowByKey_(DB_SHEETS.QUESTIONS, 'questionId', questionId);
+  var question = findWorkbookQuestionById_(workbook.workbookId, questionId);
   if (!question) {
     throw new Error('문제를 찾을 수 없습니다.');
   }
 
-  var updated = updateRowByKey_(DB_SHEETS.QUESTIONS, 'questionId', questionId, {
+  var updated = updateWorkbookQuestionById_(workbook.workbookId, questionId, {
     status: STATUS.QUESTION_REJECTED,
     reviewComment: comment,
     approvedBy: adminEmail,
     approvedAt: '',
     updatedAt: new Date(),
   });
-  clearTableCache_(DB_SHEETS.QUESTIONS);
   return toClientObject_(updated);
 }
 
@@ -333,6 +356,26 @@ function getQuestionsByCreator_(creatorId) {
   return readTable_(DB_SHEETS.QUESTIONS).filter(function(question) {
     return question.creatorId === creatorId;
   });
+}
+
+function getWorkbookQuestionsByCreatorForQuestionService_(workbookId, creatorId) {
+  var targetCreatorId = String(creatorId || '').trim();
+  return readWorkbookQuestionTable_(workbookId).filter(function(question) {
+    return String(question.creatorId || '').trim() === targetCreatorId;
+  });
+}
+
+function requireQuestionWorkbook_(workbookId) {
+  var targetWorkbookId = String(workbookId || '').trim();
+  if (!targetWorkbookId) {
+    throw new Error('문제집을 먼저 선택해 주세요.');
+  }
+  var workbook = requireWorkbook_(targetWorkbookId);
+  if (String(workbook.status || STATUS.WORKBOOK_ACTIVE) !== STATUS.WORKBOOK_ACTIVE) {
+    throw new Error('활성 상태인 문제집만 사용할 수 있습니다.');
+  }
+  ensureWorkbookQuestionSheet_(workbook);
+  return workbook;
 }
 
 function calculateQuestionLikeStartingScore_(playerId) {

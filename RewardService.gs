@@ -810,6 +810,14 @@ function grantCurrencyForRun_(run, stageState, rewardGroupId, fixedAmount) {
       updatedAt: new Date(),
     });
   }
+  var workbookId = getRunWorkbookId_(run);
+  if (workbookId) {
+    var workbookData = getWorkbookPlayerData_(workbookId, run.playerId) || ensureWorkbookPlayerData_(workbookId, run.playerId);
+    updateWorkbookPlayerData_(workbookId, run.playerId, {
+      currency: Number(workbookData.currency || 0) + Number(currencyResult.delta || 0),
+      updatedAt: new Date(),
+    });
+  }
 
   return currencyResult;
 }
@@ -1000,7 +1008,19 @@ function updatePlayerProgressFromRun_(run, currencyDelta) {
   ensureTableColumns_(DB_SHEETS.PLAYER_DATA, DB_COLUMNS.PLAYER_DATA);
   var playerData = getPlayerData_(run.playerId) || ensurePlayerData_(run.playerId);
   var patch = buildPlayerProgressPatch_(run, playerData, currencyDelta);
-  return updateRowByKey_(DB_SHEETS.PLAYER_DATA, 'playerId', run.playerId, patch);
+  var updatedPlayerData = updateRowByKey_(DB_SHEETS.PLAYER_DATA, 'playerId', run.playerId, patch);
+  updateWorkbookPlayerProgressFromRun_(run, currencyDelta);
+  return updatedPlayerData;
+}
+
+function updateWorkbookPlayerProgressFromRun_(run, currencyDelta) {
+  var workbookId = getRunWorkbookId_(run);
+  if (!workbookId) {
+    return null;
+  }
+  var workbookData = getWorkbookPlayerData_(workbookId, run.playerId) || ensureWorkbookPlayerData_(workbookId, run.playerId);
+  var patch = buildPlayerProgressPatch_(run, workbookData, currencyDelta);
+  return updateWorkbookPlayerData_(workbookId, run.playerId, patch);
 }
 
 function buildPlayerProgressPatch_(run, playerData, currencyDelta) {

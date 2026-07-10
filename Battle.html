@@ -6637,6 +6637,7 @@
     }
 
     function goHome() {
+      showLoadingModal('메인 화면으로 이동 중...', '잠시만 기다려 주세요.');
       navigateTop(WEB_APP_URL + '?skipIntro=1');
     }
 

@@ -1,27 +1,31 @@
-function getLeaderboard() {
-  ensureTableColumns_(DB_SHEETS.PLAYER_DATA, DB_COLUMNS.PLAYER_DATA);
-  var players = readTable_(DB_SHEETS.PLAYERS);
-  var playerDataRows = readTable_(DB_SHEETS.PLAYER_DATA);
-  var playerMap = {};
+function getLeaderboard(workbookId) {
+  var workbook = requireActiveLeaderboardWorkbook_(workbookId);
+  ensureTableColumns_(DB_SHEETS.WORKBOOK_PLAYER_DATA, DB_COLUMNS.WORKBOOK_PLAYER_DATA);
+  ensureTableColumns_(DB_SHEETS.PLAYERS, DB_COLUMNS.PLAYERS);
 
-  players.forEach(function(player) {
+  var playerMap = {};
+  readTable_(DB_SHEETS.PLAYERS).forEach(function(player) {
     if (String(player.isActive) === 'false') {
       return;
     }
     playerMap[player.playerId] = player;
   });
 
-  var rows = playerDataRows.map(function(playerData) {
+  var rows = readTable_(DB_SHEETS.WORKBOOK_PLAYER_DATA).filter(function(playerData) {
+    return String(playerData.workbookId || '').trim() === workbook.workbookId;
+  }).map(function(playerData) {
     var player = playerMap[playerData.playerId] || {};
     var accuracyRate = calculateAccuracyRate(playerData);
     var clearTimeMs = normalizeClearTimeForSort_(playerData.bestClearTimeMs);
-    var displayName = player.displayName || player.studentName || player.email || '이름 없음';
+    var displayName = player.displayName || player.studentName || player.email || '\uC774\uB984 \uC5C6\uC74C';
     var maxFloor = Number(playerData.maxFloor || 0);
     var maxStage = Number(playerData.maxStage || 0);
     var bestScore = Number(playerData.bestScore || 0);
 
     return {
       rank: 0,
+      workbookId: workbook.workbookId,
+      workbookName: workbook.workbookName || workbook.workbookId,
       playerId: playerData.playerId,
       displayName: displayName,
       bestScore: bestScore,
@@ -31,7 +35,7 @@ function getLeaderboard() {
       maxStage: maxStage,
       progressScore: calculateProgressScore(playerData),
       clearTimeMs: clearTimeMs,
-      clearTimeText: formatClearTime(playerData.bestClearTimeMs),
+      clearTimeText: formatClearTime(clearTimeMs),
       accuracyRate: accuracyRate,
       accuracyText: accuracyRate.toFixed(1).replace(/\.0$/, '') + '%',
     };
@@ -44,6 +48,18 @@ function getLeaderboard() {
     row.rank = index + 1;
   });
   return rows;
+}
+
+function requireActiveLeaderboardWorkbook_(workbookId) {
+  var targetWorkbookId = String(workbookId || '').trim();
+  if (!targetWorkbookId) {
+    throw new Error('Select a workbook before opening the leaderboard.');
+  }
+  var workbook = requireWorkbook_(targetWorkbookId);
+  if (String(workbook.status || STATUS.WORKBOOK_ACTIVE) !== STATUS.WORKBOOK_ACTIVE) {
+    throw new Error('Only active workbook leaderboards can be viewed.');
+  }
+  return workbook;
 }
 
 function calculateProgressScore(playerData) {
@@ -70,22 +86,10 @@ function formatCompactStageText_(progressFloor, stage) {
   return displayFloor + '-' + Number(stage || 1);
 }
 
-function formatDisplayProgressTextLegacy_(progressFloor, stage) {
-  var floorNames = {
-    1: '5층 옥상',
-    2: '4층 1학년 교실층',
-    3: '3층 3학년 교실층',
-    4: '2층 2학년 교실층',
-    5: '1층 특별실/현관',
-  };
-  var floor = Number(progressFloor || 1);
-  return (floorNames[floor] || (floor + '층')) + ' ' + Number(stage || 1) + '스테이지';
-}
-
 function formatClearTime(clearTimeMs) {
   var value = Number(clearTimeMs || 0);
   if (!value || value >= getMissingClearTimeMs_()) {
-    return '없음';
+    return '\uC5C6\uC74C';
   }
 
   var totalSeconds = Math.floor(value / 1000);
@@ -93,9 +97,9 @@ function formatClearTime(clearTimeMs) {
   var seconds = totalSeconds % 60;
   var milliseconds = value % 1000;
   if (minutes > 0) {
-    return minutes + '분 ' + seconds + '초';
+    return minutes + '\uBD84 ' + seconds + '\uCD08';
   }
-  return seconds + '.' + String(milliseconds).padStart(3, '0').slice(0, 1) + '초';
+  return seconds + '.' + String(milliseconds).padStart(3, '0').slice(0, 1) + '\uCD08';
 }
 
 function sortLeaderboardRows(rows) {
@@ -126,5 +130,5 @@ function getMissingClearTimeMs_() {
 }
 
 function formatScore_(score) {
-  return Number(score || 0).toLocaleString('ko-KR') + '점';
+  return Number(score || 0).toLocaleString('ko-KR') + '\uC810';
 }

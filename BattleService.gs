@@ -1,27 +1,29 @@
-function canStartGame(playerId, authToken) {
+function canStartGame(playerId, authToken, workbookId) {
   var player = getCurrentPlayer_(authToken);
   if (player.playerId !== playerId) {
     throw new Error('현재 로그인한 학생 정보와 요청한 플레이어가 다릅니다.');
   }
 
+  var workbook = requireActiveWorkbookForRunStart_(workbookId);
   var settings = getAppSettings();
   var reasons = [];
   if (!settings.gameEnabled) {
     reasons.push('선생님이 아직 게임 시작을 활성화하지 않았습니다.');
   }
 
-  var myQuestionCount = getQuestionsByCreator_(playerId).length;
+  var myQuestionCount = getWorkbookQuestionsByCreator_(workbook.workbookId, playerId).length;
   if (myQuestionCount < 1) {
     reasons.push('게임 시작 전 문제를 1개 이상 만들어야 합니다.');
   }
   var latestCompletedRunEndedAt = getLatestCompletedRunEndedAtMs_(playerId);
-  if (latestCompletedRunEndedAt > 0 && getLatestCreatedQuestionAtMs_(playerId) <= latestCompletedRunEndedAt) {
+  if (latestCompletedRunEndedAt > 0 && getLatestCreatedWorkbookQuestionAtMs_(workbook.workbookId, playerId) <= latestCompletedRunEndedAt) {
     reasons.push('지난 게임이 끝난 뒤 새 문제를 1개 만들어야 다음 게임을 시작할 수 있습니다.');
   }
 
   return {
     canStart: reasons.length === 0,
     reasons: reasons,
+    workbook: workbook,
   };
 }
 
@@ -35,8 +37,8 @@ function getLatestCompletedRunEndedAtMs_(playerId) {
   }, 0);
 }
 
-function getLatestCreatedQuestionAtMs_(playerId) {
-  return getQuestionsByCreator_(playerId).reduce(function(latest, question) {
+function getLatestCreatedWorkbookQuestionAtMs_(workbookId, playerId) {
+  return getWorkbookQuestionsByCreator_(workbookId, playerId).reduce(function(latest, question) {
     return Math.max(latest, parseDateMs_(question.createdAt || question.updatedAt));
   }, 0);
 }
@@ -49,34 +51,106 @@ function parseDateMs_(value) {
   return isNaN(ms) ? 0 : ms;
 }
 
-function startRun(playerId, authToken) {
+function requireActiveWorkbookForRunStart_(workbookId) {
+  var targetWorkbookId = String(workbookId || '').trim();
+  if (!targetWorkbookId) {
+    throw new Error('게임을 시작하려면 문제집을 선택해 주세요.');
+  }
+  var workbook = requireWorkbook_(targetWorkbookId);
+  if (String(workbook.status || STATUS.WORKBOOK_ACTIVE) !== STATUS.WORKBOOK_ACTIVE) {
+    throw new Error('활성 상태인 문제집만 선택할 수 있습니다.');
+  }
+  return workbook;
+}
+
+function getRunWorkbookContext_(run) {
+  var runWorkbookId = String(run && run.workbookId || '').trim();
+  var workbookId = runWorkbookId || getDefaultWorkbookId_();
+  if (!workbookId) {
+    throw new Error('This legacy run has no workbookId. Set Settings.defaultWorkbookId to an existing active workbook, or start a new run after selecting a workbook.');
+  }
+  if (!runWorkbookId && !findWorkbookById_(workbookId)) {
+    throw new Error('Settings.defaultWorkbookId points to a missing workbook: ' + workbookId);
+  }
+  var workbook = requireWorkbook_(workbookId);
+  if (!runWorkbookId && String(workbook.status || STATUS.WORKBOOK_ACTIVE) !== STATUS.WORKBOOK_ACTIVE) {
+    throw new Error('Settings.defaultWorkbookId points to a non-active workbook: ' + workbookId);
+  }
+  return {
+    workbookId: workbook.workbookId,
+    workbookName: String(run && run.workbookName || '').trim() || workbook.workbookName || workbook.workbookId,
+    workbook: workbook,
+  };
+}
+
+function getWorkbookQuestionsByCreator_(workbookId, creatorId) {
+  var targetCreatorId = String(creatorId || '').trim();
+  return readWorkbookQuestionsForBattle_(workbookId).filter(function(question) {
+    return String(question.creatorId || '').trim() === targetCreatorId;
+  });
+}
+
+function readRunQuestionsForBattle_(run) {
+  return readWorkbookQuestionsForBattle_(getRunWorkbookContext_(run).workbookId);
+}
+
+function readWorkbookQuestionsForBattle_(workbookId) {
+  var contextWorkbookId = String(workbookId || '').trim();
+  return readWorkbookQuestionTableCached_(contextWorkbookId, 120).map(function(question) {
+    return attachQuestionWorkbook_(question, contextWorkbookId);
+  });
+}
+
+function attachQuestionWorkbook_(question, workbookId) {
+  return Object.assign({}, question || {}, {
+    workbookId: String(workbookId || '').trim(),
+  });
+}
+
+function findRunQuestionById_(run, questionId) {
+  var targetQuestionId = String(questionId || '').trim();
+  if (!targetQuestionId) {
+    return null;
+  }
+  var context = getRunWorkbookContext_(run);
+  var question = readWorkbookQuestionTableCached_(context.workbookId, 120).filter(function(row) {
+    return String(row.questionId || '').trim() === targetQuestionId;
+  })[0] || null;
+  return question ? attachQuestionWorkbook_(question, context.workbookId) : null;
+}
+
+function startRun(playerId, authToken, workbookId) {
   return withRunStartLock_(function() {
     validatePlayerRequest_(playerId, authToken);
     var existingRun = getActiveRun(playerId);
     if (existingRun) {
+      getRunWorkbookContext_(existingRun);
       return toClientObject_(existingRun);
     }
 
-    var check = canStartGame(playerId, authToken);
+    var check = canStartGame(playerId, authToken, workbookId);
     if (!check.canStart) {
       throw new Error(check.reasons.join('\n'));
     }
 
-    return createNewRun_(playerId);
+    return createNewRun_(playerId, check.workbook);
   });
 }
 
-function getActiveRunSummary(playerId, authToken) {
+function getActiveRunSummary(playerId, authToken, workbookId) {
   validatePlayerRequest_(playerId, authToken);
   var existingRun = getActiveRun(playerId);
   if (existingRun) {
+    var workbookContext = getRunWorkbookContext_(existingRun);
     return toClientObject_({
       hasActiveRun: true,
       run: buildRunResumeSummary_(existingRun),
+      workbookId: workbookContext.workbookId,
+      workbookName: workbookContext.workbookName,
     });
   }
 
-  var check = canStartGame(playerId, authToken);
+  var check = canStartGame(playerId, authToken, workbookId);
   if (!check.canStart) {
     throw new Error(check.reasons.join('\n'));
   }
@@ -87,10 +161,10 @@ function getActiveRunSummary(playerId, authToken) {
   });
 }
 
-function restartRun(playerId, authToken) {
+function restartRun(playerId, authToken, workbookId) {
   return withRunStartLock_(function() {
     validatePlayerRequest_(playerId, authToken);
-    var check = canStartGame(playerId, authToken);
+    var check = canStartGame(playerId, authToken, workbookId);
     if (!check.canStart) {
       throw new Error(check.reasons.join('\n'));
     }
@@ -98,7 +172,7 @@ function restartRun(playerId, authToken) {
     getActiveRunsForPlayer_(playerId).forEach(function(run) {
       abandonActiveRun_(run);
     });
-    return createNewRun_(playerId);
+    return createNewRun_(playerId, check.workbook);
   });
 }
 
@@ -120,8 +194,9 @@ function withRunStartLock_(callback) {
   }
 }
 
-function createNewRun_(playerId) {
+function createNewRun_(playerId, workbook) {
   ensureTableColumns_(DB_SHEETS.RUNS, DB_COLUMNS.RUNS);
+  workbook = requireActiveWorkbookForRunStart_(workbook && workbook.workbookId || workbook);
   var now = new Date();
   var stats = Object.assign({}, BASE_PLAYER_STATS);
   var startingScore = typeof calculateQuestionLikeStartingScore_ === 'function'
@@ -155,6 +230,8 @@ function createNewRun_(playerId) {
     clearTimeMs: '',
     currency: 0,
     score: Math.max(0, Math.round(Number(startingScore || 0))),
+    workbookId: workbook.workbookId,
+    workbookName: workbook.workbookName,
   };
 
   appendRowObject_(DB_SHEETS.RUNS, run);
@@ -164,6 +241,7 @@ function createNewRun_(playerId) {
 
 function buildRunResumeSummary_(run) {
   var stageName = '';
+  var workbookContext = getRunWorkbookContext_(run);
   try {
     var stageState = getStageState_(run);
     var stage = loadStage(stageState.stageId || buildStageId_(run.currentFloor, run.currentStage));
@@ -180,6 +258,8 @@ function buildRunResumeSummary_(run) {
     currentShield: Number(run.currentShield || 0),
     currency: Number(run.currency || 0),
     score: Number(run.score || 0),
+    workbookId: workbookContext.workbookId,
+    workbookName: workbookContext.workbookName,
     startedAt: run.startedAt || '',
     updatedAt: run.updatedAt || '',
   };
@@ -373,6 +453,7 @@ function normalizePlayerActionPointFields_(player) {
 
 function startBattle(runId) {
   var run = requireRun_(runId);
+  var workbookContext = getRunWorkbookContext_(run);
   var stageState = getStageState_(run);
   var stage = loadStage(stageState.stageId || buildStageId_(run.currentFloor, run.currentStage));
   stageState.usedQuestionStageId = stage.stageId;
@@ -389,6 +470,8 @@ function startBattle(runId) {
   var stats = calculateStatsWithItemEffects_(baseStats, items);
   var battleState = {
     runId: run.runId,
+    workbookId: workbookContext.workbookId,
+    workbookName: workbookContext.workbookName,
     battleId: battleId,
     status: STATUS.BATTLE_ACTIVE,
     turn: 1,
@@ -602,7 +685,7 @@ function selectQuestionForAction(playerId, runId, actionType, difficultyBonus, a
   var questionModifiersForPick = getItemQuestionModifiers_(battleState, null);
   var effectiveDifficultyBonus = normalizedAction === ACTION_TYPES.SKILL ? Number(skill && skill.difficultyBonus || 0) : Number(difficultyBonus || 0);
   var targetDifficulty = calculateRequiredQuestionDifficulty_(battleState.stage, effectiveDifficultyBonus, activeEffects, questionModifiersForPick);
-  var questionResult = pickQuestion_(playerId, battleState.stage, stageState.otherStudentQuestionShown, getForcedQuestionCreatorId_(battleState), questionModifiersForPick, stageState.usedQuestionIds, targetDifficulty);
+  var questionResult = pickQuestion_(run, playerId, battleState.stage, stageState.otherStudentQuestionShown, getForcedQuestionCreatorId_(battleState), questionModifiersForPick, stageState.usedQuestionIds, targetDifficulty);
   var questionModifiers = getItemQuestionModifiers_(battleState, questionResult.question);
   var finalDifficulty = targetDifficulty;
   var maxMs = calculateFinalQuestionTimeLimitForQuestion_(finalDifficulty, activeEffects, questionResult.question, questionModifiers);
@@ -656,6 +739,7 @@ function submitActionAnswer(answerPayload) {
   var pendingAction = battleState.pendingAction;
   if (!pendingAction && payload.questionId) {
     pendingAction = createPendingActionFromCachedPayload_(
+      run,
       stageState,
       battleState,
       payload,
@@ -672,11 +756,12 @@ function submitActionAnswer(answerPayload) {
     throw new Error('풀이 중인 문제가 없습니다.');
   }
 
-  var question = findCachedRowByKey_(DB_SHEETS.QUESTIONS, 'questionId', pendingAction.questionId, 120);
+  var question = findRunQuestionById_(run, pendingAction.questionId);
   if (!question) {
     throw new Error('문제를 찾을 수 없습니다.');
   }
 
+  validateQuestionAllowedForBattle_(question, player.playerId, battleState, pendingAction.finalDifficulty);
   markQuestionUsedForRun_(stageState, battleState, pendingAction.questionId);
   var elapsedMs = Math.max(0, Number(payload.elapsedMs || 0));
   var maxMs = Number(pendingAction.maxMs || calculateFinalQuestionTimeLimitForQuestion_(pendingAction.finalDifficulty, getActiveEffectsForQuestion_(battleState), pendingAction.question || question, getItemQuestionModifiers_(battleState, question)));
@@ -1594,10 +1679,11 @@ function commitStageResult(stagePayload, authToken) {
   });
 
   (Array.isArray(payload.answerLogs) ? payload.answerLogs : []).forEach(function(answerPayload) {
-    var question = findCachedRowByKey_(DB_SHEETS.QUESTIONS, 'questionId', answerPayload.questionId, 120);
+    var question = findRunQuestionById_(run, answerPayload.questionId);
     if (!question) {
       throw new Error('문제를 찾을 수 없습니다: ' + answerPayload.questionId);
     }
+    validateQuestionAllowedForBattle_(question, player.playerId, battleState, answerPayload.finalDifficulty);
     var elapsedMs = Math.max(0, Number(answerPayload.elapsedMs || 0));
     var maxMs = Math.max(1, Number(answerPayload.maxTimeMs || answerPayload.maxMs || 1));
     var isCorrect = isCorrectAnswer_(question, answerPayload.selectedAnswer, answerPayload.selectedChoiceIndex, answerPayload.selectedAnswerText);
@@ -1840,7 +1926,7 @@ function flushQueuedBattleAnswerLogs_(battleState) {
   queuedLogs.forEach(function(answerPayload) {
     updatePlayerAnswerCache_(answerPayload);
     if (answerPayload.questionId) {
-      updateQuestionStats(answerPayload.questionId, answerPayload.isCorrect);
+      updateQuestionStats(answerPayload.questionId, answerPayload.isCorrect, answerPayload.runId);
     }
   });
   return queuedLogs.length;
@@ -1908,18 +1994,20 @@ function awardRunScore_(runId, scoreDelta) {
   };
 }
 
-function updateQuestionStats(questionId, isCorrect) {
-  var question = findRowByKey_(DB_SHEETS.QUESTIONS, 'questionId', questionId);
+function updateQuestionStats(questionId, isCorrect, runId) {
+  var run = runId ? requireRun_(runId) : null;
+  var question = run ? findRunQuestionById_(run, questionId) : null;
   if (!question) {
     return null;
   }
 
-  var updated = updateRowByKey_(DB_SHEETS.QUESTIONS, 'questionId', questionId, {
+  var workbookId = getRunWorkbookContext_(run).workbookId;
+  var updated = updateWorkbookQuestionById_(workbookId, questionId, {
     correctCount: Number(question.correctCount || 0) + (isCorrect ? 1 : 0),
     totalCount: Number(question.totalCount || 0) + 1,
     updatedAt: new Date(),
   });
-  clearTableCache_(DB_SHEETS.QUESTIONS);
+  clearWorkbookQuestionCache_(workbookId);
   return updated;
 }
 
@@ -1937,9 +2025,12 @@ function buildBattleView_(run, stageState) {
     }
   }
   var runState = buildRunState_(run);
+  var workbookContext = getRunWorkbookContext_(run);
   return toClientObject_({
     runId: run.runId,
     playerId: run.playerId,
+    workbookId: workbookContext.workbookId,
+    workbookName: workbookContext.workbookName,
     currency: Number(run.currency || 0),
     score: Number(run.score || 0),
     battle: battleState,
@@ -2108,7 +2199,7 @@ function buildBattleQuestionCache_(run, stageState, battleState) {
     var usedIdMap = getUsedQuestionIdMap_(stageState, battleState);
     var questionModifiersForPick = getItemQuestionModifiers_(battleState, null);
     var targetDifficulty = calculateRequiredQuestionDifficulty_(battleState.stage, 0, activeEffects, questionModifiersForPick);
-    var selectedQuestions = selectQuestionCacheRows_(run.playerId, battleState.stage, stageState.otherStudentQuestionShown, getForcedQuestionCreatorId_(battleState), questionModifiersForPick, stageState.usedQuestionIds, targetDifficulty);
+    var selectedQuestions = selectQuestionCacheRows_(run, run.playerId, battleState.stage, stageState.otherStudentQuestionShown, getForcedQuestionCreatorId_(battleState), questionModifiersForPick, stageState.usedQuestionIds, targetDifficulty);
     return selectedQuestions.map(function(question) {
       var questionModifiers = getItemQuestionModifiers_(battleState, question);
       var finalDifficulty = targetDifficulty;
@@ -2128,10 +2219,10 @@ function buildBattleQuestionCache_(run, stageState, battleState) {
   }
 }
 
-function selectQuestionCacheRows_(playerId, stage, otherStudentQuestionShown, forcedCreatorId, questionModifiers, usedQuestionIds, targetDifficulty) {
+function selectQuestionCacheRows_(run, playerId, stage, otherStudentQuestionShown, forcedCreatorId, questionModifiers, usedQuestionIds, targetDifficulty) {
   var limit = 30;
   var requiredDifficulty = clampDifficultyToStageRange_(targetDifficulty || calculateRequiredQuestionDifficulty_(stage, 0, [], questionModifiers), stage);
-  var approvedQuestions = readTableCached_(DB_SHEETS.QUESTIONS, 120).filter(function(question) {
+  var approvedQuestions = readRunQuestionsForBattle_(run).filter(function(question) {
     return question.status === STATUS.QUESTION_APPROVED;
   });
   var allowedQuestions = approvedQuestions.filter(function(question) {
@@ -2162,7 +2253,7 @@ function selectQuestionCacheRows_(playerId, stage, otherStudentQuestionShown, fo
     while (selected.length < limit && candidates.length > 0) {
       var picked = pickQuestionWithTypeBias_(candidates, questionModifiers, (usedQuestionIds || []).concat(selected.map(function(question) {
         return question.questionId;
-      })));
+      })), rangedQuestions);
       pushQuestion(picked);
       candidates = candidates.filter(function(candidate) {
         return candidate.questionId !== picked.questionId;
@@ -2171,7 +2262,7 @@ function selectQuestionCacheRows_(playerId, stage, otherStudentQuestionShown, fo
   }
 
   if (!otherStudentQuestionShown && primaryRangedQuestions.length > 0) {
-    pushQuestion(pickQuestionWithTypeBias_(primaryRangedQuestions, questionModifiers, usedQuestionIds));
+    pushQuestion(pickQuestionWithTypeBias_(primaryRangedQuestions, questionModifiers, usedQuestionIds, rangedQuestions));
   }
   pushRandomFrom(primaryRangedQuestions);
   return selected;
@@ -2184,8 +2275,8 @@ function sanitizeQuestionForBattleCache_(question, playerId) {
   return sanitized;
 }
 
-function createPendingActionFromCachedPayload_(stageState, battleState, payload, actionType, skillId, targetId, playerId) {
-  var question = findCachedRowByKey_(DB_SHEETS.QUESTIONS, 'questionId', payload.questionId, 120);
+function createPendingActionFromCachedPayload_(run, stageState, battleState, payload, actionType, skillId, targetId, playerId) {
+  var question = findRunQuestionById_(run, payload.questionId);
   if (!question) {
     throw new Error('문제를 찾을 수 없습니다.');
   }
@@ -2198,7 +2289,7 @@ function createPendingActionFromCachedPayload_(stageState, battleState, payload,
   validateQuestionAllowedForBattle_(question, playerId, battleState, targetDifficulty);
   normalizeUsedQuestionIds_(stageState, battleState);
   var reusedQuestion = isQuestionUsedInRun_(stageState, battleState, question.questionId);
-  if (reusedQuestion && hasUnusedQuestionForBattle_(playerId, stageState, battleState, targetDifficulty)) {
+  if (reusedQuestion && hasUnusedQuestionForBattle_(run, playerId, stageState, battleState, targetDifficulty)) {
     throw new Error('This question has already appeared in this battle.');
   }
   var actionPointCost = getActionPointCostForAction_(actionType, skill);
@@ -2346,14 +2437,14 @@ function filterUnusedQuestions_(questions, usedIdMap) {
   });
 }
 
-function hasUnusedQuestionForBattle_(playerId, stageState, battleState, targetDifficulty) {
+function hasUnusedQuestionForBattle_(run, playerId, stageState, battleState, targetDifficulty) {
   if (!battleState || !battleState.stage) {
     return false;
   }
   var forcedCreatorId = getForcedQuestionCreatorId_(battleState);
   var requiredDifficulty = targetDifficulty || calculateRequiredQuestionDifficulty_(battleState.stage, 0, getActiveEffectsForQuestion_(battleState), getItemQuestionModifiers_(battleState, null));
   var usedIdMap = getUsedQuestionIdMap_(stageState, battleState);
-  return readTableCached_(DB_SHEETS.QUESTIONS, 120).some(function(question) {
+  return readRunQuestionsForBattle_(run).some(function(question) {
     if (question.status !== STATUS.QUESTION_APPROVED || question.creatorId === playerId) {
       return false;
     }
@@ -2367,9 +2458,9 @@ function hasUnusedQuestionForBattle_(playerId, stageState, battleState, targetDi
   });
 }
 
-function pickQuestion_(playerId, stage, otherStudentQuestionShown, forcedCreatorId, questionModifiers, usedQuestionIds, targetDifficulty) {
+function pickQuestion_(run, playerId, stage, otherStudentQuestionShown, forcedCreatorId, questionModifiers, usedQuestionIds, targetDifficulty) {
   var requiredDifficulty = clampDifficultyToStageRange_(targetDifficulty || calculateRequiredQuestionDifficulty_(stage, 0, [], questionModifiers), stage);
-  var approvedQuestions = readTableCached_(DB_SHEETS.QUESTIONS, 120).filter(function(question) {
+  var approvedQuestions = readRunQuestionsForBattle_(run).filter(function(question) {
     return question.status === STATUS.QUESTION_APPROVED;
   });
   var questionPool = approvedQuestions.filter(function(question) {
@@ -2385,10 +2476,10 @@ function pickQuestion_(playerId, stage, otherStudentQuestionShown, forcedCreator
   var unusedRangedQuestions = filterUnusedQuestions_(rangedQuestions, usedIdMap);
 
   if (unusedRangedQuestions.length > 0) {
-    return questionPickResult_(pickQuestionWithTypeBias_(unusedRangedQuestions, questionModifiers, usedQuestionIds), true, '');
+    return questionPickResult_(pickQuestionWithTypeBias_(unusedRangedQuestions, questionModifiers, usedQuestionIds, rangedQuestions), true, '');
   }
   if (rangedQuestions.length > 0) {
-    return questionPickResult_(pickQuestionWithTypeBias_(rangedQuestions, questionModifiers, usedQuestionIds), true, 'exhaustedUnusedQuestions');
+    return questionPickResult_(pickQuestionWithTypeBias_(rangedQuestions, questionModifiers, usedQuestionIds, rangedQuestions), true, 'exhaustedUnusedQuestions');
   }
 
   throw new Error('No approved question is available at difficulty ' + requiredDifficulty + '.');
@@ -2404,12 +2495,12 @@ function isQuestionInStageDifficultyRange_(question, minDifficulty, maxDifficult
     && difficulty <= Number(maxDifficulty || GAME_RULES.MAX_DIFFICULTY);
 }
 
-function pickQuestionWithTypeBias_(questions, questionModifiers, recentQuestionIds) {
+function pickQuestionWithTypeBias_(questions, questionModifiers, recentQuestionIds, recentQuestionSource) {
   var pool = questions || [];
   if (!pool.length) {
     return null;
   }
-  var varietyPick = pickQuestionForTypeVariety_(pool, recentQuestionIds);
+  var varietyPick = pickQuestionForTypeVariety_(pool, recentQuestionIds, recentQuestionSource);
   if (varietyPick) {
     return varietyPick;
   }
@@ -2441,7 +2532,7 @@ function pickQuestionWithTypeBias_(questions, questionModifiers, recentQuestionI
   return pickRandom_(multipleChoices);
 }
 
-function pickQuestionForTypeVariety_(pool, recentQuestionIds) {
+function pickQuestionForTypeVariety_(pool, recentQuestionIds, recentQuestionSource) {
   var shortAnswers = (pool || []).filter(function(question) {
     return question.type === QUESTION_TYPES.SHORT_ANSWER;
   });
@@ -2451,7 +2542,7 @@ function pickQuestionForTypeVariety_(pool, recentQuestionIds) {
   if (!shortAnswers.length || !multipleChoices.length) {
     return null;
   }
-  var recentTypes = getRecentQuestionTypes_(recentQuestionIds, 2);
+  var recentTypes = getRecentQuestionTypes_(recentQuestionIds, 2, recentQuestionSource || pool);
   if (recentTypes.length < 2 || recentTypes[0] !== recentTypes[1]) {
     return null;
   }
@@ -2464,7 +2555,7 @@ function pickQuestionForTypeVariety_(pool, recentQuestionIds) {
   return null;
 }
 
-function getRecentQuestionTypes_(questionIds, limit) {
+function getRecentQuestionTypes_(questionIds, limit, questionSource) {
   var ids = (questionIds || []).map(function(questionId) {
     return String(questionId || '');
   }).filter(Boolean);
@@ -2472,7 +2563,7 @@ function getRecentQuestionTypes_(questionIds, limit) {
     return [];
   }
   var questionTypeById = {};
-  readTableCached_(DB_SHEETS.QUESTIONS, 120).forEach(function(question) {
+  (questionSource || []).forEach(function(question) {
     questionTypeById[String(question.questionId || '')] = question.type || '';
   });
   var types = [];
@@ -2496,6 +2587,7 @@ function questionPickResult_(question, isOtherPlayerQuestion, fallbackReason) {
 function sanitizeQuestionForClient_(question, playerId) {
   return {
     questionId: question.questionId,
+    workbookId: question.workbookId || '',
     type: question.type,
     prompt: question.prompt,
     choice1: question.choice1,
@@ -2522,7 +2614,9 @@ function hydrateQuestionReactionForClient_(question, playerId) {
   if (clientQuestion.myReaction === undefined || clientQuestion.myReaction === '') {
     var sourceQuestion = question || {};
     if (sourceQuestion.reactionJson === undefined) {
-      sourceQuestion = findCachedRowByKey_(DB_SHEETS.QUESTIONS, 'questionId', clientQuestion.questionId, 120) || sourceQuestion;
+      if (clientQuestion.workbookId) {
+        sourceQuestion = findWorkbookQuestionById_(clientQuestion.workbookId, clientQuestion.questionId) || sourceQuestion;
+      }
     }
     clientQuestion.myReaction = getQuestionReactionForPlayer_(sourceQuestion, playerId);
   }
@@ -2588,12 +2682,13 @@ function createPlayerGhostForDefeat_(runId, battleState) {
   }
 
   var run = requireRun_(runId);
+  var workbookContext = getRunWorkbookContext_(run);
   var player = findRowByKey_(DB_SHEETS.PLAYERS, 'playerId', run.playerId) || {};
   var ghost = {
     ghostId: generateId_('ghost'),
     sourceRunId: runId,
     sourcePlayerId: run.playerId,
-    sourceDisplayName: player.displayName || player.studentName || run.playerId,
+    sourceDisplayName: player.displayName || player.studentName || '',
     sourceAvatarType: player.avatarType || AVATAR_TYPES.INITIAL,
     sourceAvatarKey: player.avatarKey || '',
     floor: battleState && battleState.stage ? Number(battleState.stage.floor || run.currentFloor || 1) : Number(run.currentFloor || 1),
@@ -2604,6 +2699,8 @@ function createPlayerGhostForDefeat_(runId, battleState) {
     spawnedBattleId: '',
     spawnedAt: '',
     createdAt: new Date(),
+    workbookId: workbookContext.workbookId,
+    workbookName: workbookContext.workbookName,
   };
   appendRowObject_(DB_SHEETS.PLAYER_GHOSTS, ghost);
   return ghost;
@@ -2631,9 +2728,12 @@ function selectPlayerGhostForBattle_(run, stage, stageState, battleId) {
 
   try {
     ensurePlayerGhostSheet_();
-    var approvedQuestionCreators = getApprovedQuestionCreatorMap_();
+    var workbookContext = getRunWorkbookContext_(run);
+    var approvedQuestionCreators = getApprovedQuestionCreatorMap_(workbookContext.workbookId);
     var activeGhosts = readTable_(DB_SHEETS.PLAYER_GHOSTS).filter(function(ghost) {
+      var ghostWorkbookId = String(ghost.workbookId || '').trim() || getDefaultWorkbookId_();
       return ghost.status === STATUS.GHOST_ACTIVE &&
+        ghostWorkbookId === workbookContext.workbookId &&
         ghost.sourcePlayerId &&
         ghost.sourcePlayerId !== run.playerId &&
         !!approvedQuestionCreators[ghost.sourcePlayerId];
@@ -2696,8 +2796,8 @@ function ensurePlayerGhostSheet_() {
   ensureSheet_(DB_SHEETS.PLAYER_GHOSTS, DB_COLUMNS.PLAYER_GHOSTS);
 }
 
-function getApprovedQuestionCreatorMap_() {
-  return readTableCached_(DB_SHEETS.QUESTIONS, 120).reduce(function(map, question) {
+function getApprovedQuestionCreatorMap_(workbookId) {
+  return readWorkbookQuestionsForBattle_(workbookId).reduce(function(map, question) {
     if (question.status === STATUS.QUESTION_APPROVED && question.creatorId) {
       map[question.creatorId] = true;
     }
@@ -2708,7 +2808,7 @@ function getApprovedQuestionCreatorMap_() {
 function buildPlayerGhostMonster_(ghost, stage) {
   var floor = Number(stage.floor || ghost.floor || 1);
   var config = PLAYER_GHOST_FLOOR_CONFIGS[floor] || PLAYER_GHOST_FLOOR_CONFIGS[1];
-  var name = String(ghost.sourceDisplayName || 'Player Ghost') + ' Echo';
+  var name = formatPlayerGhostDisplayName_(ghost.sourceDisplayName);
   return {
     instanceId: 'player_ghost_' + ghost.ghostId,
     monsterId: 'player_ghost_' + ghost.sourcePlayerId,
@@ -2730,6 +2830,14 @@ function buildPlayerGhostMonster_(ghost, stage) {
     buffs: [],
     debuffs: [],
   };
+}
+
+function formatPlayerGhostDisplayName_(sourceDisplayName) {
+  var name = String(sourceDisplayName || '').trim().replace(/^\d+\s*/, '').trim();
+  if (!name) {
+    name = '\uD559\uC0DD';
+  }
+  return '\uC5B5\uC6B8\uD55C ' + name + '\uC758 \uC601\uD63C';
 }
 
 function getPlayerGhostAiRows_() {

@@ -106,6 +106,32 @@
     #loadingModal .loading-meta {
       display: none;
     }
+
+    .workbook-modal {
+      width: min(560px, 100%);
+    }
+
+    .workbook-form {
+      display: grid;
+      gap: 12px;
+      margin: 14px 0 16px;
+    }
+
+    .workbook-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .workbook-current-badge {
+      margin: 10px 0 14px;
+      padding: 10px 12px;
+      border: 1px solid var(--line-dark);
+      color: var(--accent);
+      background: #111;
+      text-align: center;
+    }
   </style>
 </head>
 <body>
@@ -202,14 +228,17 @@
         <img src="<?= getAssetUrl_('Resources/Intro_logo.png') ?>" alt="" onerror="this.style.display='none'">
       </div>
       <div id="playerBadge" style="text-align:center;"></div>
+      <div id="currentWorkbookBadge" class="workbook-current-badge"></div>
       <div class="vertical-menu">
         <button onclick="showGameStartMessage()">게임 시작</button>
         <button onclick="goToPage('question')">문제 만들기</button>
+        <button class="secondary" onclick="showWorkbookSelectModal({ force: true })">문제집 변경</button>
         <button class="secondary" onclick="showMyInfo()">내 정보</button>
         <button class="secondary" onclick="goToPage('leaderboard')">리더보드</button>
         <button class="secondary" onclick="refreshCurrentUser(true)">새로고침</button>
         <button class="secondary" onclick="reloadGameData()">데이터 다시 불러오기</button>
         <button id="adminButton" class="secondary" onclick="goToPage('admin')" style="display:none;">관리자</button>
+        <button class="secondary" onclick="logout()">로그아웃</button>
       </div>
       <div id="mainMessage" class="message"></div>
     </section>
@@ -229,6 +258,49 @@
       <div class="resume-run-actions">
         <button class="secondary" onclick="abandonPreviousRunAndStart()">포기</button>
         <button onclick="continuePreviousRun()">이어하기</button>
+      </div>
+    </section>
+  </div>
+
+  <div id="workbookSelectModal" class="question-modal-overlay workbook-modal-overlay" aria-hidden="true">
+    <section class="question-modal workbook-modal" role="dialog" aria-modal="true" aria-labelledby="workbookSelectTitle">
+      <h2 id="workbookSelectTitle" class="rpg-title">문제집 선택</h2>
+      <p class="muted" style="text-align:center;">메인 화면으로 진입할 문제집을 선택해 주세요.</p>
+      <div class="workbook-form">
+        <div>
+          <label for="workbookSelect">문제집</label>
+          <select id="workbookSelect"></select>
+        </div>
+      </div>
+      <div id="workbookSelectMessage" class="message"></div>
+      <div class="workbook-actions">
+        <button id="addWorkbookButton" class="secondary" type="button" onclick="showCreateWorkbookModal()">문제집 추가</button>
+        <button id="confirmWorkbookButton" type="button" onclick="confirmWorkbookSelection()">확인</button>
+      </div>
+    </section>
+  </div>
+
+  <div id="createWorkbookModal" class="question-modal-overlay workbook-modal-overlay" aria-hidden="true">
+    <section class="question-modal workbook-modal" role="dialog" aria-modal="true" aria-labelledby="createWorkbookTitle">
+      <h2 id="createWorkbookTitle" class="rpg-title">문제집 추가</h2>
+      <div class="workbook-form">
+        <div>
+          <label for="newWorkbookName">문제집 이름</label>
+          <input id="newWorkbookName" maxlength="60" autocomplete="off">
+        </div>
+        <div>
+          <label for="newWorkbookSubject">과목</label>
+          <input id="newWorkbookSubject" maxlength="40" autocomplete="off">
+        </div>
+        <div>
+          <label for="newWorkbookDescription">설명</label>
+          <textarea id="newWorkbookDescription" maxlength="300"></textarea>
+        </div>
+      </div>
+      <div id="createWorkbookMessage" class="message"></div>
+      <div class="workbook-actions">
+        <button class="secondary" type="button" onclick="hideCreateWorkbookModal()">취소</button>
+        <button id="createWorkbookButton" type="button" onclick="createWorkbookFromModal()">생성</button>
       </div>
     </section>
   </div>
@@ -257,6 +329,11 @@
     var SKIP_INTRO = window.location.search.indexOf('skipIntro=1') !== -1;
     var INTRO_SEEN_KEY = 'learningRpgIntroSeen';
     var SOUND_ENABLED_KEY = 'learningRpgSoundEnabled';
+    var SELECTED_WORKBOOK_ID_KEY = 'learningRpgSelectedWorkbookId';
+    var SELECTED_WORKBOOK_NAME_KEY = 'learningRpgSelectedWorkbookName';
+    var activeWorkbooks = [];
+    var selectedWorkbookId = '';
+    var selectedWorkbookName = '';
     var currentUserRequestTimer = null;
     var pendingResumeRun = null;
     var pendingGameStartAt = 0;
@@ -539,8 +616,11 @@
         state.isRegistered = false;
       }
       currentState = state;
+      activeWorkbooks = normalizeWorkbookList(state.activeWorkbooks);
+      restoreSelectedWorkbookToState();
+      var hasWorkbookSelection = state.isRegistered && !!selectedWorkbookId;
       toggle('registerPanel', !state.isRegistered);
-      toggle('mainPanel', state.isRegistered);
+      toggle('mainPanel', hasWorkbookSelection);
       toggle('infoPanel', false);
 
       if (!state.isRegistered) {
@@ -549,7 +629,14 @@
         return;
       }
       renderPlayerBadge(state);
+      renderCurrentWorkbookBadge();
       document.getElementById('adminButton').style.display = state.isAdmin ? 'block' : 'none';
+      renderWorkbookSelectOptions();
+      if (!hasWorkbookSelection) {
+        showWorkbookSelectModal();
+        return;
+      }
+      hideWorkbookSelectModal();
       scheduleNoticeModal();
     }
 
@@ -564,6 +651,243 @@
         '<strong>' + escapeHtml(displayName) + '</strong>' +
         '<div class="starting-score-bonus">문제 생성/좋아요로 인한 시작 점수 +' + escapeHtml(formatScore(startingScore)) +
           ' <span class="muted">(문제 ' + escapeHtml(questionCount) + '개, 좋아요 ' + escapeHtml(likeCount) + '개)</span></div>';
+    }
+
+    function normalizeWorkbookList(workbooks) {
+      return (Array.isArray(workbooks) ? workbooks : []).filter(function(workbook) {
+        return workbook && String(workbook.workbookId || '').trim();
+      }).map(function(workbook) {
+        return Object.assign({}, workbook, {
+          workbookId: String(workbook.workbookId || '').trim(),
+          workbookName: String(workbook.workbookName || '').trim(),
+          subject: String(workbook.subject || '').trim(),
+          description: String(workbook.description || '').trim(),
+        });
+      });
+    }
+
+    function restoreSelectedWorkbookToState() {
+      var stored = getStoredWorkbookSelection();
+      var workbook = stored.workbookId ? findActiveWorkbookById(stored.workbookId) : null;
+      if (!workbook) {
+        selectedWorkbookId = '';
+        selectedWorkbookName = '';
+        clearSelectedWorkbookStorage();
+        if (currentState) {
+          currentState.selectedWorkbookId = '';
+          currentState.selectedWorkbookName = '';
+          currentState.selectedWorkbook = null;
+          saveCurrentState(currentState);
+        }
+        return;
+      }
+      applySelectedWorkbook(workbook, { keepModal: true });
+    }
+
+    function findActiveWorkbookById(workbookId) {
+      var targetId = String(workbookId || '').trim();
+      return activeWorkbooks.filter(function(workbook) {
+        return workbook.workbookId === targetId;
+      })[0] || null;
+    }
+
+    function getStoredWorkbookSelection() {
+      try {
+        return {
+          workbookId: sessionStorage.getItem(SELECTED_WORKBOOK_ID_KEY) || '',
+          workbookName: sessionStorage.getItem(SELECTED_WORKBOOK_NAME_KEY) || '',
+        };
+      } catch (error) {
+        return { workbookId: '', workbookName: '' };
+      }
+    }
+
+    function applySelectedWorkbook(workbook, options) {
+      options = options || {};
+      selectedWorkbookId = String(workbook && workbook.workbookId || '').trim();
+      selectedWorkbookName = String(workbook && workbook.workbookName || '').trim();
+      try {
+        sessionStorage.setItem(SELECTED_WORKBOOK_ID_KEY, selectedWorkbookId);
+        sessionStorage.setItem(SELECTED_WORKBOOK_NAME_KEY, selectedWorkbookName);
+      } catch (error) {}
+      if (currentState) {
+        currentState.selectedWorkbookId = selectedWorkbookId;
+        currentState.selectedWorkbookName = selectedWorkbookName;
+        currentState.selectedWorkbook = workbook || null;
+        currentState.activeWorkbooks = activeWorkbooks;
+        saveCurrentState(currentState);
+      }
+      renderCurrentWorkbookBadge();
+      if (!options.keepModal) {
+        hideWorkbookSelectModal();
+        toggle('mainPanel', !!(currentState && currentState.isRegistered && selectedWorkbookId));
+        scheduleNoticeModal();
+      }
+    }
+
+    function clearSelectedWorkbookStorage() {
+      try {
+        sessionStorage.removeItem(SELECTED_WORKBOOK_ID_KEY);
+        sessionStorage.removeItem(SELECTED_WORKBOOK_NAME_KEY);
+      } catch (error) {}
+    }
+
+    function canManageWorkbooks() {
+      var player = currentState && currentState.player || {};
+      return String(player.role || '').trim() === 'teacher' || !!(currentState && currentState.isAdmin);
+    }
+
+    function renderCurrentWorkbookBadge() {
+      var element = document.getElementById('currentWorkbookBadge');
+      if (!element) return;
+      if (!selectedWorkbookId) {
+        element.textContent = '';
+        return;
+      }
+      element.textContent = '현재 문제집: ' + (selectedWorkbookName || selectedWorkbookId);
+    }
+
+    function renderWorkbookSelectOptions() {
+      var select = document.getElementById('workbookSelect');
+      var confirmButton = document.getElementById('confirmWorkbookButton');
+      var addButton = document.getElementById('addWorkbookButton');
+      if (!select || !confirmButton || !addButton) return;
+
+      select.innerHTML = '';
+      activeWorkbooks.forEach(function(workbook) {
+        var option = document.createElement('option');
+        option.value = workbook.workbookId;
+        option.textContent = workbook.workbookName + (workbook.subject ? ' (' + workbook.subject + ')' : '');
+        select.appendChild(option);
+      });
+      select.disabled = activeWorkbooks.length === 0;
+      confirmButton.disabled = activeWorkbooks.length === 0;
+      addButton.classList.toggle('hidden', !canManageWorkbooks());
+      if (selectedWorkbookId && findActiveWorkbookById(selectedWorkbookId)) {
+        select.value = selectedWorkbookId;
+      }
+      setWorkbookSelectMessage(activeWorkbooks.length ? '' : '활성 상태인 문제집이 없습니다.', activeWorkbooks.length ? '' : 'error');
+    }
+
+    function showWorkbookSelectModal(options) {
+      options = options || {};
+      renderWorkbookSelectOptions();
+      var modal = document.getElementById('workbookSelectModal');
+      if (!modal) return;
+      modal.classList.add('active');
+      modal.setAttribute('aria-hidden', 'false');
+      if (options.force) {
+        refreshActiveWorkbooksForModal();
+      }
+    }
+
+    function hideWorkbookSelectModal() {
+      var modal = document.getElementById('workbookSelectModal');
+      if (!modal) return;
+      modal.classList.remove('active');
+      modal.setAttribute('aria-hidden', 'true');
+    }
+
+    function confirmWorkbookSelection() {
+      var select = document.getElementById('workbookSelect');
+      var workbook = select ? findActiveWorkbookById(select.value) : null;
+      if (!workbook) {
+        setWorkbookSelectMessage('문제집을 선택해 주세요.', 'error');
+        return;
+      }
+      applySelectedWorkbook(workbook);
+      setMainMessage('');
+    }
+
+    function refreshActiveWorkbooksForModal() {
+      if (typeof google === 'undefined' || !google.script || !google.script.run) {
+        return;
+      }
+      google.script.run
+        .withSuccessHandler(function(workbooks) {
+          activeWorkbooks = normalizeWorkbookList(workbooks);
+          if (currentState) {
+            currentState.activeWorkbooks = activeWorkbooks;
+            saveCurrentState(currentState);
+          }
+          restoreSelectedWorkbookToState();
+          renderWorkbookSelectOptions();
+        })
+        .withFailureHandler(function(error) {
+          setWorkbookSelectMessage(error && error.message ? error.message : '문제집 목록을 불러오지 못했습니다.', 'error');
+        })
+        .getActiveWorkbooks(getAuthToken());
+    }
+
+    function showCreateWorkbookModal() {
+      if (!canManageWorkbooks()) {
+        setWorkbookSelectMessage('교사 또는 관리자만 문제집을 추가할 수 있습니다.', 'error');
+        return;
+      }
+      document.getElementById('newWorkbookName').value = '';
+      document.getElementById('newWorkbookSubject').value = '';
+      document.getElementById('newWorkbookDescription').value = '';
+      setCreateWorkbookMessage('', '');
+      var modal = document.getElementById('createWorkbookModal');
+      modal.classList.add('active');
+      modal.setAttribute('aria-hidden', 'false');
+      window.setTimeout(function() {
+        document.getElementById('newWorkbookName').focus();
+      }, 0);
+    }
+
+    function hideCreateWorkbookModal() {
+      var modal = document.getElementById('createWorkbookModal');
+      modal.classList.remove('active');
+      modal.setAttribute('aria-hidden', 'true');
+    }
+
+    function createWorkbookFromModal() {
+      var payload = {
+        workbookName: document.getElementById('newWorkbookName').value,
+        subject: document.getElementById('newWorkbookSubject').value,
+        description: document.getElementById('newWorkbookDescription').value,
+      };
+      if (!String(payload.workbookName || '').trim()) {
+        setCreateWorkbookMessage('문제집 이름을 입력해 주세요.', 'error');
+        return;
+      }
+      document.getElementById('createWorkbookButton').disabled = true;
+      setCreateWorkbookMessage('문제집을 생성하는 중입니다.', 'ok');
+      google.script.run
+        .withSuccessHandler(function(response) {
+          document.getElementById('createWorkbookButton').disabled = false;
+          hideCreateWorkbookModal();
+          activeWorkbooks = normalizeWorkbookList(response && response.activeWorkbooks);
+          if (currentState) {
+            currentState.activeWorkbooks = activeWorkbooks;
+            saveCurrentState(currentState);
+          }
+          renderWorkbookSelectOptions();
+          if (response && response.workbook && response.workbook.workbookId) {
+            document.getElementById('workbookSelect').value = response.workbook.workbookId;
+          }
+          setWorkbookSelectMessage('문제집이 생성되었습니다. 확인을 누르면 이 문제집으로 입장합니다.', 'ok');
+        })
+        .withFailureHandler(function(error) {
+          document.getElementById('createWorkbookButton').disabled = false;
+          setCreateWorkbookMessage(error && error.message ? error.message : '문제집 생성에 실패했습니다.', 'error');
+        })
+        .createWorkbook(getAuthToken(), payload);
+    }
+
+    function setWorkbookSelectMessage(message, type) {
+      var element = document.getElementById('workbookSelectMessage');
+      if (!element) return;
+      element.textContent = message || '';
+      element.className = 'message ' + (type || '');
+    }
+
+    function setCreateWorkbookMessage(message, type) {
+      var element = document.getElementById('createWorkbookMessage');
+      if (!element) return;
+      element.textContent = message || '';
+      element.className = 'message ' + (type || '');
     }
 
     function scheduleNoticeModal() {
@@ -755,9 +1079,61 @@
         .loginPlayer(getAuthFormPayload());
     }
 
+    function logout() {
+      var authToken = getAuthToken();
+      showLoadingModal('로그아웃 중...', '세션을 정리하는 중...');
+      if (typeof google === 'undefined' || !google.script || !google.script.run) {
+        completeLogout();
+        return;
+      }
+      google.script.run
+        .withSuccessHandler(completeLogout)
+        .withFailureHandler(function() {
+          completeLogout();
+        })
+        .logoutPlayer(authToken);
+    }
+
+    function completeLogout() {
+      clearLoginSessionStorage();
+      currentState = null;
+      activeWorkbooks = [];
+      selectedWorkbookId = '';
+      selectedWorkbookName = '';
+      pendingResumeRun = null;
+      pendingGameStartAt = 0;
+      closeNoticeModal();
+      hideWorkbookSelectModal();
+      hideCreateWorkbookModal();
+      hideResumeRunModal();
+      hideLoadingModal();
+      showLoginForm();
+      toggle('registerPanel', true);
+      toggle('mainPanel', false);
+      toggle('infoPanel', false);
+      setRegisterMessage('로그아웃되었습니다.', 'ok');
+      setMainMessage('', '');
+    }
+
+    function clearLoginSessionStorage() {
+      try {
+        Object.keys(sessionStorage).forEach(function(key) {
+          if (key.indexOf('learningRpg') === 0) {
+            sessionStorage.removeItem(key);
+          }
+        });
+      } catch (error) {}
+      clearSelectedWorkbookStorage();
+    }
+
     function showGameStartMessage() {
       if (!currentState || !currentState.player) {
         setMainMessage('먼저 로그인해 주세요.', 'error');
+        return;
+      }
+      if (!selectedWorkbookId) {
+        showWorkbookSelectModal();
+        setMainMessage('게임을 시작하려면 문제집을 먼저 선택해 주세요.', 'error');
         return;
       }
       var startedAt = Date.now();
@@ -776,7 +1152,7 @@
           hideLoadingModal();
           setMainMessage(error && error.message ? error.message : '게임 시작 조건을 확인하지 못했습니다.', 'error');
         })
-        .getActiveRunSummary(currentState.player.playerId, getAuthToken());
+        .getActiveRunSummary(currentState.player.playerId, getAuthToken(), selectedWorkbookId);
     }
 
     function startRunFromMenu(startedAt, restart) {
@@ -792,7 +1168,7 @@
           hideLoadingModal();
           hideResumeRunModal();
           setMainMessage(error && error.message ? error.message : '게임을 시작하지 못했습니다.', 'error');
-        })[restart ? 'restartRun' : 'startRun'](currentState.player.playerId, getAuthToken());
+        })[restart ? 'restartRun' : 'startRun'](currentState.player.playerId, getAuthToken(), selectedWorkbookId);
     }
 
     function showResumeRunModal(run) {
@@ -860,7 +1236,7 @@
         document.getElementById('loadingText').textContent = '잠시 후 전투가 시작됩니다.';
         modal.classList.add('page-transition');
         window.setTimeout(function() {
-          goToPage('battle');
+          goToPage('battle', { loading: false });
         }, 720);
         window.setTimeout(function() {
           if (document.visibilityState !== 'hidden') {
@@ -880,7 +1256,11 @@
       goToPage('mypage');
     }
 
-    function goToPage(page) {
+    function goToPage(page, options) {
+      options = options || {};
+      if (options.loading !== false) {
+        showNavigationLoading(page, options);
+      }
       var baseUrl = getNavigationBaseUrl();
       if (!baseUrl) {
         hideLoadingModal();
@@ -892,44 +1272,26 @@
       navigateTop(nextUrl);
     }
 
+    function showNavigationLoading(page, options) {
+      var labels = {
+        question: '문제 만들기 화면으로 이동 중...',
+        leaderboard: '리더보드 화면으로 이동 중...',
+        mypage: '내 정보 화면으로 이동 중...',
+        admin: '관리자 화면으로 이동 중...',
+        battle: '전투 화면으로 이동 중...',
+      };
+      showLoadingModal(options.title || labels[page] || '화면 이동 중...', options.text || '잠시만 기다려 주세요.');
+    }
+
     function navigateTop(url) {
       var targetUrl = String(url || '');
       try {
-        window.open(targetUrl, '_top');
-      } catch (error) {}
-      try {
-        submitTopNavigation(targetUrl);
-      } catch (error) {}
-      try {
-        var link = document.createElement('a');
-        link.href = targetUrl;
-        link.target = '_top';
-        link.rel = 'noopener';
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
+        window.location.assign(targetUrl);
+        return;
       } catch (error) {}
       window.setTimeout(function() {
         showNavigationFallback(targetUrl);
       }, 1200);
-    }
-
-    function submitTopNavigation(url) {
-      var parsedUrl = new URL(url, window.location.href);
-      var form = document.createElement('form');
-      form.method = 'GET';
-      form.action = parsedUrl.origin + parsedUrl.pathname;
-      form.target = '_top';
-      parsedUrl.searchParams.forEach(function(value, key) {
-        var input = document.createElement('input');
-        input.type = 'hidden';
-        input.name = key;
-        input.value = value;
-        form.appendChild(input);
-      });
-      document.body.appendChild(form);
-      form.submit();
-      document.body.removeChild(form);
     }
 
     function showNavigationFallback(url) {
