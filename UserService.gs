@@ -110,16 +110,15 @@ function getPlayerData_(playerId) {
   return findRowByKey_(DB_SHEETS.PLAYER_DATA, 'playerId', playerId);
 }
 
+var ADMIN_ALLOWED_EMAILS_ = Object.freeze(['forkboy159@gmail.com']);
+
 function isAdmin(email) {
   var normalizedEmail = normalizeEmail_(email);
   if (!normalizedEmail) {
     return false;
   }
 
-  var admin = readTableCached_(DB_SHEETS.ADMINS, 600).filter(function(row) {
-    return normalizeEmail_(row.email) === normalizedEmail;
-  })[0];
-  return !!admin && isTruthy_(admin.active);
+  return ADMIN_ALLOWED_EMAILS_.indexOf(normalizedEmail) !== -1;
 }
 
 function requireAdminUser_() {
@@ -192,14 +191,64 @@ function rejectPlayerRegistration(playerId, rejectedReason) {
 }
 
 function getAppSettings() {
+  var settingTypes = getDefaultSettingTypes_();
   var defaults = (typeof MASTER_SETTINGS !== 'undefined' ? MASTER_SETTINGS : []).reduce(function(settings, row) {
-    settings[row.key] = coerceSettingValue_(row.value, row.type);
+    var key = String(row.key || '').trim();
+    if (key) {
+      settings[key] = coerceSettingValue_(row.value, row.type);
+    }
     return settings;
   }, {});
   return readTable_(DB_SHEETS.SETTINGS).reduce(function(settings, row) {
-    settings[row.key] = coerceSettingValue_(row.value, row.type);
+    var key = String(row.key || '').trim();
+    if (key) {
+      settings[key] = coerceSettingValue_(row.value, row.type || settingTypes[key] || '');
+    }
     return settings;
   }, defaults);
+}
+
+function getDefaultSettingTypes_() {
+  return (typeof MASTER_SETTINGS !== 'undefined' ? MASTER_SETTINGS : []).reduce(function(types, row) {
+    var key = String(row.key || '').trim();
+    if (key) {
+      types[key] = String(row.type || '').trim();
+    }
+    return types;
+  }, {});
+}
+
+function getAdminGameSettings() {
+  requireAdminUser_();
+  var settings = getAppSettings();
+  return toClientObject_({
+    gameEnabled: !!settings.gameEnabled,
+    requireOwnQuestionForRunStart: settings.requireOwnQuestionForRunStart !== false,
+  });
+}
+
+function updateAdminGameSettings(settingsPayload) {
+  requireAdminUser_();
+  var payload = settingsPayload || {};
+  ensureTableColumns_(DB_SHEETS.SETTINGS, DB_COLUMNS.SETTINGS);
+  upsertBooleanSetting_('gameEnabled', payload.gameEnabled, 'Whether students can start the game.');
+  upsertBooleanSetting_(
+    'requireOwnQuestionForRunStart',
+    payload.requireOwnQuestionForRunStart,
+    'Require the player to have created a workbook question before starting a new run.'
+  );
+  clearTableCache_(DB_SHEETS.SETTINGS);
+  return getAdminGameSettings();
+}
+
+function upsertBooleanSetting_(key, value, description) {
+  upsertRowByKey_(DB_SHEETS.SETTINGS, 'key', key, {
+    key: key,
+    value: value ? 'true' : 'false',
+    type: 'boolean',
+    description: description || '',
+    updatedAt: new Date(),
+  });
 }
 
 function getCurrentPlayer_(authToken) {

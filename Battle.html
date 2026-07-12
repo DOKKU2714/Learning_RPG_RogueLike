@@ -273,15 +273,24 @@
     var stageResultCommitFailureCallbacks = [];
     var questionReactionSaving = false;
     var pendingScoreModalResponse = null;
+    var scoreModalAwaitingFinalResponse = false;
+    var currentScoreModalSummary = null;
     var currentOutcomeContext = null;
     var scoreAnimationTimers = [];
     var scoreAnimationDone = true;
     var currentRewardView = null;
+    var nextBattlePreloadKey = '';
+    var nextBattlePreloadLoading = false;
+    var nextBattlePreloadView = null;
+    var nextBattlePreloadError = null;
+    var nextBattlePreloadStartedAt = 0;
+    var nextBattlePreloadRequestId = 0;
     var combatActionPanelHtml = '';
     var shortAnswerEnterSubmitLock = false;
     var loadingTimerId = null;
     var loadingStartedAt = 0;
     var loadingStepItems = [];
+    var DELAYED_LOADING_MODAL_MS = 700;
 
     document.addEventListener('keydown', function(event) {
       if (event.key !== 'Enter' || event.isComposing) return;
@@ -310,6 +319,10 @@
     var LOCAL_BATTLE_CHECKPOINT_PREFIX = 'learningRpgBattleCheckpoint:';
     var SOUND_ENABLED_KEY = 'learningRpgSoundEnabled';
     var DESCRIPTION_AUTO_ADVANCE_MS = 2000;
+    var STAGE_ENTRANCE_BLACK_HOLD_MS = 40;
+    var STAGE_ENTRANCE_TITLE_DELAY_MS = 120;
+    var STAGE_ENTRANCE_FADE_DELAY_MS = 950;
+    var STAGE_ENTRANCE_DONE_DELAY_MS = 1350;
 
     window.addEventListener('storage', function(event) {
       if (event.key === SOUND_ENABLED_KEY) {
@@ -532,15 +545,15 @@
 
       window.setTimeout(function() {
         if (overlay) overlay.classList.remove('instant-black');
-      }, 80);
+      }, STAGE_ENTRANCE_BLACK_HOLD_MS);
 
       window.setTimeout(function() {
         if (overlay) overlay.classList.add('title-visible');
-      }, 360);
+      }, STAGE_ENTRANCE_TITLE_DELAY_MS);
 
       window.setTimeout(function() {
         if (overlay) overlay.classList.add('fade-away');
-      }, 2500);
+      }, STAGE_ENTRANCE_FADE_DELAY_MS);
 
       window.setTimeout(function() {
         if (overlay) {
@@ -548,14 +561,14 @@
           overlay.setAttribute('aria-hidden', 'true');
         }
         beginStageEntranceNarration();
-      }, 3700);
+      }, STAGE_ENTRANCE_DONE_DELAY_MS);
     }
 
     function beginStageEntranceNarration() {
       var shell = document.getElementById('battleShell');
       var lines = getStageEntranceNarrationLines();
       if (!lines.length) {
-        window.setTimeout(revealStageEntranceMonsters, 650);
+        window.setTimeout(revealStageEntranceMonsters, 180);
         return;
       }
       if (shell) {
@@ -690,7 +703,7 @@
         }
         setBattleInputLocked(false);
         setPlayerTurn(true);
-      }, 1200);
+      }, 500);
     }
 
     function startFloorIntermissionEntrance() {
@@ -731,15 +744,15 @@
 
       window.setTimeout(function() {
         if (overlay) overlay.classList.remove('instant-black');
-      }, 80);
+      }, STAGE_ENTRANCE_BLACK_HOLD_MS);
 
       window.setTimeout(function() {
         if (overlay) overlay.classList.add('title-visible');
-      }, 360);
+      }, STAGE_ENTRANCE_TITLE_DELAY_MS);
 
       window.setTimeout(function() {
         if (overlay) overlay.classList.add('fade-away');
-      }, 2500);
+      }, STAGE_ENTRANCE_FADE_DELAY_MS);
 
       window.setTimeout(function() {
         if (overlay) {
@@ -747,7 +760,7 @@
           overlay.setAttribute('aria-hidden', 'true');
         }
         beginStageEntranceNarration();
-      }, 3700);
+      }, STAGE_ENTRANCE_DONE_DELAY_MS);
     }
 
     function skipFloorIntermissionEntrance() {
@@ -2371,14 +2384,14 @@
       if (!currentView || !currentView.runId || currentView.runId === 'dummy-run') return;
       var skill = skillId ? findAvailableSkill(skillId) : null;
       var difficultyBonus = Number(skill && skill.difficultyBonus || 0);
-      showLoadingModal('문제 준비 중...', '현재 난이도에 맞는 문제를 고르는 중...');
+      var loading = startDelayedLoadingModal('문제 준비 중...', '현재 난이도에 맞는 문제를 고르는 중...', { hideProgress: true });
       google.script.run
         .withSuccessHandler(function(questionView) {
-          hideLoadingModal();
+          finishDelayedLoadingModal(loading);
           openQuestionModal(normalizeServerQuestionView(questionView, actionType, skillId, targetId), false);
         })
         .withFailureHandler(function(error) {
-          hideLoadingModal();
+          finishDelayedLoadingModal(loading);
           pushLog(error.message || '현재 난이도에서 사용할 수 있는 문제가 없습니다.');
         })
         .selectQuestionForAction(currentView.playerId, currentView.runId, actionType || 'attack', difficultyBonus, getAuthToken(), targetId || '', skillId || '');
@@ -2443,11 +2456,11 @@
       }
 
       questionCacheRefillInFlight = true;
-      showLoadingModal('문제를 다시 불러오는 중...', '현재 난이도 범위의 문제 풀을 갱신하는 중...');
+      var loading = startDelayedLoadingModal('문제를 다시 불러오는 중...', '현재 난이도 범위의 문제 풀을 갱신하는 중...', { hideProgress: true });
       google.script.run
         .withSuccessHandler(function(questionCache) {
           questionCacheRefillInFlight = false;
-          hideLoadingModal();
+          finishDelayedLoadingModal(loading);
           var cache = Array.isArray(questionCache) ? questionCache : [];
           currentView.reusableQuestionCache = cache.slice();
           currentView.questionCache = cache.slice();
@@ -2461,7 +2474,7 @@
         })
         .withFailureHandler(function(error) {
           questionCacheRefillInFlight = false;
-          hideLoadingModal();
+          finishDelayedLoadingModal(loading);
           pushLog(error && error.message ? error.message : '문제 묶음을 다시 불러오지 못했습니다.');
         })
         .preloadBattleQuestions(currentView.runId, getAuthToken());
@@ -4996,16 +5009,16 @@
         onSuccess(existing);
         return;
       }
-      showLoadingModal('정비 선택지 준비 중...', '휴식과 보상을 확인하는 중...');
+      var loading = startDelayedLoadingModal('정비 선택지 준비 중...', '휴식과 보상을 확인하는 중...');
       google.script.run
         .withSuccessHandler(function(rewardView) {
-          hideLoadingModal();
+          finishDelayedLoadingModal(loading);
           currentRewardView = rewardView;
           ensureClientRewardState(rewardView);
           onSuccess(rewardView);
         })
         .withFailureHandler(function(error) {
-          hideLoadingModal();
+          finishDelayedLoadingModal(loading);
           if (onFailure) onFailure(error);
         })
         .previewRewardChoicesForStageResult(buildStageResultPayload(), getAuthToken());
@@ -5308,6 +5321,8 @@
       rewardModal.classList.add('reward-applying');
       document.getElementById('rewardMessage').textContent = '보상을 적용하는 중...';
       document.getElementById('rewardMessage').className = 'message ok';
+      var scorePreviewSummary = currentRewardView && currentRewardView.scorePreviewSummary;
+      var showPreviewScoreModal = shouldShowScoreModal(scorePreviewSummary);
       if (isDummyMode || currentView.runId === 'dummy-run') {
         window.setTimeout(function() {
           rewardModal.classList.remove('active');
@@ -5319,34 +5334,54 @@
         }, 260);
         return;
       }
+      if (showPreviewScoreModal) {
+        rewardModal.classList.remove('active');
+        rewardModal.classList.remove('stage-clear-reward-overlay');
+        rewardModal.classList.remove('floor-rest-reward-overlay');
+        rewardModal.classList.remove('reward-applying');
+        showScoreModal(scorePreviewSummary, null, { awaitFinalResponse: true });
+      }
       window.setTimeout(function() {
-        showLoadingModal('보상 적용 중...', '1/3 전투 결과를 저장하는 중...', {
-          progress: 8,
-          activeStep: 0,
-          steps: ['전투 결과 저장', '보상 적용 및 점수 계산', '다음 스테이지 준비'],
-        });
-        commitStageResultIfNeeded(function() {
-          updateLoadingModal({
-            text: '2/3 선택한 보상을 적용하고 점수를 계산하는 중...',
-            progress: 38,
-            doneStep: 0,
-            activeStep: 1,
+        var rewardLoading = null;
+        if (!showPreviewScoreModal) {
+          rewardLoading = startDelayedLoadingModal('보상 적용 중...', '1/3 전투 결과를 저장하는 중...', {
+            progress: 8,
+            activeStep: 0,
+            steps: ['전투 결과 저장', '보상 적용 및 점수 계산', '다음 스테이지 준비'],
           });
+        }
+        commitStageResultIfNeeded(function() {
+          if (!showPreviewScoreModal) {
+            updateDelayedLoadingModal(rewardLoading, {
+              text: '2/3 선택한 보상을 적용하고 점수를 계산하는 중...',
+              progress: 38,
+              doneStep: 0,
+              activeStep: 1,
+            });
+          }
           google.script.run
             .withSuccessHandler(function(response) {
-              updateLoadingModal({
-                text: '완료',
-                progress: 100,
-                doneStep: 2,
-              });
+              if (!showPreviewScoreModal) {
+                updateDelayedLoadingModal(rewardLoading, {
+                  text: '완료',
+                  progress: 100,
+                  doneStep: 2,
+                });
+              }
               window.setTimeout(function() {
                 logRewardDebugTimings(response);
-                hideLoadingModal();
+                if (!showPreviewScoreModal) {
+                  finishDelayedLoadingModal(rewardLoading);
+                }
                 rewardSelectionApplying = false;
                 rewardModal.classList.remove('active');
                 rewardModal.classList.remove('stage-clear-reward-overlay');
                 rewardModal.classList.remove('floor-rest-reward-overlay');
                 rewardModal.classList.remove('reward-applying');
+                if (showPreviewScoreModal) {
+                  finishPreviewScoreModalAfterReward(response);
+                  return;
+                }
                 if (response && response.cleared) {
                   handleRewardSelectionResponse(response);
                   return;
@@ -5356,12 +5391,19 @@
                   return;
                 }
                 handleRewardSelectionResponse(response);
-              }, 1000);
+              }, 120);
             })
             .withFailureHandler(function(error) {
-              hideLoadingModal();
+              finishDelayedLoadingModal(rewardLoading);
               rewardSelectionApplying = false;
               rewardModal.classList.remove('reward-applying');
+              if (showPreviewScoreModal) {
+                closeScoreModal();
+                scoreModalAwaitingFinalResponse = false;
+                pendingScoreModalResponse = null;
+                rewardModal.classList.add('active');
+                rewardModal.classList.add('stage-clear-reward-overlay');
+              }
               if (confirmButton) {
                 confirmButton.disabled = false;
                 confirmButton.textContent = '확인';
@@ -5374,9 +5416,16 @@
             })
             .selectReward(currentView.runId, rewardId, getAuthToken(), currentRewardView);
         }, function(error) {
-          hideLoadingModal();
+          finishDelayedLoadingModal(rewardLoading);
           rewardSelectionApplying = false;
           rewardModal.classList.remove('reward-applying');
+          if (showPreviewScoreModal) {
+            closeScoreModal();
+            scoreModalAwaitingFinalResponse = false;
+            pendingScoreModalResponse = null;
+            rewardModal.classList.add('active');
+            rewardModal.classList.add('stage-clear-reward-overlay');
+          }
           if (confirmButton) {
             confirmButton.disabled = false;
             confirmButton.textContent = '확인';
@@ -5390,6 +5439,20 @@
       }, 260);
     }
 
+    function finishPreviewScoreModalAfterReward(response) {
+      if (response && shouldShowScoreModal(response.scoreSummary)) {
+        pendingScoreModalResponse = response;
+        scoreModalAwaitingFinalResponse = false;
+        preloadNextBattleAfterReward(response);
+        updateScoreModalConfirmButton();
+        return;
+      }
+      closeScoreModal();
+      scoreModalAwaitingFinalResponse = false;
+      pendingScoreModalResponse = null;
+      handleRewardSelectionResponse(response);
+    }
+
     function shouldShowScoreModal(scoreSummary) {
       return !!scoreSummary && Number(scoreSummary.scoreDelta || 0) > 0;
     }
@@ -5397,19 +5460,8 @@
     function logRewardDebugTimings(response) {
       var timings = response && response.debugTimings;
       if (!timings) return;
-      pushLog(
-        '보상 처리 시간: 총 ' + formatMsShort(timings.totalMs) +
-        ' / 보상 ' + formatMsShort(timings.rewardAppliedMs) +
-        ' / 저장 ' + formatMsShort(timings.runUpdatedMs) +
-        ' / 점수 ' + formatMsShort(timings.scoreAwardedMs) +
-        ' / 이동 ' + formatMsShort(timings.stageMovedMs),
-        { instant: true }
-      );
-      if (Array.isArray(timings.steps) && timings.steps.length) {
-        var detail = timings.steps.map(function(step) {
-          return step.label + ' ' + formatMsShort(step.deltaMs);
-        }).join(' / ');
-        pushLog('보상 처리 상세: ' + detail, { instant: true });
+      if (window.console && console.debug) {
+        console.debug('reward timings', timings);
       }
     }
 
@@ -5417,15 +5469,19 @@
       return (Number(ms || 0) / 1000).toFixed(1) + 's';
     }
 
-    function showScoreModal(scoreSummary, response) {
+    function showScoreModal(scoreSummary, response, options) {
+      options = options || {};
       pendingScoreModalResponse = response || null;
+      scoreModalAwaitingFinalResponse = !!options.awaitFinalResponse;
       var summary = scoreSummary || {};
+      currentScoreModalSummary = summary;
       var detailed = !!summary.showDetailedBreakdown;
       clearScoreAnimation();
       scoreAnimationDone = false;
       var confirmButton = document.getElementById('scoreModalConfirmButton');
       if (confirmButton) {
         confirmButton.disabled = true;
+        confirmButton.textContent = '확인';
       }
       var scoreDeltaRow = document.getElementById('scoreDeltaText').closest('.score-total-row');
       var scoreTotalRow = document.getElementById('scoreTotalText').closest('.score-total-row');
@@ -5456,6 +5512,7 @@
       var modal = document.getElementById('scoreModal');
       modal.classList.add('active');
       modal.setAttribute('aria-hidden', 'false');
+      preloadNextBattleAfterReward(response);
       queueScoreAnimation(function() {
         animateScoreSequence(summary);
       }, 260);
@@ -5466,11 +5523,14 @@
         finishScoreAnimationNow();
         return;
       }
-      var modal = document.getElementById('scoreModal');
-      modal.classList.remove('active');
-      modal.setAttribute('aria-hidden', 'true');
+      if (scoreModalAwaitingFinalResponse) {
+        updateScoreModalConfirmButton();
+        return;
+      }
       var response = pendingScoreModalResponse;
       pendingScoreModalResponse = null;
+      closeScoreModal();
+      currentScoreModalSummary = null;
       if (response && response.outcomeFinal) {
         completeOutcomeScoreDetails();
         return;
@@ -5549,11 +5609,7 @@
           }
           animateScoreNumber(document.getElementById('scoreTotalText'), previous, total, 560, formatScore, function() {
             scoreAnimationDone = true;
-            var confirmButton = document.getElementById('scoreModalConfirmButton');
-            if (confirmButton) {
-              confirmButton.disabled = false;
-              confirmButton.focus();
-            }
+            updateScoreModalConfirmButton(true);
           });
         }, 260);
       });
@@ -5605,7 +5661,7 @@
 
     function finishScoreAnimationNow() {
       var response = pendingScoreModalResponse || {};
-      var summary = response.scoreSummary || {};
+      var summary = response.scoreSummary || currentScoreModalSummary || {};
       clearScoreAnimation();
       Array.prototype.forEach.call(document.querySelectorAll('#scoreBreakdown .score-breakdown-row'), function(row) {
         var target = Number(row.getAttribute('data-score-value') || 0);
@@ -5621,10 +5677,151 @@
       document.getElementById('scoreDeltaText').textContent = '+' + formatScore(summary.scoreDelta || 0);
       document.getElementById('scoreTotalText').textContent = formatScore(summary.totalScore || 0);
       scoreAnimationDone = true;
+      updateScoreModalConfirmButton();
+    }
+
+    function updateScoreModalConfirmButton(focusWhenReady) {
       var confirmButton = document.getElementById('scoreModalConfirmButton');
       if (confirmButton) {
-        confirmButton.disabled = false;
+        confirmButton.disabled = !scoreAnimationDone || scoreModalAwaitingFinalResponse;
+        confirmButton.textContent = scoreModalAwaitingFinalResponse && scoreAnimationDone ? '적용 중...' : '확인';
+        if (focusWhenReady && !confirmButton.disabled) {
+          confirmButton.focus();
+        }
       }
+    }
+
+    function closeScoreModal() {
+      var modal = document.getElementById('scoreModal');
+      if (!modal) return;
+      modal.classList.remove('active');
+      modal.setAttribute('aria-hidden', 'true');
+      currentScoreModalSummary = null;
+    }
+
+    function getNextBattlePreloadKey(response) {
+      response = response || {};
+      var run = response.run || {};
+      var runId = response.runId || run.runId || (currentView && currentView.runId) || '';
+      if (!runId) {
+        return '';
+      }
+      return [
+        runId,
+        Number(run.currentFloor || 0),
+        Number(run.currentStage || 0),
+        String(run.updatedAt || response.updatedAt || '')
+      ].join(':');
+    }
+
+    function resetNextBattlePreload() {
+      nextBattlePreloadKey = '';
+      nextBattlePreloadLoading = false;
+      nextBattlePreloadView = null;
+      nextBattlePreloadError = null;
+      nextBattlePreloadStartedAt = 0;
+      nextBattlePreloadRequestId += 1;
+    }
+
+    function preloadNextBattleAfterReward(response) {
+      response = response || {};
+      if (!response.nextBattlePending) {
+        return;
+      }
+      var runId = response.runId || (response.run && response.run.runId) || (currentView && currentView.runId);
+      var key = getNextBattlePreloadKey(response);
+      if (!runId || !key) {
+        return;
+      }
+      if (nextBattlePreloadKey === key && (nextBattlePreloadLoading || nextBattlePreloadView)) {
+        return;
+      }
+      resetNextBattlePreload();
+      var requestId = nextBattlePreloadRequestId;
+      nextBattlePreloadKey = key;
+      nextBattlePreloadLoading = true;
+      nextBattlePreloadStartedAt = performance.now();
+      google.script.run
+        .withSuccessHandler(function(view) {
+          if (requestId !== nextBattlePreloadRequestId) {
+            return;
+          }
+          nextBattlePreloadLoading = false;
+          nextBattlePreloadView = view || null;
+          nextBattlePreloadError = null;
+        })
+        .withFailureHandler(function(error) {
+          if (requestId !== nextBattlePreloadRequestId) {
+            return;
+          }
+          nextBattlePreloadLoading = false;
+          nextBattlePreloadError = error || { message: '다음 전투 준비에 실패했습니다.' };
+        })
+        .prepareNextBattleAfterReward(runId, getAuthToken());
+    }
+
+    function consumePreloadedNextBattle(response) {
+      var key = getNextBattlePreloadKey(response);
+      if (!key || nextBattlePreloadKey !== key) {
+        return false;
+      }
+      if (nextBattlePreloadView) {
+        var view = nextBattlePreloadView;
+        var startedAt = nextBattlePreloadStartedAt || performance.now();
+        if (!view.battle && !(view.showReward && view.rewardView)) {
+          resetNextBattlePreload();
+          return false;
+        }
+        resetNextBattlePreload();
+        return applyPreparedNextBattleView(view, startedAt);
+      }
+      if (nextBattlePreloadLoading) {
+        resetNextBattlePreload();
+        return false;
+      }
+      if (nextBattlePreloadError) {
+        resetNextBattlePreload();
+      }
+      return false;
+    }
+
+    function applyPreparedNextBattleView(view, startedAt, loadingHandle) {
+      if (view && view.showReward && view.rewardView) {
+        finishDelayedLoadingModal(loadingHandle);
+        handleRewardSelectionResponse(view);
+        return true;
+      }
+      if (!view || !view.battle) {
+        finishDelayedLoadingModal(loadingHandle);
+        pushLog('다음 전투 데이터를 아직 불러오지 못했습니다. 다시 시도해 주세요.');
+        return true;
+      }
+      if (loadingHandle) {
+        updateDelayedLoadingModal(loadingHandle, {
+          text: '3/3 전투 화면을 그리는 중...',
+          progress: 92,
+          doneStep: 1,
+          activeStep: 2,
+        });
+      }
+      currentView = normalizeBattleView(view);
+      applyBattleClientConfig(currentView.clientConfig);
+      resetBattleQuestionCacheFromView(currentView, []);
+      clearLocalBattleCheckpoint(currentView.runId);
+      resetStageCommitState();
+      renderBattle(currentView);
+      if (loadingHandle) {
+        updateDelayedLoadingModal(loadingHandle, {
+          text: '완료',
+          progress: 100,
+          doneStep: 2,
+        });
+      }
+      window.setTimeout(function() {
+        finishDelayedLoadingModal(loadingHandle);
+        startBattleEntrance();
+      }, 120);
+      return true;
     }
 
     function loadNextBattleAfterReward(response, retryCount) {
@@ -5635,64 +5832,47 @@
         pushLog('다음 전투를 준비할 런을 찾을 수 없습니다.');
         return;
       }
+      if (!retryCount && consumePreloadedNextBattle(response)) {
+        return;
+      }
       var nextBattleLoadStartedAt = performance.now();
-      showLoadingModal('다음 스테이지 준비 중...', '1/3 새 전투 데이터를 요청하는 중...', {
+      var nextBattleLoading = startDelayedLoadingModal('다음 스테이지 준비 중...', '1/3 새 전투 데이터를 요청하는 중...', {
         progress: retryCount ? 12 : 10,
         activeStep: 0,
         steps: ['새 전투 생성 요청', '전투 데이터 수신', '화면 렌더링'],
       });
       google.script.run
         .withSuccessHandler(function(view) {
-          updateLoadingModal({
+          updateDelayedLoadingModal(nextBattleLoading, {
             text: '2/3 전투 데이터를 받았습니다.',
             progress: 70,
             doneStep: 0,
             activeStep: 1,
           });
           if (view && view.showReward && view.rewardView) {
-            hideLoadingModal();
+            finishDelayedLoadingModal(nextBattleLoading);
             handleRewardSelectionResponse(view);
             return;
           }
           if (!view || !view.battle) {
             if (retryCount < 1) {
-              updateLoadingModal({
+              updateDelayedLoadingModal(nextBattleLoading, {
                 text: '전투 데이터가 비어 있어 한 번 더 요청합니다.',
                 progress: 35,
                 activeStep: 0,
               });
+              finishDelayedLoadingModal(nextBattleLoading);
               loadNextBattleAfterReward(Object.assign({}, response, view || {}), retryCount + 1);
               return;
             }
-            hideLoadingModal();
+            finishDelayedLoadingModal(nextBattleLoading);
             pushLog('다음 전투 데이터를 아직 불러오지 못했습니다. 다시 시도해 주세요.');
             return;
           }
-          updateLoadingModal({
-            text: '3/3 전투 화면을 그리는 중...',
-            progress: 92,
-            doneStep: 1,
-            activeStep: 2,
-          });
-          currentView = normalizeBattleView(view);
-          applyBattleClientConfig(currentView.clientConfig);
-          resetBattleQuestionCacheFromView(currentView, []);
-          clearLocalBattleCheckpoint(currentView.runId);
-          resetStageCommitState();
-          renderBattle(currentView);
-          updateLoadingModal({
-            text: '완료',
-            progress: 100,
-            doneStep: 2,
-          });
-          window.setTimeout(function() {
-            pushLog('다음 전투 로딩 시간: ' + formatMsShort(performance.now() - nextBattleLoadStartedAt), { instant: true });
-            hideLoadingModal();
-            startBattleEntrance();
-          }, 1000);
+          applyPreparedNextBattleView(view, nextBattleLoadStartedAt, nextBattleLoading);
         })
         .withFailureHandler(function(error) {
-          hideLoadingModal();
+          finishDelayedLoadingModal(nextBattleLoading);
           pushLog(error.message || '다음 전투 준비에 실패했습니다.');
         })
         .prepareNextBattleAfterReward(runId, getAuthToken());
@@ -6659,6 +6839,7 @@
       options = options || {};
       document.getElementById('loadingTitle').textContent = title || '로딩 중...';
       document.getElementById('loadingText').textContent = text || '데이터를 불러오는 중...';
+      document.getElementById('loadingModal').classList.toggle('no-progress', !!options.hideProgress);
       loadingStartedAt = performance.now();
       loadingStepItems = (options.steps || []).map(function(step, index) {
         return {
@@ -6674,6 +6855,50 @@
       }
       loadingTimerId = window.setInterval(updateLoadingElapsed, 100);
       document.getElementById('loadingModal').classList.add('active');
+    }
+
+    function startDelayedLoadingModal(title, text, options, delayMs) {
+      var state = {
+        title: title,
+        text: text,
+        options: Object.assign({}, options || {}),
+        shown: false,
+        cancelled: false,
+        timerId: null,
+      };
+      state.timerId = window.setTimeout(function() {
+        if (state.cancelled) return;
+        state.shown = true;
+        showLoadingModal(state.title, state.text, state.options);
+      }, Math.max(0, Number(delayMs !== undefined ? delayMs : DELAYED_LOADING_MODAL_MS)));
+      return state;
+    }
+
+    function updateDelayedLoadingModal(state, options) {
+      if (!state || state.cancelled) return;
+      options = options || {};
+      if (options.title !== undefined) {
+        state.title = options.title;
+      }
+      if (options.text !== undefined) {
+        state.text = options.text;
+      }
+      state.options = Object.assign({}, state.options || {}, options);
+      if (state.shown) {
+        updateLoadingModal(options);
+      }
+    }
+
+    function finishDelayedLoadingModal(state) {
+      if (!state || state.cancelled) return;
+      state.cancelled = true;
+      if (state.timerId) {
+        window.clearTimeout(state.timerId);
+        state.timerId = null;
+      }
+      if (state.shown) {
+        hideLoadingModal();
+      }
     }
 
     function hideLoadingModal() {

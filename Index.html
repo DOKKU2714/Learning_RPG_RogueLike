@@ -231,7 +231,7 @@
       <div id="currentWorkbookBadge" class="workbook-current-badge"></div>
       <div class="vertical-menu">
         <button onclick="showGameStartMessage()">게임 시작</button>
-        <button onclick="goToPage('question')">문제 만들기</button>
+        <button id="questionCreateButton" class="hidden" onclick="goToPage('question')">문제 만들기</button>
         <button class="secondary" onclick="showWorkbookSelectModal({ force: true })">문제집 변경</button>
         <button class="secondary" onclick="showMyInfo()">내 정보</button>
         <button class="secondary" onclick="goToPage('leaderboard')">리더보드</button>
@@ -274,7 +274,7 @@
       </div>
       <div id="workbookSelectMessage" class="message"></div>
       <div class="workbook-actions">
-        <button id="addWorkbookButton" class="secondary" type="button" onclick="showCreateWorkbookModal()">문제집 추가</button>
+        <button id="addWorkbookButton" class="secondary hidden" type="button" onclick="showCreateWorkbookModal()">문제집 추가</button>
         <button id="confirmWorkbookButton" type="button" onclick="confirmWorkbookSelection()">확인</button>
       </div>
     </section>
@@ -630,6 +630,7 @@
       }
       renderPlayerBadge(state);
       renderCurrentWorkbookBadge();
+      renderRoleButtons();
       document.getElementById('adminButton').style.display = state.isAdmin ? 'block' : 'none';
       renderWorkbookSelectOptions();
       if (!hasWorkbookSelection) {
@@ -734,7 +735,20 @@
 
     function canManageWorkbooks() {
       var player = currentState && currentState.player || {};
-      return String(player.role || '').trim() === 'teacher' || !!(currentState && currentState.isAdmin);
+      return String(player.role || '').trim() === 'teacher';
+    }
+
+    function canCreateQuestions() {
+      return !!(currentState && currentState.isRegistered && currentState.player);
+    }
+
+    function renderRoleButtons() {
+      var questionButton = document.getElementById('questionCreateButton');
+      if (questionButton) {
+        var canCreate = canCreateQuestions();
+        questionButton.classList.toggle('hidden', !canCreate);
+        questionButton.disabled = !canCreate;
+      }
     }
 
     function renderCurrentWorkbookBadge() {
@@ -762,7 +776,10 @@
       });
       select.disabled = activeWorkbooks.length === 0;
       confirmButton.disabled = activeWorkbooks.length === 0;
-      addButton.classList.toggle('hidden', !canManageWorkbooks());
+      var canManage = canManageWorkbooks();
+      addButton.classList.toggle('hidden', !canManage);
+      addButton.disabled = !canManage;
+      addButton.setAttribute('aria-hidden', canManage ? 'false' : 'true');
       if (selectedWorkbookId && findActiveWorkbookById(selectedWorkbookId)) {
         select.value = selectedWorkbookId;
       }
@@ -1229,7 +1246,7 @@
 
     function transitionToBattlePage(startedAt) {
       var elapsed = Date.now() - Number(startedAt || Date.now());
-      var waitMs = Math.max(0, 650 - elapsed);
+      var waitMs = Math.max(0, 160 - elapsed);
       window.setTimeout(function() {
         var modal = document.getElementById('loadingModal');
         document.getElementById('loadingTitle').textContent = '전투 화면으로 이동 중...';
@@ -1237,7 +1254,7 @@
         modal.classList.add('page-transition');
         window.setTimeout(function() {
           goToPage('battle', { loading: false });
-        }, 720);
+        }, 180);
         window.setTimeout(function() {
           if (document.visibilityState !== 'hidden') {
             modal.classList.remove('page-transition');
@@ -1258,6 +1275,11 @@
 
     function goToPage(page, options) {
       options = options || {};
+      if (page === 'question' && !canCreateQuestions()) {
+        hideLoadingModal();
+        setMainMessage('교사 또는 관리자만 문제를 만들 수 있습니다.', 'error');
+        return;
+      }
       if (options.loading !== false) {
         showNavigationLoading(page, options);
       }

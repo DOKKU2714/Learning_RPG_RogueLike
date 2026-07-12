@@ -165,7 +165,7 @@ function requireWorkbookManager_(authToken) {
   var player = getCurrentPlayer_(authToken);
   var isTeacher = String(player.role || '').trim() === 'teacher';
   var isAdminUser = isAdmin(getCurrentUserEmail_());
-  if (!isTeacher && !isAdminUser) {
+  if (!isTeacher) {
     throw new Error('교사 또는 관리자만 문제집을 생성할 수 있습니다.');
   }
   return {

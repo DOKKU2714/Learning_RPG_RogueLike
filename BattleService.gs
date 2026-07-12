@@ -11,13 +11,15 @@ function canStartGame(playerId, authToken, workbookId) {
     reasons.push('선생님이 아직 게임 시작을 활성화하지 않았습니다.');
   }
 
-  var myQuestionCount = getWorkbookQuestionsByCreator_(workbook.workbookId, playerId).length;
-  if (myQuestionCount < 1) {
-    reasons.push('게임 시작 전 문제를 1개 이상 만들어야 합니다.');
-  }
-  var latestCompletedRunEndedAt = getLatestCompletedRunEndedAtMs_(playerId);
-  if (latestCompletedRunEndedAt > 0 && getLatestCreatedWorkbookQuestionAtMs_(workbook.workbookId, playerId) <= latestCompletedRunEndedAt) {
-    reasons.push('지난 게임이 끝난 뒤 새 문제를 1개 만들어야 다음 게임을 시작할 수 있습니다.');
+  if (settings.requireOwnQuestionForRunStart !== false) {
+    var myQuestionCount = getWorkbookQuestionsByCreator_(workbook.workbookId, playerId).length;
+    if (myQuestionCount < 1) {
+      reasons.push('게임 시작 전 문제를 1개 이상 만들어야 합니다.');
+    }
+    var latestCompletedRunEndedAt = getLatestCompletedRunEndedAtMs_(playerId);
+    if (latestCompletedRunEndedAt > 0 && getLatestCreatedWorkbookQuestionAtMs_(workbook.workbookId, playerId) <= latestCompletedRunEndedAt) {
+      reasons.push('지난 게임이 끝난 뒤 새 문제를 1개 만들어야 다음 게임을 시작할 수 있습니다.');
+    }
   }
 
   return {
@@ -1642,6 +1644,7 @@ function commitStageResult(stagePayload, authToken) {
   var stageState = getStageState_(run);
   var serverBattleState = stageState.battle || {};
   var clientStageState = payload.stageState || {};
+  var commitQuestionById = buildCommitQuestionMap_(run);
   mergeMonsterScoreStateForCommit_(battleState, serverBattleState, stageState.scoreState || {});
   mergeQuestionReactionScoreStateForCommit_(battleState, serverBattleState, stageState.scoreState || {});
   normalizeUsedQuestionIds_(stageState, battleState);
@@ -1679,7 +1682,7 @@ function commitStageResult(stagePayload, authToken) {
   });
 
   (Array.isArray(payload.answerLogs) ? payload.answerLogs : []).forEach(function(answerPayload) {
-    var question = findRunQuestionById_(run, answerPayload.questionId);
+    var question = commitQuestionById[String(answerPayload.questionId || '').trim()] || null;
     if (!question) {
       throw new Error('문제를 찾을 수 없습니다: ' + answerPayload.questionId);
     }
@@ -1723,7 +1726,49 @@ function commitStageResult(stagePayload, authToken) {
   }
 
   var updatedRun = saveStageState_(run.runId, stageState, battleState);
-  return buildBattleView_(updatedRun, getStageState_(updatedRun));
+  return buildStageResultCommitView_(updatedRun, getStageState_(updatedRun));
+}
+
+function buildCommitQuestionMap_(run) {
+  return readRunQuestionsForBattle_(run).reduce(function(map, question) {
+    var questionId = String(question && question.questionId || '').trim();
+    if (questionId) {
+      map[questionId] = question;
+    }
+    return map;
+  }, {});
+}
+
+function buildStageResultCommitView_(run, stageState) {
+  var battleState = stageState.battle;
+  if (battleState) {
+    syncBattlePlayerItemsFromRun_(battleState, run);
+    normalizeBattleStateEffects_(battleState);
+    normalizeBattleMonsters_(battleState);
+    normalizePlayerActionPoints_(battleState, false);
+  }
+  var workbookContext = getRunWorkbookContext_(run);
+  return toClientObject_({
+    runId: run.runId,
+    playerId: run.playerId,
+    workbookId: workbookContext.workbookId,
+    workbookName: workbookContext.workbookName,
+    currency: Number(run.currency || 0),
+    score: Number(run.score || 0),
+    battle: battleState,
+    clientConfig: getBattleClientConfig_(),
+    availableSkills: [],
+    monsterAiRules: [],
+    questionCache: [],
+    stageState: {
+      otherStudentQuestionShown: !!stageState.otherStudentQuestionShown,
+      fallbackEvents: stageState.fallbackEvents || [],
+      usedQuestionIds: stageState.usedQuestionIds || [],
+      usedQuestionStageId: stageState.usedQuestionStageId || '',
+      reward: stageState.reward || null,
+      playerGhost: stageState.playerGhost || null,
+    },
+  });
 }
 
 function mergeMonsterScoreStateForCommit_(clientBattleState, serverBattleState, scoreState) {
@@ -1899,7 +1944,7 @@ function queueBattleAnswerLog_(battleState, answerPayload) {
 }
 
 function flushQueuedBattleAnswerLogs_(battleState) {
-  ensureTableColumns_(DB_SHEETS.ANSWER_LOGS, DB_COLUMNS.ANSWER_LOGS);
+  ensureBattleAnswerLogQueueSheet_();
   var queuedLogs = (battleState.pendingAnswerLogs || []).slice();
   battleState.pendingAnswerLogs = [];
   var scoreByRunId = {};
@@ -1913,23 +1958,73 @@ function flushQueuedBattleAnswerLogs_(battleState) {
     }
   });
   var answerLogs = queuedLogs.map(function(answerPayload) {
-    return buildAnswerLog_(answerPayload);
+    return buildAnswerLog_(Object.assign({}, answerPayload, {
+      statsProcessed: false,
+      statsProcessedAt: '',
+      statsProcessError: '',
+    }));
   });
   if (answerLogs.length) {
-    appendRowObjects_(DB_SHEETS.ANSWER_LOGS, answerLogs);
+    enqueueBattleAnswerLogsForBatch_(battleState, answerLogs);
   }
   Object.keys(scoreByRunId).forEach(function(runId) {
     if (Number(scoreByRunId[runId] || 0) > 0) {
       awardRunScore_(runId, scoreByRunId[runId]);
     }
   });
-  queuedLogs.forEach(function(answerPayload) {
-    updatePlayerAnswerCache_(answerPayload);
-    if (answerPayload.questionId) {
-      updateQuestionStats(answerPayload.questionId, answerPayload.isCorrect, answerPayload.runId);
-    }
-  });
+  // Battle-end saves stay on the critical path only for game progress.
+  // Raw AnswerLogs expansion and aggregate stats are handled later by processPendingBattleStats().
   return queuedLogs.length;
+}
+
+function ensureBattleAnswerLogQueueSheet_() {
+  var spreadsheet = getSpreadsheet_();
+  var sheet = spreadsheet.getSheetByName(DB_SHEETS.BATTLE_ANSWER_LOG_QUEUE);
+  if (!sheet) {
+    sheet = spreadsheet.insertSheet(DB_SHEETS.BATTLE_ANSWER_LOG_QUEUE);
+    sheet.getRange(1, 1, 1, DB_COLUMNS.BATTLE_ANSWER_LOG_QUEUE.length).setValues([DB_COLUMNS.BATTLE_ANSWER_LOG_QUEUE]);
+    sheet.setFrozenRows(1);
+    return sheet;
+  }
+  ensureTableColumns_(DB_SHEETS.BATTLE_ANSWER_LOG_QUEUE, DB_COLUMNS.BATTLE_ANSWER_LOG_QUEUE);
+  return sheet;
+}
+
+function enqueueBattleAnswerLogsForBatch_(battleState, answerLogs) {
+  if (!answerLogs || !answerLogs.length) {
+    return null;
+  }
+  ensureBattleAnswerLogQueueSheet_();
+  var runId = String(battleState && battleState.runId || answerLogs[0].runId || '').trim();
+  var battleId = String(battleState && battleState.battleId || answerLogs[0].battleId || '').trim();
+  var queueId = buildBattleAnswerLogQueueId_(runId, battleId);
+  var existing = findRowByKey_(DB_SHEETS.BATTLE_ANSWER_LOG_QUEUE, 'queueId', queueId);
+  if (existing) {
+    return existing;
+  }
+  var firstLog = answerLogs[0] || {};
+  return appendRowObject_(DB_SHEETS.BATTLE_ANSWER_LOG_QUEUE, {
+    queueId: queueId,
+    runId: runId,
+    battleId: battleId,
+    playerId: firstLog.playerId || '',
+    floor: firstLog.floor || '',
+    stage: firstLog.stage || '',
+    answerLogCount: answerLogs.length,
+    logsJson: safeJsonStringify_(answerLogs),
+    createdAt: new Date(),
+    processed: false,
+    processedAt: '',
+    processError: '',
+  });
+}
+
+function buildBattleAnswerLogQueueId_(runId, battleId) {
+  var raw = String(runId || '') + ':' + String(battleId || '');
+  if (raw.replace(/:/g, '')) {
+    return 'battleAnswerLogs_' + raw.replace(/[^A-Za-z0-9_:-]/g, '_');
+  }
+  return generateId_('battleAnswerLogs');
 }
 
 function logAnswer(answerPayload) {
@@ -1943,6 +2038,9 @@ function logAnswer(answerPayload) {
 
 function buildAnswerLog_(answerPayload) {
   var payload = answerPayload || {};
+  var statsProcessed = payload.statsProcessed !== undefined ? payload.statsProcessed : true;
+  var statsProcessedText = String(statsProcessed).trim().toLowerCase();
+  var defaultStatsProcessedAt = statsProcessed === true || statsProcessedText === 'true' ? new Date() : '';
   return {
     answerLogId: generateId_('answerLog'),
     questionId: payload.questionId,
@@ -1962,6 +2060,9 @@ function buildAnswerLog_(answerPayload) {
     isOtherPlayerQuestion: !!payload.isOtherPlayerQuestion,
     scoreDelta: Number(payload.scoreDelta || 0),
     createdAt: new Date(),
+    statsProcessed: statsProcessed,
+    statsProcessedAt: payload.statsProcessedAt !== undefined ? payload.statsProcessedAt : defaultStatsProcessedAt,
+    statsProcessError: payload.statsProcessError || '',
   };
 }
 

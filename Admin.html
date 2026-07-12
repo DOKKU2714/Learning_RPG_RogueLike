@@ -227,7 +227,7 @@
     </section>
 
     <section id="deniedPanel" class="panel hidden">
-      <p>Admins 시트에 등록된 활성 이메일만 관리자 화면에 접근할 수 있습니다.</p>
+      <p>허용된 관리자 계정만 관리자 화면에 접근할 수 있습니다.</p>
     </section>
 
     <section id="adminPanel" class="hidden">
@@ -246,6 +246,27 @@
         <button class="secondary" onclick="loadPendingQuestions()">새로고침</button>
       </div>
       <div id="pendingList"></div>
+
+      <div class="panel">
+        <div class="topline">
+          <div>
+            <h2>게임 설정</h2>
+            <p class="muted">게임 시작 조건을 관리합니다.</p>
+          </div>
+          <button onclick="saveAdminGameSettings()">저장</button>
+        </div>
+        <div class="check-list">
+          <label style="display:flex; gap:10px; align-items:center;">
+            <input id="settingGameEnabled" type="checkbox">
+            <span>학생 게임 시작 허용</span>
+          </label>
+          <label style="display:flex; gap:10px; align-items:center;">
+            <input id="settingRequireOwnQuestionForRunStart" type="checkbox">
+            <span>새 게임 시작 전 문제 생성 필요</span>
+          </label>
+        </div>
+        <div id="gameSettingsMessage" class="message"></div>
+      </div>
 
       <div class="panel">
         <div class="topline">
@@ -290,6 +311,7 @@
             loadPendingPlayerApprovals();
             loadAdminQuestionWorkbooks();
             loadAdminStats();
+            loadAdminGameSettings();
             loadWorkbookSystemCheck();
           }
         })
@@ -358,6 +380,36 @@
         })
         .withFailureHandler(showAdminError)
         .getAdminQuestionWorkbooks();
+    }
+
+    function loadAdminGameSettings() {
+      google.script.run
+        .withSuccessHandler(renderAdminGameSettings)
+        .withFailureHandler(showAdminError)
+        .getAdminGameSettings();
+    }
+
+    function renderAdminGameSettings(settings) {
+      document.getElementById('settingGameEnabled').checked = !!(settings && settings.gameEnabled);
+      document.getElementById('settingRequireOwnQuestionForRunStart').checked = settings && settings.requireOwnQuestionForRunStart !== false;
+      setGameSettingsMessage('', '');
+    }
+
+    function saveAdminGameSettings() {
+      var payload = {
+        gameEnabled: document.getElementById('settingGameEnabled').checked,
+        requireOwnQuestionForRunStart: document.getElementById('settingRequireOwnQuestionForRunStart').checked,
+      };
+      setGameSettingsMessage('설정을 저장하는 중입니다.', 'ok');
+      google.script.run
+        .withSuccessHandler(function(settings) {
+          renderAdminGameSettings(settings);
+          setGameSettingsMessage('설정이 저장되었습니다.', 'ok');
+        })
+        .withFailureHandler(function(error) {
+          setGameSettingsMessage(error && error.message ? error.message : '설정 저장에 실패했습니다.', 'error');
+        })
+        .updateAdminGameSettings(payload);
     }
 
     function loadWorkbookSystemCheck() {
@@ -655,6 +707,13 @@
     function setAdminMessage(message, type) {
       var element = document.getElementById('adminMessage');
       element.textContent = message;
+      element.className = 'message ' + (type || '');
+    }
+
+    function setGameSettingsMessage(message, type) {
+      var element = document.getElementById('gameSettingsMessage');
+      if (!element) return;
+      element.textContent = message || '';
       element.className = 'message ' + (type || '');
     }
 

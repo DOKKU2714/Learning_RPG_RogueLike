@@ -47,7 +47,7 @@ function generateRewardChoices(runId, stageId, authToken) {
           updatedAt: new Date(),
         });
       }
-      return buildRewardChoiceView_(runId, currentStageId, rewardGroupId, rewardState, ownedSkills, stageState.battle);
+      return buildRewardChoiceView_(runId, currentStageId, rewardGroupId, rewardState, ownedSkills, stageState.battle, buildScorePreviewSummaryForRewardView_(run, stageState, stageState.battle, rewardState));
     }
   }
 
@@ -82,7 +82,7 @@ function generateRewardChoices(runId, stageId, authToken) {
     updatedAt: new Date(),
   });
 
-  return buildRewardChoiceView_(runId, currentStageId, rewardGroupId, rewardState, ownedSkills, stageState.battle);
+  return buildRewardChoiceView_(runId, currentStageId, rewardGroupId, rewardState, ownedSkills, stageState.battle, buildScorePreviewSummaryForRewardView_(run, stageState, stageState.battle, rewardState));
 }
 
 function previewRewardChoicesForStageResult(stagePayload, authToken) {
@@ -133,7 +133,7 @@ function previewRewardChoicesForStageResult(stagePayload, authToken) {
     };
   }
 
-  return buildRewardChoiceView_(run.runId, currentStageId, rewardGroupId, rewardState, ownedSkills, battle);
+  return buildRewardChoiceView_(run.runId, currentStageId, rewardGroupId, rewardState, ownedSkills, battle, buildScorePreviewSummaryForRewardView_(run, clientStageState, battle, rewardState));
 }
 
 function previewStageClearRegen_(run, battle) {
@@ -277,7 +277,7 @@ function buildFloorRestRewardViewForRun_(run, stageState) {
       reward: rewardState,
       playerGhost: stageState.playerGhost || null,
     },
-    rewardView: buildRewardChoiceView_(run.runId, stage.stageId, rewardGroupId, rewardState, ownedSkills, stageState.battle),
+    rewardView: buildRewardChoiceView_(run.runId, stage.stageId, rewardGroupId, rewardState, ownedSkills, stageState.battle, buildScorePreviewSummaryForRewardView_(run, stageState, stageState.battle, rewardState)),
   };
 }
 
@@ -1461,7 +1461,18 @@ function buildRewardSkillPreviewBattleState_(battleState) {
   return preview;
 }
 
-function buildRewardChoiceView_(runId, stageId, rewardGroupId, rewardState, ownedSkills, battleState) {
+function buildScorePreviewSummaryForRewardView_(run, stageState, battleState, rewardState) {
+  try {
+    var previewStageState = safeJsonParse_(safeJsonStringify_(stageState || {}), {});
+    previewStageState.battle = safeJsonParse_(safeJsonStringify_(battleState || previewStageState.battle || {}), {});
+    previewStageState.reward = safeJsonParse_(safeJsonStringify_(rewardState || previewStageState.reward || {}), {});
+    return calculateStageClearScoreForReward_(Object.assign({}, run || {}), previewStageState).summary || null;
+  } catch (error) {
+    return null;
+  }
+}
+
+function buildRewardChoiceView_(runId, stageId, rewardGroupId, rewardState, ownedSkills, battleState, scorePreviewSummary) {
   var skills = normalizeOwnedSkills_(ownedSkills || []);
   var choices = (rewardState.choices || []).filter(function(reward) {
     return reward.type !== REWARD_TYPES.SKILL_UPGRADE || hasOwnedSkill_(skills, reward.targetId);
@@ -1487,6 +1498,7 @@ function buildRewardChoiceView_(runId, stageId, rewardGroupId, rewardState, owne
     maxHpAfterRegen: Number(rewardState.maxHpAfterRegen || 0),
     floorRestChoice: !!rewardState.floorRestChoice,
     intermissionStage: rewardState.intermissionStage || null,
+    scorePreviewSummary: scorePreviewSummary || null,
     choices: choices,
   };
 }
