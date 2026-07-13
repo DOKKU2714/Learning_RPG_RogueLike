@@ -469,7 +469,9 @@ function normalizeQuestionPayload_(payload) {
   };
 
   if (type === QUESTION_TYPES.MULTIPLE_CHOICE) {
-    var choices = source.choices || [];
+    var choices = Array.isArray(source.choices)
+      ? source.choices
+      : [source.choice1, source.choice2, source.choice3, source.choice4];
     if (choices.length !== 4 || choices.some(function(choice) { return String(choice || '').trim() === ''; })) {
       throw new Error('객관식 문제는 선택지 4개를 모두 입력해야 합니다.');
     }
