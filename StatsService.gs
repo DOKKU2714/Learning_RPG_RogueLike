@@ -15,8 +15,8 @@ function getMyInfo(playerId, authToken) {
 }
 
 function getMyQuestionStats(playerId) {
-  return readTable_(DB_SHEETS.QUESTIONS).filter(function(question) {
-    return question.creatorId === playerId;
+  return readAllActiveWorkbookQuestions_().filter(function(question) {
+    return String(question.creatorId || '') === String(playerId || '');
   }).map(function(question) {
     var total = Number(question.totalCount || 0);
     var correct = Number(question.correctCount || 0);
@@ -84,7 +84,7 @@ function getAdminPlayerStats() {
 function getAdminQuestionStats() {
   requireAdmin_();
   var playerById = indexBy_(readTable_(DB_SHEETS.PLAYERS), 'playerId');
-  return readTable_(DB_SHEETS.QUESTIONS).map(function(question) {
+  return readAllActiveWorkbookQuestions_().map(function(question) {
     var total = Number(question.totalCount || 0);
     var correct = Number(question.correctCount || 0);
     var creator = playerById[question.creatorId] || {};
@@ -150,15 +150,17 @@ function recalculateStatsForDev() {
     });
   });
 
-  readTable_(DB_SHEETS.QUESTIONS).forEach(function(question) {
+  var touchedWorkbookIds = {};
+  readAllActiveWorkbookQuestions_().forEach(function(question) {
     var summary = questionSummary[question.questionId] || { total: 0, correct: 0 };
-    updateRowByKey_(DB_SHEETS.QUESTIONS, 'questionId', question.questionId, {
+    updateWorkbookQuestionById_(question.workbookId, question.questionId, {
       correctCount: summary.correct,
       totalCount: summary.total,
       updatedAt: new Date(),
     });
+    touchedWorkbookIds[question.workbookId] = true;
   });
-  clearTableCache_(DB_SHEETS.QUESTIONS);
+  Object.keys(touchedWorkbookIds).forEach(clearWorkbookQuestionCache_);
   return { ok: true, playerCount: players.length, answerLogCount: logs.length };
 }
 

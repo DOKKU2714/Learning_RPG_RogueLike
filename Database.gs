@@ -162,8 +162,6 @@ function clearMasterTableCaches_() {
     DB_SHEETS.EFFECTS,
     DB_SHEETS.ITEMS,
     DB_SHEETS.REWARDS,
-    // Legacy Questions remains supported during the workbook migration.
-    DB_SHEETS.QUESTIONS,
     DB_SHEETS.NOTICES,
   ].forEach(clearTableCache_);
 }
@@ -186,7 +184,6 @@ function warmupGameData(authToken) {
     DB_SHEETS.EFFECTS,
     DB_SHEETS.ITEMS,
     DB_SHEETS.REWARDS,
-    DB_SHEETS.QUESTIONS,
     DB_SHEETS.NOTICES,
   ].forEach(function(sheetName) {
     readTableCached_(sheetName, 1800);
@@ -568,6 +565,36 @@ function ensureWorkbookQuestionSheet_(workbook) {
 function readWorkbookQuestionTable_(workbookId) {
   var sheet = getWorkbookQuestionSheet_(workbookId);
   return readTableWithHeaderRow_(sheet, 2, 3);
+}
+
+function readAllActiveWorkbookQuestions_() {
+  return getActiveWorkbooks_().reduce(function(rows, workbook) {
+    return rows.concat(readWorkbookQuestionTableCached_(workbook.workbookId, 120).map(function(question) {
+      return Object.assign({}, question, {
+        workbookId: workbook.workbookId,
+        workbookName: workbook.workbookName || workbook.workbookId,
+      });
+    }));
+  }, []);
+}
+
+function findWorkbookQuestionLocationById_(questionId) {
+  var targetQuestionId = String(questionId || '').trim();
+  if (!targetQuestionId) {
+    return null;
+  }
+  var workbooks = getActiveWorkbooks_();
+  for (var i = 0; i < workbooks.length; i += 1) {
+    var question = findWorkbookQuestionById_(workbooks[i].workbookId, targetQuestionId);
+    if (question) {
+      return {
+        workbook: workbooks[i],
+        workbookId: workbooks[i].workbookId,
+        question: question,
+      };
+    }
+  }
+  return null;
 }
 
 function readWorkbookQuestionTableCached_(workbookId, ttlSeconds) {

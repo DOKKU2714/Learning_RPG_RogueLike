@@ -2,3 +2,5 @@
 .output/
 outputs/
 .tmp_spreadsheet/
+.codex-temp/
+

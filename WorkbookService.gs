@@ -8,59 +8,6 @@ function getAdminQuestionWorkbooks() {
   return getActiveWorkbooksForClient_();
 }
 
-function migrateLegacyQuestionsToWorkbook(workbookId) {
-  requireAdmin_();
-  var workbook = requireMigrationWorkbook_(workbookId);
-  ensureTableColumns_(DB_SHEETS.QUESTIONS, DB_COLUMNS.QUESTIONS);
-  ensureWorkbookQuestionSheet_(workbook);
-
-  var legacyQuestions = readTable_(DB_SHEETS.QUESTIONS);
-  var existingQuestionIds = readWorkbookQuestionTable_(workbook.workbookId).reduce(function(map, question) {
-    if (question.questionId) {
-      map[String(question.questionId)] = true;
-    }
-    return map;
-  }, {});
-
-  var result = {
-    ok: true,
-    workbookId: workbook.workbookId,
-    workbookName: workbook.workbookName || workbook.workbookId,
-    totalCount: legacyQuestions.length,
-    copiedCount: 0,
-    skippedCount: 0,
-    failedCount: 0,
-    skippedQuestionIds: [],
-    failedQuestions: [],
-  };
-
-  legacyQuestions.forEach(function(question) {
-    var questionId = String(question.questionId || '').trim();
-    if (!questionId || existingQuestionIds[questionId]) {
-      result.skippedCount += 1;
-      if (questionId) {
-        result.skippedQuestionIds.push(questionId);
-      }
-      return;
-    }
-
-    try {
-      appendWorkbookQuestion_(workbook.workbookId, normalizeLegacyQuestionForMigration_(question));
-      existingQuestionIds[questionId] = true;
-      result.copiedCount += 1;
-    } catch (error) {
-      result.failedCount += 1;
-      result.failedQuestions.push({
-        questionId: questionId,
-        message: error.message || String(error),
-      });
-    }
-  });
-
-  clearWorkbookQuestionCache_(workbook.workbookId);
-  return toClientObject_(result);
-}
-
 function checkWorkbookSystemSettings() {
   requireAdmin_();
   var checks = [];
@@ -198,33 +145,6 @@ function getNextWorkbookSortOrder_() {
   return getWorkbooks_().reduce(function(maxSortOrder, workbook) {
     return Math.max(maxSortOrder, Number(workbook.sortOrder || 0));
   }, 0) + 1;
-}
-
-function requireMigrationWorkbook_(workbookId) {
-  var targetWorkbookId = String(workbookId || '').trim();
-  if (!targetWorkbookId) {
-    throw new Error('Select a target workbook for migration.');
-  }
-  var workbook = requireWorkbook_(targetWorkbookId);
-  if (String(workbook.status || STATUS.WORKBOOK_ACTIVE) !== STATUS.WORKBOOK_ACTIVE) {
-    throw new Error('Legacy questions can only be migrated to an active workbook.');
-  }
-  return workbook;
-}
-
-function normalizeLegacyQuestionForMigration_(question) {
-  var normalized = {};
-  DB_COLUMNS.QUESTIONS.forEach(function(header) {
-    normalized[header] = question[header] !== undefined ? question[header] : '';
-  });
-  normalized.updatedAt = normalized.updatedAt || new Date();
-  normalized.createdAt = normalized.createdAt || new Date();
-  normalized.correctCount = Number(normalized.correctCount || 0);
-  normalized.totalCount = Number(normalized.totalCount || 0);
-  normalized.likeCount = Number(normalized.likeCount || 0);
-  normalized.dislikeCount = Number(normalized.dislikeCount || 0);
-  normalized.reactionJson = normalized.reactionJson || '{}';
-  return normalized;
 }
 
 function pushWorkbookSystemCheck_(checks, key, status, message, detail) {

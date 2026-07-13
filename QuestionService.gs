@@ -159,9 +159,6 @@ function updateQuestion(questionId, questionPayload, authToken, workbookId) {
 }
 
 function setQuestionReaction(questionId, reaction, authToken, runId) {
-  if (!String(runId || '').trim()) {
-    ensureQuestionSchemaColumns_();
-  }
   var player = getCurrentPlayer_(authToken);
   var targetQuestionId = String(questionId || '').trim();
   if (!targetQuestionId) {
@@ -191,8 +188,9 @@ function setQuestionReaction(questionId, reaction, authToken, runId) {
 
 function setQuestionReactionLocked_(targetQuestionId, normalizedReaction, player, runId) {
   var run = getReactionRunForQuestion_(runId, player);
-  var workbookId = run ? getRunWorkbookContext_(run).workbookId : '';
-  var question = run ? findRunQuestionById_(run, targetQuestionId) : findRowByKey_(DB_SHEETS.QUESTIONS, 'questionId', targetQuestionId);
+  var location = run ? null : findWorkbookQuestionLocationById_(targetQuestionId);
+  var workbookId = run ? getRunWorkbookContext_(run).workbookId : String(location && location.workbookId || '');
+  var question = run ? findRunQuestionById_(run, targetQuestionId) : location && location.question;
   if (!question) {
     throw new Error('문제를 찾을 수 없습니다.');
   }
@@ -232,14 +230,8 @@ function setQuestionReactionLocked_(targetQuestionId, normalizedReaction, player
     reactionJson: safeJsonStringify_(reactions) || '{}',
     updatedAt: new Date(),
   };
-  var updated = workbookId
-    ? updateWorkbookQuestionById_(workbookId, targetQuestionId, patch)
-    : updateRowByKey_(DB_SHEETS.QUESTIONS, 'questionId', targetQuestionId, patch);
-  if (workbookId) {
-    clearWorkbookQuestionCache_(workbookId);
-  } else {
-    clearTableCache_(DB_SHEETS.QUESTIONS);
-  }
+  var updated = updateWorkbookQuestionById_(workbookId, targetQuestionId, patch);
+  clearWorkbookQuestionCache_(workbookId);
   var scoreResult = awardQuestionReactionScore_(runId, playerId);
   return {
     questionId: targetQuestionId,
@@ -391,8 +383,9 @@ function rejectQuestion(questionId, reviewComment, workbookId) {
 }
 
 function getQuestionsByCreator_(creatorId) {
-  return readTable_(DB_SHEETS.QUESTIONS).filter(function(question) {
-    return question.creatorId === creatorId;
+  var targetCreatorId = String(creatorId || '').trim();
+  return readAllActiveWorkbookQuestions_().filter(function(question) {
+    return String(question.creatorId || '').trim() === targetCreatorId;
   });
 }
 
@@ -440,36 +433,10 @@ function getQuestionLikeStartingScoreSummary_(playerId) {
 }
 
 function deleteQuestionByOwner_(questionId, creatorId) {
-  var sheet = getSheet_(DB_SHEETS.QUESTIONS);
-  var headers = getHeaderRow_(sheet);
-  var questionIdIndex = headers.indexOf('questionId');
-  var creatorIdIndex = headers.indexOf('creatorId');
-  if (questionIdIndex === -1 || creatorIdIndex === -1) {
-    throw new Error('Questions 시트 구조를 확인해 주세요.');
-  }
-
-  var lastRow = sheet.getLastRow();
-  if (lastRow < 2) {
-    return false;
-  }
-
-  var values = sheet.getRange(2, 1, lastRow - 1, headers.length).getValues();
-  for (var i = 0; i < values.length; i += 1) {
-    var rowQuestionId = String(values[i][questionIdIndex] || '').trim();
-    if (rowQuestionId !== questionId) {
-      continue;
-    }
-    var rowCreatorId = String(values[i][creatorIdIndex] || '').trim();
-    if (rowCreatorId !== String(creatorId || '').trim()) {
-      throw new Error('본인이 만든 문제만 삭제할 수 있습니다.');
-    }
-    sheet.deleteRow(i + 2);
-    try {
-      CacheService.getScriptCache().remove(getSheetRowNumberCacheKey_(DB_SHEETS.QUESTIONS, 'questionId', questionId));
-    } catch (error) {}
-    return true;
-  }
-  return false;
+  var location = findWorkbookQuestionLocationById_(questionId);
+  return location
+    ? deleteWorkbookQuestionByOwner_(location.workbookId, questionId, creatorId)
+    : false;
 }
 
 function normalizeQuestionPayload_(payload) {
@@ -713,28 +680,6 @@ function normalizeQuestionReaction_(reaction) {
     return value;
   }
   return '';
-}
-
-function ensureQuestionSchemaColumns_() {
-  var sheet = getSheet_(DB_SHEETS.QUESTIONS);
-  var headers = getHeaderRow_(sheet);
-  var existing = {};
-  headers.forEach(function(header) {
-    existing[header] = true;
-  });
-  var missing = DB_COLUMNS.QUESTIONS.filter(function(header) {
-    return !existing[header];
-  });
-  if (!missing.length) {
-    return headers;
-  }
-
-  if (sheet.getMaxColumns() < headers.length + missing.length) {
-    sheet.insertColumnsAfter(sheet.getMaxColumns(), headers.length + missing.length - sheet.getMaxColumns());
-  }
-  sheet.getRange(1, headers.length + 1, 1, missing.length).setValues([missing]);
-  clearTableCache_(DB_SHEETS.QUESTIONS);
-  return headers.concat(missing);
 }
 
 function requireAdmin_() {

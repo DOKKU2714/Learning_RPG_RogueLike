@@ -317,7 +317,7 @@ function useSkill(runId, skillId, targetId, answerPayload) {
     throw new Error('풀이 중인 스킬 문제가 없습니다.');
   }
 
-  var question = findCachedRowByKey_(DB_SHEETS.QUESTIONS, 'questionId', pendingAction.questionId, 120);
+  var question = findRunQuestionById_(run, pendingAction.questionId);
   if (!question) {
     throw new Error('문제를 찾을 수 없습니다.');
   }

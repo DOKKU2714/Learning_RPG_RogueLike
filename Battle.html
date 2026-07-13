@@ -280,6 +280,11 @@
     var scoreAnimationTimers = [];
     var scoreAnimationDone = true;
     var currentRewardView = null;
+    var victoryRewardPreload = null;
+    var victoryRewardFlowStarted = false;
+    var victoryRewardRecoveryComplete = false;
+    var victoryRewardDisplayStarted = false;
+    var victoryRegenPresentationKey = '';
     var nextBattlePreloadKey = '';
     var nextBattlePreloadLoading = false;
     var nextBattlePreloadView = null;
@@ -466,6 +471,11 @@
       stageResultCommitCallbacks = [];
       stageResultCommitFailureCallbacks = [];
       currentRewardView = null;
+      victoryRewardPreload = null;
+      victoryRewardFlowStarted = false;
+      victoryRewardRecoveryComplete = false;
+      victoryRewardDisplayStarted = false;
+      victoryRegenPresentationKey = '';
     }
 
     function getLocalBattleCheckpointKey(runId) {
@@ -3314,6 +3324,9 @@
       isAnimatingTurn = true;
       setBattleInputLocked(true);
       setPlayerTurn(false);
+      if (nextView && nextView.battle && nextView.battle.status === 'victory') {
+        preloadVictoryRewardChoices(nextView);
+      }
       var events = (nextView.battle.lastTurnEvents || []).slice();
       var consumedSimultaneousEvents = {};
 
@@ -3432,7 +3445,6 @@
       }
       if (currentView.battle.status === 'victory') {
         passTurnLogPending = false;
-        pushLog('스테이지 클리어! 보상을 준비 중입니다...');
         openRewardAfterVictory();
         return;
       }
@@ -4809,37 +4821,104 @@
       return { damage: totalDamage, shieldDamage: shieldDamage, hpDamage: hpDamage };
     }
 
-    function openRewardAfterVictory() {
-      if (isDummyMode || currentView.runId === 'dummy-run') {
-        renderRewardChoices({
-          currencyAmount: 12,
-          choices: [
-            { rewardId: 'dummy_attack', type: 'stat', targetId: 'attack', value: 2, description: '공격 +2', detailDescription: '기본 공격과 공격 스킬 피해가 증가합니다.' },
-            { rewardId: 'dummy_hp', type: 'stat', targetId: 'hp', value: 10, description: '최대 체력 +10', detailDescription: '최대 체력이 증가하고 현재 체력이 함께 회복됩니다.' },
-            { rewardId: 'dummy_skill', type: 'skill', targetId: 'skill_basic_slash', value: 1, description: '스킬 획득: 깊게 베기', detailDescription: '강한 피해를 주는 공격 스킬을 획득합니다.' },
-          ],
-          regenAmount: 5,
-          currentHpAfterRegen: 35,
-          maxHpAfterRegen: 100,
-        });
-        return;
+    function getVictoryRewardKey(view) {
+      view = view || currentView || {};
+      var battle = view.battle || {};
+      return [view.runId || '', battle.battleId || '', battle.stage && battle.stage.stageId || ''].join(':');
+    }
+
+    function buildDummyVictoryRewardView() {
+      return {
+        currencyAmount: 12,
+        choices: [
+          { rewardId: 'dummy_attack', type: 'stat', targetId: 'attack', value: 2, description: '공격 +2', detailDescription: '기본 공격과 공격 스킬 피해가 증가합니다.' },
+          { rewardId: 'dummy_hp', type: 'stat', targetId: 'hp', value: 10, description: '최대 체력 +10', detailDescription: '최대 체력이 증가하고 현재 체력이 함께 회복됩니다.' },
+          { rewardId: 'dummy_skill', type: 'skill', targetId: 'skill_basic_slash', value: 1, description: '스킬 획득: 깊게 베기', detailDescription: '강한 피해를 주는 공격 스킬을 획득합니다.' },
+        ],
+        regenAmount: 5,
+        currentHpAfterRegen: 35,
+        maxHpAfterRegen: 100,
+      };
+    }
+
+    function preloadVictoryRewardChoices(view) {
+      view = view || currentView;
+      if (!view || !view.battle || view.battle.status !== 'victory') return null;
+      var key = getVictoryRewardKey(view);
+      if (!key) return null;
+      if (victoryRewardPreload && victoryRewardPreload.key === key) {
+        return victoryRewardPreload;
       }
+      if (isDummyMode || view.runId === 'dummy-run') {
+        victoryRewardPreload = { key: key, loading: false, rewardView: buildDummyVictoryRewardView(), error: null };
+        return victoryRewardPreload;
+      }
+
+      var preload = { key: key, loading: true, rewardView: null, error: null };
+      victoryRewardPreload = preload;
       google.script.run
         .withSuccessHandler(function(rewardView) {
-          hideLoadingModal();
-          currentRewardView = rewardView;
-          ensureClientRewardState(rewardView);
-          renderRewardChoices(rewardView);
-          commitStageResultIfNeeded(null, function(error) {
-            document.getElementById('rewardMessage').textContent = error.message || '전투 결과 저장에 실패했습니다.';
-            document.getElementById('rewardMessage').className = 'message error';
-          }, { silent: true });
+          if (victoryRewardPreload !== preload) return;
+          preload.loading = false;
+          preload.rewardView = rewardView;
         })
         .withFailureHandler(function(error) {
-          hideLoadingModal();
-          pushLog(error.message);
+          if (victoryRewardPreload !== preload) return;
+          preload.loading = false;
+          preload.error = error || { message: '보상 선택지를 불러오지 못했습니다.' };
         })
-        .previewRewardChoicesForStageResult(buildStageResultPayload(), getAuthToken());
+        .previewRewardChoicesForStageResult(buildStageResultPayload(view), getAuthToken());
+      return preload;
+    }
+
+    function openRewardAfterVictory() {
+      if (!currentView || !currentView.battle || currentView.battle.status !== 'victory') return;
+      preloadVictoryRewardChoices(currentView);
+      if (victoryRewardFlowStarted) {
+        if (victoryRewardRecoveryComplete) showPreparedVictoryReward();
+        return;
+      }
+
+      victoryRewardFlowStarted = true;
+      var recovery = presentStageClearRegen();
+      if (recovery.alreadyApplied) {
+        victoryRewardRecoveryComplete = true;
+        showPreparedVictoryReward();
+        return;
+      }
+      pushLog(recovery.amount > 0
+        ? '체력이 ' + recovery.amount + ' 재생되었습니다.'
+        : '체력이 모두 차 있어 재생되지 않았습니다.');
+      waitForBattleLogAdvance().then(function() {
+        victoryRewardRecoveryComplete = true;
+        showPreparedVictoryReward();
+      });
+    }
+
+    function showPreparedVictoryReward() {
+      if (victoryRewardDisplayStarted) return;
+      var preload = preloadVictoryRewardChoices(currentView);
+      if (!preload) return;
+      if (preload.rewardView) {
+        victoryRewardDisplayStarted = true;
+        currentRewardView = preload.rewardView;
+        ensureClientRewardState(preload.rewardView);
+        renderRewardChoices(preload.rewardView);
+        commitStageResultIfNeeded(null, function(error) {
+          document.getElementById('rewardMessage').textContent = error.message || '전투 결과 저장에 실패했습니다.';
+          document.getElementById('rewardMessage').className = 'message error';
+        }, { silent: true });
+        return;
+      }
+      if (preload.loading) {
+        if (!preload.waitingMessageShown) {
+          preload.waitingMessageShown = true;
+          pushLog('보상 준비 중...', { instant: true });
+        }
+        window.setTimeout(showPreparedVictoryReward, 120);
+        return;
+      }
+      pushLog(preload.error && preload.error.message || '보상 선택지를 불러오지 못했습니다.');
     }
 
     function ensureClientRewardState(rewardView) {
@@ -4863,13 +4942,18 @@
       saveLocalBattleCheckpoint();
     }
 
-    function buildStageResultPayload() {
-      getClientUsedQuestionIds(currentView);
+    function buildStageResultPayload(view) {
+      view = view || currentView;
+      if (!view) return {};
+      if (!view.stageState && currentView && currentView.stageState) {
+        view.stageState = currentView.stageState;
+      }
+      getClientUsedQuestionIds(view);
       return {
-        runId: currentView.runId,
-        battle: currentView.battle,
+        runId: view.runId,
+        battle: view.battle,
         answerLogs: pendingStageAnswerLogs.slice(),
-        stageState: currentView.stageState || {},
+        stageState: view.stageState || {},
       };
     }
 
@@ -5230,12 +5314,42 @@
     }
 
     function animateStageClearRegen(rewardView) {
-      var regenAmount = Number(rewardView && rewardView.regenAmount || 0);
-      if (regenAmount <= 0 || !currentView || !currentView.battle || !currentView.battle.player) return;
-      currentView.battle.player.hp = Number(rewardView.currentHpAfterRegen || currentView.battle.player.hp || 0);
-      currentView.battle.player.maxHp = Number(rewardView.maxHpAfterRegen || currentView.battle.player.maxHp || currentView.battle.player.stats.hp || 1);
-      renderPlayerHud(currentView.battle.player);
-      spawnFloatingText(document.getElementById('playerHpText') || document.getElementById('playerDamageAnchor'), '+' + regenAmount, 'heal-green');
+      presentStageClearRegen(rewardView);
+    }
+
+    function presentStageClearRegen(rewardView) {
+      var player = currentView && currentView.battle && currentView.battle.player;
+      if (!player) return { amount: 0, applied: false };
+      var key = getVictoryRewardKey(currentView);
+      if (key && victoryRegenPresentationKey === key) {
+        return { amount: 0, applied: false };
+      }
+
+      var maxHp = Math.max(1, Number(rewardView && rewardView.maxHpAfterRegen || player.maxHp || player.stats && player.stats.hp || 1));
+      var currentHp = Math.max(0, Number(player.hp || 0));
+      var savedReward = currentView && currentView.stageState && currentView.stageState.reward || {};
+      var savedHpAfterRegen = Number(savedReward.currentHpAfterRegen || 0);
+      if (!rewardView && savedReward.stageClearRegenApplied && savedHpAfterRegen > 0 && currentHp === savedHpAfterRegen) {
+        victoryRegenPresentationKey = key;
+        return { amount: 0, applied: false, alreadyApplied: true };
+      }
+      var configuredRegen = Math.max(0, Math.round(Number(player.stats && player.stats.hpRegen || 0)));
+      var amount = rewardView
+        ? Math.max(0, Number(rewardView.regenAmount || 0))
+        : Math.max(0, Math.min(configuredRegen, maxHp - currentHp));
+      var nextHp = rewardView
+        ? Math.max(0, Math.min(maxHp, Number(rewardView.currentHpAfterRegen || currentHp)))
+        : Math.max(0, Math.min(maxHp, currentHp + amount));
+
+      victoryRegenPresentationKey = key;
+      player.hp = nextHp;
+      player.maxHp = maxHp;
+      renderPlayerHud(player);
+      if (amount > 0) {
+        animatePlayerStatusEffect('buff');
+        spawnFloatingText(document.getElementById('playerHpText') || document.getElementById('playerDamageAnchor'), '+' + amount, 'heal-green');
+      }
+      return { amount: amount, applied: true };
     }
 
     function formatRewardMeta(reward) {
