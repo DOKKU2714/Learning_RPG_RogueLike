@@ -603,6 +603,23 @@ function appendWorkbookQuestion_(workbookId, question) {
   return question;
 }
 
+function appendWorkbookQuestions_(workbookId, questions) {
+  var rows = questions || [];
+  if (!rows.length) {
+    return [];
+  }
+  var sheet = getWorkbookQuestionSheet_(workbookId);
+  var headers = getHeaderRowAt_(sheet, 2);
+  var values = rows.map(function(question) {
+    return headers.map(function(header) {
+      return question[header] !== undefined ? question[header] : '';
+    });
+  });
+  sheet.getRange(sheet.getLastRow() + 1, 1, values.length, headers.length).setValues(values);
+  clearWorkbookQuestionCache_(workbookId);
+  return rows;
+}
+
 function findWorkbookQuestionById_(workbookId, questionId) {
   var targetQuestionId = String(questionId || '').trim();
   if (!targetQuestionId) {

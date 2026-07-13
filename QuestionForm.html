@@ -108,7 +108,7 @@
 
     .question-import-row {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
+      grid-template-columns: minmax(0, 1fr) auto auto;
       gap: 10px;
       align-items: end;
       margin-top: 12px;
@@ -127,6 +127,11 @@
       color: var(--muted);
       font-size: 13px;
       line-height: 1.45;
+    }
+
+    .import-preview-list {
+      margin: 6px 0 0;
+      padding-left: 20px;
     }
 
     @media (max-width: 720px) {
@@ -169,6 +174,7 @@
           <label for="questionImportFile">문제 파일</label>
           <input id="questionImportFile" type="file" accept=".xlsx,.xls,.csv,.tsv" onchange="previewImportFile()">
         </div>
+        <button class="secondary" type="button" onclick="downloadQuestionImportTemplate()">양식 다운로드</button>
         <button id="importQuestionButton" type="button" onclick="importQuestionFile()">파일 등록</button>
       </div>
       <div id="importPreview" class="import-preview"></div>
@@ -202,6 +208,8 @@
     var SELECTED_WORKBOOK_NAME_KEY = 'learningRpgSelectedWorkbookName';
     var selectedWorkbookId = '';
     var selectedWorkbookName = '';
+    var lastImportRows = null;
+    var lastImportFileSignature = '';
     var QUESTION_LIMITS = {
       prompt: 200,
       choice: 60,
@@ -460,12 +468,24 @@
     function previewImportFile() {
       var file = getQuestionImportFile();
       var preview = document.getElementById('importPreview');
+      lastImportRows = null;
+      lastImportFileSignature = '';
       setImportMessage('', '');
       if (!file) {
         preview.textContent = '';
         return;
       }
-      preview.textContent = file.name + ' / ' + Math.ceil(file.size / 1024) + 'KB';
+      preview.textContent = file.name + ' / ' + Math.ceil(file.size / 1024) + 'KB / 확인 중...';
+      readQuestionImportRows(file, function(rows) {
+        lastImportRows = rows;
+        lastImportFileSignature = getImportFileSignature(file);
+        renderImportPreview(file, rows);
+      }, function(message) {
+        lastImportRows = null;
+        lastImportFileSignature = '';
+        preview.textContent = file.name + ' / ' + Math.ceil(file.size / 1024) + 'KB';
+        setImportMessage(message, 'error');
+      });
     }
 
     function importQuestionFile() {
@@ -477,9 +497,10 @@
         setImportMessage('등록할 파일을 선택하세요.', 'error');
         return;
       }
-      setImportMessage('파일을 읽는 중입니다.', 'ok');
-      showLoadingModal('파일 읽는 중...', '문제 데이터를 확인하는 중...');
-      readQuestionImportRows(file, function(rows) {
+      var cachedRows = lastImportFileSignature === getImportFileSignature(file) ? lastImportRows : null;
+      setImportMessage(cachedRows ? cachedRows.length + '개 문제를 등록하는 중입니다.' : '파일을 읽는 중입니다.', 'ok');
+      showLoadingModal(cachedRows ? '등록 중...' : '파일 읽는 중...', cachedRows ? '문제를 저장하는 중...' : '문제 데이터를 확인하는 중...');
+      function submitImportRows(rows) {
         if (!rows.length) {
           hideLoadingModal();
           setImportMessage('가져올 문제가 없습니다.', 'error');
@@ -501,7 +522,12 @@
             setImportMessage(error.message, 'error');
           })
           .importQuestionsFromRows(rows, getAuthToken(), selectedWorkbookId);
-      }, function(message) {
+      }
+      if (cachedRows) {
+        submitImportRows(cachedRows);
+        return;
+      }
+      readQuestionImportRows(file, submitImportRows, function(message) {
         hideLoadingModal();
         setImportMessage(message, 'error');
       });
@@ -510,6 +536,84 @@
     function getQuestionImportFile() {
       var input = document.getElementById('questionImportFile');
       return input && input.files && input.files[0] ? input.files[0] : null;
+    }
+
+    function downloadQuestionImportTemplate() {
+      var headers = ['유형', '문제', '보기1', '보기2', '보기3', '보기4', '정답', '복수 정답', '해설', '난이도', '과목', '단원', '태그'];
+      var rows = [
+        headers,
+        ['객관식', '다음 중 조선의 건국 연도는?', '1392', '1443', '1592', '1919', '1', '', '조선은 1392년에 건국되었습니다.', '1', '역사', '조선 전기', '조선,건국'],
+        ['주관식', '훈민정음을 창제한 왕은?', '', '', '', '', '세종대왕', '세종, 세종 왕', '훈민정음은 세종대왕이 창제했습니다.', '1', '역사', '조선 전기', '훈민정음'],
+      ];
+      if (typeof XLSX !== 'undefined') {
+        var worksheet = XLSX.utils.aoa_to_sheet(rows);
+        var workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, worksheet, 'Questions');
+        XLSX.writeFile(workbook, 'question_import_template.xlsx');
+        return;
+      }
+      downloadTextFile('question_import_template.csv', rows.map(function(row) {
+        return row.map(escapeCsvCell).join(',');
+      }).join('\n'));
+    }
+
+    function escapeCsvCell(value) {
+      var text = String(value == null ? '' : value);
+      return /[",\r\n]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
+    }
+
+    function downloadTextFile(filename, text) {
+      var blob = new Blob([String(text || '')], { type: 'text/csv;charset=utf-8' });
+      var url = URL.createObjectURL(blob);
+      var link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    }
+
+    function getImportFileSignature(file) {
+      return file ? [file.name, file.size, file.lastModified].join(':') : '';
+    }
+
+    function renderImportPreview(file, rows) {
+      var preview = document.getElementById('importPreview');
+      rows = rows || [];
+      if (!rows.length) {
+        preview.innerHTML = escapeHtml(file.name) + ' / ' + Math.ceil(file.size / 1024) + 'KB<br>가져올 문제가 없습니다.';
+        return;
+      }
+      var headers = getImportPreviewHeaders(rows);
+      var sampleRows = rows.slice(0, 3).map(function(row, index) {
+        return '<li>' + escapeHtml((index + 1) + '. ' + getImportPreviewRowText(row)) + '</li>';
+      }).join('');
+      preview.innerHTML =
+        '<strong>' + escapeHtml(file.name) + '</strong> / ' + Math.ceil(file.size / 1024) + 'KB<br>' +
+        '인식된 문제: ' + rows.length + '개<br>' +
+        (headers.length ? '헤더: ' + escapeHtml(headers.join(', ')) + '<br>' : '') +
+        '<ol class="import-preview-list">' + sampleRows + '</ol>';
+    }
+
+    function getImportPreviewHeaders(rows) {
+      var first = rows && rows[0] || {};
+      return Object.keys(first).filter(function(key) {
+        return String(key || '').trim();
+      });
+    }
+
+    function getImportPreviewRowText(row) {
+      var keys = ['문제', '문제 내용', '질문', 'prompt', 'question', 'problem'];
+      for (var i = 0; i < keys.length; i += 1) {
+        var value = row && row[keys[i]];
+        if (String(value || '').trim()) {
+          return String(value).trim();
+        }
+      }
+      return Object.keys(row || {}).map(function(key) {
+        return String(row[key] || '').trim();
+      }).filter(Boolean).slice(0, 3).join(' / ') || '내용 없음';
     }
 
     function readQuestionImportRows(file, onSuccess, onFailure) {

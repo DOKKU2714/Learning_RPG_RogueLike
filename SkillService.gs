@@ -801,7 +801,7 @@ function calculateSkillRuleDamage_(battleState, skill, rule, context, efficiency
     damage *= Number(rule.efficiencyBonus.damageMultiplier || 1);
     damage += Number(rule.efficiencyBonus.damageAdd || 0);
   }
-  return Math.max(0, Math.round(damage));
+  return applyActiveSkillTagBonuses_(battleState, skill, damage, context);
 }
 
 function applySkillRuleShield_(battleState, skill, rule, context, efficiency) {
@@ -1264,7 +1264,7 @@ function validateSkillTriggerRule_(battleState, skill, key, triggerRule) {
     warnSkillRule_(battleState, skill, key + ' must be an object.', { value: triggerRule });
     return;
   }
-  var supported = ['durationType', 'durationTurns', 'reflectBlockedDamage', 'damageFormula', 'applyEffects', 'actionPointModify'];
+  var supported = ['durationType', 'durationTurns', 'reflectBlockedDamage', 'damageFormula', 'applyEffects', 'actionPointModify', 'tagBonus'];
   Object.keys(triggerRule).forEach(function(ruleKey) {
     if (supported.indexOf(ruleKey) === -1) {
       warnSkillRule_(battleState, skill, 'Unsupported ' + key + ' key: ' + ruleKey, { key: ruleKey });
@@ -1301,6 +1301,9 @@ function processImmediateSkillRuleActions_(battleState, skill, actionRule, targe
   }
   if (actionRule.applyEffects) {
     applySkillRuleEffects_(battleState, skill, { applyEffects: actionRule.applyEffects }, targets, context);
+  }
+  if (actionRule.tagBonus) {
+    registerActiveSkillTagBonus_(battleState, skill, actionRule.tagBonus, context);
   }
 }
 
@@ -1436,6 +1439,135 @@ function applySkillTagBonusToValue_(battleState, skill, tagBonus, value) {
     next += Number(tagBonus.add || 0);
   }
   return next;
+}
+
+function registerActiveSkillTagBonus_(battleState, skill, tagBonus, context) {
+  if (!battleState || !skill || !tagBonus) {
+    return;
+  }
+
+  var normalized = normalizeActiveSkillTagBonus_(battleState, skill, tagBonus, context || {});
+  if (!normalized) {
+    return;
+  }
+
+  battleState.activeTagBonuses = (battleState.activeTagBonuses || []).filter(function(existing) {
+    return existing && existing.sourceSkillId !== normalized.sourceSkillId;
+  });
+  battleState.activeTagBonuses.push(normalized);
+  battleState.lastTurnEvents = battleState.lastTurnEvents || [];
+  battleState.lastTurnEvents.push({
+    actor: 'player',
+    type: 'buff',
+    skillId: skill.skillId,
+    message: (skill.name || '스킬') + ' 효과로 ' + normalized.tag + ' 스킬 피해가 증가했습니다.',
+  });
+  upsertActiveTagBonusBuffIcon_(battleState, normalized);
+}
+
+function normalizeActiveSkillTagBonus_(battleState, skill, tagBonus, context) {
+  var tag = String(tagBonus.tag || tagBonus.requireTag || tagBonus.skillTag || '').trim();
+  if (!tag) {
+    return null;
+  }
+
+  var damageMultiplier = tagBonus.damageMultiplier !== undefined ? Number(tagBonus.damageMultiplier || 1) : 1;
+  if (tagBonus.damageMultiplierFormula) {
+    damageMultiplier = evaluateSkillFormulaValue_(tagBonus.damageMultiplierFormula, context, damageMultiplier, battleState, skill);
+  }
+
+  var damageAdd = tagBonus.damageAdd !== undefined ? Number(tagBonus.damageAdd || 0) : Number(tagBonus.add || 0);
+  if (tagBonus.damageAddFormula) {
+    damageAdd = evaluateSkillFormulaValue_(tagBonus.damageAddFormula, context, damageAdd, battleState, skill);
+  }
+
+  return {
+    sourceSkillId: skill.skillId || '',
+    sourceSkillName: skill.name || skill.skillId || '',
+    tag: tag,
+    damageMultiplier: isFinite(damageMultiplier) ? Number(damageMultiplier || 1) : 1,
+    damageAdd: isFinite(damageAdd) ? Number(damageAdd || 0) : 0,
+    durationType: tagBonus.durationType || 'battle',
+    remainingTurns: Number(tagBonus.durationTurns || 0),
+    createdAtTurn: Number(battleState.turn || 1),
+  };
+}
+
+function applyActiveSkillTagBonuses_(battleState, skill, damage, context) {
+  var result = Number(damage || 0);
+  var bonuses = battleState && battleState.activeTagBonuses || [];
+  if (!bonuses.length || result <= 0) {
+    return Math.max(0, Math.round(result));
+  }
+
+  var tags = normalizeSkillTags_(skill && skill.tags);
+  bonuses.forEach(function(bonus) {
+    if (!bonus || tags.indexOf(bonus.tag) === -1) {
+      return;
+    }
+    if (bonus.sourceSkillId && skill && bonus.sourceSkillId === skill.skillId) {
+      return;
+    }
+    result *= Number(bonus.damageMultiplier || 1);
+    result += Number(bonus.damageAdd || 0);
+  });
+
+  return Math.max(0, Math.round(result));
+}
+
+function upsertActiveTagBonusBuffIcon_(battleState, bonus) {
+  if (!battleState || !battleState.player || !bonus) {
+    return;
+  }
+
+  var effectId = buildActiveTagBonusEffectId_(bonus);
+  var effect = {
+    effectId: effectId,
+    name: bonus.sourceSkillName || '태그 강화',
+    category: EFFECT_CATEGORIES.BUFF,
+    statKey: '',
+    effectType: EFFECT_TYPES.CONTROL,
+    value: 0,
+    description: buildActiveTagBonusDescription_(bonus),
+    durationType: bonus.durationType || 'battle',
+    remainingTurns: bonus.remainingTurns || '',
+    stackable: false,
+    maxStacks: 1,
+    triggerTiming: TRIGGER_TIMINGS.PASSIVE,
+    stacks: 1,
+    source: {
+      source: 'skillTagBonus',
+      skillId: bonus.sourceSkillId || '',
+      tag: bonus.tag || '',
+    },
+  };
+
+  battleState.player.effects = (battleState.player.effects || []).filter(function(existing) {
+    return existing && existing.effectId !== effectId;
+  });
+  battleState.player.effects.push(effect);
+  battleState.player.buffs = battleState.player.effects.filter(function(existing) {
+    return existing && existing.category === EFFECT_CATEGORIES.BUFF;
+  });
+  battleState.player.debuffs = battleState.player.effects.filter(function(existing) {
+    return existing && existing.category === EFFECT_CATEGORIES.DEBUFF;
+  });
+}
+
+function buildActiveTagBonusEffectId_(bonus) {
+  return 'buff_skill_tag_bonus_' + String(bonus && bonus.sourceSkillId || 'unknown').replace(/[^0-9A-Za-z_-]/g, '_');
+}
+
+function buildActiveTagBonusDescription_(bonus) {
+  var tag = String(bonus && bonus.tag || '태그');
+  var parts = [];
+  if (bonus && bonus.damageMultiplier && Number(bonus.damageMultiplier) !== 1) {
+    parts.push(tag + ' 스킬 피해 ' + Math.round((Number(bonus.damageMultiplier || 1) - 1) * 100) + '% 증가');
+  }
+  if (bonus && Number(bonus.damageAdd || 0)) {
+    parts.push(tag + ' 스킬 추가 피해 +' + Number(bonus.damageAdd || 0));
+  }
+  return parts.length ? parts.join(', ') : tag + ' 스킬 강화';
 }
 
 function trackSkillTagsForUse_(battleState, skill) {

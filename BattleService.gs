@@ -318,9 +318,53 @@ function loadStage(stageId) {
   ensureTableColumns_(DB_SHEETS.STAGES, DB_COLUMNS.STAGES);
   var stage = findCachedRowByKey_(DB_SHEETS.STAGES, 'stageId', stageId, 600);
   if (!stage) {
+    if (isSyntheticFloorRestStageId_(stageId)) {
+      return buildSyntheticFloorRestStage_(getFloorFromSyntheticStageId_(stageId));
+    }
     throw new Error('스테이지를 찾을 수 없습니다: ' + stageId);
   }
   return normalizeStageDifficulty_(stage);
+}
+
+function isSyntheticFloorRestStageId_(stageId) {
+  var parts = parseStageIdParts_(stageId);
+  return !!parts &&
+    Number(parts.floor || 1) < Number(GAME_RULES.FLOOR_COUNT || 5) &&
+    Number(parts.stage || 1) === Number(GAME_RULES.FLOOR_REST_STAGE || 6);
+}
+
+function getFloorFromSyntheticStageId_(stageId) {
+  var parts = parseStageIdParts_(stageId);
+  return parts ? parts.floor : 1;
+}
+
+function parseStageIdParts_(stageId) {
+  var match = String(stageId || '').match(/floor_(\d+)_stage_(\d+)/);
+  if (!match) {
+    return null;
+  }
+  return {
+    floor: Number(match[1] || 1),
+    stage: Number(match[2] || 1),
+  };
+}
+
+function buildSyntheticFloorRestStage_(floor) {
+  var normalizedFloor = Math.max(1, Math.min(Number(GAME_RULES.FLOOR_COUNT || 5), Number(floor || 1)));
+  return normalizeStageDifficulty_({
+    stageId: buildStageId_(normalizedFloor, GAME_RULES.FLOOR_REST_STAGE),
+    floor: normalizedFloor,
+    stage: GAME_RULES.FLOOR_REST_STAGE,
+    name: normalizedFloor + '층 정비 구역',
+    baseDifficulty: GAME_RULES.MIN_DIFFICULTY,
+    minDifficulty: GAME_RULES.MIN_DIFFICULTY,
+    maxDifficulty: GAME_RULES.MIN_DIFFICULTY,
+    questionDifficultyBonus: 0,
+    monsterGroupId: '',
+    bossMonsterId: '',
+    rewardGroupId: typeof getDefaultRewardGroupId_ === 'function' ? getDefaultRewardGroupId_() : 'reward_global',
+    requiredOtherQuestionCount: 0,
+  });
 }
 
 function normalizeStageDifficulty_(stage) {
@@ -678,9 +722,12 @@ function selectQuestionForAction(playerId, runId, actionType, difficultyBonus, a
     throw new Error('행동력이 부족합니다.');
   }
   if (battleState.pendingAction) {
-    markQuestionUsedForRun_(stageState, battleState, battleState.pendingAction.questionId);
-    saveStageState_(runId, stageState, battleState);
-    return buildQuestionView_(battleState.pendingAction.question, battleState.pendingAction, playerId);
+    if (doesPendingActionMatchRequest_(battleState.pendingAction, normalizedAction, skillId, targetId)) {
+      markQuestionUsedForRun_(stageState, battleState, battleState.pendingAction.questionId);
+      saveStageState_(runId, stageState, battleState);
+      return buildQuestionView_(battleState.pendingAction.question, battleState.pendingAction, playerId);
+    }
+    battleState.pendingAction = null;
   }
 
   var activeEffects = getActiveEffectsForQuestion_(battleState);
@@ -740,13 +787,15 @@ function submitActionAnswer(answerPayload) {
   normalizeBattleStateEffects_(battleState);
   var pendingAction = battleState.pendingAction;
   if (!pendingAction && payload.questionId) {
+    var submittedActionType = normalizeActionType_(payload.actionType || ACTION_TYPES.ATTACK);
+    var submittedSkillId = submittedActionType === ACTION_TYPES.SKILL ? payload.skillId || '' : '';
     pendingAction = createPendingActionFromCachedPayload_(
       run,
       stageState,
       battleState,
       payload,
-      normalizeActionType_(payload.actionType || ACTION_TYPES.ATTACK),
-      payload.skillId || '',
+      submittedActionType,
+      submittedSkillId,
       payload.targetId || '',
       player.playerId
     );
@@ -1765,6 +1814,7 @@ function buildStageResultCommitView_(run, stageState) {
       fallbackEvents: stageState.fallbackEvents || [],
       usedQuestionIds: stageState.usedQuestionIds || [],
       usedQuestionStageId: stageState.usedQuestionStageId || '',
+      scoreState: stageState.scoreState || {},
       reward: stageState.reward || null,
       playerGhost: stageState.playerGhost || null,
     },
@@ -2144,6 +2194,7 @@ function buildBattleView_(run, stageState) {
       fallbackEvents: stageState.fallbackEvents || [],
       usedQuestionIds: stageState.usedQuestionIds || [],
       usedQuestionStageId: stageState.usedQuestionStageId || '',
+      scoreState: stageState.scoreState || {},
       reward: stageState.reward || null,
       playerGhost: stageState.playerGhost || null,
     },
@@ -2377,13 +2428,17 @@ function sanitizeQuestionForBattleCache_(question, playerId) {
 }
 
 function createPendingActionFromCachedPayload_(run, stageState, battleState, payload, actionType, skillId, targetId, playerId) {
+  actionType = normalizeActionType_(actionType || ACTION_TYPES.ATTACK);
+  skillId = actionType === ACTION_TYPES.SKILL ? skillId || payload.skillId || '' : '';
+  targetId = actionType === ACTION_TYPES.ATTACK || actionType === ACTION_TYPES.SKILL ? targetId || payload.targetId || '' : '';
+
   var question = findRunQuestionById_(run, payload.questionId);
   if (!question) {
     throw new Error('문제를 찾을 수 없습니다.');
   }
 
   var activeEffects = getActiveEffectsForQuestion_(battleState);
-  var skill = skillId ? findCachedRowByKey_(DB_SHEETS.SKILLS, 'skillId', skillId, 600) : null;
+  var skill = actionType === ACTION_TYPES.SKILL && skillId ? findCachedRowByKey_(DB_SHEETS.SKILLS, 'skillId', skillId, 600) : null;
   var difficultyBonus = skill ? Number(skill.difficultyBonus || 0) : 0;
   var questionModifiersForPick = getItemQuestionModifiers_(battleState, null);
   var targetDifficulty = calculateRequiredQuestionDifficulty_(battleState.stage, difficultyBonus, activeEffects, questionModifiersForPick);
@@ -2398,8 +2453,8 @@ function createPendingActionFromCachedPayload_(run, stageState, battleState, pay
   var finalDifficulty = targetDifficulty;
   return {
     actionType: actionType,
-    skillId: skillId || payload.skillId || '',
-    targetId: targetId || payload.targetId || '',
+    skillId: skillId,
+    targetId: targetId,
     actionPointCost: actionPointCost,
     questionId: question.questionId,
     question: sanitizeQuestionForClient_(question, playerId),
@@ -2412,6 +2467,33 @@ function createPendingActionFromCachedPayload_(run, stageState, battleState, pay
     fallbackReason: reusedQuestion ? 'exhaustedUnusedQuestions' : payload.fallbackReason || '',
     fromCache: true,
   };
+}
+
+function doesPendingActionMatchRequest_(pendingAction, actionType, skillId, targetId) {
+  if (!pendingAction) {
+    return false;
+  }
+
+  var normalizedAction = normalizeActionType_(actionType || ACTION_TYPES.ATTACK);
+  var pendingActionType = normalizeActionType_(pendingAction.actionType || ACTION_TYPES.ATTACK);
+  if (pendingActionType !== normalizedAction) {
+    return false;
+  }
+
+  var expectedSkillId = normalizedAction === ACTION_TYPES.SKILL ? skillId || '' : '';
+  if ((pendingAction.skillId || '') !== expectedSkillId) {
+    return false;
+  }
+
+  if (normalizedAction === ACTION_TYPES.ATTACK || normalizedAction === ACTION_TYPES.SKILL) {
+    var requestedTargetId = targetId || '';
+    var pendingTargetId = pendingAction.targetId || '';
+    if (requestedTargetId && pendingTargetId && requestedTargetId !== pendingTargetId) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 function getForcedQuestionCreatorId_(battleState) {
@@ -2742,6 +2824,7 @@ function saveStageState_(runId, stageState, battleState) {
   normalizeUsedQuestionIds_(stageState, battleState);
   normalizeBattleStateEffects_(battleState);
   battleState.runId = battleState.runId || runId;
+  syncDefeatedMonsterTotal_(stageState, battleState);
   if (battleState.monsterScoreState) {
     stageState.scoreState = stageState.scoreState || {};
     stageState.scoreState.monsterScoreBattleId = battleState.battleId || '';
@@ -2774,6 +2857,34 @@ function saveStageState_(runId, stageState, battleState) {
     updatePlayerProgressFromRun_(updatedRun);
   }
   return updatedRun;
+}
+
+function syncDefeatedMonsterTotal_(stageState, battleState) {
+  if (!stageState || !battleState) {
+    return;
+  }
+  stageState.scoreState = stageState.scoreState || {};
+  var scoreState = stageState.scoreState;
+  var defeatedMap = scoreState.defeatedMonsterIds || {};
+  var total = Number(scoreState.totalDefeatedMonsters || 0);
+  var battleId = String(battleState.battleId || '');
+  (battleState.monsters || []).forEach(function(monster, index) {
+    if (Number(monster && monster.currentHp || 0) > 0) {
+      return;
+    }
+    var monsterKey = String(monster.instanceId || monster.monsterId || monster.name || index);
+    if (!monsterKey) {
+      return;
+    }
+    var defeatedKey = battleId + '::' + monsterKey;
+    if (defeatedMap[defeatedKey]) {
+      return;
+    }
+    defeatedMap[defeatedKey] = true;
+    total += 1;
+  });
+  scoreState.defeatedMonsterIds = defeatedMap;
+  scoreState.totalDefeatedMonsters = total;
 }
 
 function createPlayerGhostForDefeat_(runId, battleState) {
@@ -3093,9 +3204,46 @@ function findMonsterRowById_(monsterId) {
     return trimmed;
   }
 
+  var aliases = getBossMonsterIdAliases_(id);
+  for (var i = 0; i < aliases.length; i += 1) {
+    var aliasRow = findCachedRowByKey_(DB_SHEETS.MONSTERS, 'monsterId', aliases[i], 600);
+    if (aliasRow) {
+      return aliasRow;
+    }
+  }
+
   return (MASTER_MONSTERS || []).filter(function(monster) {
     return String(monster.monsterId || '').trim() === id;
   })[0] || null;
+}
+
+function getBossMonsterIdAliases_(monsterId) {
+  var aliases = {
+    boss_floor_1: ['boss_Door'],
+    boss_floor_2: ['boss_Ghost'],
+  };
+  return aliases[String(monsterId || '').trim()] || [];
+}
+
+function auditStageBossMonsterReferences() {
+  var monsterIds = readTable_(DB_SHEETS.MONSTERS).reduce(function(map, monster) {
+    if (monster && monster.monsterId) {
+      map[String(monster.monsterId).trim()] = true;
+    }
+    return map;
+  }, {});
+
+  return readTable_(DB_SHEETS.STAGES).filter(function(stage) {
+    return stage && stage.bossMonsterId && !monsterIds[String(stage.bossMonsterId).trim()];
+  }).map(function(stage) {
+    return {
+      stageId: stage.stageId,
+      floor: Number(stage.floor || 0),
+      stage: Number(stage.stage || 0),
+      bossMonsterId: stage.bossMonsterId,
+      aliases: getBossMonsterIdAliases_(stage.bossMonsterId),
+    };
+  });
 }
 
 function buildBattleMonster_(monster, index) {

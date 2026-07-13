@@ -53,9 +53,47 @@ function createQuestions(questionPayloads, authToken, workbookId) {
   if (!payloads.length) {
     throw new Error('저장할 문제가 없습니다.');
   }
-  return payloads.map(function(payload) {
-    return createQuestion(payload, authToken, workbookId);
+  var player = getCurrentPlayer_(authToken);
+  var workbook = requireQuestionWorkbook_(workbookId);
+  var now = new Date();
+  var questions = payloads.map(function(payload, index) {
+    var normalizedPayload;
+    try {
+      normalizedPayload = normalizeQuestionPayload_(payload);
+    } catch (error) {
+      throw new Error((index + 1) + '번째 문제: ' + error.message);
+    }
+    return {
+      questionId: generateId_('question'),
+      type: normalizedPayload.type,
+      prompt: normalizedPayload.prompt,
+      choice1: normalizedPayload.choice1,
+      choice2: normalizedPayload.choice2,
+      choice3: normalizedPayload.choice3,
+      choice4: normalizedPayload.choice4,
+      answer: normalizedPayload.answer,
+      answerAliases: safeJsonStringify_(normalizedPayload.answerAliases),
+      explanation: normalizedPayload.explanation,
+      difficulty: normalizedPayload.difficulty,
+      creatorId: player.playerId,
+      creatorName: player.displayName,
+      subject: normalizedPayload.subject,
+      unit: normalizedPayload.unit,
+      tags: normalizedPayload.tags,
+      status: STATUS.QUESTION_APPROVED,
+      reviewComment: '',
+      approvedBy: 'auto',
+      approvedAt: now,
+      createdAt: now,
+      updatedAt: now,
+      correctCount: 0,
+      totalCount: 0,
+      likeCount: 0,
+      dislikeCount: 0,
+      reactionJson: '{}',
+    };
   });
+  return appendWorkbookQuestions_(workbook.workbookId, questions).map(toClientObject_);
 }
 
 function importQuestionsFromRows(questionRows, authToken, workbookId) {
@@ -551,6 +589,10 @@ function normalizeQuestionImportObject_(row) {
 
 function getQuestionImportFieldKey_(key) {
   var normalizedKey = normalizeQuestionImportHeader_(key);
+  var stableAliases = getStableQuestionImportHeaderAliases_();
+  if (stableAliases[normalizedKey]) {
+    return stableAliases[normalizedKey];
+  }
   var aliases = {
     type: 'type',
     questiontype: 'type',
@@ -605,6 +647,30 @@ function getQuestionImportFieldKey_(key) {
   return aliases[normalizedKey] || '';
 }
 
+function getStableQuestionImportHeaderAliases_() {
+  var aliases = {};
+  function add(headers, field) {
+    headers.forEach(function(header) {
+      aliases[normalizeQuestionImportHeader_(header)] = field;
+    });
+  }
+
+  add(['type', 'questionType', '유형', '문제유형', '문제 유형', '형식'], 'type');
+  add(['prompt', 'question', 'problem', '문제', '문제내용', '문제 내용', '질문', '문항'], 'prompt');
+  add(['choice1', 'option1', '보기1', '보기 1', '선택지1', '선택지 1'], 'choice1');
+  add(['choice2', 'option2', '보기2', '보기 2', '선택지2', '선택지 2'], 'choice2');
+  add(['choice3', 'option3', '보기3', '보기 3', '선택지3', '선택지 3'], 'choice3');
+  add(['choice4', 'option4', '보기4', '보기 4', '선택지4', '선택지 4'], 'choice4');
+  add(['answer', 'correctAnswer', '정답', '답', '정답번호', '정답 번호'], 'answer');
+  add(['answerAliases', 'aliases', '복수정답', '복수 정답', '별칭', '인정답안', '인정 답안'], 'answerAliases');
+  add(['explanation', '해설', '설명', '풀이'], 'explanation');
+  add(['difficulty', '난이도', '문제난이도', '문제 난이도'], 'difficulty');
+  add(['subject', '과목'], 'subject');
+  add(['unit', '단원'], 'unit');
+  add(['tags', 'tag', '태그'], 'tags');
+  return aliases;
+}
+
 function normalizeQuestionImportHeader_(key) {
   return String(key || '')
     .trim()
@@ -615,6 +681,17 @@ function normalizeQuestionImportHeader_(key) {
 
 function normalizeQuestionImportType_(type) {
   var value = String(type || '').trim().toLowerCase().replace(/\s+/g, '');
+  var stableAliases = {};
+  stableAliases[normalizeQuestionImportHeader_('객관식')] = QUESTION_TYPES.MULTIPLE_CHOICE;
+  stableAliases[normalizeQuestionImportHeader_('선택형')] = QUESTION_TYPES.MULTIPLE_CHOICE;
+  stableAliases[normalizeQuestionImportHeader_('multipleChoice')] = QUESTION_TYPES.MULTIPLE_CHOICE;
+  stableAliases[normalizeQuestionImportHeader_('주관식')] = QUESTION_TYPES.SHORT_ANSWER;
+  stableAliases[normalizeQuestionImportHeader_('단답형')] = QUESTION_TYPES.SHORT_ANSWER;
+  stableAliases[normalizeQuestionImportHeader_('서술형')] = QUESTION_TYPES.SHORT_ANSWER;
+  stableAliases[normalizeQuestionImportHeader_('shortAnswer')] = QUESTION_TYPES.SHORT_ANSWER;
+  if (stableAliases[value]) {
+    return stableAliases[value];
+  }
   var aliases = {
     multiplechoice: QUESTION_TYPES.MULTIPLE_CHOICE,
     choice: QUESTION_TYPES.MULTIPLE_CHOICE,

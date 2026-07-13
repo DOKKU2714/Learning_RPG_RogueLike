@@ -231,7 +231,8 @@
     var DEATH_STATE_HOLD_MS = 2200;
     var MESSAGE_HOLD_MS = 220;
     var MONSTER_TURN_END_DELAY_MS = 560;
-    var MONSTER_ATTACK_WINDUP_MS = 140;
+    var MONSTER_ATTACK_WINDUP_MS = 360;
+    var MONSTER_ATTACK_LUNGE_MS = 680;
     var QUESTION_RESULT_HOLD_MS = 1400;
     var QUESTION_RESULT_AUTO_CLOSE_MS = 10000;
     var QUESTION_RESULT_SKIP_ENABLE_MS = 0;
@@ -288,9 +289,12 @@
     var combatActionPanelHtml = '';
     var shortAnswerEnterSubmitLock = false;
     var loadingTimerId = null;
+    var loadingHideTimerId = null;
+    var loadingSessionId = 0;
     var loadingStartedAt = 0;
     var loadingStepItems = [];
     var DELAYED_LOADING_MODAL_MS = 700;
+    var LOADING_MIN_VISIBLE_MS = 650;
 
     document.addEventListener('keydown', function(event) {
       if (event.key !== 'Enter' || event.isComposing) return;
@@ -379,7 +383,7 @@
 
     function init() {
       setupBattleUi();
-      showLoadingModal('전투를 준비하는 중...', '진행 중인 전투를 확인하는 중...');
+      showLoadingModal('로딩 중...', '진행 중인 전투를 확인하는 중...');
       google.script.run
         .withSuccessHandler(function(view) {
           hideLoadingModal();
@@ -875,6 +879,11 @@
         document.body.appendChild(statTooltip);
       }
       document.addEventListener('mousemove', function(event) {
+        if (activeTooltipTarget && !document.body.contains(activeTooltipTarget)) {
+          hideHoverTooltips();
+          activeTooltipTarget = null;
+          return;
+        }
         if (tooltip.getAttribute('aria-hidden') !== 'true') {
           positionHoverTooltip(tooltip, activeTooltipTarget, event, 0);
         }
@@ -916,6 +925,13 @@
           statTooltip.classList.remove('active');
         }
       });
+
+      function hideHoverTooltips() {
+        tooltip.setAttribute('aria-hidden', 'true');
+        tooltip.classList.remove('active');
+        statTooltip.setAttribute('aria-hidden', 'true');
+        statTooltip.classList.remove('active');
+      }
     }
 
     function positionHoverTooltip(tooltip, target, event, stackIndex) {
@@ -933,6 +949,15 @@
       }
       tooltip.style.left = ((event && event.clientX || 0) + (stackIndex ? 22 : 14)) + 'px';
       tooltip.style.top = ((event && event.clientY || 0) + (stackIndex ? 78 : 14)) + 'px';
+    }
+
+    function hideActiveHoverTooltips() {
+      ['hoverTooltip', 'statHoverTooltip'].forEach(function(id) {
+        var tooltip = document.getElementById(id);
+        if (!tooltip) return;
+        tooltip.setAttribute('aria-hidden', 'true');
+        tooltip.classList.remove('active');
+      });
     }
 
     function normalizeBattleView(view) {
@@ -964,6 +989,7 @@
       battle.skillCooldownStartedTurns = battle.skillCooldownStartedTurns || {};
       battle.skillUseCounts = battle.skillUseCounts || {};
       view.stageState = view.stageState || {};
+      view.stageState.scoreState = view.stageState.scoreState || {};
       var usageStageId = String(battle.stage && battle.stage.stageId || '');
       if (usageStageId && view.stageState.usedQuestionStageId !== usageStageId) {
         view.stageState.usedQuestionIds = [];
@@ -1109,7 +1135,9 @@
       view = normalizeBattleView(view);
       var battle = view.battle;
       if (!battle || !battle.stage) {
-        pushLog('전투 화면 데이터가 아직 준비되지 않았습니다.');
+        if (!view.nextBattlePending && !view.showReward && !view.rewardView) {
+          pushLog('전투 화면 데이터가 아직 준비되지 않았습니다.');
+        }
         return;
       }
       battle.player = battle.player || {};
@@ -1166,7 +1194,7 @@
             '</span>' +
             '<span class="skill-detail-meta">' + escapeHtml(rarity) + ' / Lv.' + escapeHtml(skill.level || 1) + '</span>' +
             '<span class="skill-detail-description">' + detailDescription + '</span>' +
-            (difficultyBonusText ? '<span class="skill-detail-line">' + escapeHtml(difficultyBonusText) + '</span>' : '') +
+            (difficultyBonusText ? '<span class="' + escapeHtml(getSkillDifficultyBonusClass(skill)) + '">' + escapeHtml(difficultyBonusText) + '</span>' : '') +
             (useLimitText ? '<span class="skill-detail-line">' + escapeHtml(useLimitText) + '</span>' : '') +
             (cooldown ? '<span class="skill-detail-line">' + escapeHtml(cooldown) + '</span>' : '') +
           '</span>' +
@@ -1278,7 +1306,7 @@
         var visualMax = Math.max(maxHp, hp + shield);
         var hpPercent = Math.max(0, Math.min(100, Math.round((hp / visualMax) * 100)));
         var shieldPercent = Math.max(0, Math.min(100, Math.round((shield / visualMax) * 100)));
-        return '<article class="monster-slot monster-slot-' + monsters.length + ' monster-count-' + monsters.length + selectable + '" data-monster-id="' + escapeHtml(monsterId) + '" data-tooltip="' + (pendingTargetSelection ? '대상 선택: ' + escapeHtml(monster.name || '몬스터') : '') + '">' +
+        return '<article class="monster-slot monster-slot-' + monsters.length + ' monster-count-' + monsters.length + selectable + '" data-monster-id="' + escapeHtml(monsterId) + '" data-tooltip="' + (pendingTargetSelection ? '대상 선택: ' + escapeHtml(monster.name || '몬스터') : '') + '" data-tooltip-placement="' + (pendingTargetSelection ? 'above' : '') + '">' +
           '<div class="monster-hp-text">' + (shield > 0 ? hp + ' + ' + shield + ' / ' + maxHp : hp + ' / ' + maxHp) + '</div>' +
           '<div class="thin-hp-bar monster-hp-bar"><span class="hp-lag" style="width:' + hpPercent + '%"></span><span class="hp-current" style="width:' + hpPercent + '%"></span><span class="monster-shield-fill" style="left:' + hpPercent + '%; width:' + shieldPercent + '%"></span></div>' +
           renderStatusIcons(monster) +
@@ -1870,6 +1898,11 @@
       var bonus = Number(skill && skill.difficultyBonus || 0);
       if (!bonus) return '';
       return '문제 난이도 ' + (bonus > 0 ? '+' : '') + bonus;
+    }
+
+    function getSkillDifficultyBonusClass(skill) {
+      var bonus = Number(skill && skill.difficultyBonus || 0);
+      return 'skill-detail-line' + (bonus > 0 ? ' skill-detail-difficulty-penalty' : '');
     }
 
     function hasClientActionPoint(cost) {
@@ -2990,6 +3023,14 @@
       questionResultProceedRequested = false;
       pendingTurnResolutionActive = true;
       pendingTurnResolutionLoading = false;
+      if (questionResultHoldTimerId) {
+        window.clearTimeout(questionResultHoldTimerId);
+        questionResultHoldTimerId = null;
+      }
+      if (questionResultSkipTimerId) {
+        window.clearTimeout(questionResultSkipTimerId);
+        questionResultSkipTimerId = null;
+      }
       var hold = document.getElementById('questionResultHold');
       var fill = document.getElementById('questionResultHoldFill');
       var button = document.getElementById('questionSubmitButton');
@@ -3002,8 +3043,8 @@
         fill.style.width = '100%';
       }
       if (button) {
-        button.disabled = !!requiresManualProceed ? false : true;
-        button.textContent = requiresManualProceed ? '확인' : '결과 확인 중...';
+        button.disabled = false;
+        button.textContent = '확인';
         if (requiresManualProceed) {
           button.focus();
         }
@@ -3011,7 +3052,7 @@
       if (requiresManualProceed) {
         return;
       }
-      questionResultHoldTimerId = window.setTimeout(requestQuestionResultProceed, QUESTION_RESULT_HOLD_MS);
+      questionResultHoldTimerId = window.setTimeout(requestQuestionResultProceed, QUESTION_RESULT_AUTO_CLOSE_MS);
     }
 
     function receiveQuestionTurnView(view) {
@@ -3354,7 +3395,6 @@
             await holdBattleMessage();
           } else if (Number(monsterEvent.damage || monsterEvent.shieldDamage || monsterEvent.hpDamage || 0) > 0) {
             await animateMonsterAttack(monsterEvent.monsterId);
-            await skippableAutoDelay(ATTACK_EFFECT_DELAY_MS);
             pushLog(monsterEventMessage, { instant: true });
             animatePlayerHit(monsterEvent.damage || 0, monsterEvent.hpDamage || 0, monsterEvent.shieldDamage || 0);
           } else {
@@ -4022,11 +4062,26 @@
           entry.scoreAwarded = killScore;
           state.monsterScore = Number(state.monsterScore || 0) + killScore;
           killScoreTotal += killScore;
+          recordClientDefeatedMonster(view, monsterKey);
         }
         state.byMonsterId[monsterKey] = entry;
         battle.monsterScoreState = state;
       });
       return killScoreTotal;
+    }
+
+    function recordClientDefeatedMonster(view, monsterKey) {
+      if (!view || !monsterKey) return;
+      view.stageState = view.stageState || {};
+      view.stageState.scoreState = view.stageState.scoreState || {};
+      var scoreState = view.stageState.scoreState;
+      var defeatedMap = scoreState.defeatedMonsterIds || {};
+      var battleId = String(view.battle && view.battle.battleId || '');
+      var defeatedKey = battleId + '::' + String(monsterKey || '');
+      if (defeatedMap[defeatedKey]) return;
+      defeatedMap[defeatedKey] = true;
+      scoreState.defeatedMonsterIds = defeatedMap;
+      scoreState.totalDefeatedMonsters = Number(scoreState.totalDefeatedMonsters || 0) + 1;
     }
 
     function ensureClientMonsterScoreState(battle) {
@@ -5162,7 +5217,7 @@
       var useLimitText = getSkillUseLimitText(skill);
       var cooldown = getSkillCooldownDisplayText(skill);
       var difficultyBonusText = getSkillDifficultyBonusText(skill);
-      return (difficultyBonusText ? '<span class="skill-detail-line">' + escapeHtml(difficultyBonusText) + '</span>' : '') +
+      return (difficultyBonusText ? '<span class="' + escapeHtml(getSkillDifficultyBonusClass(skill)) + '">' + escapeHtml(difficultyBonusText) + '</span>' : '') +
         (useLimitText ? '<span class="skill-detail-line">' + escapeHtml(useLimitText) + '</span>' : '') +
         (cooldown ? '<span class="skill-detail-line">' + escapeHtml(cooldown) + '</span>' : '');
     }
@@ -5344,10 +5399,8 @@
       window.setTimeout(function() {
         var rewardLoading = null;
         if (!showPreviewScoreModal) {
-          rewardLoading = startDelayedLoadingModal('보상 적용 중...', '1/3 전투 결과를 저장하는 중...', {
+          rewardLoading = startDelayedLoadingModal('로딩 중...', '1/3 전투 결과를 저장하는 중...', {
             progress: 8,
-            activeStep: 0,
-            steps: ['전투 결과 저장', '보상 적용 및 점수 계산', '다음 스테이지 준비'],
           });
         }
         commitStageResultIfNeeded(function() {
@@ -5355,8 +5408,6 @@
             updateDelayedLoadingModal(rewardLoading, {
               text: '2/3 선택한 보상을 적용하고 점수를 계산하는 중...',
               progress: 38,
-              doneStep: 0,
-              activeStep: 1,
             });
           }
           google.script.run
@@ -5365,7 +5416,6 @@
                 updateDelayedLoadingModal(rewardLoading, {
                   text: '완료',
                   progress: 100,
-                  doneStep: 2,
                 });
               }
               window.setTimeout(function() {
@@ -5469,11 +5519,65 @@
       return (Number(ms || 0) / 1000).toFixed(1) + 's';
     }
 
+    var SCORE_BREAKDOWN_COMPONENT_KEYS = [
+      'answerScore',
+      'monsterScore',
+      'questionReactionScore',
+      'stageScore',
+      'floorBaseScore',
+      'floorSpeedScore',
+      'clearBonus',
+      'unclassifiedScore'
+    ];
+
+    function positiveScoreNumber(value) {
+      var number = Number(value || 0);
+      return isFinite(number) ? Math.max(0, Math.round(number)) : 0;
+    }
+
+    function getClientScoreComponentTotal(summary) {
+      return SCORE_BREAKDOWN_COMPONENT_KEYS.reduce(function(total, key) {
+        return total + positiveScoreNumber(summary && summary[key]);
+      }, 0);
+    }
+
+    function normalizeClientScoreSummary(summary, response) {
+      summary = Object.assign({}, summary || {});
+      response = response || {};
+      var currentTotal = positiveScoreNumber(currentView && currentView.score);
+      var responseTotal = positiveScoreNumber(response.score || response.totalScore || response.run && response.run.score);
+      var totalScore = positiveScoreNumber(summary.totalScore || responseTotal || currentTotal);
+      var scoreDelta = positiveScoreNumber(summary.scoreDelta);
+      var previousScore = summary.previousScore !== undefined && summary.previousScore !== null && summary.previousScore !== ''
+        ? positiveScoreNumber(summary.previousScore)
+        : Math.max(0, totalScore - scoreDelta);
+
+      if (scoreDelta <= 0) {
+        var inferredDelta = Math.max(0, totalScore - previousScore);
+        scoreDelta = inferredDelta;
+      }
+      if (scoreDelta > 0 && totalScore < previousScore + scoreDelta) {
+        totalScore = previousScore + scoreDelta;
+      }
+
+      summary.totalScore = totalScore;
+      summary.scoreDelta = scoreDelta;
+      summary.previousScore = previousScore;
+
+      var knownTotal = getClientScoreComponentTotal(summary);
+      if (scoreDelta > knownTotal) {
+        summary.unclassifiedScore = positiveScoreNumber(summary.unclassifiedScore) + (scoreDelta - knownTotal);
+      }
+      return summary;
+    }
+
     function showScoreModal(scoreSummary, response, options) {
       options = options || {};
+      response = response || {};
+      var summary = normalizeClientScoreSummary(scoreSummary, response);
+      response.scoreSummary = summary;
       pendingScoreModalResponse = response || null;
       scoreModalAwaitingFinalResponse = !!options.awaitFinalResponse;
-      var summary = scoreSummary || {};
       currentScoreModalSummary = summary;
       var detailed = !!summary.showDetailedBreakdown;
       clearScoreAnimation();
@@ -5490,7 +5594,7 @@
       document.getElementById('scoreDeltaText').textContent = '+0점';
       document.getElementById('scoreTotalText').textContent = '0점';
       var rows = buildScoreBreakdownRows(summary, detailed).filter(function(row) {
-        return detailed || Number(row.value || 0) > 0;
+        return Number(row.value || 0) > 0;
       });
       document.getElementById('scoreBreakdown').innerHTML = rows.map(function(row) {
         return '<div class="score-breakdown-row score-breakdown-pending" data-score-value="' + escapeHtml(row.value) + '">' +
@@ -5539,6 +5643,7 @@
     }
 
     function buildScoreBreakdownRows(summary, detailed) {
+      summary = normalizeClientScoreSummary(summary, { outcomeFinal: detailed });
       var rows = [
         { label: '몬스터 처치', value: Number(summary.monsterScore || 0) },
         { label: '문제 평가', value: Number(summary.questionReactionScore || 0) },
@@ -5550,6 +5655,21 @@
       if (detailed && Number(summary.floorScore || 0) > 0) {
         rows.push({ label: '층 클리어 합계', value: Number(summary.floorScore || 0) });
       }
+      rows = rows.filter(function(row) {
+        return positiveScoreNumber(row && row.value) > 0;
+      });
+      if (positiveScoreNumber(summary.unclassifiedScore) > 0) {
+        rows.push({
+          label: detailed ? '누적 점수 반영' : '기타 점수',
+          value: positiveScoreNumber(summary.unclassifiedScore),
+        });
+      }
+      if (!rows.length && positiveScoreNumber(summary.scoreDelta) > 0) {
+        rows.push({
+          label: detailed ? '누적 점수 반영' : '획득 점수',
+          value: positiveScoreNumber(summary.scoreDelta),
+        });
+      }
       return rows;
     }
 
@@ -5559,14 +5679,14 @@
         rows.push({ label: '층 클리어 시간', value: formatDuration(summary.floorClearTimeMs || 0) });
         rows.push({ label: '층 목표 시간', value: formatDuration(summary.floorTargetTimeMs || 0) });
       }
-      if (summary.floorSpeedMultiplier !== undefined && summary.floorSpeedMultiplier !== null) {
+      if ((summary.floorClearTimeMs || summary.floorTargetTimeMs || summary.floorScore) && summary.floorSpeedMultiplier !== undefined && summary.floorSpeedMultiplier !== null) {
         rows.push({ label: '속도 보너스 비율', value: Math.round(Number(summary.floorSpeedMultiplier || 0) * 100) + '%' });
       }
       return rows;
     }
 
     function animateScoreSequence(summary) {
-      var rows = Array.prototype.slice.call(document.querySelectorAll('#scoreBreakdown .score-breakdown-row'));
+      var rows = Array.prototype.slice.call(document.querySelectorAll('#scoreBreakdown .score-breakdown-row[data-score-value]'));
       var index = 0;
 
       function nextRow() {
@@ -5663,7 +5783,7 @@
       var response = pendingScoreModalResponse || {};
       var summary = response.scoreSummary || currentScoreModalSummary || {};
       clearScoreAnimation();
-      Array.prototype.forEach.call(document.querySelectorAll('#scoreBreakdown .score-breakdown-row'), function(row) {
+      Array.prototype.forEach.call(document.querySelectorAll('#scoreBreakdown .score-breakdown-row[data-score-value]'), function(row) {
         var target = Number(row.getAttribute('data-score-value') || 0);
         row.classList.remove('score-breakdown-pending', 'score-breakdown-active');
         row.classList.add('score-breakdown-complete');
@@ -5800,8 +5920,6 @@
         updateDelayedLoadingModal(loadingHandle, {
           text: '3/3 전투 화면을 그리는 중...',
           progress: 92,
-          doneStep: 1,
-          activeStep: 2,
         });
       }
       currentView = normalizeBattleView(view);
@@ -5814,7 +5932,6 @@
         updateDelayedLoadingModal(loadingHandle, {
           text: '완료',
           progress: 100,
-          doneStep: 2,
         });
       }
       window.setTimeout(function() {
@@ -5836,18 +5953,14 @@
         return;
       }
       var nextBattleLoadStartedAt = performance.now();
-      var nextBattleLoading = startDelayedLoadingModal('다음 스테이지 준비 중...', '1/3 새 전투 데이터를 요청하는 중...', {
+      var nextBattleLoading = startDelayedLoadingModal('로딩 중...', '1/3 새 전투 데이터를 요청하는 중...', {
         progress: retryCount ? 12 : 10,
-        activeStep: 0,
-        steps: ['새 전투 생성 요청', '전투 데이터 수신', '화면 렌더링'],
       });
       google.script.run
         .withSuccessHandler(function(view) {
           updateDelayedLoadingModal(nextBattleLoading, {
             text: '2/3 전투 데이터를 받았습니다.',
             progress: 70,
-            doneStep: 0,
-            activeStep: 1,
           });
           if (view && view.showReward && view.rewardView) {
             finishDelayedLoadingModal(nextBattleLoading);
@@ -5859,7 +5972,6 @@
               updateDelayedLoadingModal(nextBattleLoading, {
                 text: '전투 데이터가 비어 있어 한 번 더 요청합니다.',
                 progress: 35,
-                activeStep: 0,
               });
               finishDelayedLoadingModal(nextBattleLoading);
               loadNextBattleAfterReward(Object.assign({}, response, view || {}), retryCount + 1);
@@ -5953,7 +6065,8 @@
       void target.offsetWidth;
       await skippableAutoDelay(MONSTER_ATTACK_WINDUP_MS);
       target.classList.add('monster-lunge');
-      await skippableAutoDelay(ATTACK_EFFECT_DELAY_MS);
+      await skippableAutoDelay(MONSTER_ATTACK_LUNGE_MS);
+      target.classList.remove('monster-lunge');
       resetMonsterSpriteState(target);
     }
 
@@ -6449,7 +6562,7 @@
     }
 
     function openLoadingForTest() {
-      showLoadingModal('로딩 중...', '전투를 준비하는 중...');
+      showLoadingModal('로딩 중...', '데이터를 불러오는 중...');
       window.setTimeout(hideLoadingModal, 900);
     }
 
@@ -6544,6 +6657,11 @@
       return parts.floorLabel + ' ' + (configuredName || parts.areaLabel) + ' ' + Number(stage || 1) + '스테이지';
     }
 
+    function formatCompactStage(stage) {
+      stage = stage || {};
+      return Number(stage.floor || 1) + '-' + Number(stage.stage || 1);
+    }
+
     function showDefeatSequence(options) {
       if (defeatSequenceStarted) return;
       options = options || {};
@@ -6551,6 +6669,8 @@
       playBattleSound('gameover');
       setBattleInputLocked(true);
       setPlayerTurn(false);
+      cancelTargetSelection();
+      hideActiveHoverTooltips();
       closeQuestionModal();
       currentOutcomeContext = buildOutcomeContext('defeat', options.response || null);
       if (!options.skipCommit) {
@@ -6602,6 +6722,8 @@
       playBattleSound('escape');
       setBattleInputLocked(true);
       setPlayerTurn(false);
+      cancelTargetSelection();
+      hideActiveHoverTooltips();
       closeQuestionModal();
       currentOutcomeContext = buildOutcomeContext('escape', response || null);
 
@@ -6652,10 +6774,18 @@
 
     function buildCurrentOutcomeScoreSummary() {
       var total = Number(currentView && currentView.score || 0);
-      var monsterScore = Number(currentView && currentView.battle && currentView.battle.monsterScoreState && currentView.battle.monsterScoreState.monsterScore || 0);
-      var questionReactionScore = Number(currentView && currentView.battle && currentView.battle.questionReactionScoreState && currentView.battle.questionReactionScoreState.score || 0);
+      var scoreState = currentView && currentView.stageState && currentView.stageState.scoreState || {};
+      var battle = currentView && currentView.battle || {};
+      var battleId = String(battle.battleId || '');
+      var monsterScore = battleId && scoreState.monsterScoreBattleId === battleId
+        ? Number(scoreState.monsterScore || 0)
+        : Number(battle.monsterScoreState && battle.monsterScoreState.monsterScore || 0);
+      var questionReactionScore = battleId && scoreState.questionReactionScoreBattleId === battleId
+        ? Number(scoreState.questionReactionScore || 0)
+        : Number(battle.questionReactionScoreState && battle.questionReactionScoreState.score || 0);
+      var scoreDelta = monsterScore + questionReactionScore;
       return {
-        previousScore: Math.max(0, total - monsterScore - questionReactionScore),
+        previousScore: Math.max(0, total - scoreDelta),
         answerScore: 0,
         monsterScore: monsterScore,
         questionReactionScore: questionReactionScore,
@@ -6667,7 +6797,7 @@
         floorTargetTimeMs: 0,
         floorSpeedMultiplier: 0,
         clearBonus: 0,
-        scoreDelta: monsterScore + questionReactionScore,
+        scoreDelta: scoreDelta,
         totalScore: total,
       };
     }
@@ -6687,8 +6817,7 @@
       var defeatedCount = monsters.filter(function(monster) {
         return Number(monster.currentHp || 0) <= 0;
       }).length;
-      var aliveCount = monsters.length - defeatedCount;
-      var player = battle.player || {};
+      var totalDefeatedCount = getOutcomeTotalDefeatedMonsterCount(defeatedCount);
       var response = context.response || {};
       var scoreSummary = context.scoreSummary || buildCurrentOutcomeScoreSummary();
       var lastMessage = context.kind === 'escape'
@@ -6696,16 +6825,19 @@
         : (battle.lastMessage || '전투가 종료되었습니다.');
       var rewardName = response.selectedReward && (response.selectedReward.description || response.selectedReward.displayTitle || response.selectedReward.rewardId) || '';
       return '' +
-        '<div class="defeat-result-row"><span>스테이지</span><strong>' + escapeHtml(formatDisplayStage(stage.floor, stage.stage, stage.name)) + '</strong></div>' +
-        '<div class="defeat-result-row"><span>턴</span><strong>' + escapeHtml(battle.turn || 1) + '</strong></div>' +
-        '<div class="defeat-result-row"><span>플레이어 체력</span><strong>' + escapeHtml(player.hp || 0) + ' / ' + escapeHtml(player.maxHp || '-') + '</strong></div>' +
-        '<div class="defeat-result-row"><span>처치한 몬스터</span><strong>' + defeatedCount + ' / ' + monsters.length + '</strong></div>' +
-        '<div class="defeat-result-row"><span>남은 몬스터</span><strong>' + aliveCount + '</strong></div>' +
+        '<div class="defeat-result-row"><span>스테이지</span><strong>' + escapeHtml(formatCompactStage(stage)) + '</strong></div>' +
+        '<div class="defeat-result-row"><span>처치한 몬스터</span><strong>' + escapeHtml(totalDefeatedCount) + '</strong></div>' +
         '<div class="defeat-result-row"><span>이번 점수</span><strong>' + escapeHtml(formatScore(scoreSummary.scoreDelta || 0)) + '</strong></div>' +
         '<div class="defeat-result-row"><span>총 점수</span><strong>' + escapeHtml(formatScore(scoreSummary.totalScore || currentView && currentView.score || 0)) + '</strong></div>' +
         (rewardName ? '<div class="defeat-result-row"><span>마지막 보상</span><strong>' + escapeHtml(rewardName) + '</strong></div>' : '') +
         (response.currencyAmount ? '<div class="defeat-result-row"><span>획득 화폐</span><strong>' + escapeHtml(response.currencyAmount) + '</strong></div>' : '') +
         '<p class="defeat-last-message">' + escapeHtml(lastMessage) + '</p>';
+    }
+
+    function getOutcomeTotalDefeatedMonsterCount(currentDefeatedCount) {
+      var scoreState = currentView && currentView.stageState && currentView.stageState.scoreState || {};
+      var total = Number(scoreState.totalDefeatedMonsters || 0);
+      return Math.max(total, Number(currentDefeatedCount || 0), 0);
     }
 
     function showOutcomeScoreDetails() {
@@ -6837,6 +6969,11 @@
 
     function showLoadingModal(title, text, options) {
       options = options || {};
+      loadingSessionId += 1;
+      if (loadingHideTimerId) {
+        window.clearTimeout(loadingHideTimerId);
+        loadingHideTimerId = null;
+      }
       document.getElementById('loadingTitle').textContent = title || '로딩 중...';
       document.getElementById('loadingText').textContent = text || '데이터를 불러오는 중...';
       document.getElementById('loadingModal').classList.toggle('no-progress', !!options.hideProgress);
@@ -6897,11 +7034,25 @@
         state.timerId = null;
       }
       if (state.shown) {
-        hideLoadingModal();
+        updateLoadingModal({ progress: 100 });
+        var sessionId = loadingSessionId;
+        var visibleMs = loadingStartedAt ? performance.now() - loadingStartedAt : LOADING_MIN_VISIBLE_MS;
+        var waitMs = Math.max(0, LOADING_MIN_VISIBLE_MS - visibleMs);
+        loadingHideTimerId = window.setTimeout(function() {
+          loadingHideTimerId = null;
+          if (sessionId === loadingSessionId) {
+            hideLoadingModal();
+          }
+        }, waitMs);
       }
     }
 
     function hideLoadingModal() {
+      loadingSessionId += 1;
+      if (loadingHideTimerId) {
+        window.clearTimeout(loadingHideTimerId);
+        loadingHideTimerId = null;
+      }
       if (loadingTimerId) {
         window.clearInterval(loadingTimerId);
         loadingTimerId = null;

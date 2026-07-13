@@ -25,10 +25,48 @@
       gap: 10px;
     }
 
-    .starting-score-bonus {
-      margin-top: 10px;
+    #playerBadge {
+      margin: 6px auto 18px;
+    }
+
+    #playerBadge .player-name-line {
+      display: block;
+      margin-bottom: 8px;
       color: var(--accent);
-      font-size: 0.92rem;
+      font-size: 1rem;
+    }
+
+    #playerBadge .starting-score-bonus {
+      width: min(340px, 100%);
+      margin: 8px auto 0;
+      padding: 8px 10px;
+      border: 1px solid rgba(255,255,255,0.16);
+      background: rgba(0,0,0,0.18);
+      color: var(--text);
+      text-align: center;
+      line-height: 1.45;
+    }
+
+    #playerBadge .score-bonus-title {
+      display: block;
+      margin-bottom: 2px;
+      color: var(--muted);
+      font-size: 0.76rem;
+    }
+
+    #playerBadge .score-bonus-value {
+      display: block;
+      color: var(--accent);
+      font-size: 0.98rem;
+      font-weight: 700;
+    }
+
+    #playerBadge .score-bonus-detail {
+      display: block;
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 0.78rem;
+      word-break: keep-all;
     }
 
     .notice-modal-overlay {
@@ -649,6 +687,14 @@
       var questionCount = Number(bonus.questionCount || 0);
       var likeCount = Number(bonus.likeCount || 0);
       document.getElementById('playerBadge').innerHTML =
+        '<strong class="player-name-line">' + escapeHtml(displayName) + '</strong>' +
+        '<div class="starting-score-bonus">' +
+          '<span class="score-bonus-title">문제 기여 시작 점수</span>' +
+          '<span class="score-bonus-value">+' + escapeHtml(formatScore(startingScore)) + '점</span>' +
+          '<span class="score-bonus-detail">문제 ' + escapeHtml(questionCount) + '개 · 좋아요 ' + escapeHtml(likeCount) + '개</span>' +
+        '</div>';
+      return;
+      document.getElementById('playerBadge').innerHTML =
         '<strong>' + escapeHtml(displayName) + '</strong>' +
         '<div class="starting-score-bonus">문제 생성/좋아요로 인한 시작 점수 +' + escapeHtml(formatScore(startingScore)) +
           ' <span class="muted">(문제 ' + escapeHtml(questionCount) + '개, 좋아요 ' + escapeHtml(likeCount) + '개)</span></div>';
@@ -1155,7 +1201,7 @@
       }
       var startedAt = Date.now();
       pendingGameStartAt = startedAt;
-      showLoadingModal('전투를 준비하는 중...', '게임 시작 조건을 확인하는 중...');
+      showLoadingModal('로딩 중...', '게임 시작 조건을 확인하는 중...');
       google.script.run
         .withSuccessHandler(function(summary) {
           if (summary && summary.hasActiveRun) {
@@ -1174,7 +1220,7 @@
 
     function startRunFromMenu(startedAt, restart) {
       showLoadingModal(
-        restart ? '새 게임을 준비하는 중...' : '전투를 준비하는 중...',
+        '로딩 중...',
         restart ? '이전 진행을 포기하고 처음부터 시작합니다.' : '전투 데이터를 불러오는 중...'
       );
       google.script.run
@@ -1249,7 +1295,7 @@
       var waitMs = Math.max(0, 160 - elapsed);
       window.setTimeout(function() {
         var modal = document.getElementById('loadingModal');
-        document.getElementById('loadingTitle').textContent = '전투 화면으로 이동 중...';
+        document.getElementById('loadingTitle').textContent = '로딩 중...';
         document.getElementById('loadingText').textContent = '잠시 후 전투가 시작됩니다.';
         modal.classList.add('page-transition');
         window.setTimeout(function() {
@@ -1258,7 +1304,7 @@
         window.setTimeout(function() {
           if (document.visibilityState !== 'hidden') {
             modal.classList.remove('page-transition');
-            document.getElementById('loadingTitle').textContent = '전투 화면으로 이동 중...';
+            document.getElementById('loadingTitle').textContent = '로딩 중...';
             document.getElementById('loadingText').textContent = '이동이 지연되면 새로고침 후 다시 시도해 주세요.';
           }
         }, 2200);
@@ -1300,7 +1346,7 @@
         leaderboard: '리더보드 화면으로 이동 중...',
         mypage: '내 정보 화면으로 이동 중...',
         admin: '관리자 화면으로 이동 중...',
-        battle: '전투 화면으로 이동 중...',
+        battle: '로딩 중...',
       };
       showLoadingModal(options.title || labels[page] || '화면 이동 중...', options.text || '잠시만 기다려 주세요.');
     }

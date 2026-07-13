@@ -13,3 +13,467 @@
     <ol id="loadingSteps" class="loading-steps hidden"></ol>
   </div>
 </div>
+<script>
+(function(){
+  var SOUND_ENABLED_KEY = 'learningRpgSoundEnabled';
+  var STORAGE_INTENT_KEY = 'learningRpgAudioIntent';
+  var DEFAULT_FADE_MS = 900;
+  var DEFAULT_VOLUME = 0.52;
+  var SFX_VOLUME_MULTIPLIER = 0.7;
+  var RAIN_AMBIENCE_VOLUME = 0.3;
+  var RAIN_AMBIENCE_MIN_FLOOR = 3;
+  var RAIN_AMBIENCE_PATH = 'Resources/Sounds/Rain.mp3';
+  var REWARD_ONE_SHOT_VOLUME = 0.48;
+  var currentTrack = null;
+  var rainAmbienceAudio = null;
+  var rainAmbiencePending = false;
+  var pendingIntent = null;
+  var rewardOneShotAudio = null;
+  var lastRewardOneShotAt = 0;
+
+  function assetUrl(path){
+    var base = String(window.ASSET_BASE_URL || '').replace(/\/+$/, '');
+    var cleanPath = String(path || '').replace(/^\/+/, '');
+    return base ? base + '/' + cleanPath : cleanPath;
+  }
+
+  function isSoundEnabled(){
+    try { return window.localStorage.getItem(SOUND_ENABLED_KEY) === '1'; } catch (error) { return false; }
+  }
+
+  function normalizePathList(paths){
+    var seen = {};
+    return (paths || []).map(function(path){ return String(path || '').trim(); }).filter(function(path){
+      if (!path || seen[path]) return false;
+      seen[path] = true;
+      return true;
+    });
+  }
+
+  function buildBattleBgmPaths(floor){
+    var normalizedFloor = Math.max(1, Math.min(5, Math.round(Number(floor || 1))));
+    return normalizePathList([
+      'Resources/Sounds/BGM/Battle/' + normalizedFloor + '.wav',
+      'Resources/Sounds/BGM/Battle/1.wav',
+      'Resources/Sounds/BGM/Battle/2.wav',
+      'Resources/Sounds/BGM/Battle/3.wav',
+      'Resources/Sounds/BGM/Battle/4.wav',
+      'Resources/Sounds/BGM/Battle/5.wav'
+    ]);
+  }
+
+  function makeIntent(kind, options){
+    options = options || {};
+    if (kind === 'battle') {
+      var floor = Math.max(1, Math.min(5, Math.round(Number(options.floor || 1))));
+      return { kind: 'battle', key: 'battle:' + floor, floor: floor, volume: 0.5, paths: buildBattleBgmPaths(floor) };
+    }
+    return { kind: 'main', key: 'main', volume: 0.42, paths: ['Resources/Sounds/BGM/Main.wav'] };
+  }
+
+  function rememberIntent(intent){
+    try {
+      window.localStorage.setItem(STORAGE_INTENT_KEY, JSON.stringify({ kind: intent.kind, floor: intent.floor || 0, key: intent.key || '' }));
+    } catch (error) {}
+  }
+
+  function fadeAudio(audio, targetVolume, durationMs, onDone){
+    if (!audio) { if (onDone) onDone(); return; }
+    if (audio.__learningRpgFadeTimer) {
+      window.clearInterval(audio.__learningRpgFadeTimer);
+      audio.__learningRpgFadeTimer = null;
+    }
+    var startVolume = Number(audio.volume || 0);
+    var target = Math.max(0, Math.min(1, Number(targetVolume || 0)));
+    var duration = Math.max(0, Number(durationMs || 0));
+    if (!duration) {
+      audio.volume = target;
+      if (onDone) onDone();
+      return;
+    }
+    var startedAt = Date.now();
+    audio.__learningRpgFadeTimer = window.setInterval(function(){
+      var progress = Math.min(1, (Date.now() - startedAt) / duration);
+      audio.volume = startVolume + ((target - startVolume) * progress);
+      if (progress >= 1) {
+        window.clearInterval(audio.__learningRpgFadeTimer);
+        audio.__learningRpgFadeTimer = null;
+        if (onDone) onDone();
+      }
+    }, 40);
+  }
+
+  function stopCurrentTrack(fadeMs){
+    var track = currentTrack;
+    if (!track || !track.audio) { currentTrack = null; return; }
+    currentTrack = null;
+    fadeAudio(track.audio, 0, fadeMs === undefined ? DEFAULT_FADE_MS : fadeMs, function(){
+      try { track.audio.pause(); track.audio.removeAttribute('src'); track.audio.load(); } catch (error) {}
+    });
+  }
+
+  function playIntent(intent, fadeMs){
+    intent = intent || makeIntent('main');
+    intent.paths = normalizePathList(intent.paths || []);
+    if (!intent.paths.length) return;
+    pendingIntent = intent;
+    rememberIntent(intent);
+    if (!isSoundEnabled()) {
+      stopCurrentTrack(0);
+      return;
+    }
+    if (currentTrack && currentTrack.key === intent.key && currentTrack.audio && !currentTrack.audio.paused) {
+      fadeAudio(currentTrack.audio, intent.volume || DEFAULT_VOLUME, fadeMs === undefined ? 300 : fadeMs);
+      return;
+    }
+    stopCurrentTrack(fadeMs === undefined ? DEFAULT_FADE_MS : fadeMs);
+    startIntentAtPath(intent, 0, fadeMs === undefined ? DEFAULT_FADE_MS : fadeMs);
+  }
+
+  function startIntentAtPath(intent, pathIndex, fadeMs){
+    var paths = intent.paths || [];
+    if (!isSoundEnabled()) { pendingIntent = intent; return; }
+    if (pathIndex >= paths.length) { pendingIntent = intent; return; }
+    var audio = new Audio(assetUrl(paths[pathIndex]));
+    audio.loop = true;
+    audio.preload = 'auto';
+    audio.volume = 0;
+    audio.muted = !isSoundEnabled();
+    audio.__learningRpgSkipSfxVolume = true;
+    audio.addEventListener('error', function(){
+      if (currentTrack && currentTrack.audio === audio) currentTrack = null;
+      try { audio.pause(); } catch (error) {}
+      startIntentAtPath(intent, pathIndex + 1, fadeMs);
+    }, { once: true });
+    currentTrack = { key: intent.key, kind: intent.kind, audio: audio, path: paths[pathIndex] };
+    var playPromise;
+    try { playPromise = audio.play(); } catch (error) {
+      pendingIntent = intent;
+      return;
+    }
+    if (playPromise && playPromise.then) {
+      playPromise.then(function(){
+        pendingIntent = null;
+        if (!isSoundEnabled()) { stopCurrentTrack(0); return; }
+        fadeAudio(audio, intent.volume || DEFAULT_VOLUME, fadeMs);
+      }).catch(function(){ pendingIntent = intent; });
+    } else {
+      pendingIntent = null;
+      if (!isSoundEnabled()) { stopCurrentTrack(0); return; }
+      fadeAudio(audio, intent.volume || DEFAULT_VOLUME, fadeMs);
+    }
+  }
+
+  function getBattleFloor(){
+    var battle = window.currentView && window.currentView.battle || {};
+    var stage = battle.stage || {};
+    return Math.max(1, Math.min(5, Math.round(Number(stage.floor || 1))));
+  }
+
+  function isBattlePage(){
+    return !!document.getElementById('battleShell');
+  }
+
+  function shouldPlayRainAmbience(){
+    return isBattlePage() && getBattleFloor() >= RAIN_AMBIENCE_MIN_FLOOR;
+  }
+
+  function stopRainAmbience(fadeMs){
+    rainAmbiencePending = false;
+    var audio = rainAmbienceAudio;
+    if (!audio) return;
+    rainAmbienceAudio = null;
+    fadeAudio(audio, 0, fadeMs === undefined ? DEFAULT_FADE_MS : fadeMs, function(){
+      try { audio.pause(); audio.removeAttribute('src'); audio.load(); } catch (error) {}
+    });
+  }
+
+  function syncRainAmbience(fadeMs){
+    if (!shouldPlayRainAmbience()) {
+      stopRainAmbience(fadeMs === undefined ? DEFAULT_FADE_MS : fadeMs);
+      return;
+    }
+    if (!isSoundEnabled()) {
+      stopRainAmbience(0);
+      return;
+    }
+    if (rainAmbienceAudio && !rainAmbienceAudio.paused) {
+      rainAmbienceAudio.muted = false;
+      fadeAudio(rainAmbienceAudio, RAIN_AMBIENCE_VOLUME, fadeMs === undefined ? 360 : fadeMs);
+      return;
+    }
+    stopRainAmbience(0);
+    try {
+      var audio = new Audio(assetUrl(RAIN_AMBIENCE_PATH));
+      audio.loop = true;
+      audio.preload = 'auto';
+      audio.volume = 0;
+      audio.__learningRpgSkipSfxVolume = true;
+      rainAmbienceAudio = audio;
+      audio.addEventListener('error', function(){
+        if (rainAmbienceAudio === audio) {
+          rainAmbienceAudio = null;
+          rainAmbiencePending = false;
+        }
+      }, { once: true });
+      var playPromise = audio.play();
+      if (playPromise && playPromise.then) {
+        playPromise.then(function(){
+          rainAmbiencePending = false;
+          if (!isSoundEnabled() || !shouldPlayRainAmbience()) { stopRainAmbience(0); return; }
+          fadeAudio(audio, RAIN_AMBIENCE_VOLUME, fadeMs === undefined ? DEFAULT_FADE_MS : fadeMs);
+        }).catch(function(){
+          if (rainAmbienceAudio === audio) rainAmbiencePending = true;
+        });
+      } else {
+        rainAmbiencePending = false;
+        fadeAudio(audio, RAIN_AMBIENCE_VOLUME, fadeMs === undefined ? DEFAULT_FADE_MS : fadeMs);
+      }
+    } catch (error) {
+      rainAmbienceAudio = null;
+      rainAmbiencePending = true;
+    }
+  }
+
+  function requestMainBgm(){ playIntent(makeIntent('main')); }
+  function requestBattleBgm(){ playIntent(makeIntent('battle', { floor: getBattleFloor() })); }
+
+  function stopRewardOneShot(){
+    if (!rewardOneShotAudio) return;
+    try {
+      rewardOneShotAudio.pause();
+      rewardOneShotAudio.currentTime = 0;
+      rewardOneShotAudio.removeAttribute('src');
+      rewardOneShotAudio.load();
+    } catch (error) {}
+    rewardOneShotAudio = null;
+  }
+
+  function playRewardOneShot(){
+    if (!isSoundEnabled()) return;
+    if (Date.now() - lastRewardOneShotAt < 1200) return;
+    lastRewardOneShotAt = Date.now();
+    stopRewardOneShot();
+    stopCurrentTrack(180);
+    try {
+      var audio = new Audio(assetUrl('Resources/Sounds/BGM/Battle/Reward.wav'));
+      audio.loop = false;
+      audio.preload = 'auto';
+      audio.volume = REWARD_ONE_SHOT_VOLUME;
+      audio.muted = !isSoundEnabled();
+      audio.__learningRpgSkipSfxVolume = true;
+      rewardOneShotAudio = audio;
+      audio.addEventListener('ended', function(){
+        if (rewardOneShotAudio === audio) rewardOneShotAudio = null;
+      }, { once: true });
+      var playPromise = audio.play();
+      if (playPromise && playPromise.catch) playPromise.catch(function(){});
+    } catch (error) {}
+  }
+
+  function unlockAudio(){
+    if (!isSoundEnabled()) return;
+    if (pendingIntent) {
+      playIntent(pendingIntent, 360);
+      syncRainAmbience(360);
+      return;
+    }
+    if (!isBattlePage()) requestMainBgm();
+    if (rainAmbiencePending || shouldPlayRainAmbience()) syncRainAmbience(360);
+  }
+
+  function installUnlockListeners(){
+    ['pointerdown', 'click', 'keydown', 'touchstart'].forEach(function(eventName){
+      document.addEventListener(eventName, unlockAudio, { passive: true });
+    });
+  }
+
+  function isAudioElement(element){
+    return !!element && (element.tagName === 'AUDIO' || (window.HTMLAudioElement && element instanceof HTMLAudioElement));
+  }
+
+  function isLearningRpgSfxSource(source){
+    var src = String(source || '');
+    return src.indexOf('Resources/Sounds/') !== -1 && src.indexOf('Resources/Sounds/BGM/') === -1;
+  }
+
+  function applySfxVolume(audio){
+    if (!isAudioElement(audio) || audio.__learningRpgSkipSfxVolume) return;
+    var src = String(audio.currentSrc || audio.src || '');
+    if (!isLearningRpgSfxSource(src)) return;
+    if (!isSoundEnabled()) {
+      audio.muted = true;
+      audio.volume = 0;
+      return;
+    }
+    if (audio.__learningRpgSfxBaseVolume === undefined) {
+      audio.__learningRpgSfxBaseVolume = Number(audio.volume || 1);
+    }
+    audio.volume = Math.max(0, Math.min(1, Number(audio.__learningRpgSfxBaseVolume || 1) * SFX_VOLUME_MULTIPLIER));
+    audio.muted = false;
+  }
+
+  function patchMediaPlayVolume(){
+    if (!window.HTMLMediaElement || !HTMLMediaElement.prototype || HTMLMediaElement.prototype.__learningRpgSfxVolumePatched) return;
+    var originalPlay = HTMLMediaElement.prototype.play;
+    HTMLMediaElement.prototype.play = function(){
+      applySfxVolume(this);
+      return originalPlay.apply(this, arguments);
+    };
+    HTMLMediaElement.prototype.__learningRpgSfxVolumePatched = true;
+  }
+
+  function patchFunction(name, wrapper){
+    var attempts = 0;
+    var timer = window.setInterval(function(){
+      attempts += 1;
+      var original = window[name];
+      if (typeof original === 'function' && !original.__learningRpgAudioPatched) {
+        var patched = wrapper(original);
+        patched.__learningRpgAudioPatched = true;
+        window[name] = patched;
+        window.clearInterval(timer);
+        return;
+      }
+      if (attempts > 240) window.clearInterval(timer);
+    }, 40);
+  }
+
+  function installMenuPatches(){
+    patchFunction('transitionToBattlePage', function(original){
+      return function(){
+        stopCurrentTrack(DEFAULT_FADE_MS);
+        stopRainAmbience(DEFAULT_FADE_MS);
+        return original.apply(this, arguments);
+      };
+    });
+    patchFunction('goToPage', function(original){
+      return function(page){
+        if (String(page || '') === 'battle') {
+          stopCurrentTrack(DEFAULT_FADE_MS);
+        } else if (!isBattlePage() && isSoundEnabled()) {
+          requestMainBgm();
+          stopRainAmbience(DEFAULT_FADE_MS);
+        }
+        return original.apply(this, arguments);
+      };
+    });
+  }
+
+  function installBattlePatches(){
+    if (!isBattlePage()) return;
+    patchFunction('renderBattle', function(original){
+      return function(){
+        var result = original.apply(this, arguments);
+        syncRainAmbience(420);
+        return result;
+      };
+    });
+    patchFunction('startBattleEntrance', function(original){
+      return function(){
+        stopRewardOneShot();
+        stopCurrentTrack(DEFAULT_FADE_MS);
+        return original.apply(this, arguments);
+      };
+    });
+    patchFunction('skipStageEntranceIntro', function(original){
+      return function(){
+        var result = original.apply(this, arguments);
+        requestBattleBgm();
+        return result;
+      };
+    });
+    patchFunction('revealStageEntranceMonsters', function(original){
+      return function(){
+        var result = original.apply(this, arguments);
+        requestBattleBgm();
+        return result;
+      };
+    });
+    patchFunction('startFloorIntermissionEntrance', function(original){
+      return function(){
+        stopCurrentTrack(DEFAULT_FADE_MS);
+        syncRainAmbience(DEFAULT_FADE_MS);
+        return original.apply(this, arguments);
+      };
+    });
+    patchFunction('renderRewardChoices', function(original){
+      return function(){
+        var result = original.apply(this, arguments);
+        playRewardOneShot();
+        syncRainAmbience(360);
+        return result;
+      };
+    });
+    patchFunction('showDefeatSequence', function(original){
+      return function(){
+        stopRewardOneShot();
+        stopCurrentTrack(DEFAULT_FADE_MS);
+        stopRainAmbience(DEFAULT_FADE_MS);
+        return original.apply(this, arguments);
+      };
+    });
+    patchFunction('goHome', function(original){
+      return function(){
+        stopRewardOneShot();
+        stopRainAmbience(DEFAULT_FADE_MS);
+        return original.apply(this, arguments);
+      };
+    });
+  }
+
+  function routeInitialAudio(){
+    if (!isSoundEnabled()) return;
+    if (isBattlePage()) {
+      stopCurrentTrack(240);
+      syncRainAmbience(240);
+      return;
+    }
+    requestMainBgm();
+  }
+
+  function applySoundPreference(){
+    if (!isSoundEnabled()) {
+      stopCurrentTrack(0);
+      stopRainAmbience(0);
+      stopRewardOneShot();
+      return;
+    }
+    if (pendingIntent) {
+      playIntent(pendingIntent, 240);
+    } else if (!isBattlePage()) {
+      requestMainBgm();
+    } else {
+      requestBattleBgm();
+    }
+    syncRainAmbience(240);
+  }
+
+  function install(){
+    if (window.__learningRpgAudioManagerInstalled) return;
+    window.__learningRpgAudioManagerInstalled = true;
+    window.LEARNING_RPG_AUDIO = {
+      playMain: requestMainBgm,
+      playBattle: requestBattleBgm,
+      playReward: playRewardOneShot,
+      stop: function(ms){ stopCurrentTrack(ms === undefined ? DEFAULT_FADE_MS : ms); },
+      syncRainAmbience: syncRainAmbience,
+      applySoundPreference: applySoundPreference,
+      getCurrent: function(){ return currentTrack ? { key: currentTrack.key, kind: currentTrack.kind, path: currentTrack.path } : null; }
+    };
+    patchMediaPlayVolume();
+    window.addEventListener('storage', function(event){ if (event.key === SOUND_ENABLED_KEY) applySoundPreference(); });
+    window.addEventListener('learningRpgSoundPreferenceChanged', applySoundPreference);
+    installUnlockListeners();
+    installMenuPatches();
+    installBattlePatches();
+    window.setTimeout(routeInitialAudio, 120);
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', install);
+  } else {
+    install();
+  }
+})();
+</script>

@@ -465,7 +465,10 @@ function selectReward(runId, rewardId, authToken, rewardView) {
   var scoreSummary = scoreResult.summary;
   markTiming('scoreAwarded');
   var runAfterScore = Object.assign({}, runAfterReward, {
-    score: Number(runAfterReward.score || 0) + Number(scoreResult.runScoreDelta || 0),
+    score: Math.max(
+      Number(runAfterReward.score || 0) + Number(scoreResult.runScoreDelta || 0),
+      Number(scoreSummary.totalScore || 0)
+    ),
     stageStateJson: safeJsonStringify_(stageState),
   });
 
@@ -543,8 +546,12 @@ function prepareNextBattleAfterReward(runId, authToken) {
 function awardStageClearScoreForReward_(run, stageState) {
   var result = calculateStageClearScoreForReward_(run, stageState);
   if (Number(result.runScoreDelta || 0) > 0 || result.stageStateChanged) {
+    var nextScore = Math.max(
+      Number(run.score || 0) + Number(result.runScoreDelta || 0),
+      Number(result.summary.totalScore || 0)
+    );
     var updatedRun = updateRowByKey_(DB_SHEETS.RUNS, 'runId', run.runId, {
-      score: Number(run.score || 0) + Number(result.runScoreDelta || 0),
+      score: nextScore,
       stageStateJson: safeJsonStringify_(result.stageState),
       updatedAt: new Date(),
     });
@@ -604,28 +611,34 @@ function calculateStageClearScoreForReward_(run, stageState) {
   scoreState.clearBonus = clearBonus;
   scoreState.stageScoreAwardedAt = new Date().toISOString();
   stageState.scoreState = scoreState;
+  var awardedMonsterScore = battleId && scoreState.monsterScoreAwardedBattleId === battleId
+    ? Number(scoreState.monsterScoreAwardedToRun || 0)
+    : Number(battleState.monsterScoreState && battleState.monsterScoreState.scoreAwardedToRun || 0);
+  var awardedQuestionReactionScore = battleId && scoreState.questionReactionScoreBattleId === battleId
+    ? questionReactionScore
+    : 0;
+  var previousScore = Math.max(0, Number(run.score || 0) - awardedMonsterScore - awardedQuestionReactionScore);
+  var totalScore = previousScore + monsterScore + questionReactionScore + scoreDelta;
   return {
     runScoreDelta: scoreDelta,
     stageState: stageState,
     stageStateChanged: true,
-    summary: buildStageScoreSummary_(Object.assign({}, run, {
-      score: Number(run.score || 0) + scoreDelta,
-    }), {
-    previousScore: Math.max(0, Number(run.score || 0) - monsterScore - questionReactionScore),
-    answerScore: 0,
-    monsterScore: monsterScore,
-    questionReactionScore: questionReactionScore,
-    stageScore: stageScore,
-    floorBaseScore: floorClearScore.baseScore,
-    floorSpeedScore: floorClearScore.speedScore,
-    floorScore: floorClearScore.floorScore,
-    floorClearTimeMs: floorClearScore.elapsedMs,
-    floorTargetTimeMs: floorClearScore.targetMs,
-    floorSpeedMultiplier: floorClearScore.speedMultiplier,
-    clearBonus: clearBonus,
-    scoreDelta: monsterScore + questionReactionScore + scoreDelta,
-    totalScore: Number(run.score || 0) + scoreDelta,
-  }),
+    summary: buildStageScoreSummary_(run, {
+      previousScore: previousScore,
+      answerScore: 0,
+      monsterScore: monsterScore,
+      questionReactionScore: questionReactionScore,
+      stageScore: stageScore,
+      floorBaseScore: floorClearScore.baseScore,
+      floorSpeedScore: floorClearScore.speedScore,
+      floorScore: floorClearScore.floorScore,
+      floorClearTimeMs: floorClearScore.elapsedMs,
+      floorTargetTimeMs: floorClearScore.targetMs,
+      floorSpeedMultiplier: floorClearScore.speedMultiplier,
+      clearBonus: clearBonus,
+      scoreDelta: monsterScore + questionReactionScore + scoreDelta,
+      totalScore: totalScore,
+    }),
   };
 }
 
@@ -733,7 +746,7 @@ function buildStageScoreSummary_(run, summary) {
     ? Number(summary.totalScore || 0)
     : Number(run && run.score || 0);
   var scoreDelta = Number(summary.scoreDelta || 0);
-  return {
+  return normalizeScoreSummaryBreakdown_({
     previousScore: Math.max(0, Number(summary.previousScore !== undefined ? summary.previousScore : totalScore - scoreDelta)),
     answerScore: Number(summary.answerScore || 0),
     monsterScore: Number(summary.monsterScore || 0),
@@ -749,7 +762,47 @@ function buildStageScoreSummary_(run, summary) {
     scoreDelta: scoreDelta,
     totalScore: totalScore,
     alreadyAwarded: !!summary.alreadyAwarded,
-  };
+  });
+}
+
+function normalizeScoreSummaryBreakdown_(summary) {
+  summary = Object.assign({}, summary || {});
+  var componentTotal = getScoreSummaryComponentTotal_(summary);
+  var scoreDelta = Math.max(0, Number(summary.scoreDelta || 0));
+  var totalScore = Math.max(0, Number(summary.totalScore || 0));
+  var previousScore = Math.max(0, Number(summary.previousScore !== undefined && summary.previousScore !== ''
+    ? summary.previousScore
+    : totalScore - scoreDelta));
+
+  if (scoreDelta <= 0 && totalScore > previousScore) {
+    scoreDelta = totalScore - previousScore;
+    summary.scoreDelta = scoreDelta;
+  }
+  if (scoreDelta > 0 && totalScore < previousScore + scoreDelta) {
+    totalScore = previousScore + scoreDelta;
+    summary.totalScore = totalScore;
+  }
+
+  if (scoreDelta > componentTotal) {
+    summary.unclassifiedScore = Number(summary.unclassifiedScore || 0) + (scoreDelta - componentTotal);
+  }
+
+  return summary;
+}
+
+function getScoreSummaryComponentTotal_(summary) {
+  return [
+    'answerScore',
+    'monsterScore',
+    'questionReactionScore',
+    'stageScore',
+    'floorBaseScore',
+    'floorSpeedScore',
+    'clearBonus',
+    'unclassifiedScore',
+  ].reduce(function(total, key) {
+    return total + Math.max(0, Number(summary && summary[key] || 0));
+  }, 0);
 }
 
 function grantCurrency(runId, rewardGroupId, authToken) {
