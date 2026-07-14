@@ -277,7 +277,7 @@
       <div class="vertical-menu">
         <button onclick="showGameStartMessage()">게임 시작</button>
         <button id="questionCreateButton" class="hidden" onclick="goToPage('question')">문제 만들기</button>
-        <button class="secondary" onclick="showWorkbookSelectModal({ force: true })">문제집 변경</button>
+        <button class="secondary" onclick="showWorkbookSelectModal({ force: true })">문제집(수업) 변경</button>
         <button class="secondary" onclick="showMyInfo()">내 정보</button>
         <button class="secondary" onclick="goToPage('leaderboard')">리더보드</button>
         <button id="adminButton" class="secondary" onclick="goToPage('admin')" style="display:none;">관리자</button>
@@ -306,18 +306,18 @@
 
   <div id="workbookSelectModal" class="question-modal-overlay workbook-modal-overlay" aria-hidden="true">
     <section class="question-modal workbook-modal" role="dialog" aria-modal="true" aria-labelledby="workbookSelectTitle">
-      <h2 id="workbookSelectTitle" class="rpg-title">문제집 선택</h2>
-      <p class="muted" style="text-align:center;">메인 화면으로 진입할 문제집을 선택해 주세요.</p>
+      <h2 id="workbookSelectTitle" class="rpg-title">문제집(수업) 선택</h2>
+      <p class="muted" style="text-align:center;">메인 화면으로 진입할 문제집(수업)을 선택해 주세요.</p>
       <div class="workbook-form">
         <div>
-          <label for="workbookSelect">문제집</label>
+          <label for="workbookSelect">문제집(수업)</label>
           <select id="workbookSelect" onchange="renderWorkbookArchiveButton()"></select>
         </div>
       </div>
       <div id="workbookSelectMessage" class="message"></div>
       <div class="workbook-actions">
-        <button id="archiveWorkbookButton" class="danger hidden" type="button" onclick="archiveSelectedWorkbook()">내 문제집 삭제</button>
-        <button id="addWorkbookButton" class="secondary hidden" type="button" onclick="showCreateWorkbookModal()">문제집 추가</button>
+        <button id="archiveWorkbookButton" class="danger hidden" type="button" onclick="archiveSelectedWorkbook()">내 문제집(수업) 삭제</button>
+        <button id="addWorkbookButton" class="secondary hidden" type="button" onclick="showCreateWorkbookModal()">문제집(수업) 추가</button>
         <button id="confirmWorkbookButton" type="button" onclick="confirmWorkbookSelection()">확인</button>
       </div>
     </section>
@@ -325,10 +325,10 @@
 
   <div id="createWorkbookModal" class="question-modal-overlay workbook-modal-overlay" aria-hidden="true">
     <section class="question-modal workbook-modal" role="dialog" aria-modal="true" aria-labelledby="createWorkbookTitle">
-      <h2 id="createWorkbookTitle" class="rpg-title">문제집 추가</h2>
+      <h2 id="createWorkbookTitle" class="rpg-title">문제집(수업) 추가</h2>
       <div class="workbook-form">
         <div>
-          <label for="newWorkbookName">문제집 이름</label>
+          <label for="newWorkbookName">문제집(수업) 이름</label>
           <input id="newWorkbookName" maxlength="60" autocomplete="off">
         </div>
         <div>
@@ -808,7 +808,7 @@
         element.textContent = '';
         return;
       }
-      element.textContent = '현재 문제집: ' + (selectedWorkbookName || selectedWorkbookId);
+      element.textContent = '현재 문제집(수업): ' + (selectedWorkbookName || selectedWorkbookId);
     }
 
     function renderWorkbookSelectOptions() {
@@ -834,7 +834,7 @@
         select.value = selectedWorkbookId;
       }
       renderWorkbookArchiveButton();
-      setWorkbookSelectMessage(activeWorkbooks.length ? '' : '활성 상태인 문제집이 없습니다.', activeWorkbooks.length ? '' : 'error');
+      setWorkbookSelectMessage(activeWorkbooks.length ? '' : '활성 상태인 문제집(수업)이 없습니다.', activeWorkbooks.length ? '' : 'error');
     }
 
     function renderWorkbookArchiveButton() {
@@ -873,7 +873,7 @@
       var select = document.getElementById('workbookSelect');
       var workbook = select ? findActiveWorkbookById(select.value) : null;
       if (!workbook) {
-        setWorkbookSelectMessage('문제집을 선택해 주세요.', 'error');
+        setWorkbookSelectMessage('문제집(수업)을 선택해 주세요.', 'error');
         return;
       }
       applySelectedWorkbook(workbook);
@@ -885,23 +885,23 @@
       var workbook = select ? findActiveWorkbookById(select.value) : null;
       var playerId = String(currentState && currentState.player && currentState.player.playerId || '').trim();
       if (!workbook) {
-        setWorkbookSelectMessage('삭제할 문제집을 선택해 주세요.', 'error');
+        setWorkbookSelectMessage('삭제할 문제집(수업)을 선택해 주세요.', 'error');
         return;
       }
       if (!playerId || String(workbook.createdBy || '').trim() !== playerId) {
-        setWorkbookSelectMessage('자신이 만든 문제집만 삭제할 수 있습니다.', 'error');
+        setWorkbookSelectMessage('자신이 만든 문제집(수업)만 삭제할 수 있습니다.', 'error');
         renderWorkbookArchiveButton();
         return;
       }
-      if (!window.confirm('"' + workbook.workbookName + '" 문제집을 목록에서 삭제할까요?\n문제와 기존 진행 기록은 보존됩니다.')) {
+      if (!window.confirm('"' + workbook.workbookName + '" 문제집(수업)을 목록에서 삭제할까요?\n문제와 기존 진행 기록은 보존됩니다.')) {
         return;
       }
 
       var archivedWorkbookId = workbook.workbookId;
       var archiveButton = document.getElementById('archiveWorkbookButton');
       archiveButton.disabled = true;
-      setWorkbookSelectMessage('문제집을 삭제하는 중입니다.', 'ok');
-      showLoadingModal('삭제 중...', '문제집을 목록에서 삭제하는 중...');
+      setWorkbookSelectMessage('문제집(수업)을 삭제하는 중입니다.', 'ok');
+      showLoadingModal('삭제 중...', '문제집(수업)을 목록에서 삭제하는 중...');
       google.script.run
         .withSuccessHandler(function(response) {
           hideLoadingModal();
@@ -922,12 +922,12 @@
           }
           renderCurrentWorkbookBadge();
           renderWorkbookSelectOptions();
-          setWorkbookSelectMessage('문제집을 삭제했습니다. 문제와 기존 진행 기록은 보존됩니다.', 'ok');
+          setWorkbookSelectMessage('문제집(수업)을 삭제했습니다. 문제와 기존 진행 기록은 보존됩니다.', 'ok');
         })
         .withFailureHandler(function(error) {
           hideLoadingModal();
           renderWorkbookArchiveButton();
-          setWorkbookSelectMessage(error && error.message ? error.message : '문제집 삭제에 실패했습니다.', 'error');
+          setWorkbookSelectMessage(error && error.message ? error.message : '문제집(수업) 삭제에 실패했습니다.', 'error');
         })
         .archiveWorkbook(getAuthToken(), archivedWorkbookId);
     }
@@ -947,14 +947,14 @@
           renderWorkbookSelectOptions();
         })
         .withFailureHandler(function(error) {
-          setWorkbookSelectMessage(error && error.message ? error.message : '문제집 목록을 불러오지 못했습니다.', 'error');
+          setWorkbookSelectMessage(error && error.message ? error.message : '문제집(수업) 목록을 불러오지 못했습니다.', 'error');
         })
         .getActiveWorkbooks(getAuthToken());
     }
 
     function showCreateWorkbookModal() {
       if (!canManageWorkbooks()) {
-        setWorkbookSelectMessage('교사 또는 관리자만 문제집을 추가할 수 있습니다.', 'error');
+        setWorkbookSelectMessage('교사 또는 관리자만 문제집(수업)을 추가할 수 있습니다.', 'error');
         return;
       }
       document.getElementById('newWorkbookName').value = '';
@@ -982,11 +982,11 @@
         description: document.getElementById('newWorkbookDescription').value,
       };
       if (!String(payload.workbookName || '').trim()) {
-        setCreateWorkbookMessage('문제집 이름을 입력해 주세요.', 'error');
+        setCreateWorkbookMessage('문제집(수업) 이름을 입력해 주세요.', 'error');
         return;
       }
       document.getElementById('createWorkbookButton').disabled = true;
-      setCreateWorkbookMessage('문제집을 생성하는 중입니다.', 'ok');
+      setCreateWorkbookMessage('문제집(수업)을 생성하는 중입니다.', 'ok');
       google.script.run
         .withSuccessHandler(function(response) {
           document.getElementById('createWorkbookButton').disabled = false;
@@ -1001,11 +1001,11 @@
             document.getElementById('workbookSelect').value = response.workbook.workbookId;
           }
           renderWorkbookArchiveButton();
-          setWorkbookSelectMessage('문제집이 생성되었습니다. 확인을 누르면 이 문제집으로 입장합니다.', 'ok');
+          setWorkbookSelectMessage('문제집(수업)이 생성되었습니다. 확인을 누르면 이 문제집(수업)으로 입장합니다.', 'ok');
         })
         .withFailureHandler(function(error) {
           document.getElementById('createWorkbookButton').disabled = false;
-          setCreateWorkbookMessage(error && error.message ? error.message : '문제집 생성에 실패했습니다.', 'error');
+          setCreateWorkbookMessage(error && error.message ? error.message : '문제집(수업) 생성에 실패했습니다.', 'error');
         })
         .createWorkbook(getAuthToken(), payload);
     }
@@ -1262,7 +1262,7 @@
       }
       if (!selectedWorkbookId) {
         showWorkbookSelectModal();
-        setMainMessage('게임을 시작하려면 문제집을 먼저 선택해 주세요.', 'error');
+        setMainMessage('게임을 시작하려면 문제집(수업)을 먼저 선택해 주세요.', 'error');
         return;
       }
       var startedAt = Date.now();
@@ -1314,7 +1314,7 @@
       var workbookName = String(run && run.workbookName || selectedWorkbookName || '').trim();
       summary.innerHTML = [
         '<strong>' + escapeHtml(displayFloor + ' ' + (stageName || displayParts.areaLabel) + ' ' + stage + '스테이지') + '</strong>',
-        (workbookName ? '<span>문제집: ' + escapeHtml(workbookName) + '</span>' : ''),
+        (workbookName ? '<span>문제집(수업): ' + escapeHtml(workbookName) + '</span>' : ''),
         '<span>HP ' + escapeHtml(hp) + (shield > 0 ? ' / 보호막 ' + escapeHtml(shield) : '') + '</span>'
       ].filter(Boolean).join('<br>');
       modal.classList.add('active');

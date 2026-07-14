@@ -11,6 +11,14 @@ function canStartGame(playerId, authToken, workbookId) {
     reasons.push('선생님이 아직 게임 시작을 활성화하지 않았습니다.');
   }
 
+  var missingDifficulties = getMissingApprovedQuestionDifficulties_(workbook.workbookId);
+  if (missingDifficulties.length > 0) {
+    reasons.push(
+      '선택한 문제집에 난이도 ' + GAME_RULES.MIN_DIFFICULTY + '~' + GAME_RULES.MAX_DIFFICULTY +
+      '의 승인된 문제가 각각 1개 이상 있어야 합니다. 부족한 난이도: ' + missingDifficulties.join(', ')
+    );
+  }
+
   if (settings.requireOwnQuestionForRunStart !== false) {
     var myQuestionCount = getWorkbookQuestionsByCreator_(workbook.workbookId, playerId).length;
     if (myQuestionCount < 1) {
@@ -27,6 +35,26 @@ function canStartGame(playerId, authToken, workbookId) {
     reasons: reasons,
     workbook: workbook,
   };
+}
+
+function getMissingApprovedQuestionDifficulties_(workbookId) {
+  var availableDifficulties = readWorkbookQuestionsForBattle_(workbookId).reduce(function(available, question) {
+    if (question.status === STATUS.QUESTION_APPROVED) {
+      var difficulty = Number(question.difficulty);
+      if (Number.isInteger(difficulty) && difficulty >= GAME_RULES.MIN_DIFFICULTY && difficulty <= GAME_RULES.MAX_DIFFICULTY) {
+        available[difficulty] = true;
+      }
+    }
+    return available;
+  }, {});
+
+  var missingDifficulties = [];
+  for (var difficulty = GAME_RULES.MIN_DIFFICULTY; difficulty <= GAME_RULES.MAX_DIFFICULTY; difficulty += 1) {
+    if (!availableDifficulties[difficulty]) {
+      missingDifficulties.push(difficulty);
+    }
+  }
+  return missingDifficulties;
 }
 
 function getLatestCompletedRunEndedAtMs_(playerId) {
@@ -1349,8 +1377,77 @@ function evaluateMonsterSkillFormula_(formula, context) {
   return getSharedRuleEngine_().evaluateFormula(formula, context || {}, { random: Math.random });
 }
 
+function getMonsterSkillRule_(skill) {
+  return normalizeMonsterSkillRuleValue_(skill && (skill.effectJson || skill.effectRule || skill.ruleJson), 0);
+}
+
+function normalizeMonsterSkillRuleValue_(value, depth) {
+  depth = Number(depth || 0);
+  if (depth > 5 || value === null || value === undefined || value === '') {
+    return {};
+  }
+  if (typeof value === 'string') {
+    var text = String(value || '').trim();
+    var parsed = safeJsonParse_(text, null);
+    if (parsed === null && /[“”‘’]/.test(text)) {
+      parsed = safeJsonParse_(text.replace(/[“”]/g, '"').replace(/[‘’]/g, "'"), null);
+    }
+    if (parsed === null) {
+      return extractMonsterSkillRuleFromText_(text);
+    }
+    return normalizeMonsterSkillRuleValue_(parsed, depth + 1);
+  }
+  if (Array.isArray(value)) {
+    return value.reduce(function(merged, entry) {
+      return Object.assign(merged, normalizeMonsterSkillRuleValue_(entry, depth + 1));
+    }, {});
+  }
+  if (typeof value !== 'object') {
+    return {};
+  }
+
+  var normalized = Object.assign({}, value);
+  ['rule', 'skillRule', 'action', 'onUse'].forEach(function(key) {
+    if (value[key] !== undefined) {
+      normalized = Object.assign(normalized, normalizeMonsterSkillRuleValue_(value[key], depth + 1));
+    }
+  });
+  ['actions', 'rules'].forEach(function(key) {
+    if (Array.isArray(value[key])) {
+      normalized = Object.assign(normalized, normalizeMonsterSkillRuleValue_(value[key], depth + 1));
+    }
+  });
+
+  var canonicalKeys = {
+    damageformula: 'damageFormula',
+    extradamageformula: 'extraDamageFormula',
+    hitcount: 'hitCount',
+    randommin: 'randomMin',
+    randommax: 'randomMax',
+  };
+  Object.keys(normalized).forEach(function(key) {
+    var compactKey = String(key || '').replace(/[\s_-]/g, '').toLowerCase();
+    var canonicalKey = canonicalKeys[compactKey];
+    if (canonicalKey && (normalized[canonicalKey] === undefined || normalized[canonicalKey] === '')) {
+      normalized[canonicalKey] = normalized[key];
+    }
+  });
+  return normalized;
+}
+
+function extractMonsterSkillRuleFromText_(text) {
+  var rule = {};
+  var damageMatch = String(text || '').match(/["']?damageFormula["']?\s*:\s*["']([^"']+)["']/i);
+  var extraDamageMatch = String(text || '').match(/["']?extraDamageFormula["']?\s*:\s*["']([^"']+)["']/i);
+  var hitCountMatch = String(text || '').match(/["']?hitCount["']?\s*:\s*(?:["']([^"']+)["']|(-?\d+(?:\.\d+)?))/i);
+  if (damageMatch) rule.damageFormula = damageMatch[1];
+  if (extraDamageMatch) rule.extraDamageFormula = extraDamageMatch[1];
+  if (hitCountMatch) rule.hitCount = hitCountMatch[1] !== undefined ? hitCountMatch[1] : hitCountMatch[2];
+  return rule;
+}
+
 function calculateMonsterSkillHitCount_(battleState, monster, skill, monsterStats) {
-  var rule = safeJsonParse_(skill && (skill.effectJson || skill.effectRule || skill.ruleJson), {});
+  var rule = getMonsterSkillRule_(skill);
   var rawHitCount = rule.hitCount !== undefined && rule.hitCount !== null && rule.hitCount !== ''
     ? evaluateMonsterSkillFormula_(rule.hitCount, buildMonsterSkillFormulaContext_(battleState, monster, skill, monsterStats))
     : Number(skill && skill.hitCount || 1);
@@ -1358,7 +1455,7 @@ function calculateMonsterSkillHitCount_(battleState, monster, skill, monsterStat
 }
 
 function calculateMonsterSkillDamage_(battleState, monster, skill, monsterStats) {
-  var rule = safeJsonParse_(skill && (skill.effectJson || skill.effectRule || skill.ruleJson), {});
+  var rule = getMonsterSkillRule_(skill);
   var context = buildMonsterSkillFormulaContext_(battleState, monster, skill, monsterStats);
   var hasDamageFormula = rule.damageFormula !== undefined && rule.damageFormula !== null && rule.damageFormula !== '';
   var damage = hasDamageFormula
@@ -2381,7 +2478,7 @@ function buildClientMonsterAiRules_(battleState) {
     return !row.aiId || aiIds[row.aiId];
   }).map(function(row) {
     var skill = row.skillId ? skillsById[String(row.skillId)] || null : null;
-    var effectConfig = skill ? safeJsonParse_(skill.effectJson || skill.effectRule || skill.ruleJson, {}) : {};
+    var effectConfig = skill ? getMonsterSkillRule_(skill) : {};
     var effect = effectConfig.effectId ? findCachedRowByKey_(DB_SHEETS.EFFECTS, 'effectId', effectConfig.effectId, 600) : null;
     return {
       aiId: row.aiId || '',
