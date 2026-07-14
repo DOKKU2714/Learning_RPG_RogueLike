@@ -55,8 +55,30 @@
 
       <div id="actionPanel" class="action-panel compact-actions">
         <div id="actionPanelApGauge" class="action-point-gauge action-panel-ap-gauge"></div>
-        <button id="attackActionButton" onclick="chooseAction('attack')">공격</button>
-        <button id="guardActionButton" onclick="chooseAction('guard')">수비</button>
+        <button id="attackActionButton" class="action-detail-button action-detail-attack" onclick="chooseAction('attack')">
+          <span class="action-button-label">공격</span>
+          <span class="skill-detail-card action-detail-card" aria-hidden="true">
+            <span class="skill-detail-header">
+              <strong class="skill-detail-name">기본 공격</strong>
+              <span class="skill-detail-line skill-detail-ap-line">행동력 <em class="skill-detail-ap-inline">1</em> 소비</span>
+            </span>
+            <span class="skill-detail-meta">기본 행동 / 적 대상</span>
+            <span class="skill-detail-description">적에게 약 <strong id="attackActionPreviewValue" class="skill-damage-number">0</strong> 피해를 입힙니다.</span>
+            <span class="skill-detail-line">문제 풀이 효율에 따라 피해량이 변합니다.</span>
+          </span>
+        </button>
+        <button id="guardActionButton" class="action-detail-button action-detail-guard" onclick="chooseAction('guard')">
+          <span class="action-button-label">수비</span>
+          <span class="skill-detail-card action-detail-card" aria-hidden="true">
+            <span class="skill-detail-header">
+              <strong class="skill-detail-name">기본 수비</strong>
+              <span class="skill-detail-line skill-detail-ap-line">행동력 <em class="skill-detail-ap-inline">1</em> 소비</span>
+            </span>
+            <span class="skill-detail-meta">기본 행동 / 자신 대상</span>
+            <span class="skill-detail-description"><strong id="guardActionPreviewValue" class="skill-damage-number">0</strong> 방어막을 얻습니다.</span>
+            <span class="skill-detail-line">문제 풀이 효율에 따라 방어막 수치가 변합니다.</span>
+          </span>
+        </button>
         <button id="skillToggleButton" type="button" onclick="toggleSkillPanel()">스킬</button>
         <button id="passTurnButton" type="button" onclick="passTurn()">턴 종료</button>
         <div id="skillPanel" class="skill-panel hidden"></div>
@@ -420,7 +442,7 @@
           pushLog(error.message || '데모 UI로 전투 화면을 표시합니다.');
           startBattleEntrance();
         })
-        .getBattleView(getAuthToken());
+        .getBattleView(getAuthToken(), getSelectedWorkbookId());
     }
 
     function setupBattleUi() {
@@ -1244,8 +1266,12 @@
       var stats = getClientEffectiveStats(player);
       var attack = Math.max(0, Math.round(Number(stats.attack || 0)));
       var defense = Math.max(0, Math.round(CLIENT_BASE_GUARD_SHIELD + Number(stats.defense || 0)));
-      document.getElementById('attackActionButton').setAttribute('data-tooltip', '문제를 풀고 효율에 따라 약 ' + attack + ' 피해를 줍니다.');
-      document.getElementById('guardActionButton').setAttribute('data-tooltip', '문제를 풀고 효율에 따라 약 ' + defense + ' 방어막을 얻습니다.');
+      var attackPreview = document.getElementById('attackActionPreviewValue');
+      var guardPreview = document.getElementById('guardActionPreviewValue');
+      if (attackPreview) attackPreview.textContent = attack;
+      if (guardPreview) guardPreview.textContent = defense;
+      document.getElementById('attackActionButton').removeAttribute('data-tooltip');
+      document.getElementById('guardActionButton').removeAttribute('data-tooltip');
       document.getElementById('skillToggleButton').setAttribute('data-tooltip', '보유 스킬 목록을 엽니다.');
     }
 
@@ -1649,7 +1675,15 @@
       var view = intent || { intentIcon: 'sword', intentText: 'Waiting' };
       var text = String(view.intentText || view.intentTextTemplate || 'Waiting').replace(/Expected\s*/g, '');
       var valueMatch = text.match(/(\d+)/);
-      var valueBadge = valueMatch ? '<em class="monster-intent-value">' + escapeHtml(valueMatch[1]) + '</em>' : '';
+      var numericValue = view.value !== undefined && view.value !== ''
+        ? Math.max(0, Math.round(Number(view.value || 0)))
+        : (valueMatch ? valueMatch[1] : '');
+      var hitCount = Math.max(1, Math.round(Number(view.hitCount || view.skillHitCount || 1)));
+      var isMultiHitDamage = String(view.actionType || '').toLowerCase() === 'skill'
+        && String(view.skillType || '').toLowerCase() === 'damage'
+        && hitCount > 1;
+      var badgeText = numericValue === '' ? '' : String(numericValue) + (isMultiHitDamage ? 'x' + hitCount : '');
+      var valueBadge = badgeText ? '<em class="monster-intent-value">' + escapeHtml(badgeText) + '</em>' : '';
       var iconUrl = getActionIntentIconUrl(view);
       var iconHtml = iconUrl ? '<img class="monster-intent-icon" src="' + escapeHtml(iconUrl) + '" alt="" onerror="this.remove();">' : '<span class="monster-intent-icon-fallback">' + escapeHtml(intentIconLabel(view.intentIcon || view.actionType || 'sword')) + '</span>';
       return '<div class="monster-intent" data-tooltip="' + escapeHtml(text) + '" aria-label="' + escapeHtml(text) + '">' +
@@ -2082,7 +2116,7 @@
               hideLoadingModal();
               pushLog(error && error.message ? error.message : '전투 데이터 갱신에 실패했습니다.');
             })
-            .getBattleView(getAuthToken());
+            .getBattleView(getAuthToken(), getSelectedWorkbookId());
         })
         .withFailureHandler(function(error) {
           hideLoadingModal();
@@ -3582,7 +3616,7 @@
         var actionType = String(intent.actionType || 'attack');
         var intentValue = getClientIntentValue(intent);
         if (actionType === 'guard') {
-          var shield = Math.max(0, Math.round(intentValue || getClientEffectiveStat(monster, 'defense') || 6));
+          var shield = Math.max(0, Math.round(intentValue || calculateClientMonsterGuardShield(monster)));
           monster.shield = Number(monster.shield || 0) + shield;
           battle.lastTurnEvents.push({
             actor: 'monster',
@@ -3597,7 +3631,7 @@
         if (actionType === 'skill') {
           var skillType = String(intent.skillType || '').toLowerCase();
           if (skillType === 'shield') {
-            var skillShield = Math.max(0, Math.round(intentValue || getClientEffectiveStat(monster, 'defense') || 6));
+            var skillShield = Math.max(0, Math.round(intentValue || (Number(intent.skillBaseValue || 0) + getClientEffectiveStat(monster, 'defense'))));
             monster.shield = Number(monster.shield || 0) + skillShield;
             applyClientMonsterSkillEffect(monster, intent);
             battle.lastTurnEvents.push({
@@ -3642,20 +3676,27 @@
         }
 
         var damage = Math.max(0, Math.round(intentValue || getClientEffectiveStat(monster, 'attack') || 0));
-        var result = applyOptimisticPlayerDamage(battle, damage);
-        battle.lastTurnEvents.push({
-          actor: 'monster',
-          type: actionType === 'skill' ? 'skill' : 'attack',
-          skillId: intent.skillId || '',
-          monsterId: monster.instanceId || monster.monsterId,
-          monsterName: monster.name,
-          damage: result.damage,
-          shieldDamage: result.shieldDamage,
-          hpDamage: result.hpDamage,
-          message: actionType === 'skill' && intent.skillName
-            ? monster.name + '이 ' + intent.skillName + ' 사용!'
-            : monster.name + '의 공격!',
-        });
+        var hitCount = actionType === 'skill'
+          ? Math.max(1, Math.round(Number(intent.hitCount || intent.skillHitCount || 1)))
+          : 1;
+        for (var hitIndex = 0; hitIndex < hitCount && Number(battle.player.hp || 0) > 0; hitIndex += 1) {
+          var result = applyOptimisticPlayerDamage(battle, damage);
+          battle.lastTurnEvents.push({
+            actor: 'monster',
+            type: actionType === 'skill' ? 'skill' : 'attack',
+            skillId: intent.skillId || '',
+            monsterId: monster.instanceId || monster.monsterId,
+            monsterName: monster.name,
+            damage: result.damage,
+            shieldDamage: result.shieldDamage,
+            hpDamage: result.hpDamage,
+            hitIndex: hitIndex + 1,
+            hitCount: hitCount,
+            message: actionType === 'skill' && intent.skillName
+              ? monster.name + '이 ' + intent.skillName + ' 사용!'
+              : monster.name + '의 공격!',
+          });
+        }
       });
 
       battle.player.shield = 0;
@@ -3746,6 +3787,10 @@
         skillId: rule.skillId || '',
         skillType: rule.skillType || '',
         skillName: rule.skillName || '',
+        skillBaseValue: Number(rule.skillBaseValue || 0),
+        skillHitCount: calculateClientMonsterSkillHitCount(monster, rule),
+        hitCount: calculateClientMonsterSkillHitCount(monster, rule),
+        skillRule: rule.skillRule || {},
         skillEffectChance: rule.skillEffectChance,
         skillEffect: rule.skillEffect || null,
         intentIcon: rule.intentIcon || 'sword',
@@ -3913,17 +3958,67 @@
       var attack = Math.max(0, Math.round(getClientEffectiveStat(monster, 'attack')));
       var defense = Math.max(0, Math.round(getClientEffectiveStat(monster, 'defense')));
       if (actionType === 'guard') {
-        return Math.max(0, Math.round(defense || 6));
+        return calculateClientMonsterGuardShield(monster);
       }
       if (actionType === 'skill') {
         var skillType = String(rule.skillType || '').toLowerCase();
         var baseValue = Number(rule.skillBaseValue || 0);
         if (skillType === 'shield') return Math.max(0, Math.round(baseValue + defense));
         if (skillType === 'heal') return Math.max(0, Math.round(baseValue));
-        if (skillType === 'damage') return Math.max(0, Math.round(baseValue + attack));
+        if (skillType === 'damage') {
+          var skillRule = rule.skillRule || {};
+          var context = buildClientMonsterSkillFormulaContext(monster, rule);
+          var damage = skillRule.damageFormula !== undefined && skillRule.damageFormula !== null && skillRule.damageFormula !== ''
+            ? evaluateSkillDisplayFormula(skillRule.damageFormula, context, 'average')
+            : baseValue + attack;
+          if (skillRule.extraDamageFormula) {
+            damage += evaluateSkillDisplayFormula(skillRule.extraDamageFormula, context, 'average');
+          }
+          if (skillRule.randomMin !== undefined || skillRule.randomMax !== undefined) {
+            var randomMin = Number(skillRule.randomMin || 0);
+            var randomMax = Number(skillRule.randomMax !== undefined ? skillRule.randomMax : skillRule.randomMin || 0);
+            damage += (randomMin + randomMax) / 2;
+          }
+          return Math.max(0, Math.round(damage));
+        }
         return 0;
       }
       return attack;
+    }
+
+    function buildClientMonsterSkillFormulaContext(monster, rule) {
+      var attack = Number(getClientEffectiveStat(monster, 'attack') || 0);
+      var defense = Number(getClientEffectiveStat(monster, 'defense') || 0);
+      var baseValue = Number(rule && rule.skillBaseValue || 0);
+      return {
+        n: 0,
+        level: 1,
+        skillLevel: 1,
+        base: baseValue,
+        baseValue: baseValue,
+        skillBaseValue: baseValue,
+        atk: attack,
+        attack: attack,
+        def: defense,
+        defense: defense,
+        hp: Number(monster && monster.currentHp || 0),
+        maxHp: Number(monster && monster.maxHp || 1),
+        shield: Number(monster && monster.shield || 0),
+        enemyHp: Number(currentView && currentView.battle && currentView.battle.player && currentView.battle.player.hp || 0),
+        enemyShield: Number(currentView && currentView.battle && currentView.battle.player && currentView.battle.player.shield || 0),
+      };
+    }
+
+    function calculateClientMonsterSkillHitCount(monster, rule) {
+      var skillRule = rule && rule.skillRule || {};
+      var rawHitCount = skillRule.hitCount !== undefined && skillRule.hitCount !== null && skillRule.hitCount !== ''
+        ? evaluateSkillDisplayFormula(skillRule.hitCount, buildClientMonsterSkillFormulaContext(monster, rule), 'average')
+        : Number(rule && rule.skillHitCount || 1);
+      return Math.max(1, Math.round(Number(rawHitCount || 1)));
+    }
+
+    function calculateClientMonsterGuardShield(monster) {
+      return Math.max(0, Math.round(CLIENT_BASE_GUARD_SHIELD + getClientEffectiveStat(monster, 'defense')));
     }
 
     function buildClientMonsterIntentText(monster, rule, actionType, value) {
@@ -3933,7 +4028,10 @@
       if (actionType === 'skill' && rule && rule.skillId) {
         var skillName = rule.skillName || '스킬';
         var skillType = String(rule.skillType || '').toLowerCase();
-        if (skillType === 'damage') return '다음턴 ' + skillName + ' (예상 ' + Math.max(0, Math.round(Number(value || 0))) + ' 피해)';
+        if (skillType === 'damage') {
+          var hitCount = calculateClientMonsterSkillHitCount(monster, rule);
+          return '다음턴 ' + skillName + ' (예상 ' + Math.max(0, Math.round(Number(value || 0))) + ' 피해' + (hitCount > 1 ? ' × ' + hitCount : '') + ')';
+        }
         if (skillType === 'shield') return '다음턴 ' + skillName + ' (방어막 ' + Math.max(0, Math.round(Number(value || 0))) + ')';
         if (skillType === 'heal') return '다음턴 ' + skillName + ' (회복 ' + Math.max(0, Math.round(Number(value || 0))) + ')';
         if (skillType === 'buff') return skillName + ' / 강화 효과';
@@ -4333,7 +4431,7 @@
       var metrics = getSkillDisplayMetrics(skill);
       var damage = metrics.damage;
       if (damage > 0) {
-        var hitCount = getSkillHitCount(skill);
+        var hitCount = metrics.hitCount;
         var damageText = metrics.minDamage !== metrics.maxDamage ? metrics.damageRange : String(damage);
         if (hitCount > 1) {
           return '적에게 <strong class="skill-damage-number">' + escapeHtml(damageText) + '</strong> 피해를 <strong class="skill-damage-number">' + escapeHtml(hitCount) + '</strong>회 입힙니다.';
@@ -4353,6 +4451,7 @@
         { keys: ['maxDamage', 'maximumDamage', '최대피해'], value: values.maxDamage, highlight: true },
         { keys: ['shield', 'shieldAmount', '방어막'], value: values.shield, highlight: true },
         { keys: ['heal', 'healAmount', '회복량'], value: values.heal, highlight: true },
+        { keys: ['healPercent', 'damageHealPercent', '회복비율', '흡혈률'], value: values.healPercent, highlight: true },
         { keys: ['effectValue', 'buffValue', 'debuffValue', '효과값', '버프수치'], value: values.effectValue, highlight: true },
         { keys: ['effectChance', 'chance', '확률'], value: values.effectChance, highlight: false },
         { keys: ['effectName', '효과명'], value: values.effectName, highlight: false },
@@ -4380,7 +4479,7 @@
     function getSkillDescriptionTemplateValues(skill) {
       var metrics = getSkillDisplayMetrics(skill);
       var damage = metrics.damage;
-      var hitCount = getSkillHitCount(skill);
+      var hitCount = metrics.hitCount;
       return {
         name: skill && skill.name || '',
         base: Number(skill && skill.baseValue || 0),
@@ -4390,6 +4489,7 @@
         damageRange: metrics.damageRange,
         shield: metrics.shield,
         heal: metrics.heal,
+        healPercent: metrics.healPercent,
         effectName: metrics.effectName,
         effectValue: metrics.effectValue,
         effectChance: metrics.effectChance,
@@ -4449,7 +4549,16 @@
       var maxDamage = formulaRange ? formulaRange.max : (fallbackDamage || (previewRange ? previewRange.max : 0));
       var damage = maxDamage;
       var shield = getSkillDisplayShield(skill, rule, context);
-      var heal = getSkillDisplayHeal(skill, rule, context);
+      var displayHitCount = rule && rule.hitCount !== undefined
+        ? Math.max(1, Math.round(evaluateSkillDisplayFormula(rule.hitCount, context, 'max')))
+        : getSkillHitCount(skill);
+      var displayDamageDealt = damage * displayHitCount;
+      var healContext = Object.assign({}, context, {
+        damageDealt: displayDamageDealt,
+        totalDamageDealt: displayDamageDealt,
+      });
+      var heal = getSkillDisplayHeal(skill, rule, healContext);
+      var healPercent = getSkillDisplayHealPercent(rule, healContext);
       return {
         damage: damage,
         minDamage: minDamage,
@@ -4457,6 +4566,8 @@
         damageRange: minDamage === maxDamage ? String(maxDamage) : (minDamage + '-' + maxDamage),
         shield: shield,
         heal: heal,
+        healPercent: healPercent,
+        hitCount: displayHitCount,
         effectName: effectMetrics.name,
         effectValue: effectMetrics.value,
         effectChance: effectMetrics.chance,
@@ -4609,8 +4720,29 @@
       if (rule && rule.healFormula) {
         return Math.max(0, Math.round(evaluateSkillDisplayFormula(rule.healFormula, context, 'max')));
       }
+      if (rule && rule.healFromDamagePercentFormula) {
+        var damageDealt = Math.max(0, Number(context && context.damageDealt || 0));
+        var healPercent = evaluateSkillDisplayFormula(rule.healFromDamagePercentFormula, context, 'max');
+        return Math.max(0, Math.round(damageDealt * healPercent / 100));
+      }
+      if (rule && rule.healFromDamageFormula) {
+        return Math.max(0, Math.round(evaluateSkillDisplayFormula(rule.healFromDamageFormula, context, 'max')));
+      }
       if (type === 'heal') {
         return Math.max(0, Math.round(Number(skill && skill.baseValue || 0) + getClientSkillUpgradeValue(skill, 'damage') + getClientSkillUpgradeValue(skill, 'effect')));
+      }
+      return 0;
+    }
+
+    function getSkillDisplayHealPercent(rule, context) {
+      if (rule && rule.healFromDamagePercentFormula) {
+        var percent = Math.max(0, evaluateSkillDisplayFormula(rule.healFromDamagePercentFormula, context, 'max'));
+        return Math.round(percent * 100) / 100;
+      }
+      if (rule && rule.healFromDamageFormula && Number(context && context.damageDealt || 0) > 0) {
+        var heal = evaluateSkillDisplayFormula(rule.healFromDamageFormula, context, 'max');
+        var derivedPercent = Math.max(0, heal / Number(context.damageDealt) * 100);
+        return Math.round(derivedPercent * 100) / 100;
       }
       return 0;
     }
@@ -7079,6 +7211,10 @@
 
     function getAuthToken() {
       return sessionStorage.getItem('learningRpgAuthToken') || '';
+    }
+
+    function getSelectedWorkbookId() {
+      return sessionStorage.getItem('learningRpgSelectedWorkbookId') || '';
     }
 
     function showLoadingModal(title, text, options) {

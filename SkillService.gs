@@ -647,6 +647,7 @@ function executeSkillByRule_(battleState, skill, rule, efficiency, isCorrect) {
 
   var criticalStats = calculateEffectiveStats(battleState.player.stats || {}, battleState.player.effects || []);
   var damageEvents = 0;
+  var totalDamageDealt = 0;
   targets.forEach(function(target) {
     if (!target || target.currentHp === undefined) {
       return;
@@ -691,6 +692,7 @@ function executeSkillByRule_(battleState, skill, rule, efficiency, isCorrect) {
       damage = applyOutgoingItemDamageModifiers_(battleState, damage, { actionType: ACTION_TYPES.SKILL, skill: skill });
       var damageResult = dealDamageToMonster_(battleState, damageTarget, damage);
       damageEvents += 1;
+      totalDamageDealt += Number(damageResult.damage || 0);
       battleState.lastTurnEvents.push({
         actor: 'player',
         type: ACTION_TYPES.SKILL,
@@ -709,6 +711,7 @@ function executeSkillByRule_(battleState, skill, rule, efficiency, isCorrect) {
     }
   });
 
+  applySkillRuleDamageHeal_(battleState, skill, rule, context, totalDamageDealt);
   applySkillRuleEffects_(battleState, skill, rule, targets, context);
   if (rule.efficiencyBonus && Number(efficiency || 0) >= Number(rule.efficiencyBonus.threshold || 0) && Array.isArray(rule.efficiencyBonus.applyEffects)) {
     applySkillRuleEffects_(battleState, skill, { applyEffects: rule.efficiencyBonus.applyEffects }, targets, context);
@@ -725,7 +728,7 @@ function executeSkillByRule_(battleState, skill, rule, efficiency, isCorrect) {
   }
   syncPrimaryMonster_(battleState);
   battleState.lastMessage = skill.name + '을 사용했습니다.';
-  if (!damageEvents && !collectSkillRuleShieldFormulas_(rule).length && !rule.healFormula && !(rule.applyEffects || []).length) {
+  if (!damageEvents && !collectSkillRuleShieldFormulas_(rule).length && !rule.healFormula && !rule.healFromDamageFormula && !rule.healFromDamagePercentFormula && !(rule.applyEffects || []).length) {
     battleState.lastTurnEvents.push({ actor: 'player', type: skill.type || ACTION_TYPES.SKILL, skillId: skill.skillId, message: skill.name + ' 효과가 발동했습니다.' });
   }
   return battleState;
@@ -734,8 +737,17 @@ function executeSkillByRule_(battleState, skill, rule, efficiency, isCorrect) {
 function buildSkillRulePreviewText_(skill, battleState, rule) {
   var context = buildSkillFormulaContext_(battleState, skill, getFirstAliveMonster_(battleState), 1);
   var parts = [];
+  var previewDamage = 0;
   if (rule.damageFormula) {
-    parts.push('Damage ' + Math.max(0, Math.round(evaluateSkillFormula_(rule.damageFormula, context, battleState, skill))));
+    previewDamage = evaluateSkillFormula_(rule.damageFormula, context, battleState, skill);
+    if (rule.randomMin !== undefined || rule.randomMax !== undefined) {
+      previewDamage += Number(rule.randomMax !== undefined ? rule.randomMax : rule.randomMin || 0);
+    }
+    if (rule.extraDamageFormula) {
+      previewDamage += evaluateSkillFormula_(rule.extraDamageFormula, context, battleState, skill);
+    }
+    previewDamage = Math.max(0, Math.round(previewDamage));
+    parts.push('Damage ' + previewDamage);
   }
   var shield = getSkillRuleDisplayShield_(battleState, skill, rule, context);
   if (shield > 0) {
@@ -743,6 +755,18 @@ function buildSkillRulePreviewText_(skill, battleState, rule) {
   }
   if (rule.healFormula) {
     parts.push('Heal ' + Math.max(0, Math.round(evaluateSkillFormula_(rule.healFormula, context, battleState, skill))));
+  }
+  if (rule.healFromDamageFormula || rule.healFromDamagePercentFormula) {
+    var previewHitCount = Math.max(1, Math.round(evaluateSkillFormulaValue_(rule.hitCount, context, Math.max(1, Number(skill.hitCount || 1)), battleState, skill)));
+    var previewDamageDealt = previewDamage * previewHitCount;
+    var damageHealContext = Object.assign({}, context, {
+      damageDealt: previewDamageDealt,
+      totalDamageDealt: previewDamageDealt,
+    });
+    var previewDamageHeal = rule.healFromDamagePercentFormula
+      ? previewDamageDealt * evaluateSkillFormula_(rule.healFromDamagePercentFormula, damageHealContext, battleState, skill) / 100
+      : evaluateSkillFormula_(rule.healFromDamageFormula, damageHealContext, battleState, skill);
+    parts.push('Heal ' + Math.max(0, Math.round(previewDamageHeal)));
   }
   if (Array.isArray(rule.applyEffects) && rule.applyEffects.length) {
     parts.push('Effects ' + rule.applyEffects.length);
@@ -836,6 +860,29 @@ function applySkillRuleHeal_(battleState, skill, rule, context) {
   heal = Math.max(0, Math.round(heal));
   battleState.player.hp = Math.min(Number(battleState.player.maxHp || battleState.player.stats.hp || 1), Number(battleState.player.hp || 0) + heal);
   battleState.lastTurnEvents.push({ actor: 'player', type: 'heal', skillId: skill.skillId, heal: heal, message: skill.name + '으로 체력을 ' + heal + ' 회복했습니다.' });
+}
+
+function applySkillRuleDamageHeal_(battleState, skill, rule, context, totalDamageDealt) {
+  var hasDamageHealFormula = rule.healFromDamageFormula !== undefined && rule.healFromDamageFormula !== null && rule.healFromDamageFormula !== '';
+  var hasDamageHealPercentFormula = rule.healFromDamagePercentFormula !== undefined && rule.healFromDamagePercentFormula !== null && rule.healFromDamagePercentFormula !== '';
+  if (!hasDamageHealFormula && !hasDamageHealPercentFormula) {
+    return;
+  }
+  var damageHealContext = Object.assign({}, context, {
+    damageDealt: Number(totalDamageDealt || 0),
+    totalDamageDealt: Number(totalDamageDealt || 0),
+  });
+  // damageDealt already includes efficiency, critical hits, defense, and item modifiers.
+  var heal = hasDamageHealPercentFormula
+    ? Number(totalDamageDealt || 0) * evaluateSkillFormula_(rule.healFromDamagePercentFormula, damageHealContext, battleState, skill) / 100
+    : evaluateSkillFormula_(rule.healFromDamageFormula, damageHealContext, battleState, skill);
+  if (rule.efficiencyBonus && Number(context.efficiency || 0) >= Number(rule.efficiencyBonus.threshold || 0)) {
+    heal *= Number(rule.efficiencyBonus.healMultiplier || 1);
+    heal += Number(rule.efficiencyBonus.healAdd || 0);
+  }
+  heal = Math.max(0, Math.round(heal));
+  battleState.player.hp = Math.min(Number(battleState.player.maxHp || battleState.player.stats && battleState.player.stats.hp || 1), Number(battleState.player.hp || 0) + heal);
+  battleState.lastTurnEvents.push({ actor: 'player', type: 'heal', skillId: skill.skillId, heal: heal, damageDealt: Number(totalDamageDealt || 0), message: skill.name + '으로 체력을 ' + heal + ' 회복했습니다.' });
 }
 
 function applySkillRuleSelfDamage_(battleState, skill, rule, context) {

@@ -82,7 +82,8 @@
     background: #a52a2a;
   }
 
-  .sound-toggle-button {
+  .sound-toggle-button,
+  .menu-logout-button {
     width: 40px;
     height: 40px;
     min-height: 40px;
@@ -95,7 +96,8 @@
     box-shadow: inset -2px -2px 0 rgba(0, 0, 0, 0.62), 0 10px 28px rgba(0, 0, 0, 0.42);
   }
 
-  .sound-toggle-button svg {
+  .sound-toggle-button svg,
+  .menu-logout-button svg {
     width: 22px;
     height: 22px;
     display: block;
@@ -119,6 +121,13 @@
     position: fixed;
     top: 14px;
     left: 14px;
+    z-index: 20;
+  }
+
+  .menu-logout-button {
+    position: fixed;
+    top: 14px;
+    right: 14px;
     z-index: 20;
   }
 
@@ -1444,6 +1453,7 @@
     font-size: 12px;
     font-weight: 900;
     line-height: 1;
+    white-space: nowrap;
     text-shadow: -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000, 0 0 6px rgba(0, 0, 0, 0.95);
     box-shadow: none;
   }
@@ -1826,8 +1836,42 @@
   }
 
   .skill-button:hover,
-  .skill-button:focus-visible {
+  .skill-button:focus-visible,
+  .action-detail-button:hover,
+  .action-detail-button:focus-visible {
     z-index: 24;
+  }
+
+  .action-detail-button {
+    position: relative;
+    overflow: visible;
+    z-index: 1;
+  }
+
+  .action-detail-card {
+    text-align: left;
+    white-space: normal;
+  }
+
+  .action-detail-attack .action-detail-card,
+  .action-detail-guard .action-detail-card {
+    border-color: rgba(255, 255, 255, 0.78);
+    box-shadow: 0 16px 38px rgba(0, 0, 0, 0.52);
+  }
+
+  .action-detail-attack .skill-detail-name,
+  .action-detail-guard .skill-detail-name {
+    color: #ffffff;
+  }
+
+  .action-detail-card .skill-damage-number {
+    color: #ffffff;
+    text-shadow: 0 2px 0 #000, 0 0 10px rgba(255, 255, 255, 0.28);
+  }
+
+  .action-detail-guard .action-detail-card {
+    right: 0;
+    left: auto;
   }
 
   .skill-button-name {
@@ -1949,6 +1993,8 @@
 
   .skill-button:hover .skill-detail-card,
   .skill-button:focus-visible .skill-detail-card,
+  .action-detail-button:hover .action-detail-card,
+  .action-detail-button:focus-visible .action-detail-card,
   .reward-choice-card:hover .reward-detail-card,
   .reward-choice-card:focus-visible .reward-detail-card,
   .item-card:hover .reward-detail-card,
@@ -3535,7 +3581,7 @@
     background: #000;
     opacity: 0;
     pointer-events: none;
-    transition: opacity 260ms ease-out;
+    transition: opacity 1200ms ease-out;
   }
 
   .battle-start-fade.active {

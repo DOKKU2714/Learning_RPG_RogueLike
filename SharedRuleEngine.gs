@@ -366,7 +366,8 @@ var RULE_ENGINE_SHARED = (function() {
       'applyEffects', 'efficiencyBonus', 'requireCondition', 'onUse', 'onDamaged',
       'onBlock', 'onCorrect', 'onWrong', 'onTurnStart', 'onTurnEnd', 'cooldownModify',
       'actionPointModify', 'failPenalty', 'tagBonus', 'scaleByEfficiency', 'randomMin',
-      'randomMax', 'extraDamageFormula', 'healFormula'
+      'randomMax', 'extraDamageFormula', 'healFormula', 'healFromDamageFormula',
+      'healFromDamagePercentFormula'
     ];
   }
 
@@ -628,6 +629,7 @@ var RULE_ENGINE_SHARED = (function() {
       battle.player.hp = Math.min(Number(battle.player.maxHp || battle.player.stats && battle.player.stats.hp || 1), Number(battle.player.hp || 0) + heal);
       battle.lastTurnEvents.push({ actor: 'player', type: 'heal', skillId: skill.skillId || '', heal: heal, message: (skill.name || '스킬') + '으로 체력을 ' + heal + ' 회복했습니다.' });
     }
+    var totalDamageDealt = 0;
     targets.forEach(function(target) {
       var perTargetHits = normalizedTargetMode === 'randomEnemies' ? 1 : hitCount;
       for (var i = 0; i < perTargetHits; i += 1) {
@@ -638,6 +640,7 @@ var RULE_ENGINE_SHARED = (function() {
         }
         if (damage <= 0 || !target) continue;
         var result = dealDamageToMonster(target, damage);
+        totalDamageDealt += Number(result.damage || 0);
         battle.lastTurnEvents.push({
           actor: 'player',
           type: 'skill',
@@ -651,6 +654,25 @@ var RULE_ENGINE_SHARED = (function() {
         });
       }
     });
+    var hasDamageHealFormula = rule.healFromDamageFormula !== undefined && rule.healFromDamageFormula !== null && rule.healFromDamageFormula !== '';
+    var hasDamageHealPercentFormula = rule.healFromDamagePercentFormula !== undefined && rule.healFromDamagePercentFormula !== null && rule.healFromDamagePercentFormula !== '';
+    if (hasDamageHealFormula || hasDamageHealPercentFormula) {
+      var damageHealContext = Object.assign({}, context, {
+        damageDealt: totalDamageDealt,
+        totalDamageDealt: totalDamageDealt
+      });
+      // damageDealt already includes efficiency and outgoing damage modifiers.
+      var damageHeal = hasDamageHealPercentFormula
+        ? totalDamageDealt * evaluateFormula(rule.healFromDamagePercentFormula, damageHealContext, options) / 100
+        : evaluateFormula(rule.healFromDamageFormula, damageHealContext, options);
+      if (rule.efficiencyBonus && efficiency >= Number(rule.efficiencyBonus.threshold || 0)) {
+        damageHeal *= Number(rule.efficiencyBonus.healMultiplier || 1);
+        damageHeal += Number(rule.efficiencyBonus.healAdd || 0);
+      }
+      damageHeal = Math.max(0, Math.round(damageHeal));
+      battle.player.hp = Math.min(Number(battle.player.maxHp || battle.player.stats && battle.player.stats.hp || 1), Number(battle.player.hp || 0) + damageHeal);
+      battle.lastTurnEvents.push({ actor: 'player', type: 'heal', skillId: skill.skillId || '', heal: damageHeal, damageDealt: totalDamageDealt, message: (skill.name || '스킬') + '으로 체력을 ' + damageHeal + ' 회복했습니다.' });
+    }
     applyRuleEffects(battle, skill, rule, targets, context, options);
     if (rule.efficiencyBonus && efficiency >= Number(rule.efficiencyBonus.threshold || 0) && Array.isArray(rule.efficiencyBonus.applyEffects)) {
       applyRuleEffects(battle, skill, { applyEffects: rule.efficiencyBonus.applyEffects }, targets, context, options);

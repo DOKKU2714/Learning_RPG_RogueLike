@@ -262,6 +262,13 @@
     </section>
 
     <section id="mainPanel" class="rpg-panel screen">
+      <button class="menu-logout-button" type="button" onclick="logout()" aria-label="로그아웃" title="로그아웃">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M10 4H5v16h5"></path>
+          <path d="M14 8l4 4-4 4"></path>
+          <path d="M18 12H9"></path>
+        </svg>
+      </button>
       <div class="main-menu-logo" aria-hidden="true">
         <img src="<?= getAssetUrl_('Resources/Intro_logo.png') ?>" alt="" onerror="this.style.display='none'">
       </div>
@@ -273,10 +280,7 @@
         <button class="secondary" onclick="showWorkbookSelectModal({ force: true })">문제집 변경</button>
         <button class="secondary" onclick="showMyInfo()">내 정보</button>
         <button class="secondary" onclick="goToPage('leaderboard')">리더보드</button>
-        <button class="secondary" onclick="refreshCurrentUser(true)">새로고침</button>
-        <button class="secondary" onclick="reloadGameData()">데이터 다시 불러오기</button>
         <button id="adminButton" class="secondary" onclick="goToPage('admin')" style="display:none;">관리자</button>
-        <button class="secondary" onclick="logout()">로그아웃</button>
       </div>
       <div id="mainMessage" class="message"></div>
     </section>
@@ -307,11 +311,12 @@
       <div class="workbook-form">
         <div>
           <label for="workbookSelect">문제집</label>
-          <select id="workbookSelect"></select>
+          <select id="workbookSelect" onchange="renderWorkbookArchiveButton()"></select>
         </div>
       </div>
       <div id="workbookSelectMessage" class="message"></div>
       <div class="workbook-actions">
+        <button id="archiveWorkbookButton" class="danger hidden" type="button" onclick="archiveSelectedWorkbook()">내 문제집 삭제</button>
         <button id="addWorkbookButton" class="secondary hidden" type="button" onclick="showCreateWorkbookModal()">문제집 추가</button>
         <button id="confirmWorkbookButton" type="button" onclick="confirmWorkbookSelection()">확인</button>
       </div>
@@ -375,7 +380,6 @@
     var currentUserRequestTimer = null;
     var pendingResumeRun = null;
     var pendingGameStartAt = 0;
-    var noticeModalTimer = null;
     var noticeRequestToken = '';
     var currentNoticeItems = [];
     var NOTICE_HIDE_PREFIX = 'learningRpgNoticeHiddenDate:';
@@ -671,12 +675,12 @@
       renderRoleButtons();
       document.getElementById('adminButton').style.display = state.isAdmin ? 'block' : 'none';
       renderWorkbookSelectOptions();
+      scheduleNoticeModal();
       if (!hasWorkbookSelection) {
         showWorkbookSelectModal();
         return;
       }
       hideWorkbookSelectModal();
-      scheduleNoticeModal();
     }
 
     function renderPlayerBadge(state) {
@@ -690,7 +694,7 @@
         '<strong class="player-name-line">' + escapeHtml(displayName) + '</strong>' +
         '<div class="starting-score-bonus">' +
           '<span class="score-bonus-title">문제 기여 시작 점수</span>' +
-          '<span class="score-bonus-value">+' + escapeHtml(formatScore(startingScore)) + '점</span>' +
+          '<span class="score-bonus-value">+' + escapeHtml(formatScore(startingScore)) + '</span>' +
           '<span class="score-bonus-detail">문제 ' + escapeHtml(questionCount) + '개 · 좋아요 ' + escapeHtml(likeCount) + '개</span>' +
         '</div>';
       return;
@@ -829,7 +833,21 @@
       if (selectedWorkbookId && findActiveWorkbookById(selectedWorkbookId)) {
         select.value = selectedWorkbookId;
       }
+      renderWorkbookArchiveButton();
       setWorkbookSelectMessage(activeWorkbooks.length ? '' : '활성 상태인 문제집이 없습니다.', activeWorkbooks.length ? '' : 'error');
+    }
+
+    function renderWorkbookArchiveButton() {
+      var select = document.getElementById('workbookSelect');
+      var archiveButton = document.getElementById('archiveWorkbookButton');
+      if (!select || !archiveButton) return;
+
+      var workbook = findActiveWorkbookById(select.value);
+      var playerId = String(currentState && currentState.player && currentState.player.playerId || '').trim();
+      var isOwner = !!workbook && !!playerId && String(workbook.createdBy || '').trim() === playerId;
+      archiveButton.classList.toggle('hidden', !isOwner);
+      archiveButton.disabled = !isOwner;
+      archiveButton.setAttribute('aria-hidden', isOwner ? 'false' : 'true');
     }
 
     function showWorkbookSelectModal(options) {
@@ -860,6 +878,58 @@
       }
       applySelectedWorkbook(workbook);
       setMainMessage('');
+    }
+
+    function archiveSelectedWorkbook() {
+      var select = document.getElementById('workbookSelect');
+      var workbook = select ? findActiveWorkbookById(select.value) : null;
+      var playerId = String(currentState && currentState.player && currentState.player.playerId || '').trim();
+      if (!workbook) {
+        setWorkbookSelectMessage('삭제할 문제집을 선택해 주세요.', 'error');
+        return;
+      }
+      if (!playerId || String(workbook.createdBy || '').trim() !== playerId) {
+        setWorkbookSelectMessage('자신이 만든 문제집만 삭제할 수 있습니다.', 'error');
+        renderWorkbookArchiveButton();
+        return;
+      }
+      if (!window.confirm('"' + workbook.workbookName + '" 문제집을 목록에서 삭제할까요?\n문제와 기존 진행 기록은 보존됩니다.')) {
+        return;
+      }
+
+      var archivedWorkbookId = workbook.workbookId;
+      var archiveButton = document.getElementById('archiveWorkbookButton');
+      archiveButton.disabled = true;
+      setWorkbookSelectMessage('문제집을 삭제하는 중입니다.', 'ok');
+      showLoadingModal('삭제 중...', '문제집을 목록에서 삭제하는 중...');
+      google.script.run
+        .withSuccessHandler(function(response) {
+          hideLoadingModal();
+          activeWorkbooks = normalizeWorkbookList(response && response.activeWorkbooks);
+          if (selectedWorkbookId === archivedWorkbookId) {
+            selectedWorkbookId = '';
+            selectedWorkbookName = '';
+            clearSelectedWorkbookStorage();
+          }
+          if (currentState) {
+            currentState.activeWorkbooks = activeWorkbooks;
+            if (currentState.selectedWorkbookId === archivedWorkbookId) {
+              currentState.selectedWorkbookId = '';
+              currentState.selectedWorkbookName = '';
+              currentState.selectedWorkbook = null;
+            }
+            saveCurrentState(currentState);
+          }
+          renderCurrentWorkbookBadge();
+          renderWorkbookSelectOptions();
+          setWorkbookSelectMessage('문제집을 삭제했습니다. 문제와 기존 진행 기록은 보존됩니다.', 'ok');
+        })
+        .withFailureHandler(function(error) {
+          hideLoadingModal();
+          renderWorkbookArchiveButton();
+          setWorkbookSelectMessage(error && error.message ? error.message : '문제집 삭제에 실패했습니다.', 'error');
+        })
+        .archiveWorkbook(getAuthToken(), archivedWorkbookId);
     }
 
     function refreshActiveWorkbooksForModal() {
@@ -930,6 +1000,7 @@
           if (response && response.workbook && response.workbook.workbookId) {
             document.getElementById('workbookSelect').value = response.workbook.workbookId;
           }
+          renderWorkbookArchiveButton();
           setWorkbookSelectMessage('문제집이 생성되었습니다. 확인을 누르면 이 문제집으로 입장합니다.', 'ok');
         })
         .withFailureHandler(function(error) {
@@ -959,12 +1030,7 @@
         return;
       }
       noticeRequestToken = authToken;
-      if (noticeModalTimer) {
-        window.clearTimeout(noticeModalTimer);
-      }
-      noticeModalTimer = window.setTimeout(function() {
-        loadActiveNotices(authToken);
-      }, 650);
+      loadActiveNotices(authToken);
     }
 
     function loadActiveNotices(authToken) {
@@ -1245,10 +1311,12 @@
       var stageName = getStageDisplayName(run && run.stageName);
       var hp = Number(run && run.currentHp || 0);
       var shield = Number(run && run.currentShield || 0);
+      var workbookName = String(run && run.workbookName || selectedWorkbookName || '').trim();
       summary.innerHTML = [
         '<strong>' + escapeHtml(displayFloor + ' ' + (stageName || displayParts.areaLabel) + ' ' + stage + '스테이지') + '</strong>',
+        (workbookName ? '<span>문제집: ' + escapeHtml(workbookName) + '</span>' : ''),
         '<span>HP ' + escapeHtml(hp) + (shield > 0 ? ' / 보호막 ' + escapeHtml(shield) : '') + '</span>'
-      ].join('<br>');
+      ].filter(Boolean).join('<br>');
       modal.classList.add('active');
       modal.setAttribute('aria-hidden', 'false');
     }
@@ -1292,7 +1360,7 @@
 
     function transitionToBattlePage(startedAt) {
       var elapsed = Date.now() - Number(startedAt || Date.now());
-      var waitMs = Math.max(0, 160 - elapsed);
+      var waitMs = Math.max(0, 650 - elapsed);
       window.setTimeout(function() {
         var modal = document.getElementById('loadingModal');
         document.getElementById('loadingTitle').textContent = '로딩 중...';
@@ -1300,7 +1368,7 @@
         modal.classList.add('page-transition');
         window.setTimeout(function() {
           goToPage('battle', { loading: false });
-        }, 180);
+        }, 720);
         window.setTimeout(function() {
           if (document.visibilityState !== 'hidden') {
             modal.classList.remove('page-transition');

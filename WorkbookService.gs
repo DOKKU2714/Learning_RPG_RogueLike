@@ -90,6 +90,43 @@ function createWorkbook(authToken, workbookPayload) {
   }
 }
 
+function archiveWorkbook(authToken, workbookId) {
+  var player = getCurrentPlayer_(authToken);
+  var targetWorkbookId = String(workbookId || '').trim();
+  if (!targetWorkbookId) {
+    throw new Error('삭제할 문제집을 선택해 주세요.');
+  }
+
+  var lock = LockService.getScriptLock();
+  lock.waitLock(5000);
+  try {
+    var workbook = requireWorkbook_(targetWorkbookId);
+    if (String(workbook.createdBy || '').trim() !== String(player.playerId || '').trim()) {
+      throw new Error('자신이 만든 문제집만 삭제할 수 있습니다.');
+    }
+    if (String(workbook.status || STATUS.WORKBOOK_ACTIVE) !== STATUS.WORKBOOK_ACTIVE) {
+      throw new Error('이미 삭제되었거나 비활성화된 문제집입니다.');
+    }
+
+    var archivedWorkbook = updateRowByKey_(DB_SHEETS.WORKBOOKS, 'workbookId', targetWorkbookId, {
+      status: STATUS.WORKBOOK_ARCHIVED,
+      updatedAt: new Date(),
+    });
+    if (!archivedWorkbook) {
+      throw new Error('삭제할 문제집을 찾을 수 없습니다.');
+    }
+    clearTableCache_(DB_SHEETS.WORKBOOKS);
+
+    return {
+      ok: true,
+      workbookId: targetWorkbookId,
+      activeWorkbooks: getActiveWorkbooksForClient_(),
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
 function getActiveWorkbooksForClient_() {
   return getActiveWorkbooks_().map(function(workbook) {
     return toClientObject_({

@@ -122,6 +122,52 @@
       padding: 8px;
     }
 
+    .registration-option {
+      position: relative;
+      border-color: rgba(217, 166, 66, 0.5);
+    }
+
+    .registration-option-header {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: flex-start;
+      flex-wrap: wrap;
+    }
+
+    .registration-option-label {
+      display: inline-block;
+      margin-bottom: 7px;
+      color: var(--accent);
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+    }
+
+    .registration-option-description {
+      margin: 6px 0 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .registration-option-divider {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin: 14px 0;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .registration-option-divider::before,
+    .registration-option-divider::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: var(--line);
+    }
+
     .import-preview {
       margin-top: 10px;
       color: var(--muted);
@@ -154,21 +200,14 @@
       </div>
     </section>
 
-    <section id="formPanel" class="rpg-panel hidden" style="margin-top:14px;">
-      <div class="inline-actions" style="justify-content:space-between;">
-        <h2 id="formTitle" style="margin:0;">문제 입력</h2>
-        <button id="addQuestionButton" class="secondary" onclick="addQuestionForm()">+ 문제 추가</button>
+    <section id="importPanel" class="rpg-panel registration-option hidden" style="margin-top:14px;">
+      <div class="registration-option-header">
+        <div>
+          <span class="registration-option-label">파일로 등록</span>
+          <h2 style="margin:0;">문제 일괄 등록</h2>
+          <p class="registration-option-description">Excel·CSV 파일로 여러 문제를 한 번에 등록합니다.</p>
+        </div>
       </div>
-      <div id="questionForms" class="question-batch"></div>
-      <div class="inline-actions" style="justify-content:flex-end; margin-top:16px;">
-        <button id="resetQuestionButton" class="secondary" onclick="resetQuestionForms()">전체 초기화</button>
-        <button id="submitQuestionButton" onclick="submitQuestions()">저장</button>
-      </div>
-      <div id="formMessage" class="message"></div>
-    </section>
-
-    <section id="importPanel" class="rpg-panel hidden" style="margin-top:14px;">
-      <h2 style="margin:0;">엑셀 일괄 등록</h2>
       <div class="question-import-row">
         <div>
           <label for="questionImportFile">문제 파일</label>
@@ -179,6 +218,25 @@
       </div>
       <div id="importPreview" class="import-preview"></div>
       <div id="importMessage" class="message"></div>
+    </section>
+
+    <div id="manualEntryDivider" class="registration-option-divider hidden"><span>또는</span></div>
+
+    <section id="formPanel" class="rpg-panel registration-option hidden">
+      <div class="registration-option-header">
+        <div>
+          <span class="registration-option-label">직접 등록</span>
+          <h2 id="formTitle" style="margin:0;">문제 입력</h2>
+          <p class="registration-option-description">문제를 하나씩 입력하거나 추가해 등록합니다.</p>
+        </div>
+        <button id="addQuestionButton" class="secondary" onclick="addQuestionForm()">+ 문제 추가</button>
+      </div>
+      <div id="questionForms" class="question-batch"></div>
+      <div class="inline-actions" style="justify-content:flex-end; margin-top:16px;">
+        <button id="resetQuestionButton" class="secondary" onclick="resetQuestionForms()">전체 초기화</button>
+        <button id="submitQuestionButton" onclick="submitQuestions()">저장</button>
+      </div>
+      <div id="formMessage" class="message"></div>
     </section>
 
     <section id="lockedPanel" class="rpg-panel hidden" style="margin-top:14px;">
@@ -259,6 +317,7 @@
       renderCurrentWorkbookBadge();
       document.getElementById('formPanel').classList.toggle('hidden', !unlocked);
       document.getElementById('importPanel').classList.toggle('hidden', !unlocked);
+      document.getElementById('manualEntryDivider').classList.toggle('hidden', !unlocked);
       document.getElementById('lockedPanel').classList.toggle('hidden', unlocked);
       if (state.isRegistered && !hasSelectedWorkbook()) {
         var lockedMessage = document.getElementById('lockedMessage');

@@ -158,6 +158,7 @@ function clearMasterTableCaches_() {
     DB_SHEETS.STAGES,
     DB_SHEETS.MONSTER_GROUPS,
     DB_SHEETS.MONSTERS,
+    DB_SHEETS.MONSTER_AI,
     DB_SHEETS.SKILLS,
     DB_SHEETS.EFFECTS,
     DB_SHEETS.ITEMS,
@@ -169,6 +170,22 @@ function clearMasterTableCaches_() {
 function clearRuntimeCaches() {
   clearMasterTableCaches_();
   return { ok: true, clearedAt: new Date() };
+}
+
+function refreshBattleDefinitionCaches_() {
+  var battleSheets = [
+    DB_SHEETS.STAGES,
+    DB_SHEETS.MONSTER_GROUPS,
+    DB_SHEETS.MONSTERS,
+    DB_SHEETS.MONSTER_AI,
+    DB_SHEETS.SKILLS,
+    DB_SHEETS.EFFECTS,
+    DB_SHEETS.ITEMS,
+  ];
+  battleSheets.forEach(clearTableCache_);
+  battleSheets.forEach(function(sheetName) {
+    readTableCached_(sheetName, 1800);
+  });
 }
 
 function warmupGameData(authToken) {

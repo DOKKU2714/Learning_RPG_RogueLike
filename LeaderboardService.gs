@@ -50,6 +50,54 @@ function getLeaderboard(workbookId) {
   return rows;
 }
 
+function resetLeaderboard(workbookId, authToken) {
+  requireLeaderboardManager_(authToken);
+  var workbook = requireActiveLeaderboardWorkbook_(workbookId);
+
+  var lock = LockService.getScriptLock();
+  lock.waitLock(5000);
+  try {
+    ensureTableColumns_(DB_SHEETS.WORKBOOK_PLAYER_DATA, DB_COLUMNS.WORKBOOK_PLAYER_DATA);
+    var sheet = getSheet_(DB_SHEETS.WORKBOOK_PLAYER_DATA);
+    var headers = getHeaderRow_(sheet);
+    var workbookIdIndex = headers.indexOf('workbookId');
+    if (workbookIdIndex === -1) {
+      throw new Error('\uB9AC\uB354\uBCF4\uB4DC \uB370\uC774\uD130\uC5D0 workbookId \uC5F4\uC774 \uC5C6\uC2B5\uB2C8\uB2E4.');
+    }
+
+    var lastRow = sheet.getLastRow();
+    var deletedCount = 0;
+    if (lastRow >= 2) {
+      var workbookIds = sheet.getRange(2, workbookIdIndex + 1, lastRow - 1, 1).getValues();
+      for (var i = workbookIds.length - 1; i >= 0; i -= 1) {
+        if (String(workbookIds[i][0] || '').trim() !== workbook.workbookId) {
+          continue;
+        }
+        sheet.deleteRow(i + 2);
+        deletedCount += 1;
+      }
+    }
+
+    clearTableCache_(DB_SHEETS.WORKBOOK_PLAYER_DATA);
+    return {
+      ok: true,
+      workbookId: workbook.workbookId,
+      workbookName: workbook.workbookName || workbook.workbookId,
+      deletedCount: deletedCount,
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function requireLeaderboardManager_(authToken) {
+  var player = getCurrentPlayer_(authToken);
+  if (String(player.role || '').trim() !== 'teacher') {
+    throw new Error('\uC120\uC0DD\uB2D8 \uACC4\uC815\uB9CC \uB9AC\uB354\uBCF4\uB4DC\uB97C \uCD08\uAE30\uD654\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4.');
+  }
+  return player;
+}
+
 function requireActiveLeaderboardWorkbook_(workbookId) {
   var targetWorkbookId = String(workbookId || '').trim();
   if (!targetWorkbookId) {
