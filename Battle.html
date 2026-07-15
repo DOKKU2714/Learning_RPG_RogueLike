@@ -148,8 +148,11 @@
 
       <div class="question-efficiency-panel">
         <span id="questionMaxTime" class="question-max-time">10.0s</span>
-        <div class="efficiency-meter">
-          <span id="questionEfficiencyText" class="question-efficiency-text">125%</span>
+        <div id="questionEfficiencyMeter" class="efficiency-meter">
+          <span id="questionEfficiencyText" class="question-efficiency-text" aria-live="polite">
+            <strong id="questionEfficiencyPercent">125%</strong>
+            <span id="questionEfficiencyActionValue" class="question-efficiency-action-value">(0)</span>
+          </span>
           <span id="questionEfficiencyFill" class="meter-fill" style="width:100%;"></span>
         </div>
         <div id="questionRemainingTime" class="question-time-left">10.0s</div>
@@ -1199,13 +1202,18 @@
       var panel = document.getElementById('skillPanel');
       if (!skills.length) {
         panel.innerHTML = '<div class="skill-empty">보유 스킬 없음</div><button class="secondary skill-cancel-button" type="button" onclick="closeSkillPanel()">취소</button>';
+        updateZeroCostSkillAttention(false);
         return;
       }
+      var currentActionPoint = getCurrentActionPoint();
+      var hasUsableZeroCostSkill = false;
       panel.innerHTML = skills.map(function(skill) {
         var apCost = getSkillActionPointCost(skill);
         var hasAp = hasClientActionPoint(apCost);
         var canUseNow = isClientSkillAvailableNow(skill, hasAp);
         var isDisabled = !canUseNow || !hasAp;
+        var shouldHighlightZeroCostSkill = currentActionPoint <= 0 && apCost === 0 && !isDisabled;
+        hasUsableZeroCostSkill = hasUsableZeroCostSkill || shouldHighlightZeroCostSkill;
         var disabled = isDisabled ? ' disabled' : '';
         var reason = !hasAp ? '행동력이 부족합니다.' : (!canUseNow ? skill.unavailableReason : (skill.description || ''));
         var cooldown = getSkillCooldownDisplayText(skill);
@@ -1216,7 +1224,7 @@
         var rarityClass = normalizeRewardRarity(skill.rarity);
         var reasonText = reason || description || '';
         var detailDescription = buildSkillDetailDescription(skill, description || reasonText || '-');
-        return '<button class="skill-button rarity-' + escapeHtml(rarityClass) + '" data-skill-id="' + escapeHtml(skill.skillId) + '" data-skill-disabled="' + escapeHtml(isDisabled ? 'true' : 'false') + '" data-unavailable-reason="' + escapeHtml(reason || '') + '"' + disabled + '>' +
+        return '<button class="skill-button rarity-' + escapeHtml(rarityClass) + (shouldHighlightZeroCostSkill ? ' zero-cost-skill-attention' : '') + '" data-skill-id="' + escapeHtml(skill.skillId) + '" data-skill-disabled="' + escapeHtml(isDisabled ? 'true' : 'false') + '" data-unavailable-reason="' + escapeHtml(reason || '') + '"' + disabled + '>' +
           '<span class="skill-button-name">' + escapeHtml(skill.name) + '</span>' +
           '<span class="skill-ap-badge">' + escapeHtml(apCost) + '</span>' +
           '<span class="skill-detail-card rarity-' + escapeHtml(rarityClass) + '" aria-hidden="true">' +
@@ -1233,11 +1241,20 @@
         '</button>';
       }).join('') + '<button class="secondary skill-cancel-button" type="button" onclick="closeSkillPanel()">취소</button>';
 
+      updateZeroCostSkillAttention(hasUsableZeroCostSkill);
+
       Array.prototype.forEach.call(panel.querySelectorAll('.skill-button'), function(button) {
         button.addEventListener('click', function() {
           chooseSkill(button.getAttribute('data-skill-id'));
         });
       });
+    }
+
+    function updateZeroCostSkillAttention(shouldHighlight) {
+      var skillToggleButton = document.getElementById('skillToggleButton');
+      if (!skillToggleButton) return;
+      skillToggleButton.classList.toggle('zero-cost-skill-attention', !!shouldHighlight);
+      skillToggleButton.setAttribute('aria-label', shouldHighlight ? '스킬, 행동력 0으로 사용 가능한 스킬 있음' : '스킬');
     }
 
     function normalizeSkillTags(tags) {
@@ -1926,6 +1943,12 @@
         var element = document.getElementById(id);
         if (element) element.innerHTML = html;
       });
+      var passTurnButton = document.getElementById('passTurnButton');
+      if (passTurnButton) {
+        var shouldHighlightPassTurn = current <= 0;
+        passTurnButton.classList.toggle('pass-turn-attention', shouldHighlightPassTurn);
+        passTurnButton.setAttribute('aria-label', shouldHighlightPassTurn ? '행동력 0, 턴 종료' : '턴 종료');
+      }
     }
 
     function getCurrentActionPoint() {
@@ -2586,6 +2609,7 @@
 
     function openQuestionModal(questionView, dummy) {
       resetQuestionResultHold();
+      resetQuestionEfficiencyFeedback();
       currentQuestionView = questionView;
       currentQuestionView.isDummy = !!dummy;
       shortAnswerEnterSubmitLock = false;
@@ -2608,6 +2632,9 @@
       renderQuestionMetadata(question);
       renderQuestionReactionView(question, !!dummy);
       renderAnswerArea(question);
+      if (question.type === 'shortAnswer') {
+        showQuestionGiveUpButton();
+      }
       document.getElementById('questionModal').classList.add('active');
       document.getElementById('questionModal').setAttribute('aria-hidden', 'false');
       tickQuestionTimer();
@@ -2888,10 +2915,85 @@
       var maxEfficiency = getQuestionMaxAnswerEfficiency();
       var percent = Math.round(normalizedEfficiency * 100);
       var fill = document.getElementById('questionEfficiencyFill');
-      document.getElementById('questionEfficiencyText').textContent = percent + '%';
-      fill.style.width = Math.round(Math.max(0, Math.min(1, (normalizedEfficiency - MIN_ANSWER_EFFICIENCY) / Math.max(0.01, maxEfficiency - MIN_ANSWER_EFFICIENCY))) * 100) + '%';
+      var meter = document.getElementById('questionEfficiencyMeter');
+      var percentText = document.getElementById('questionEfficiencyPercent');
+      var actionValueText = document.getElementById('questionEfficiencyActionValue');
+      var actionValue = calculateQuestionActionActualValue(normalizedEfficiency);
+      percentText.textContent = percent + '%';
+      actionValueText.textContent = '(' + actionValue + ')';
+      meter.dataset.efficiency = String(normalizedEfficiency);
+      meter.setAttribute('aria-label', '효율 ' + percent + '퍼센트, 행동 수치 ' + actionValue);
+      fill.style.width = Math.round(Math.max(0, Math.min(1, normalizedEfficiency / Math.max(0.01, maxEfficiency))) * 100) + '%';
       fill.classList.remove('efficiency-high', 'efficiency-mid', 'efficiency-low');
       fill.classList.add(percent <= 50 ? 'efficiency-low' : (percent <= 100 ? 'efficiency-mid' : 'efficiency-high'));
+    }
+
+    function calculateQuestionActionActualValue(efficiency) {
+      var battle = currentView && currentView.battle || {};
+      var player = battle.player || {};
+      var actionType = String(currentQuestionView && currentQuestionView.actionType || 'attack').toLowerCase();
+      var normalizedEfficiency = Math.max(0, Number(efficiency || 0));
+
+      if (actionType === 'guard') {
+        return Math.max(0, Math.round((CLIENT_BASE_GUARD_SHIELD + getClientEffectiveStat(player, 'defense')) * normalizedEfficiency));
+      }
+
+      if (actionType === 'skill') {
+        var skill = findAvailableSkill(currentQuestionView && currentQuestionView.skillId || '') || {};
+        var skillType = String(skill.type || 'damage').toLowerCase();
+        var metrics = getSkillDisplayMetrics(skill);
+        if (skillType === 'shield') {
+          return Math.max(0, Math.round(Number(metrics.shield || 0) * normalizedEfficiency));
+        }
+        if (skillType === 'heal') {
+          return Math.max(0, Math.round(Number(metrics.heal || 0) * normalizedEfficiency));
+        }
+        if (skillType === 'buff' || skillType === 'debuff') {
+          return parseClientPositiveNumber(metrics.effectValue);
+        }
+        var perHitDamage = Math.max(0, Math.round(Number(metrics.damage || 0) * normalizedEfficiency));
+        perHitDamage = applyClientOutgoingItemDamageModifiers(battle, perHitDamage, { actionType: 'skill', skill: skill });
+        return perHitDamage * Math.max(1, Number(metrics.hitCount || 1));
+      }
+
+      var attack = getClientEffectiveStat(player, 'attack') || 10;
+      var damage = Math.max(0, Math.round(attack * normalizedEfficiency));
+      return applyClientOutgoingItemDamageModifiers(battle, damage, { actionType: 'attack' });
+    }
+
+    function resetQuestionEfficiencyFeedback() {
+      var meter = document.getElementById('questionEfficiencyMeter');
+      if (!meter) return;
+      meter.classList.remove('efficiency-correct', 'efficiency-penalty');
+      meter.removeAttribute('data-efficiency');
+      meter.querySelectorAll('.efficiency-damage-pop').forEach(function(pop) {
+        pop.remove();
+      });
+    }
+
+    function animateQuestionEfficiencyCorrect() {
+      var meter = document.getElementById('questionEfficiencyMeter');
+      if (!meter) return;
+      meter.classList.remove('efficiency-correct', 'efficiency-penalty');
+      void meter.offsetWidth;
+      meter.classList.add('efficiency-correct');
+    }
+
+    function animateQuestionEfficiencyPenalty(previousEfficiency, nextEfficiency) {
+      var meter = document.getElementById('questionEfficiencyMeter');
+      if (!meter) return;
+      var lostPercent = Math.max(0, Math.round((Number(previousEfficiency || 0) - Number(nextEfficiency || 0)) * 100));
+      meter.classList.remove('efficiency-correct', 'efficiency-penalty');
+      void meter.offsetWidth;
+      meter.classList.add('efficiency-penalty');
+      if (lostPercent <= 0) return;
+      var pop = document.createElement('span');
+      pop.className = 'efficiency-damage-pop';
+      pop.textContent = '-' + lostPercent + '%';
+      meter.appendChild(pop);
+      window.setTimeout(function() {
+        if (pop.parentNode) pop.parentNode.removeChild(pop);
+      }, 950);
     }
 
     function calculateWrongEfficiency(wrongCount) {
@@ -2918,10 +3020,13 @@
 
       if (!isCorrect) {
         clearInterval(questionTimerId);
+        var efficiencyMeter = document.getElementById('questionEfficiencyMeter');
+        var previousEfficiency = Number(efficiencyMeter && efficiencyMeter.dataset.efficiency || calculateTimedEfficiency(Math.max(0, Number(currentQuestionView.maxMs || 10000) - elapsedMs), currentQuestionView.maxMs));
         wrongCountAfterTimeout += 1;
         currentQuestionView.efficiencyLocked = true;
         currentQuestionView.lockedEfficiency = calculateWrongEfficiency(wrongCountAfterTimeout);
         updateQuestionEfficiencyMeter(currentQuestionView.lockedEfficiency);
+        animateQuestionEfficiencyPenalty(previousEfficiency, currentQuestionView.lockedEfficiency);
         markSelectedAnswerResult(false);
         showQuestionGiveUpButton();
         document.getElementById('questionMessage').textContent = wrongCountAfterTimeout === 1 ? '오답입니다. 효율이 50%로 고정됩니다.' : '오답입니다. 효율이 10% 감소했습니다.';
@@ -2930,6 +3035,11 @@
       }
 
       clearInterval(questionTimerId);
+      var finalEfficiency = currentQuestionView.efficiencyLocked
+        ? Number(currentQuestionView.lockedEfficiency || 0)
+        : applyClientQuestionCorrectEfficiencyModifiers(calculateTimedEfficiency(Math.max(0, Number(currentQuestionView.maxMs || 10000) - elapsedMs), currentQuestionView.maxMs), currentQuestionView);
+      updateQuestionEfficiencyMeter(finalEfficiency);
+      animateQuestionEfficiencyCorrect();
       document.getElementById('questionSubmitButton').disabled = true;
       hideQuestionGiveUpButton();
       setQuestionInputsDisabled(true);
@@ -2978,10 +3088,13 @@
       if (question.type !== 'shortAnswer') return;
 
       clearInterval(questionTimerId);
+      var efficiencyMeter = document.getElementById('questionEfficiencyMeter');
+      var previousEfficiency = Number(efficiencyMeter && efficiencyMeter.dataset.efficiency || 0);
       currentQuestionView.giveUp = true;
       currentQuestionView.efficiencyLocked = true;
       currentQuestionView.lockedEfficiency = 0;
       updateQuestionEfficiencyMeter(0);
+      animateQuestionEfficiencyPenalty(previousEfficiency, 0);
       document.getElementById('questionSubmitButton').disabled = true;
       var giveUpButton = document.getElementById('questionGiveUpButton');
       if (giveUpButton) {
@@ -2989,7 +3102,8 @@
       }
       setQuestionInputsDisabled(true);
       setBattleInputLocked(true);
-      document.getElementById('questionMessage').textContent = '문제를 포기했습니다. 정답: ' + getQuestionAnswerDisplayText(question);
+      showGivenUpAnswerInInput(question);
+      document.getElementById('questionMessage').textContent = '문제를 포기했습니다.';
       document.getElementById('questionMessage').className = 'message error';
       startQuestionResultHold();
 
@@ -3013,6 +3127,15 @@
       };
 
       submitQuestionAnswerOnServer(answerPayload, currentQuestionView.actionType, currentQuestionView.skillId || '', currentQuestionView.targetId || '');
+    }
+
+    function showGivenUpAnswerInInput(question) {
+      var input = document.getElementById('shortAnswerInput');
+      if (!input) return;
+      var answerText = getQuestionAnswerDisplayText(question);
+      input.value = '정답: ' + answerText;
+      input.classList.add('answer-revealed');
+      input.setAttribute('aria-label', '정답 ' + answerText);
     }
 
     function submitQuestionAnswerOnServer(answerPayload, actionTypeForSubmit, skillIdForSubmit, targetIdForSubmit) {
@@ -5737,6 +5860,12 @@
 
     function finishPreviewScoreModalAfterReward(response) {
       if (response && shouldShowScoreModal(response.scoreSummary)) {
+        var finalSummary = normalizeClientScoreSummary(response.scoreSummary, response);
+        response.scoreSummary = finalSummary;
+        if (getScoreSummaryDisplaySignature(finalSummary) !== getScoreSummaryDisplaySignature(currentScoreModalSummary)) {
+          showScoreModal(finalSummary, response);
+          return;
+        }
         pendingScoreModalResponse = response;
         scoreModalAwaitingFinalResponse = false;
         preloadNextBattleAfterReward(response);
@@ -5785,6 +5914,16 @@
       return SCORE_BREAKDOWN_COMPONENT_KEYS.reduce(function(total, key) {
         return total + positiveScoreNumber(summary && summary[key]);
       }, 0);
+    }
+
+    function getScoreSummaryDisplaySignature(summary) {
+      summary = summary || {};
+      return ['previousScore', 'scoreDelta', 'totalScore']
+        .concat(SCORE_BREAKDOWN_COMPONENT_KEYS)
+        .map(function(key) {
+          return positiveScoreNumber(summary[key]);
+        })
+        .join('|');
     }
 
     function normalizeClientScoreSummary(summary, response) {

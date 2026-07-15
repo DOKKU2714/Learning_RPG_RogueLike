@@ -568,9 +568,14 @@ function calculateStageClearScoreForReward_(run, stageState) {
   var scoreState = stageState.scoreState;
   var isFloorRestReward = !!rewardState.floorRestChoice || isFloorRestStage_(battleState.stage || {});
   var battleId = String(battleState.battleId || '');
-  var monsterScore = battleId && scoreState.monsterScoreBattleId === battleId
+  var storedMonsterScore = battleId && scoreState.monsterScoreBattleId === battleId
     ? Number(scoreState.monsterScore || 0)
-    : Number(battleState.monsterScoreState && battleState.monsterScoreState.monsterScore || 0);
+    : 0;
+  var battleMonsterScoreState = battleState.monsterScoreState || {};
+  var liveMonsterScore = !battleMonsterScoreState.battleId || String(battleMonsterScoreState.battleId) === battleId
+    ? Number(battleMonsterScoreState.monsterScore || 0)
+    : 0;
+  var monsterScore = Math.max(0, storedMonsterScore, liveMonsterScore);
   var questionReactionScore = battleId && scoreState.questionReactionScoreBattleId === battleId
     ? Number(scoreState.questionReactionScore || 0)
     : Number(battleState.questionReactionScoreState && battleState.questionReactionScoreState.score || 0);
