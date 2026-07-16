@@ -222,7 +222,7 @@
       <div class="form-grid" style="margin-top:18px;">
         <div id="studentIdField">
           <label for="studentId">학번</label>
-          <input id="studentId" maxlength="30" autocomplete="username" placeholder="예: 202601">
+          <input id="studentId" maxlength="30" autocomplete="username" placeholder="예: 2026">
         </div>
         <div id="studentNameField">
           <label for="studentName">이름</label>
@@ -238,12 +238,12 @@
         </div>
         <div id="roleField" style="grid-column:1 / -1;">
           <label>역할</label>
-          <div style="display:flex; gap:14px; flex-wrap:wrap; align-items:center;">
-            <label style="display:inline-flex; gap:6px; align-items:center; margin:0;">
+          <div class="account-role-options">
+            <label class="account-role-option">
               <input type="radio" name="accountRole" value="student" checked>
               학생
             </label>
-            <label style="display:inline-flex; gap:6px; align-items:center; margin:0;">
+            <label class="account-role-option">
               <input type="radio" name="accountRole" value="teacher">
               교사
             </label>
