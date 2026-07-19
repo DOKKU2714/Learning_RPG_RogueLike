@@ -20,13 +20,17 @@
   var DEFAULT_FADE_MS = 900;
   var DEFAULT_VOLUME = 0.52;
   var SFX_VOLUME_MULTIPLIER = 0.7;
+  var AUDIO_EXTENSIONS = ['wav', 'mp3', 'ogg'];
   var RAIN_AMBIENCE_VOLUME = 0.3;
   var RAIN_AMBIENCE_MIN_FLOOR = 3;
-  var RAIN_AMBIENCE_PATH = 'Resources/Sounds/Rain.mp3';
+  var RAIN_AMBIENCE_PATH = 'Resources/Sounds/Rain';
+  var WHITE_NOISE_VOLUME = 0.22;
   var REWARD_ONE_SHOT_VOLUME = 0.48;
   var currentTrack = null;
   var rainAmbienceAudio = null;
   var rainAmbiencePending = false;
+  var whiteNoiseAudio = null;
+  var whiteNoisePending = false;
   var pendingIntent = null;
   var rewardOneShotAudio = null;
   var lastRewardOneShotAt = 0;
@@ -43,22 +47,31 @@
 
   function normalizePathList(paths){
     var seen = {};
-    return (paths || []).map(function(path){ return String(path || '').trim(); }).filter(function(path){
-      if (!path || seen[path]) return false;
-      seen[path] = true;
-      return true;
+    var candidates = [];
+    (paths || []).forEach(function(path){
+      path = String(path || '').trim();
+      if (!path) return;
+      var expanded = /\.(?:wav|mp3|ogg)(?:[?#].*)?$/i.test(path)
+        ? [path]
+        : AUDIO_EXTENSIONS.map(function(extension){ return path + '.' + extension; });
+      expanded.forEach(function(candidate){
+        if (seen[candidate]) return;
+        seen[candidate] = true;
+        candidates.push(candidate);
+      });
     });
+    return candidates;
   }
 
   function buildBattleBgmPaths(floor){
     var normalizedFloor = Math.max(1, Math.min(5, Math.round(Number(floor || 1))));
     return normalizePathList([
-      'Resources/Sounds/BGM/Battle/' + normalizedFloor + '.wav',
-      'Resources/Sounds/BGM/Battle/1.wav',
-      'Resources/Sounds/BGM/Battle/2.wav',
-      'Resources/Sounds/BGM/Battle/3.wav',
-      'Resources/Sounds/BGM/Battle/4.wav',
-      'Resources/Sounds/BGM/Battle/5.wav'
+      'Resources/Sounds/BGM/Battle/' + normalizedFloor,
+      'Resources/Sounds/BGM/Battle/1',
+      'Resources/Sounds/BGM/Battle/2',
+      'Resources/Sounds/BGM/Battle/3',
+      'Resources/Sounds/BGM/Battle/4',
+      'Resources/Sounds/BGM/Battle/5'
     ]);
   }
 
@@ -68,7 +81,7 @@
       var floor = Math.max(1, Math.min(5, Math.round(Number(options.floor || 1))));
       return { kind: 'battle', key: 'battle:' + floor, floor: floor, volume: 0.5, paths: buildBattleBgmPaths(floor) };
     }
-    return { kind: 'main', key: 'main', volume: 0.42, paths: ['Resources/Sounds/BGM/Main.wav'] };
+    return { kind: 'main', key: 'main', volume: 0.42, paths: ['Resources/Sounds/BGM/Main'] };
   }
 
   function rememberIntent(intent){
@@ -203,8 +216,18 @@
       return;
     }
     stopRainAmbience(0);
+    startRainAmbienceAtPath(normalizePathList([RAIN_AMBIENCE_PATH]), 0, fadeMs);
+  }
+
+  function startRainAmbienceAtPath(paths, pathIndex, fadeMs){
+    if (!isSoundEnabled() || !shouldPlayRainAmbience()) return;
+    if (pathIndex >= paths.length) {
+      rainAmbienceAudio = null;
+      rainAmbiencePending = true;
+      return;
+    }
     try {
-      var audio = new Audio(assetUrl(RAIN_AMBIENCE_PATH));
+      var audio = new Audio(assetUrl(paths[pathIndex]));
       audio.loop = true;
       audio.preload = 'auto';
       audio.volume = 0;
@@ -213,7 +236,7 @@
       audio.addEventListener('error', function(){
         if (rainAmbienceAudio === audio) {
           rainAmbienceAudio = null;
-          rainAmbiencePending = false;
+          startRainAmbienceAtPath(paths, pathIndex + 1, fadeMs);
         }
       }, { once: true });
       var playPromise = audio.play();
@@ -231,7 +254,90 @@
       }
     } catch (error) {
       rainAmbienceAudio = null;
-      rainAmbiencePending = true;
+      startRainAmbienceAtPath(paths, pathIndex + 1, fadeMs);
+    }
+  }
+
+  function getWhiteNoisePath(){
+    return getBattleFloor() <= 1
+      ? 'Resources/Sounds/White_noise_1'
+      : 'Resources/Sounds/White_noise_2';
+  }
+
+  function shouldPlayWhiteNoise(){
+    var battle = window.currentView && window.currentView.battle || {};
+    return isBattlePage() && !!battle.stage;
+  }
+
+  function stopWhiteNoise(fadeMs){
+    whiteNoisePending = false;
+    var audio = whiteNoiseAudio;
+    if (!audio) return;
+    whiteNoiseAudio = null;
+    fadeAudio(audio, 0, fadeMs === undefined ? DEFAULT_FADE_MS : fadeMs, function(){
+      try { audio.pause(); audio.removeAttribute('src'); audio.load(); } catch (error) {}
+    });
+  }
+
+  function syncWhiteNoise(fadeMs){
+    if (!shouldPlayWhiteNoise()) {
+      stopWhiteNoise(fadeMs === undefined ? DEFAULT_FADE_MS : fadeMs);
+      return;
+    }
+    if (!isSoundEnabled()) {
+      stopWhiteNoise(0);
+      return;
+    }
+    var desiredPath = getWhiteNoisePath();
+    if (whiteNoiseAudio && whiteNoiseAudio.__learningRpgWhiteNoisePath === desiredPath && !whiteNoiseAudio.paused) {
+      whiteNoiseAudio.muted = false;
+      fadeAudio(whiteNoiseAudio, WHITE_NOISE_VOLUME, fadeMs === undefined ? 360 : fadeMs);
+      return;
+    }
+    stopWhiteNoise(0);
+    startWhiteNoiseAtPath(desiredPath, normalizePathList([desiredPath]), 0, fadeMs);
+  }
+
+  function startWhiteNoiseAtPath(basePath, paths, pathIndex, fadeMs){
+    if (!isSoundEnabled() || !shouldPlayWhiteNoise() || getWhiteNoisePath() !== basePath) return;
+    if (pathIndex >= paths.length) {
+      whiteNoiseAudio = null;
+      whiteNoisePending = true;
+      return;
+    }
+    try {
+      var audio = new Audio(assetUrl(paths[pathIndex]));
+      audio.loop = true;
+      audio.preload = 'auto';
+      audio.volume = 0;
+      audio.muted = !isSoundEnabled();
+      audio.__learningRpgSkipSfxVolume = true;
+      audio.__learningRpgWhiteNoisePath = basePath;
+      whiteNoiseAudio = audio;
+      audio.addEventListener('error', function(){
+        if (whiteNoiseAudio !== audio) return;
+        whiteNoiseAudio = null;
+        startWhiteNoiseAtPath(basePath, paths, pathIndex + 1, fadeMs);
+      }, { once: true });
+      var playPromise = audio.play();
+      if (playPromise && playPromise.then) {
+        playPromise.then(function(){
+          whiteNoisePending = false;
+          if (!isSoundEnabled() || !shouldPlayWhiteNoise() || getWhiteNoisePath() !== basePath) {
+            stopWhiteNoise(0);
+            return;
+          }
+          fadeAudio(audio, WHITE_NOISE_VOLUME, fadeMs === undefined ? DEFAULT_FADE_MS : fadeMs);
+        }).catch(function(){
+          if (whiteNoiseAudio === audio) whiteNoisePending = true;
+        });
+      } else {
+        whiteNoisePending = false;
+        fadeAudio(audio, WHITE_NOISE_VOLUME, fadeMs === undefined ? DEFAULT_FADE_MS : fadeMs);
+      }
+    } catch (error) {
+      whiteNoiseAudio = null;
+      startWhiteNoiseAtPath(basePath, paths, pathIndex + 1, fadeMs);
     }
   }
 
@@ -255,8 +361,13 @@
     lastRewardOneShotAt = Date.now();
     stopRewardOneShot();
     stopCurrentTrack(180);
+    startRewardOneShotAtPath(normalizePathList(['Resources/Sounds/BGM/Battle/Reward']), 0);
+  }
+
+  function startRewardOneShotAtPath(paths, pathIndex){
+    if (!isSoundEnabled() || pathIndex >= paths.length) return;
     try {
-      var audio = new Audio(assetUrl('Resources/Sounds/BGM/Battle/Reward.wav'));
+      var audio = new Audio(assetUrl(paths[pathIndex]));
       audio.loop = false;
       audio.preload = 'auto';
       audio.volume = REWARD_ONE_SHOT_VOLUME;
@@ -266,9 +377,16 @@
       audio.addEventListener('ended', function(){
         if (rewardOneShotAudio === audio) rewardOneShotAudio = null;
       }, { once: true });
+      audio.addEventListener('error', function(){
+        if (rewardOneShotAudio !== audio) return;
+        rewardOneShotAudio = null;
+        startRewardOneShotAtPath(paths, pathIndex + 1);
+      }, { once: true });
       var playPromise = audio.play();
       if (playPromise && playPromise.catch) playPromise.catch(function(){});
-    } catch (error) {}
+    } catch (error) {
+      startRewardOneShotAtPath(paths, pathIndex + 1);
+    }
   }
 
   function unlockAudio(){
@@ -276,10 +394,12 @@
     if (pendingIntent) {
       playIntent(pendingIntent, 360);
       syncRainAmbience(360);
+      syncWhiteNoise(360);
       return;
     }
     if (!isBattlePage()) requestMainBgm();
     if (rainAmbiencePending || shouldPlayRainAmbience()) syncRainAmbience(360);
+    if (whiteNoisePending || shouldPlayWhiteNoise()) syncWhiteNoise(360);
   }
 
   function installUnlockListeners(){
@@ -344,6 +464,7 @@
       return function(){
         stopCurrentTrack(DEFAULT_FADE_MS);
         stopRainAmbience(DEFAULT_FADE_MS);
+        stopWhiteNoise(DEFAULT_FADE_MS);
         return original.apply(this, arguments);
       };
     });
@@ -354,6 +475,7 @@
         } else if (!isBattlePage() && isSoundEnabled()) {
           requestMainBgm();
           stopRainAmbience(DEFAULT_FADE_MS);
+          stopWhiteNoise(DEFAULT_FADE_MS);
         }
         return original.apply(this, arguments);
       };
@@ -366,6 +488,7 @@
       return function(){
         var result = original.apply(this, arguments);
         syncRainAmbience(420);
+        syncWhiteNoise(420);
         return result;
       };
     });
@@ -394,6 +517,7 @@
       return function(){
         stopCurrentTrack(DEFAULT_FADE_MS);
         syncRainAmbience(DEFAULT_FADE_MS);
+        syncWhiteNoise(DEFAULT_FADE_MS);
         return original.apply(this, arguments);
       };
     });
@@ -402,6 +526,7 @@
         var result = original.apply(this, arguments);
         playRewardOneShot();
         syncRainAmbience(360);
+        syncWhiteNoise(360);
         return result;
       };
     });
@@ -410,6 +535,7 @@
         stopRewardOneShot();
         stopCurrentTrack(DEFAULT_FADE_MS);
         stopRainAmbience(DEFAULT_FADE_MS);
+        stopWhiteNoise(DEFAULT_FADE_MS);
         return original.apply(this, arguments);
       };
     });
@@ -417,6 +543,7 @@
       return function(){
         stopRewardOneShot();
         stopRainAmbience(DEFAULT_FADE_MS);
+        stopWhiteNoise(DEFAULT_FADE_MS);
         return original.apply(this, arguments);
       };
     });
@@ -427,6 +554,7 @@
     if (isBattlePage()) {
       stopCurrentTrack(240);
       syncRainAmbience(240);
+      syncWhiteNoise(240);
       return;
     }
     requestMainBgm();
@@ -436,6 +564,7 @@
     if (!isSoundEnabled()) {
       stopCurrentTrack(0);
       stopRainAmbience(0);
+      stopWhiteNoise(0);
       stopRewardOneShot();
       return;
     }
@@ -447,6 +576,7 @@
       requestBattleBgm();
     }
     syncRainAmbience(240);
+    syncWhiteNoise(240);
   }
 
   function install(){
@@ -458,6 +588,7 @@
       playReward: playRewardOneShot,
       stop: function(ms){ stopCurrentTrack(ms === undefined ? DEFAULT_FADE_MS : ms); },
       syncRainAmbience: syncRainAmbience,
+      syncWhiteNoise: syncWhiteNoise,
       applySoundPreference: applySoundPreference,
       getCurrent: function(){ return currentTrack ? { key: currentTrack.key, kind: currentTrack.kind, path: currentTrack.path } : null; }
     };

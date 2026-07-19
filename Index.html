@@ -1290,7 +1290,8 @@
         restart ? '이전 진행을 포기하고 처음부터 시작합니다.' : '전투 데이터를 불러오는 중...'
       );
       google.script.run
-        .withSuccessHandler(function() {
+        .withSuccessHandler(function(view) {
+          cacheInitialBattleView(view);
           transitionToBattlePage(startedAt || Date.now());
         })
         .withFailureHandler(function(error) {
@@ -1360,7 +1361,7 @@
 
     function transitionToBattlePage(startedAt) {
       var elapsed = Date.now() - Number(startedAt || Date.now());
-      var waitMs = Math.max(0, 650 - elapsed);
+      var waitMs = Math.max(0, 250 - elapsed);
       window.setTimeout(function() {
         var modal = document.getElementById('loadingModal');
         document.getElementById('loadingTitle').textContent = '로딩 중...';
@@ -1368,7 +1369,7 @@
         modal.classList.add('page-transition');
         window.setTimeout(function() {
           goToPage('battle', { loading: false });
-        }, 720);
+        }, 280);
         window.setTimeout(function() {
           if (document.visibilityState !== 'hidden') {
             modal.classList.remove('page-transition');
@@ -1377,6 +1378,35 @@
           }
         }, 2200);
       }, waitMs);
+    }
+
+    function cacheInitialBattleView(view) {
+      var key = 'learningRpgInitialBattleView';
+      try {
+        sessionStorage.removeItem(key);
+        if (!view || !view.battle) return;
+        sessionStorage.setItem(key, JSON.stringify({
+          savedAt: Date.now(),
+          workbookId: getSelectedWorkbookId(),
+          view: view,
+        }));
+        return;
+      } catch (error) {
+        // Retry with a lightweight view so the battle page does not repeat the full battle request.
+      }
+      try {
+        var lightweightView = Object.assign({}, view, {
+          questionCache: [],
+          reusableQuestionCache: [],
+        });
+        sessionStorage.setItem(key, JSON.stringify({
+          savedAt: Date.now(),
+          workbookId: getSelectedWorkbookId(),
+          view: lightweightView,
+        }));
+      } catch (error) {
+        // The battle page can still fall back to fetching the view again.
+      }
     }
 
     function showLeaderboardMessage() {

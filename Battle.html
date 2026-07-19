@@ -224,17 +224,25 @@
   <script>
     var WEB_APP_URL = '<?= getWebAppUrl_() ?>';
     var ASSET_BASE_URL = '<?= getAssetBaseUrl_() ?>';
+    var BATTLE_SOUND_EXTENSIONS = ['wav', 'mp3', 'ogg'];
     var BATTLE_SOUND_FILES = {
-      block: 'Resources/Sounds/Block.wav',
-      blockSuccess: 'Resources/Sounds/Block_Success.wav',
-      buff: 'Resources/Sounds/Buff.wav',
-      debuff: 'Resources/Sounds/Debuff.wav',
-      escape: 'Resources/Sounds/Escape.wav',
-      gameover: 'Resources/Sounds/Gameover.wav',
-      hit: 'Resources/Sounds/Hit.wav',
-      hpDown: 'Resources/Sounds/Hp_down.wav',
+      block: 'Resources/Sounds/Block',
+      blockSuccess: 'Resources/Sounds/Block_Success',
+      buff: 'Resources/Sounds/Buff',
+      debuff: 'Resources/Sounds/Debuff',
+      escape: 'Resources/Sounds/Escape',
+      gameover: 'Resources/Sounds/Gameover',
+      hitDefault: 'Resources/Sounds/Hit/Default',
+      hitDefault2: 'Resources/Sounds/Hit/Default2',
+      hitDefault3: 'Resources/Sounds/Hit/Default3',
+      hitCrit: 'Resources/Sounds/Hit/Crit',
+      hitCrit2: 'Resources/Sounds/Hit/Crit2',
+      hitCrit3: 'Resources/Sounds/Hit/Crit3',
+      swing: 'Resources/Sounds/Attack/Swing',
+      nextStage: 'Resources/Sounds/NextStage',
     };
     var battleSoundCache = {};
+    var battleSoundResolveCallbacks = {};
     var activeBattleSounds = [];
     var pendingBattleSoundKeys = [];
     var currentView = null;
@@ -353,10 +361,12 @@
     var LOCAL_BATTLE_CHECKPOINT_PREFIX = 'learningRpgBattleCheckpoint:';
     var SOUND_ENABLED_KEY = 'learningRpgSoundEnabled';
     var DESCRIPTION_AUTO_ADVANCE_MS = 2000;
-    var STAGE_ENTRANCE_BLACK_HOLD_MS = 40;
-    var STAGE_ENTRANCE_TITLE_DELAY_MS = 120;
-    var STAGE_ENTRANCE_FADE_DELAY_MS = 950;
-    var STAGE_ENTRANCE_DONE_DELAY_MS = 1350;
+    var STAGE_ENTRANCE_BLACK_HOLD_MS = 60;
+    var STAGE_ENTRANCE_TITLE_DELAY_MS = 100;
+    var STAGE_ENTRANCE_FADE_DELAY_MS = 2200;
+    var STAGE_ENTRANCE_DONE_DELAY_MS = 3150;
+    var INITIAL_BATTLE_VIEW_KEY = 'learningRpgInitialBattleView';
+    var INITIAL_BATTLE_VIEW_MAX_AGE_MS = 30000;
 
     window.addEventListener('storage', function(event) {
       if (event.key === SOUND_ENABLED_KEY) {
@@ -413,28 +423,16 @@
 
     function init() {
       setupBattleUi();
+      var initialView = consumeInitialBattleView();
+      if (initialView) {
+        loadInitialBattleView(initialView);
+        return;
+      }
       showLoadingModal('로딩 중...', '진행 중인 전투를 확인하는 중...');
       google.script.run
         .withSuccessHandler(function(view) {
           hideLoadingModal();
-          isDummyMode = false;
-          currentView = normalizeBattleView(view);
-          resetStageCommitState();
-          restoreLocalBattleCheckpoint();
-          applyBattleClientConfig(currentView.clientConfig);
-          resetBattleQuestionCacheFromView(currentView, []);
-          renderBattle(currentView);
-          if (isFloorIntermissionView(currentView)) {
-            startFloorIntermissionEntrance();
-          } else if (currentView.battle.status === 'victory') {
-            finishBattleStartFade();
-            openRewardAfterVictory();
-          } else if (currentView.battle.status === 'defeat') {
-            finishBattleStartFade();
-            showDefeatSequence();
-          } else {
-            startBattleEntrance();
-          }
+          loadInitialBattleView(view);
         })
         .withFailureHandler(function(error) {
           hideLoadingModal();
@@ -446,6 +444,43 @@
           startBattleEntrance();
         })
         .getBattleView(getAuthToken(), getSelectedWorkbookId());
+    }
+
+    function consumeInitialBattleView() {
+      try {
+        var raw = sessionStorage.getItem(INITIAL_BATTLE_VIEW_KEY);
+        sessionStorage.removeItem(INITIAL_BATTLE_VIEW_KEY);
+        if (!raw) return null;
+        var cached = JSON.parse(raw);
+        if (!cached || !cached.view || !cached.view.battle) return null;
+        if (Date.now() - Number(cached.savedAt || 0) > INITIAL_BATTLE_VIEW_MAX_AGE_MS) return null;
+        if (String(cached.workbookId || '') !== String(getSelectedWorkbookId() || '')) return null;
+        return cached.view;
+      } catch (error) {
+        return null;
+      }
+    }
+
+    function loadInitialBattleView(view) {
+      isDummyMode = false;
+      currentView = normalizeBattleView(view);
+      resetStageCommitState();
+      restoreLocalBattleCheckpoint();
+      applyBattleClientConfig(currentView.clientConfig);
+      resetBattleQuestionCacheFromView(currentView, []);
+      preloadMissingBattleQuestionCache();
+      renderBattle(currentView);
+      if (isFloorIntermissionView(currentView)) {
+        startFloorIntermissionEntrance();
+      } else if (currentView.battle.status === 'victory') {
+        finishBattleStartFade();
+        openRewardAfterVictory();
+      } else if (currentView.battle.status === 'defeat') {
+        finishBattleStartFade();
+        showDefeatSequence();
+      } else {
+        startBattleEntrance();
+      }
     }
 
     function setupBattleUi() {
@@ -511,9 +546,13 @@
       if (!currentView || !currentView.runId || isDummyMode || currentView.runId === 'dummy-run') return;
       if (pendingTurnResolutionActive || pendingTurnResolutionLoading || pendingQuestionTurnIsOptimistic) return;
       try {
+        var checkpointView = Object.assign({}, currentView, {
+          questionCache: [],
+          reusableQuestionCache: [],
+        });
         sessionStorage.setItem(getLocalBattleCheckpointKey(currentView.runId), JSON.stringify({
           version: 2,
-          view: currentView,
+          view: checkpointView,
           answerLogs: pendingStageAnswerLogs,
           savedAt: Date.now(),
         }));
@@ -1472,26 +1511,101 @@
       });
     }
 
-    function getBattleSoundUrl(soundKey) {
+    function getBattleSoundUrls(soundKey) {
       var path = BATTLE_SOUND_FILES[soundKey] || '';
-      if (!ASSET_BASE_URL || !path) return '';
-      return ASSET_BASE_URL.replace(/\/+$/, '') + '/' + path.replace(/^\/+/, '');
+      if (!ASSET_BASE_URL || !path) return [];
+      var normalizedPath = path.replace(/^\/+/, '');
+      var paths = /\.(?:wav|mp3|ogg)(?:[?#].*)?$/i.test(normalizedPath)
+        ? [normalizedPath]
+        : BATTLE_SOUND_EXTENSIONS.map(function(extension) {
+            return normalizedPath + '.' + extension;
+          });
+      return paths.map(function(candidate) {
+        return ASSET_BASE_URL.replace(/\/+$/, '') + '/' + candidate;
+      });
     }
 
-    function getBattleSound(soundKey) {
-      var url = getBattleSoundUrl(soundKey);
-      if (!url || typeof Audio === 'undefined') return null;
-      if (!battleSoundCache[soundKey]) {
-        var audio = new Audio(url);
-        audio.preload = 'auto';
-        battleSoundCache[soundKey] = audio;
+    function getBattleSound(soundKey, onReady) {
+      if (typeof onReady !== 'function') return;
+      if (typeof Audio === 'undefined') {
+        onReady(null);
+        return;
       }
-      return battleSoundCache[soundKey];
+      if (!battleSoundCache[soundKey]) {
+        if (battleSoundResolveCallbacks[soundKey]) {
+          battleSoundResolveCallbacks[soundKey].push(onReady);
+          return;
+        }
+        battleSoundResolveCallbacks[soundKey] = [onReady];
+        resolveBattleSoundCandidate(soundKey, getBattleSoundUrls(soundKey), 0);
+        return;
+      }
+      onReady(battleSoundCache[soundKey]);
+    }
+
+    function resolveBattleSoundCandidate(soundKey, urls, index) {
+      if (index >= urls.length) {
+        finishBattleSoundResolution(soundKey, null);
+        return;
+      }
+      var audio = new Audio(urls[index]);
+      var settled = false;
+      audio.preload = 'auto';
+      function handleReady() {
+        if (settled) return;
+        settled = true;
+        battleSoundCache[soundKey] = audio;
+        finishBattleSoundResolution(soundKey, audio);
+      }
+      function handleError() {
+        if (settled) return;
+        settled = true;
+        resolveBattleSoundCandidate(soundKey, urls, index + 1);
+      }
+      audio.addEventListener('loadeddata', handleReady, { once: true });
+      audio.addEventListener('canplay', handleReady, { once: true });
+      audio.addEventListener('error', handleError, { once: true });
+      try {
+        audio.load();
+      } catch (error) {
+        handleError();
+      }
+    }
+
+    function finishBattleSoundResolution(soundKey, audio) {
+      var callbacks = battleSoundResolveCallbacks[soundKey] || [];
+      delete battleSoundResolveCallbacks[soundKey];
+      callbacks.forEach(function(callback) {
+        callback(audio);
+      });
     }
 
     function playBattleSound(soundKey) {
       if (!isSoundEnabled()) return;
-      var baseAudio = getBattleSound(soundKey);
+      getBattleSound(soundKey, function(baseAudio) {
+        playResolvedBattleSound(soundKey, baseAudio);
+      });
+    }
+
+    function playBattleSoundsTogether(soundKeys) {
+      if (!isSoundEnabled()) return;
+      var keys = (soundKeys || []).filter(Boolean);
+      if (!keys.length) return;
+      var resolved = new Array(keys.length);
+      var remaining = keys.length;
+      keys.forEach(function(soundKey, index) {
+        getBattleSound(soundKey, function(baseAudio) {
+          resolved[index] = baseAudio;
+          remaining -= 1;
+          if (remaining > 0 || !isSoundEnabled()) return;
+          resolved.forEach(function(audio, resolvedIndex) {
+            playResolvedBattleSound(keys[resolvedIndex], audio);
+          });
+        });
+      });
+    }
+
+    function playResolvedBattleSound(soundKey, baseAudio) {
       if (!baseAudio) return;
       var audio = baseAudio.cloneNode ? baseAudio.cloneNode(true) : new Audio(baseAudio.src);
       audio.volume = 0.75;
@@ -1510,6 +1624,21 @@
           removeActiveBattleSound(audio);
         });
       }
+    }
+
+    function playBattleHitSound(isCritical) {
+      if (isCritical) {
+        playBattleSoundsTogether(['hitCrit', 'hitCrit2', 'hitCrit3']);
+        return;
+      }
+      playBattleSoundsTogether(['hitDefault', 'hitDefault2', 'hitDefault3']);
+    }
+
+    function preloadBattleSounds() {
+      if (!isSoundEnabled()) return;
+      Object.keys(BATTLE_SOUND_FILES).forEach(function(soundKey) {
+        getBattleSound(soundKey, function() {});
+      });
     }
 
     function queuePendingBattleSound(soundKey) {
@@ -1596,6 +1725,7 @@
         return !audio.ended;
       });
       if (enabled) {
+        preloadBattleSounds();
         flushPendingBattleSounds();
       } else {
         pendingBattleSoundKeys = [];
@@ -1657,6 +1787,11 @@
     function renderMonsterSprite(monster, index) {
       var name = monster.name || ('MONSTER ' + (index + 1));
       var className = 'monster-sprite-placeholder compact-monster';
+      var monsterType = String(monster.type || '').toLowerCase();
+      var monsterId = String(monster.monsterId || '').toLowerCase();
+      if (monsterType === 'boss' || monsterType === 'finalboss' || monsterId.indexOf('boss_') === 0) {
+        className += ' boss-monster';
+      }
       if (monster.avatarType === 'photo' && monster.avatarKey) {
         className += ' player-ghost-photo';
         return '<div class="' + className + '" data-monster-key="' + escapeHtml(monster.monsterId || 'placeholder') + '">' +
@@ -2580,6 +2715,27 @@
         .preloadBattleQuestions(currentView.runId, getAuthToken());
     }
 
+    function preloadMissingBattleQuestionCache() {
+      if (!currentView || !currentView.runId || currentView.runId === 'dummy-run') return;
+      if (battleQuestionCache && battleQuestionCache.length) return;
+      if (questionCacheRefillInFlight) return;
+      if (typeof google === 'undefined' || !google.script || !google.script.run) return;
+      questionCacheRefillInFlight = true;
+      google.script.run
+        .withSuccessHandler(function(questionCache) {
+          questionCacheRefillInFlight = false;
+          var cache = Array.isArray(questionCache) ? questionCache : [];
+          if (!cache.length || !currentView) return;
+          currentView.reusableQuestionCache = cache.slice();
+          currentView.questionCache = cache.slice();
+          resetBattleQuestionCacheFromView(currentView, cache);
+        })
+        .withFailureHandler(function() {
+          questionCacheRefillInFlight = false;
+        })
+        .preloadBattleQuestions(currentView.runId, getAuthToken());
+    }
+
     function applySkillDifficultyBonusToQuestionView(questionView, skillId) {
       var skill = findAvailableSkill(skillId);
       var bonus = Number(skill && skill.difficultyBonus || 0);
@@ -3378,16 +3534,21 @@
     function getQuestionAnswerDisplayText(question) {
       question = question || {};
       var answer = String(question.answer == null ? '' : question.answer).trim();
-      return answer || '정답 정보 없음';
+      if (answer) return answer;
+      var aliases = safeJsonParseClient(question.answerAliases, []);
+      return String(aliases[0] || '').trim() || '정답 정보 없음';
     }
 
     function isClientCorrectAnswer(question, answer) {
-      var expected = normalizeClientAnswer(question.answer);
-      var aliases = safeJsonParseClient(question.answerAliases, []).map(normalizeClientAnswer);
+      var answerNormalizer = question.type === 'shortAnswer'
+        ? normalizeClientShortAnswer
+        : normalizeClientAnswer;
+      var expected = answerNormalizer(question.answer);
+      var aliases = safeJsonParseClient(question.answerAliases, []).map(answerNormalizer);
       var candidates = [
-        normalizeClientAnswer(answer.selectedAnswer),
-        normalizeClientAnswer(answer.selectedChoiceIndex),
-        normalizeClientAnswer(answer.selectedAnswerText),
+        answerNormalizer(answer.selectedAnswer),
+        answerNormalizer(answer.selectedChoiceIndex),
+        answerNormalizer(answer.selectedAnswerText),
       ].filter(Boolean);
       if (question.type === 'multipleChoice') {
         var expectedChoice = Number(question.answer);
@@ -3476,6 +3637,10 @@
       return String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
     }
 
+    function normalizeClientShortAnswer(value) {
+      return normalizeClientAnswer(value).replace(/\s+/g, '');
+    }
+
     async function playTurnSequence(nextView) {
       cancelTargetSelection();
       isAnimatingTurn = true;
@@ -3503,7 +3668,7 @@
             await waitForBattleLogAdvance();
           } else if (event.target === 'player') {
             pushLog(effectEventMessage);
-            animatePlayerHit(event.damage, event.hpDamage || event.damage, event.shieldDamage);
+            animatePlayerHit(event.damage, event.hpDamage || event.damage, event.shieldDamage, event.isCritical);
             await waitForBattleLogAdvance();
           } else {
             pushLog(effectEventMessage);
@@ -3566,7 +3731,7 @@
           } else if (Number(monsterEvent.damage || monsterEvent.shieldDamage || monsterEvent.hpDamage || 0) > 0) {
             await animateMonsterAttack(monsterEvent.monsterId);
             pushLog(monsterEventMessage, { instant: true });
-            animatePlayerHit(monsterEvent.damage || 0, monsterEvent.hpDamage || 0, monsterEvent.shieldDamage || 0);
+            animatePlayerHit(monsterEvent.damage || 0, monsterEvent.hpDamage || 0, monsterEvent.shieldDamage || 0, monsterEvent.isCritical);
           } else {
             pushLog(monsterEventMessage);
             await holdBattleMessage();
@@ -5768,14 +5933,14 @@
       window.setTimeout(function() {
         var rewardLoading = null;
         if (!showPreviewScoreModal) {
-          rewardLoading = startDelayedLoadingModal('로딩 중...', '1/3 전투 결과를 저장하는 중...', {
+          rewardLoading = startDelayedLoadingModal('로딩 중...', '1/2 전투 결과와 보상을 저장하는 중...', {
             progress: 8,
           });
         }
         commitStageResultIfNeeded(function() {
           if (!showPreviewScoreModal) {
             updateDelayedLoadingModal(rewardLoading, {
-              text: '2/3 선택한 보상을 적용하고 점수를 계산하는 중...',
+              text: '2/2 보상을 적용하고 다음 스테이지를 준비하는 중...',
               progress: 38,
             });
           }
@@ -6321,6 +6486,7 @@
       }
       window.setTimeout(function() {
         finishDelayedLoadingModal(loadingHandle);
+        playBattleSound('nextStage');
         startBattleEntrance();
       }, 120);
       return true;
@@ -6406,6 +6572,7 @@
         resetStageCommitState();
         currentRewardView = response.rewardView;
         renderBattle(currentView);
+        playBattleSound('nextStage');
         startFloorIntermissionEntrance();
         return;
       }
@@ -6418,6 +6585,7 @@
       clearLocalBattleCheckpoint(currentView.runId);
       resetStageCommitState();
       renderBattle(currentView);
+      playBattleSound('nextStage');
       startBattleEntrance();
     }
 
@@ -6436,6 +6604,7 @@
     async function animatePlayerAttack(monsterId) {
       var target = document.querySelector('[data-monster-id="' + cssEscape(monsterId) + '"] .compact-monster');
       if (!target) return;
+      playBattleSound('swing');
       target.classList.remove('incoming-slash');
       void target.offsetWidth;
       target.classList.add('incoming-slash');
@@ -6449,6 +6618,7 @@
       setMonsterSpriteState(target, 'attack');
       void target.offsetWidth;
       await skippableAutoDelay(MONSTER_ATTACK_WINDUP_MS);
+      playBattleSound('swing');
       target.classList.add('monster-lunge');
       await skippableAutoDelay(MONSTER_ATTACK_LUNGE_MS);
       target.classList.remove('monster-lunge');
@@ -6462,13 +6632,12 @@
       var visibleShieldDamage = Number(shieldDamage || 0);
       applyMonsterDamageDelta(monsterId, visibleHpDamage, shieldDamage || 0);
       if (visibleHpDamage <= 0 && visibleShieldDamage <= 0) return Promise.resolve();
-      if (visibleShieldDamage > 0) {
+      if (visibleShieldDamage > 0 && visibleHpDamage <= 0) {
         playBattleSound('blockSuccess');
         spawnShieldBlockIcon(target);
       }
       if (visibleHpDamage > 0) {
-        playBattleSound('hit');
-        playBattleSound('hpDown');
+        playBattleHitSound(isCritical);
       }
       target.classList.remove('monster-hit', 'monster-hit-red', 'monster-hit-white');
       setMonsterSpriteState(target, 'hit');
@@ -6602,7 +6771,7 @@
       }, 980);
     }
 
-    function animatePlayerHit(damage, hpDamage, shieldDamage) {
+    function animatePlayerHit(damage, hpDamage, shieldDamage, isCritical) {
       var shell = document.getElementById('battleShell');
       var visibleHpDamage = hpDamage === undefined || hpDamage === null ? Number(damage || 0) : Number(hpDamage || 0);
       applyPlayerDamageDelta(visibleHpDamage, shieldDamage || 0);
@@ -6613,11 +6782,7 @@
         }
         return;
       }
-      if (Number(shieldDamage || 0) > 0) {
-        playBattleSound('blockSuccess');
-      }
-      playBattleSound('hit');
-      playBattleSound('hpDown');
+      playBattleHitSound(isCritical);
       shell.classList.remove('player-hit');
       shell.classList.remove('player-shield-block');
       void shell.offsetWidth;

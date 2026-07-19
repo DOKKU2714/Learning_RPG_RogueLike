@@ -334,6 +334,7 @@ function selectReward(runId, rewardId, authToken, rewardView) {
       ['stageMoved', 'moveStage'],
       ['runUpdated', 'saveRun'],
       ['progressUpdated', 'progress'],
+      ['nextBattlePrepared', 'nextBattle'],
     ];
     var previous = 0;
     return order.filter(function(entry) {
@@ -517,16 +518,20 @@ function selectReward(runId, rewardId, authToken, rewardView) {
     });
   }
 
-  return {
-    nextBattlePending: true,
-    runId: runId,
-    run: toClientObject_(movedRun),
+  startBattle(runId);
+  var nextBattleRun = requireRun_(runId);
+  var nextBattleView = buildBattleView_(nextBattleRun, getStageState_(nextBattleRun));
+  markTiming('nextBattlePrepared');
+  debugTimings.nextBattlePreparedMs = Number(timingMarks.nextBattlePrepared || 0);
+  debugTimings.totalMs = new Date().getTime() - timingStartedAt;
+  debugTimings.steps = buildTimingSteps();
+  return Object.assign({}, nextBattleView, {
     rewardSelected: true,
     selectedReward: appliedReward,
     currencyAmount: isRestReward ? 0 : rewardState.currencyAmount,
     scoreSummary: scoreSummary,
     debugTimings: debugTimings,
-  };
+  });
 }
 
 function prepareNextBattleAfterReward(runId, authToken) {
@@ -540,7 +545,9 @@ function prepareNextBattleAfterReward(runId, authToken) {
   if (stageState.battle && stageState.battle.status === STATUS.BATTLE_ACTIVE) {
     return buildBattleView_(run, stageState);
   }
-  return startBattle(run.runId);
+  startBattle(run.runId);
+  run = requireRun_(run.runId);
+  return buildBattleView_(run, getStageState_(run));
 }
 
 function awardStageClearScoreForReward_(run, stageState) {

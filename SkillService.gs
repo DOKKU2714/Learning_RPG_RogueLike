@@ -284,7 +284,7 @@ function useSkill(runId, skillId, targetId, answerPayload) {
       targetId: targetId || '',
       actionPointCost: getActionPointCostForAction_(ACTION_TYPES.SKILL, skill),
       questionId: questionResult.question.questionId,
-      question: sanitizeQuestionForClient_(questionResult.question, player.playerId),
+      question: sanitizeQuestionForBattleCache_(questionResult.question, player.playerId),
       issuedAt: new Date().getTime(),
       maxMs: maxMs,
       finalDifficulty: finalDifficulty,

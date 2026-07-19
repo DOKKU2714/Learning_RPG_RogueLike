@@ -156,7 +156,13 @@ function startRun(playerId, authToken, workbookId) {
     if (existingRun) {
       refreshBattleDefinitionCaches_();
       getRunWorkbookContext_(existingRun);
-      return toClientObject_(existingRun);
+      var existingStageState = getStageState_(existingRun);
+      if (!existingStageState.battle) {
+        startBattle(existingRun.runId);
+        existingRun = requireRun_(existingRun.runId);
+        existingStageState = getStageState_(existingRun);
+      }
+      return buildBattleView_(existingRun, existingStageState);
     }
 
     var check = canStartGame(playerId, authToken, workbookId);
@@ -267,7 +273,9 @@ function createNewRun_(playerId, workbook) {
 
   appendRowObject_(DB_SHEETS.RUNS, run);
   cacheRun_(run);
-  return startBattle(run.runId);
+  startBattle(run.runId);
+  var startedRun = requireRun_(run.runId);
+  return buildBattleView_(startedRun, getStageState_(startedRun));
 }
 
 function buildRunResumeSummary_(run) {
@@ -536,7 +544,6 @@ function normalizePlayerActionPointFields_(player) {
 function startBattle(runId) {
   var run = requireRun_(runId);
   var workbookContext = getRunWorkbookContext_(run);
-  refreshBattleDefinitionCaches_();
   var stageState = getStageState_(run);
   var stage = loadStage(stageState.stageId || buildStageId_(run.currentFloor, run.currentStage));
   stageState.usedQuestionStageId = stage.stageId;
@@ -782,7 +789,7 @@ function selectQuestionForAction(playerId, runId, actionType, difficultyBonus, a
     targetId: normalizedAction === ACTION_TYPES.ATTACK || normalizedAction === ACTION_TYPES.SKILL ? targetId || '' : '',
     actionPointCost: actionCost,
     questionId: questionResult.question.questionId,
-    question: sanitizeQuestionForClient_(questionResult.question, playerId),
+    question: sanitizeQuestionForBattleCache_(questionResult.question, playerId),
     issuedAt: new Date().getTime(),
     maxMs: maxMs,
     finalDifficulty: finalDifficulty,
@@ -2374,6 +2381,7 @@ function buildBattleView_(run, stageState) {
     }
   }
   var runState = buildRunState_(run);
+  var availableSkills = battleState ? getAvailableSkills(runState, battleState) : [];
   var workbookContext = getRunWorkbookContext_(run);
   return toClientObject_({
     runId: run.runId,
@@ -2384,7 +2392,7 @@ function buildBattleView_(run, stageState) {
     score: Number(run.score || 0),
     battle: battleState,
     clientConfig: getBattleClientConfig_(),
-    availableSkills: battleState ? getAvailableSkills(runState, battleState) : [],
+    availableSkills: availableSkills,
     monsterAiRules: battleState ? buildClientMonsterAiRules_(battleState) : [],
     questionCache: battleState ? buildBattleQuestionCache_(run, stageState, battleState) : [],
     stageState: {
@@ -2556,33 +2564,51 @@ function buildBattleQuestionCache_(run, stageState, battleState) {
     var activeEffects = getActiveEffectsForQuestion_(battleState);
     var usedIdMap = getUsedQuestionIdMap_(stageState, battleState);
     var questionModifiersForPick = getItemQuestionModifiers_(battleState, null);
-    var targetDifficulty = calculateRequiredQuestionDifficulty_(battleState.stage, 0, activeEffects, questionModifiersForPick);
-    var selectedQuestions = selectQuestionCacheRows_(run, run.playerId, battleState.stage, stageState.otherStudentQuestionShown, getForcedQuestionCreatorId_(battleState), questionModifiersForPick, stageState.usedQuestionIds, targetDifficulty);
-    return selectedQuestions.map(function(question) {
-      var questionModifiers = getItemQuestionModifiers_(battleState, question);
-      var finalDifficulty = targetDifficulty;
-      var maxMs = calculateFinalQuestionTimeLimitForQuestion_(finalDifficulty, activeEffects, question, questionModifiers);
-      return {
-        question: sanitizeQuestionForBattleCache_(question, run.playerId),
-        maxMs: maxMs,
-        finalDifficulty: finalDifficulty,
-        maxAnswerEfficiency: calculateMaxAnswerEfficiency_(questionModifiers),
-        questionModifiers: questionModifiers,
-        isOtherPlayerQuestion: question.creatorId !== run.playerId,
-        fallbackReason: usedIdMap[String(question.questionId || '')] ? 'exhaustedUnusedQuestions' : '',
-      };
+    var targetDifficulties = getStageQuestionCacheDifficulties_(battleState.stage);
+    var approvedQuestions = readRunQuestionsForBattle_(run).filter(function(question) {
+      return question.status === STATUS.QUESTION_APPROVED;
     });
+    var cacheLimitPerDifficulty = Math.min(30, Math.max(1, approvedQuestions.length));
+    return targetDifficulties.reduce(function(cache, targetDifficulty) {
+      var selectedQuestions = selectQuestionCacheRows_(run, run.playerId, battleState.stage, stageState.otherStudentQuestionShown, getForcedQuestionCreatorId_(battleState), questionModifiersForPick, stageState.usedQuestionIds, targetDifficulty, cacheLimitPerDifficulty, approvedQuestions);
+      return cache.concat(selectedQuestions.map(function(question) {
+        var questionModifiers = getItemQuestionModifiers_(battleState, question);
+        var maxMs = calculateFinalQuestionTimeLimitForQuestion_(targetDifficulty, activeEffects, question, questionModifiers);
+        return {
+          question: sanitizeQuestionForBattleCache_(question, run.playerId),
+          maxMs: maxMs,
+          finalDifficulty: targetDifficulty,
+          maxAnswerEfficiency: calculateMaxAnswerEfficiency_(questionModifiers),
+          questionModifiers: questionModifiers,
+          isOtherPlayerQuestion: question.creatorId !== run.playerId,
+          fallbackReason: usedIdMap[String(question.questionId || '')] ? 'exhaustedUnusedQuestions' : '',
+        };
+      }));
+    }, []);
   } catch (error) {
     return [];
   }
 }
 
-function selectQuestionCacheRows_(run, playerId, stage, otherStudentQuestionShown, forcedCreatorId, questionModifiers, usedQuestionIds, targetDifficulty) {
-  var limit = 30;
+function getStageQuestionCacheDifficulties_(stage) {
+  var difficultyRange = getStageDifficultyRange_(stage || {});
+  var minDifficulty = Math.max(GAME_RULES.MIN_DIFFICULTY, Number(difficultyRange.minDifficulty || GAME_RULES.MIN_DIFFICULTY));
+  var maxDifficulty = Math.min(GAME_RULES.MAX_DIFFICULTY, Number(difficultyRange.maxDifficulty || GAME_RULES.MAX_DIFFICULTY));
+  var difficulties = [];
+  for (var difficulty = minDifficulty; difficulty <= maxDifficulty; difficulty += 1) {
+    difficulties.push(difficulty);
+  }
+  return difficulties;
+}
+
+function selectQuestionCacheRows_(run, playerId, stage, otherStudentQuestionShown, forcedCreatorId, questionModifiers, usedQuestionIds, targetDifficulty, limitOverride, approvedQuestionsOverride) {
+  var limit = Math.max(1, Number(limitOverride || 30));
   var requiredDifficulty = clampDifficultyToStageRange_(targetDifficulty || calculateRequiredQuestionDifficulty_(stage, 0, [], questionModifiers), stage);
-  var approvedQuestions = readRunQuestionsForBattle_(run).filter(function(question) {
-    return question.status === STATUS.QUESTION_APPROVED;
-  });
+  var approvedQuestions = Array.isArray(approvedQuestionsOverride)
+    ? approvedQuestionsOverride
+    : readRunQuestionsForBattle_(run).filter(function(question) {
+        return question.status === STATUS.QUESTION_APPROVED;
+      });
   var allowedQuestions = approvedQuestions.filter(function(question) {
     return !forcedCreatorId || question.creatorId === forcedCreatorId;
   });
@@ -2663,7 +2689,7 @@ function createPendingActionFromCachedPayload_(run, stageState, battleState, pay
     targetId: targetId,
     actionPointCost: actionPointCost,
     questionId: question.questionId,
-    question: sanitizeQuestionForClient_(question, playerId),
+    question: sanitizeQuestionForBattleCache_(question, playerId),
     issuedAt: new Date().getTime() - Math.max(0, Number(payload.elapsedMs || 0)),
     maxMs: calculateFinalQuestionTimeLimitForQuestion_(finalDifficulty, activeEffects, question, questionModifiers),
     finalDifficulty: finalDifficulty,
@@ -3695,12 +3721,15 @@ function pickWeighted_(ids, weights) {
 }
 
 function isCorrectAnswer_(question, selectedAnswer, selectedChoiceIndex, selectedAnswerText) {
-  var answer = normalizeAnswer_(question.answer);
-  var aliases = safeJsonParse_(question.answerAliases, []).map(normalizeAnswer_);
+  var answerNormalizer = question.type === QUESTION_TYPES.SHORT_ANSWER
+    ? normalizeShortAnswer_
+    : normalizeAnswer_;
+  var answer = answerNormalizer(question.answer);
+  var aliases = safeJsonParse_(question.answerAliases, []).map(answerNormalizer);
   var candidates = [
-    normalizeAnswer_(selectedAnswer),
-    normalizeAnswer_(selectedChoiceIndex),
-    normalizeAnswer_(selectedAnswerText),
+    answerNormalizer(selectedAnswer),
+    answerNormalizer(selectedChoiceIndex),
+    answerNormalizer(selectedAnswerText),
   ].filter(Boolean);
 
   if (question.type === QUESTION_TYPES.MULTIPLE_CHOICE) {
@@ -3717,6 +3746,10 @@ function isCorrectAnswer_(question, selectedAnswer, selectedChoiceIndex, selecte
 
 function normalizeAnswer_(value) {
   return String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function normalizeShortAnswer_(value) {
+  return normalizeAnswer_(value).replace(/\s+/g, '');
 }
 
 function logBattleEvent_(run, result, summary) {
