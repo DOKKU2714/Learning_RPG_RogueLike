@@ -1,0 +1,134 @@
+<script>
+(function(global) {
+  'use strict';
+
+  var DB_NAME = 'LearningRpgLocalData';
+  var DB_VERSION = 1;
+  var STORE_NAME = 'questionSnapshots';
+  var SESSION_PREFIX = 'learningRpgQuestionSnapshot:';
+  var memorySnapshots = {};
+
+  function openDatabase() {
+    return new Promise(function(resolve, reject) {
+      if (!global.indexedDB) {
+        reject(new Error('이 브라우저는 IndexedDB를 사용할 수 없습니다.'));
+        return;
+      }
+      var request = global.indexedDB.open(DB_NAME, DB_VERSION);
+      request.onupgradeneeded = function() {
+        var database = request.result;
+        if (!database.objectStoreNames.contains(STORE_NAME)) {
+          database.createObjectStore(STORE_NAME, { keyPath: 'workbookId' });
+        }
+      };
+      request.onsuccess = function() { resolve(request.result); };
+      request.onerror = function() { reject(request.error || new Error('로컬 문제 저장소를 열지 못했습니다.')); };
+    });
+  }
+
+  function runStore(mode, callback) {
+    return openDatabase().then(function(database) {
+      return new Promise(function(resolve, reject) {
+        var transaction = database.transaction(STORE_NAME, mode);
+        var store = transaction.objectStore(STORE_NAME);
+        var result;
+        transaction.oncomplete = function() {
+          database.close();
+          resolve(result);
+        };
+        transaction.onerror = function() {
+          database.close();
+          reject(transaction.error || new Error('로컬 문제 저장소 처리에 실패했습니다.'));
+        };
+        transaction.onabort = transaction.onerror;
+        result = callback(store, function(value) { result = value; });
+      });
+    });
+  }
+
+  function saveSessionFallback(snapshot) {
+    try {
+      global.sessionStorage.setItem(SESSION_PREFIX + snapshot.workbookId, JSON.stringify(snapshot));
+      return snapshot;
+    } catch (error) {
+      throw new Error('문제집이 커서 브라우저에 저장하지 못했습니다. 브라우저 저장소 설정을 확인해 주세요.');
+    }
+  }
+
+  function loadSessionFallback(workbookId) {
+    try {
+      var raw = global.sessionStorage.getItem(SESSION_PREFIX + workbookId);
+      return raw ? JSON.parse(raw) : null;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function clearSessionFallbacks() {
+    try {
+      Object.keys(global.sessionStorage).forEach(function(key) {
+        if (key.indexOf(SESSION_PREFIX) === 0) global.sessionStorage.removeItem(key);
+      });
+    } catch (error) {}
+  }
+
+  function replace(snapshot) {
+    snapshot = snapshot || {};
+    var workbookId = String(snapshot.workbookId || '').trim();
+    if (!workbookId || !Array.isArray(snapshot.questions)) {
+      return Promise.reject(new Error('저장할 문제집 데이터가 올바르지 않습니다.'));
+    }
+    snapshot.workbookId = workbookId;
+    snapshot.savedAt = Date.now();
+    memorySnapshots = {};
+    memorySnapshots[workbookId] = snapshot;
+    clearSessionFallbacks();
+    return runStore('readwrite', function(store) {
+      store.clear();
+      store.put(snapshot);
+    }).then(function() {
+      return snapshot;
+    }).catch(function() {
+      return saveSessionFallback(snapshot);
+    });
+  }
+
+  function get(workbookId) {
+    workbookId = String(workbookId || '').trim();
+    if (!workbookId) return Promise.resolve(null);
+    if (memorySnapshots[workbookId]) return Promise.resolve(memorySnapshots[workbookId]);
+    return openDatabase().then(function(database) {
+      return new Promise(function(resolve, reject) {
+        var transaction = database.transaction(STORE_NAME, 'readonly');
+        var request = transaction.objectStore(STORE_NAME).get(workbookId);
+        request.onsuccess = function() {
+          database.close();
+          var snapshot = request.result || loadSessionFallback(workbookId) || null;
+          if (snapshot) memorySnapshots[workbookId] = snapshot;
+          resolve(snapshot);
+        };
+        request.onerror = function() {
+          database.close();
+          reject(request.error || new Error('로컬 문제집을 읽지 못했습니다.'));
+        };
+      });
+    }).catch(function() {
+      var snapshot = loadSessionFallback(workbookId);
+      if (snapshot) memorySnapshots[workbookId] = snapshot;
+      return snapshot;
+    });
+  }
+
+  function clear() {
+    memorySnapshots = {};
+    clearSessionFallbacks();
+    return runStore('readwrite', function(store) { store.clear(); }).catch(function() {});
+  }
+
+  global.LearningRpgQuestionStore = {
+    replace: replace,
+    get: get,
+    clear: clear,
+  };
+})(window);
+</script>

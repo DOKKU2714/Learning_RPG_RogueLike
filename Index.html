@@ -6,25 +6,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <?!= include_('UiStyles'); ?>
   <style>
-    .resume-run-modal {
-      width: min(520px, 100%);
-    }
-
-    .resume-run-summary {
-      margin: 14px 0 18px;
-      border: 1px solid var(--line-dark);
-      padding: 12px;
-      color: var(--accent);
-      background: #111;
-      text-align: center;
-    }
-
-    .resume-run-actions {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 10px;
-    }
-
     #playerBadge {
       margin: 6px auto 18px;
     }
@@ -138,11 +119,6 @@
     .notice-hide-today input {
       width: auto;
       margin: 0;
-    }
-
-    #loadingModal .loading-progress,
-    #loadingModal .loading-meta {
-      display: none;
     }
 
     .workbook-modal {
@@ -292,18 +268,6 @@
     </section>
   </main>
 
-  <div id="resumeRunModal" class="question-modal-overlay" aria-hidden="true">
-    <section class="question-modal resume-run-modal" role="dialog" aria-modal="true" aria-labelledby="resumeRunTitle">
-      <h2 id="resumeRunTitle" class="rpg-title">이전 진행 발견</h2>
-      <p class="muted" style="text-align:center;">이전에 하던 플레이를 이어 하시겠습니까?</p>
-      <div id="resumeRunSummary" class="resume-run-summary"></div>
-      <div class="resume-run-actions">
-        <button class="secondary" onclick="abandonPreviousRunAndStart()">포기</button>
-        <button onclick="continuePreviousRun()">이어하기</button>
-      </div>
-    </section>
-  </div>
-
   <div id="workbookSelectModal" class="question-modal-overlay workbook-modal-overlay" aria-hidden="true">
     <section class="question-modal workbook-modal" role="dialog" aria-modal="true" aria-labelledby="workbookSelectTitle">
       <h2 id="workbookSelectTitle" class="rpg-title">문제집(수업) 선택</h2>
@@ -363,6 +327,7 @@
   </div>
 
   <?!= include_('UiLoadingModal'); ?>
+  <?!= include_('QuestionSnapshotStore'); ?>
 
   <script>
     var WEB_APP_URL = '<?= getWebAppUrl_() ?>';
@@ -377,9 +342,36 @@
     var activeWorkbooks = [];
     var selectedWorkbookId = '';
     var selectedWorkbookName = '';
+    var QUESTION_SNAPSHOT_SCHEMA_VERSION = 2;
+    var QUESTION_SNAPSHOT_REFRESH_REQUESTED = window.location.search.indexOf('refreshQuestions=1') !== -1;
+    var questionSnapshotRefreshConsumed = false;
+    var questionSnapshotRequestId = 0;
+    var questionSnapshotLoadingWorkbookId = '';
+    var currentQuestionSnapshotManifest = null;
     var currentUserRequestTimer = null;
-    var pendingResumeRun = null;
-    var pendingGameStartAt = 0;
+    var loadingTimerId = null;
+    var loadingHideTimerId = null;
+    var loadingSessionId = 0;
+    var loadingStartedAt = 0;
+    var loadingStepItems = [];
+    var LOADING_COMPLETE_HOLD_MS = 500;
+    var GAME_START_LOADING_STEPS = [
+      '브라우저 로컬 문제집 준비 상태 확인',
+      '게임 시작 조건 확인',
+      '기존 활성 게임 패배 처리 및 새 게임 생성',
+      '플레이어·스테이지·몬스터·스킬 등 필수 상태 준비',
+      '로컬 문제집을 제외한 최소 전투 화면 데이터 생성',
+      '최소 데이터를 브라우저로 전송·임시 저장',
+      '준비된 로컬 문제집과 함께 전투 화면으로 이동'
+    ];
+    var WORKBOOK_SNAPSHOT_LOADING_STEPS = [
+      '선택한 문제집과 사용자 권한 확인',
+      '문제집 시트의 전체 문제 읽기',
+      '승인된 문제만 게임용으로 정리·검증',
+      '브라우저 IndexedDB에 문제집 스냅샷 저장',
+      '로컬 문제집 준비 완료',
+      '메인 화면 표시'
+    ];
     var noticeRequestToken = '';
     var currentNoticeItems = [];
     var NOTICE_HIDE_PREFIX = 'learningRpgNoticeHiddenDate:';
@@ -634,9 +626,14 @@
       showLoadingModal('데이터 다시 불러오는 중...', '시트 데이터 캐시를 비우는 중...');
       google.script.run
         .withSuccessHandler(function() {
-          hideLoadingModal();
-          setMainMessage('데이터를 다시 불러왔습니다.', 'ok');
-          refreshCurrentUser(true);
+          QUESTION_SNAPSHOT_REFRESH_REQUESTED = true;
+          questionSnapshotRefreshConsumed = false;
+          var cleared = window.LearningRpgQuestionStore ? window.LearningRpgQuestionStore.clear() : Promise.resolve();
+          cleared.finally(function() {
+            hideLoadingModal();
+            setMainMessage('데이터를 다시 불러왔습니다.', 'ok');
+            refreshCurrentUser(true);
+          });
         })
         .withFailureHandler(function(error) {
           hideLoadingModal();
@@ -662,7 +659,7 @@
       restoreSelectedWorkbookToState();
       var hasWorkbookSelection = state.isRegistered && !!selectedWorkbookId;
       toggle('registerPanel', !state.isRegistered);
-      toggle('mainPanel', hasWorkbookSelection);
+      toggle('mainPanel', false);
       toggle('infoPanel', false);
 
       if (!state.isRegistered) {
@@ -675,12 +672,12 @@
       renderRoleButtons();
       document.getElementById('adminButton').style.display = state.isAdmin ? 'block' : 'none';
       renderWorkbookSelectOptions();
-      scheduleNoticeModal();
       if (!hasWorkbookSelection) {
         showWorkbookSelectModal();
         return;
       }
       hideWorkbookSelectModal();
+      prepareStoredWorkbookBeforeMain(findActiveWorkbookById(selectedWorkbookId));
     }
 
     function renderPlayerBadge(state) {
@@ -876,8 +873,124 @@
         setWorkbookSelectMessage('문제집(수업)을 선택해 주세요.', 'error');
         return;
       }
-      applySelectedWorkbook(workbook);
-      setMainMessage('');
+      prepareWorkbookSnapshotAndEnterMain(workbook, { forceReload: true });
+    }
+
+    function prepareStoredWorkbookBeforeMain(workbook) {
+      if (!workbook) {
+        showWorkbookSelectModal();
+        return;
+      }
+      var forceReload = QUESTION_SNAPSHOT_REFRESH_REQUESTED && !questionSnapshotRefreshConsumed;
+      if (!window.LearningRpgQuestionStore) {
+        prepareWorkbookSnapshotAndEnterMain(workbook, { forceReload: true });
+        return;
+      }
+      window.LearningRpgQuestionStore.get(workbook.workbookId).then(function(snapshot) {
+        if (!forceReload && isUsableQuestionSnapshot(snapshot, workbook.workbookId)) {
+          currentQuestionSnapshotManifest = snapshot.runStartManifest || null;
+          applyQuestionSnapshotContribution(snapshot);
+          applySelectedWorkbook(workbook);
+          setMainMessage('');
+          return;
+        }
+        prepareWorkbookSnapshotAndEnterMain(workbook, { forceReload: true });
+      }).catch(function() {
+        prepareWorkbookSnapshotAndEnterMain(workbook, { forceReload: true });
+      });
+    }
+
+    function isUsableQuestionSnapshot(snapshot, workbookId) {
+      return !!(snapshot
+        && Number(snapshot.schemaVersion || 0) === QUESTION_SNAPSHOT_SCHEMA_VERSION
+        && String(snapshot.workbookId || '') === String(workbookId || '')
+        && Array.isArray(snapshot.questions)
+        && snapshot.runStartManifest
+        && snapshot.runStartManifest.signature);
+    }
+
+    function prepareWorkbookSnapshotAndEnterMain(workbook, options) {
+      options = options || {};
+      if (!workbook || !workbook.workbookId) return;
+      if (questionSnapshotLoadingWorkbookId === String(workbook.workbookId)) return;
+      if (!window.LearningRpgQuestionStore || typeof google === 'undefined' || !google.script || !google.script.run) {
+        setWorkbookSelectMessage('브라우저 로컬 저장소나 서버 연결을 사용할 수 없습니다.', 'error');
+        showWorkbookSelectModal();
+        return;
+      }
+      var requestId = ++questionSnapshotRequestId;
+      questionSnapshotLoadingWorkbookId = String(workbook.workbookId);
+      toggle('mainPanel', false);
+      showLoadingModal('문제집을 브라우저에 준비하는 중...', '메인 화면에 들어가기 전 선택한 문제집을 한 번 읽습니다.', {
+        steps: WORKBOOK_SNAPSHOT_LOADING_STEPS,
+        activeStep: 0,
+        progress: 5
+      });
+      window.setTimeout(function() {
+        if (requestId !== questionSnapshotRequestId || questionSnapshotLoadingWorkbookId !== String(workbook.workbookId)) return;
+        updateLoadingModal({
+          text: '선택한 문제집을 확인했습니다. 문제집 시트의 전체 행과 열을 읽는 중입니다.',
+          activeStep: 1,
+          progress: 18
+        });
+      }, 180);
+      google.script.run
+        .withSuccessHandler(function(snapshot) {
+          if (requestId !== questionSnapshotRequestId) return;
+          if (!isUsableQuestionSnapshot(snapshot, workbook.workbookId)) {
+            handleWorkbookSnapshotFailure(workbook, new Error('서버에서 받은 문제집 데이터가 올바르지 않습니다.'));
+            return;
+          }
+          updateLoadingModal({
+            text: '승인된 문제 ' + Number(snapshot.questionCount || snapshot.questions.length || 0).toLocaleString('ko-KR') + '개를 받았습니다. 브라우저 로컬 저장소에 저장하는 중입니다.',
+            activeStep: 3,
+            progress: 78
+          });
+          window.LearningRpgQuestionStore.replace(snapshot).then(function() {
+            if (requestId !== questionSnapshotRequestId) return;
+            questionSnapshotLoadingWorkbookId = '';
+            if (QUESTION_SNAPSHOT_REFRESH_REQUESTED) questionSnapshotRefreshConsumed = true;
+            currentQuestionSnapshotManifest = snapshot.runStartManifest || null;
+            applyQuestionSnapshotContribution(snapshot);
+            updateLoadingModal({
+              text: '로컬 문제집 준비가 완료되었습니다. 메인 화면을 엽니다.',
+              activeStep: 5,
+              progress: 100
+            });
+            applySelectedWorkbook(workbook);
+            setMainMessage('문제 ' + Number(snapshot.questions.length || 0).toLocaleString('ko-KR') + '개를 브라우저에 준비했습니다.', 'ok');
+            window.setTimeout(function() { hideLoadingModal(true); }, LOADING_COMPLETE_HOLD_MS);
+          }).catch(function(error) {
+            handleWorkbookSnapshotFailure(workbook, error);
+          });
+        })
+        .withFailureHandler(function(error) {
+          if (requestId !== questionSnapshotRequestId) return;
+          handleWorkbookSnapshotFailure(workbook, error);
+        })
+        .getWorkbookBattleQuestionSnapshot(workbook.workbookId, getAuthToken());
+    }
+
+    function handleWorkbookSnapshotFailure(workbook, error) {
+      questionSnapshotLoadingWorkbookId = '';
+      hideLoadingModal();
+      toggle('mainPanel', false);
+      showWorkbookSelectModal();
+      var message = error && error.message ? error.message : '문제집을 브라우저에 준비하지 못했습니다.';
+      setWorkbookSelectMessage(message, 'error');
+    }
+
+    function applyQuestionSnapshotContribution(snapshot) {
+      var manifest = snapshot && snapshot.runStartManifest || {};
+      if (!currentState) return;
+      currentState.startingScoreBonus = {
+        questionCount: Number(manifest.ownQuestionCount || 0),
+        likeCount: Number(manifest.ownLikeCount || 0),
+        multiplier: 5,
+        startingScore: Number(manifest.startingScore || 0),
+      };
+      saveCurrentState(currentState);
+      renderPlayerBadge(currentState);
     }
 
     function archiveSelectedWorkbook() {
@@ -1177,7 +1290,7 @@
           .withSuccessHandler(function(response) {
             hideLoadingModal();
             showLoginForm();
-            setRegisterMessage((response && response.message) || '가입 신청이 완료되었습니다. 관리자 승인 후 로그인할 수 있습니다.', 'ok');
+            setRegisterMessage((response && response.message) || '회원가입이 완료되었습니다. 바로 로그인할 수 있습니다.', 'ok');
           })
           .withFailureHandler(function(error) {
             hideLoadingModal();
@@ -1225,16 +1338,15 @@
 
     function completeLogout() {
       clearLoginSessionStorage();
+      if (window.LearningRpgQuestionStore) window.LearningRpgQuestionStore.clear();
       currentState = null;
       activeWorkbooks = [];
       selectedWorkbookId = '';
       selectedWorkbookName = '';
-      pendingResumeRun = null;
-      pendingGameStartAt = 0;
+      currentQuestionSnapshotManifest = null;
       closeNoticeModal();
       hideWorkbookSelectModal();
       hideCreateWorkbookModal();
-      hideResumeRunModal();
       hideLoadingModal();
       showLoginForm();
       toggle('registerPanel', true);
@@ -1265,118 +1377,74 @@
         setMainMessage('게임을 시작하려면 문제집(수업)을 먼저 선택해 주세요.', 'error');
         return;
       }
-      var startedAt = Date.now();
-      pendingGameStartAt = startedAt;
-      showLoadingModal('로딩 중...', '게임 시작 조건을 확인하는 중...');
-      google.script.run
-        .withSuccessHandler(function(summary) {
-          if (summary && summary.hasActiveRun) {
-            hideLoadingModal();
-            showResumeRunModal(summary.run);
-            return;
-          }
-          startRunFromMenu(startedAt, false);
-        })
-        .withFailureHandler(function(error) {
+      showLoadingModal('게임을 준비하는 중...', '브라우저 로컬 문제집이 준비되었는지 확인합니다.', {
+        steps: GAME_START_LOADING_STEPS,
+        activeStep: 0,
+        progress: 5
+      });
+      if (!window.LearningRpgQuestionStore) {
+        hideLoadingModal();
+        prepareWorkbookSnapshotAndEnterMain(findActiveWorkbookById(selectedWorkbookId), { forceReload: true });
+        return;
+      }
+      window.LearningRpgQuestionStore.get(selectedWorkbookId).then(function(snapshot) {
+        if (!isUsableQuestionSnapshot(snapshot, selectedWorkbookId)) {
           hideLoadingModal();
-          setMainMessage(error && error.message ? error.message : '게임 시작 조건을 확인하지 못했습니다.', 'error');
-        })
-        .getActiveRunSummary(currentState.player.playerId, getAuthToken(), selectedWorkbookId);
+          prepareWorkbookSnapshotAndEnterMain(findActiveWorkbookById(selectedWorkbookId), { forceReload: true });
+          return;
+        }
+        currentQuestionSnapshotManifest = snapshot.runStartManifest || null;
+        beginGameStartRequest();
+      }).catch(function() {
+        hideLoadingModal();
+        prepareWorkbookSnapshotAndEnterMain(findActiveWorkbookById(selectedWorkbookId), { forceReload: true });
+      });
     }
 
-    function startRunFromMenu(startedAt, restart) {
-      showLoadingModal(
-        '로딩 중...',
-        restart ? '이전 진행을 포기하고 처음부터 시작합니다.' : '전투 데이터를 불러오는 중...'
-      );
+    function beginGameStartRequest() {
+      var startedAt = Date.now();
+      updateLoadingModal({
+        title: '새 게임을 준비하는 중...',
+        text: '기존 활성 게임을 정리하고 새 전투를 생성합니다.',
+        activeStep: 2,
+        progress: 24
+      });
       google.script.run
         .withSuccessHandler(function(view) {
           cacheInitialBattleView(view);
-          transitionToBattlePage(startedAt || Date.now());
+          updateLoadingModal({
+            text: '새 전투 준비가 완료되었습니다.',
+            activeStep: 6,
+            progress: 100
+          });
+          transitionToBattlePage(startedAt, view && view.entryToken);
         })
         .withFailureHandler(function(error) {
           hideLoadingModal();
-          hideResumeRunModal();
           setMainMessage(error && error.message ? error.message : '게임을 시작하지 못했습니다.', 'error');
-        })[restart ? 'restartRun' : 'startRun'](currentState.player.playerId, getAuthToken(), selectedWorkbookId);
+        })
+        .startRun(currentState.player.playerId, getAuthToken(), selectedWorkbookId, currentQuestionSnapshotManifest);
     }
 
-    function showResumeRunModal(run) {
-      pendingResumeRun = run || null;
-      var modal = document.getElementById('resumeRunModal');
-      var summary = document.getElementById('resumeRunSummary');
-      var floor = Number(run && run.currentFloor || 1);
-      var stage = Number(run && run.currentStage || 1);
-      var displayParts = getDisplayFloorParts(floor);
-      var displayFloor = displayParts.floorLabel;
-      var stageName = getStageDisplayName(run && run.stageName);
-      var hp = Number(run && run.currentHp || 0);
-      var shield = Number(run && run.currentShield || 0);
-      var workbookName = String(run && run.workbookName || selectedWorkbookName || '').trim();
-      summary.innerHTML = [
-        '<strong>' + escapeHtml(displayFloor + ' ' + (stageName || displayParts.areaLabel) + ' ' + stage + '스테이지') + '</strong>',
-        (workbookName ? '<span>문제집(수업): ' + escapeHtml(workbookName) + '</span>' : ''),
-        '<span>HP ' + escapeHtml(hp) + (shield > 0 ? ' / 보호막 ' + escapeHtml(shield) : '') + '</span>'
-      ].filter(Boolean).join('<br>');
-      modal.classList.add('active');
-      modal.setAttribute('aria-hidden', 'false');
-    }
-
-    function getDisplayFloorParts(progressFloor) {
-      var floor = Number(progressFloor || 1);
-      var displays = {
-        1: { floorLabel: '5층', areaLabel: '옥상' },
-        2: { floorLabel: '4층', areaLabel: '1학년 교실층' },
-        3: { floorLabel: '3층', areaLabel: '3학년 교실층' },
-        4: { floorLabel: '2층', areaLabel: '2학년 교실층' },
-        5: { floorLabel: '1층', areaLabel: '현관 앞' },
-      };
-      return displays[floor] || { floorLabel: floor + '층', areaLabel: '' };
-    }
-
-    function getStageDisplayName(stageName) {
-      var name = String(stageName || '').trim();
-      if (/^\d+층\s*\d+스테이지$/.test(name)) {
-        return '';
-      }
-      return name;
-    }
-
-    function hideResumeRunModal() {
-      var modal = document.getElementById('resumeRunModal');
-      if (!modal) return;
-      modal.classList.remove('active');
-      modal.setAttribute('aria-hidden', 'true');
-    }
-
-    function continuePreviousRun() {
-      hideResumeRunModal();
-      startRunFromMenu(pendingGameStartAt || Date.now(), false);
-    }
-
-    function abandonPreviousRunAndStart() {
-      hideResumeRunModal();
-      startRunFromMenu(pendingGameStartAt || Date.now(), true);
-    }
-
-    function transitionToBattlePage(startedAt) {
+    function transitionToBattlePage(startedAt, entryToken) {
       var elapsed = Date.now() - Number(startedAt || Date.now());
       var waitMs = Math.max(0, 250 - elapsed);
       window.setTimeout(function() {
-        var modal = document.getElementById('loadingModal');
         document.getElementById('loadingTitle').textContent = '로딩 중...';
         document.getElementById('loadingText').textContent = '잠시 후 전투가 시작됩니다.';
-        modal.classList.add('page-transition');
+        updateLoadingModal({ activeStep: 6, progress: 100 });
         window.setTimeout(function() {
-          goToPage('battle', { loading: false });
-        }, 280);
+          goToPage('battle', {
+            loading: false,
+            params: { entryToken: String(entryToken || '') }
+          });
+        }, LOADING_COMPLETE_HOLD_MS);
         window.setTimeout(function() {
           if (document.visibilityState !== 'hidden') {
-            modal.classList.remove('page-transition');
             document.getElementById('loadingTitle').textContent = '로딩 중...';
             document.getElementById('loadingText').textContent = '이동이 지연되면 새로고침 후 다시 시도해 주세요.';
           }
-        }, 2200);
+        }, LOADING_COMPLETE_HOLD_MS + 2200);
       }, waitMs);
     }
 
@@ -1424,9 +1492,6 @@
         setMainMessage('교사 또는 관리자만 문제를 만들 수 있습니다.', 'error');
         return;
       }
-      if (options.loading !== false) {
-        showNavigationLoading(page, options);
-      }
       var baseUrl = getNavigationBaseUrl();
       if (!baseUrl) {
         hideLoadingModal();
@@ -1435,6 +1500,11 @@
       }
       var separator = baseUrl.indexOf('?') === -1 ? '?' : '&';
       var nextUrl = baseUrl + separator + 'page=' + encodeURIComponent(page);
+      Object.keys(options.params || {}).forEach(function(key) {
+        var value = options.params[key];
+        if (value === undefined || value === null || value === '') return;
+        nextUrl += '&' + encodeURIComponent(key) + '=' + encodeURIComponent(String(value));
+      });
       navigateTop(nextUrl);
     }
 
@@ -1451,13 +1521,15 @@
 
     function navigateTop(url) {
       var targetUrl = String(url || '');
-      try {
-        window.location.assign(targetUrl);
-        return;
-      } catch (error) {}
-      window.setTimeout(function() {
+      var fallbackTimer = window.setTimeout(function() {
         showNavigationFallback(targetUrl);
       }, 1200);
+      try {
+        window.location.assign(targetUrl);
+      } catch (error) {
+        window.clearTimeout(fallbackTimer);
+        showNavigationFallback(targetUrl);
+      }
     }
 
     function showNavigationFallback(url) {
@@ -1475,9 +1547,6 @@
         String(document.referrer || ''),
         String(window.location && window.location.href || ''),
       ];
-      try {
-        candidates.unshift(String(window.top && window.top.location && window.top.location.href || ''));
-      } catch (error) {}
 
       for (var i = 0; i < candidates.length; i += 1) {
         var cleanUrl = sanitizeWebAppBaseUrl(candidates[i]);
@@ -1604,15 +1673,99 @@
       return Number(score || 0).toLocaleString('ko-KR') + '점';
     }
 
-    function showLoadingModal(title, text) {
-      document.getElementById('loadingModal').classList.remove('page-transition');
+    function showLoadingModal(title, text, options) {
+      options = options || {};
+      var modal = document.getElementById('loadingModal');
+      loadingSessionId += 1;
+      if (loadingHideTimerId) {
+        window.clearTimeout(loadingHideTimerId);
+        loadingHideTimerId = null;
+      }
+      modal.classList.remove('page-transition');
+      modal.classList.remove('no-progress');
       document.getElementById('loadingTitle').textContent = title || '로딩 중...';
       document.getElementById('loadingText').textContent = text || '데이터를 불러오는 중...';
-      document.getElementById('loadingModal').classList.add('active');
+      loadingStartedAt = performance.now();
+      loadingStepItems = (options.steps || []).map(function(step, index) {
+        return {
+          text: String(step || ''),
+          status: index < Number(options.activeStep || 0) ? 'done' : (index === Number(options.activeStep || 0) ? 'active' : '')
+        };
+      });
+      renderLoadingSteps();
+      setLoadingProgress(options.progress !== undefined ? options.progress : 0);
+      updateLoadingElapsed();
+      if (loadingTimerId) window.clearInterval(loadingTimerId);
+      loadingTimerId = window.setInterval(updateLoadingElapsed, 100);
+      modal.classList.add('active');
+      modal.setAttribute('aria-hidden', 'false');
     }
 
-    function hideLoadingModal() {
-      document.getElementById('loadingModal').classList.remove('active', 'page-transition');
+    function hideLoadingModal(immediate) {
+      var modal = document.getElementById('loadingModal');
+      if (!modal.classList.contains('active')) return;
+      if (!immediate) {
+        updateLoadingModal({ progress: 100 });
+        var sessionId = loadingSessionId;
+        if (loadingHideTimerId) window.clearTimeout(loadingHideTimerId);
+        loadingHideTimerId = window.setTimeout(function() {
+          loadingHideTimerId = null;
+          if (sessionId === loadingSessionId) hideLoadingModal(true);
+        }, LOADING_COMPLETE_HOLD_MS);
+        return;
+      }
+      if (loadingTimerId) {
+        window.clearInterval(loadingTimerId);
+        loadingTimerId = null;
+      }
+      if (loadingHideTimerId) {
+        window.clearTimeout(loadingHideTimerId);
+        loadingHideTimerId = null;
+      }
+      modal.classList.remove('active', 'page-transition');
+      modal.setAttribute('aria-hidden', 'true');
+    }
+
+    function updateLoadingModal(options) {
+      options = options || {};
+      if (options.title !== undefined) document.getElementById('loadingTitle').textContent = options.title;
+      if (options.text !== undefined) document.getElementById('loadingText').textContent = options.text;
+      if (options.progress !== undefined) setLoadingProgress(options.progress);
+      if (options.activeStep !== undefined) {
+        loadingStepItems.forEach(function(step, index) {
+          step.status = index < options.activeStep ? 'done' : (index === options.activeStep ? 'active' : '');
+        });
+        renderLoadingSteps();
+      }
+      updateLoadingElapsed();
+    }
+
+    function setLoadingProgress(progress) {
+      var percent = Math.max(0, Math.min(100, Math.round(Number(progress || 0))));
+      var fill = document.getElementById('loadingProgressFill');
+      var label = document.getElementById('loadingProgressText');
+      if (fill) fill.style.width = percent + '%';
+      if (label) label.textContent = percent + '%';
+    }
+
+    function updateLoadingElapsed() {
+      var element = document.getElementById('loadingElapsedText');
+      if (!element || !loadingStartedAt) return;
+      element.textContent = '경과 ' + ((performance.now() - loadingStartedAt) / 1000).toFixed(1) + '초';
+    }
+
+    function renderLoadingSteps() {
+      var list = document.getElementById('loadingSteps');
+      if (!list) return;
+      if (!loadingStepItems.length) {
+        list.innerHTML = '';
+        list.classList.add('hidden');
+        return;
+      }
+      list.classList.remove('hidden');
+      list.innerHTML = loadingStepItems.map(function(step) {
+        return '<li class="' + escapeHtml(step.status || '') + '">' + escapeHtml(step.text) + '</li>';
+      }).join('');
     }
 
     function escapeHtml(value) {

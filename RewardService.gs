@@ -518,20 +518,19 @@ function selectReward(runId, rewardId, authToken, rewardView) {
     });
   }
 
-  startBattle(runId);
-  var nextBattleRun = requireRun_(runId);
-  var nextBattleView = buildBattleView_(nextBattleRun, getStageState_(nextBattleRun));
-  markTiming('nextBattlePrepared');
-  debugTimings.nextBattlePreparedMs = Number(timingMarks.nextBattlePrepared || 0);
-  debugTimings.totalMs = new Date().getTime() - timingStartedAt;
-  debugTimings.steps = buildTimingSteps();
-  return Object.assign({}, nextBattleView, {
+  // Return the score/reward result immediately. The battle page starts
+  // prepareNextBattleAfterReward while the score animation is visible, so the
+  // expensive question-sheet read and battle-view build do not block this response.
+  return {
+    nextBattlePending: true,
+    runId: runId,
+    run: toClientObject_(movedRun),
     rewardSelected: true,
     selectedReward: appliedReward,
     currencyAmount: isRestReward ? 0 : rewardState.currencyAmount,
     scoreSummary: scoreSummary,
     debugTimings: debugTimings,
-  });
+  };
 }
 
 function prepareNextBattleAfterReward(runId, authToken) {
@@ -543,11 +542,94 @@ function prepareNextBattleAfterReward(runId, authToken) {
 
   var stageState = getStageState_(run);
   if (stageState.battle && stageState.battle.status === STATUS.BATTLE_ACTIVE) {
-    return buildBattleView_(run, stageState);
+    return buildBattleStateView_(run, stageState);
   }
   startBattle(run.runId);
   run = requireRun_(run.runId);
-  return buildBattleView_(run, getStageState_(run));
+  return buildBattleStateView_(run, getStageState_(run));
+}
+
+function preloadNextStageStatic(runId, currentStageId, authToken) {
+  var run = requireRun_(runId);
+  requireRewardRunOwner_(run, authToken);
+  if (run.status !== STATUS.RUN_ACTIVE) {
+    return { prepared: false, reason: 'inactiveRun' };
+  }
+  var persistedStageId = buildStageId_(run.currentFloor, run.currentStage);
+  if (String(currentStageId || '') !== String(persistedStageId || '')) {
+    return { prepared: false, reason: 'stageChanged' };
+  }
+
+  var nextPosition = getNextStagePositionForPreload_(run);
+  if (!nextPosition) {
+    return { prepared: false, reason: 'runClear' };
+  }
+  var stageId = buildStageId_(nextPosition.floor, nextPosition.stage);
+  var stage = loadStage(stageId);
+  if (isFloorRestStage_(stage)) {
+    return {
+      prepared: false,
+      intermission: true,
+      stageId: stageId,
+    };
+  }
+
+  var prepared = {
+    runId: String(run.runId || ''),
+    stageId: String(stage.stageId || stageId),
+    monsters: createMonstersForStage_(stage, null),
+    preparedAt: new Date().toISOString(),
+  };
+  try {
+    CacheService.getScriptCache().put(
+      getNextStageStaticCacheKey_(run.runId, prepared.stageId),
+      safeJsonStringify_(prepared),
+      1800
+    );
+  } catch (error) {
+    return { prepared: false, reason: 'cacheUnavailable', stageId: prepared.stageId };
+  }
+  return {
+    prepared: true,
+    stageId: prepared.stageId,
+    monsterCount: prepared.monsters.length,
+  };
+}
+
+function getNextStagePositionForPreload_(run) {
+  var floor = Number(run && run.currentFloor || 1);
+  var stage = Number(run && run.currentStage || 1);
+  if (floor >= GAME_RULES.FLOOR_COUNT && stage >= GAME_RULES.STAGES_PER_FLOOR) {
+    return null;
+  }
+  if (stage === GAME_RULES.STAGES_PER_FLOOR && floor < GAME_RULES.FLOOR_COUNT) {
+    return { floor: floor, stage: GAME_RULES.FLOOR_REST_STAGE };
+  }
+  if (stage === GAME_RULES.FLOOR_REST_STAGE || stage + 1 > GAME_RULES.STAGES_PER_FLOOR) {
+    return { floor: floor + 1, stage: 1 };
+  }
+  return { floor: floor, stage: stage + 1 };
+}
+
+function getNextStageStaticCacheKey_(runId, stageId) {
+  return ['next-stage-static', String(runId || ''), String(stageId || '')].join(':');
+}
+
+function consumePreloadedStageMonsters_(runId, stageId) {
+  var key = getNextStageStaticCacheKey_(runId, stageId);
+  try {
+    var cache = CacheService.getScriptCache();
+    var prepared = safeJsonParse_(cache.get(key), null);
+    if (!prepared || String(prepared.runId || '') !== String(runId || '')
+        || String(prepared.stageId || '') !== String(stageId || '')
+        || !Array.isArray(prepared.monsters) || !prepared.monsters.length) {
+      return null;
+    }
+    cache.remove(key);
+    return safeJsonParse_(safeJsonStringify_(prepared.monsters), null);
+  } catch (error) {
+    return null;
+  }
 }
 
 function awardStageClearScoreForReward_(run, stageState) {
@@ -1054,6 +1136,7 @@ function buildNextStageMoveForRun_(run, stageState) {
       fallbackEvents: [],
       usedQuestionIds: [],
       usedQuestionStageId: buildStageId_(nextFloor, nextStage),
+      approvedQuestionCreatorIds: (stageState.approvedQuestionCreatorIds || []).slice(),
       scoreState: scoreState,
     }),
   };

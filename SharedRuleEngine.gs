@@ -634,11 +634,36 @@ var RULE_ENGINE_SHARED = (function() {
       var perTargetHits = normalizedTargetMode === 'randomEnemies' ? 1 : hitCount;
       for (var i = 0; i < perTargetHits; i += 1) {
         var targetContext = buildFormulaContext(battle, skill, target, efficiency);
+        var simultaneousGroupId = normalizedTargetMode === 'allEnemies'
+          ? (skill.skillId || 'skill') + ':allEnemies:' + i
+          : ((hitCount > 1 || normalizedTargetMode === 'randomEnemies') ? (skill.skillId || 'skill') + ':multiHit' : '');
         var damage = calculateRuleDamage(battle, skill, rule, targetContext, efficiency, options);
+        if (damage <= 0 || !target) continue;
+        var hitResult = typeof args.hitResolver === 'function'
+          ? args.hitResolver({ attacker: battle.player, target: target, skill: skill, hitIndex: i, hitCount: hitCount })
+          : { hit: true, chance: 100 };
+        if (hitResult && hitResult.hit === false) {
+          battle.lastTurnEvents.push({
+            actor: 'player',
+            type: 'skill',
+            skillId: skill.skillId || '',
+            targetMonsterId: target && (target.instanceId || target.monsterId) || '',
+            damage: 0,
+            shieldDamage: 0,
+            hpDamage: 0,
+            missed: true,
+            hitChance: Number(hitResult.chance || 0),
+            hitIndex: i + 1,
+            hitCount: hitCount,
+            simultaneousGroupId: simultaneousGroupId,
+            message: (skill.name || '스킬') + ' 공격이 빗나갔습니다.'
+          });
+          continue;
+        }
         if (typeof args.damageModifier === 'function') {
           damage = args.damageModifier(damage, { actionType: 'skill', skill: skill, target: target });
         }
-        if (damage <= 0 || !target) continue;
+        if (damage <= 0) continue;
         var result = dealDamageToMonster(target, damage);
         totalDamageDealt += Number(result.damage || 0);
         battle.lastTurnEvents.push({
@@ -649,7 +674,9 @@ var RULE_ENGINE_SHARED = (function() {
           damage: result.damage,
           shieldDamage: result.shieldDamage,
           hpDamage: result.hpDamage,
-          simultaneousGroupId: normalizedTargetMode === 'allEnemies' ? (skill.skillId || 'skill') + ':allEnemies:' + i : '',
+          hitIndex: i + 1,
+          hitCount: hitCount,
+          simultaneousGroupId: simultaneousGroupId,
           message: (skill.name || '스킬') + '으로 ' + result.damage + ' 피해를 주었습니다.'
         });
       }

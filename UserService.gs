@@ -12,9 +12,9 @@ function getCurrentUser(authToken) {
     activeWorkbooks: player && typeof getActiveWorkbooksForClient_ === 'function'
       ? getActiveWorkbooksForClient_()
       : [],
-    startingScoreBonus: player && typeof getQuestionLikeStartingScoreSummary_ === 'function'
-      ? getQuestionLikeStartingScoreSummary_(player.playerId)
-      : { likeCount: 0, multiplier: 5, startingScore: 0 },
+    // The selected workbook snapshot supplies this before the main screen opens.
+    // Avoid reading every active question sheet during login.
+    startingScoreBonus: { questionCount: 0, likeCount: 0, multiplier: 5, startingScore: 0 },
     settings: getAppSettings(),
   };
 }
@@ -35,6 +35,7 @@ function registerPlayer(signupPayload) {
   var now = new Date();
   var passwordSalt = generateId_('salt');
   var displayName = studentId + ' ' + studentName;
+  var isStudent = role === 'student';
   var player = {
     playerId: generateId_('player'),
     studentId: studentId,
@@ -49,9 +50,9 @@ function registerPlayer(signupPayload) {
     lastLoginAt: '',
     isActive: true,
     role: role,
-    approvalStatus: 'pending',
-    approvedBy: '',
-    approvedAt: '',
+    approvalStatus: isStudent ? 'approved' : 'pending',
+    approvedBy: isStudent ? 'automatic' : '',
+    approvedAt: isStudent ? now : '',
     rejectedReason: '',
   };
 
@@ -60,7 +61,9 @@ function registerPlayer(signupPayload) {
   return {
     ok: true,
     approvalStatus: player.approvalStatus,
-    message: '가입 신청이 완료되었습니다. 관리자 승인 후 로그인할 수 있습니다.',
+    message: isStudent
+      ? '회원가입이 완료되었습니다. 바로 로그인할 수 있습니다.'
+      : '가입 신청이 완료되었습니다. 관리자 승인 후 로그인할 수 있습니다.',
   };
 }
 
@@ -79,10 +82,16 @@ function loginPlayer(loginPayload) {
     throw new Error('비밀번호가 올바르지 않습니다.');
   }
 
-  updateRowByKey_(DB_SHEETS.PLAYERS, 'playerId', player.playerId, {
-    lastLoginAt: new Date(),
-  });
-  return buildAuthResponse_(Object.assign({}, player, { lastLoginAt: new Date() }));
+  var loginAt = new Date();
+  var loginUpdates = { lastLoginAt: loginAt };
+  if (player.role === 'student' && player.approvalStatus !== 'approved') {
+    loginUpdates.approvalStatus = 'approved';
+    loginUpdates.approvedBy = 'automatic';
+    loginUpdates.approvedAt = loginAt;
+    loginUpdates.rejectedReason = '';
+  }
+  var updatedPlayer = updateRowByKey_(DB_SHEETS.PLAYERS, 'playerId', player.playerId, loginUpdates);
+  return buildAuthResponse_(normalizePlayerAccountDefaults_(updatedPlayer));
 }
 
 function logoutPlayer(authToken) {
@@ -274,6 +283,10 @@ function normalizePlayerAccountDefaults_(player) {
 
 function requireApprovedPlayerForLogin_(player) {
   var approvalStatus = String(player && player.approvalStatus || '').trim() || 'approved';
+  var role = normalizeAccountRole_(player && player.role);
+  if (role === 'student' && approvalStatus !== 'rejected') {
+    return;
+  }
   if (approvalStatus === 'approved') {
     return;
   }

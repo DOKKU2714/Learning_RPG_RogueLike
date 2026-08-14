@@ -227,7 +227,6 @@
     }
 
     function goHome() {
-      showLoadingModal('\uBA54\uC778 \uD654\uBA74\uC73C\uB85C \uC774\uB3D9 \uC911...', '\uC7A0\uC2DC\uB9CC \uAE30\uB2E4\uB824 \uC8FC\uC138\uC694.');
       navigateTop(WEB_APP_URL + '?page=index&skipIntro=1');
     }
 
@@ -242,13 +241,33 @@
     }
 
     function showLoadingModal(title, text) {
+      var modal = document.getElementById('loadingModal');
+      modal._loadingSessionId = Number(modal._loadingSessionId || 0) + 1;
+      if (modal._loadingHideTimerId) window.clearTimeout(modal._loadingHideTimerId);
+      modal._loadingHideTimerId = null;
+      modal.classList.remove('no-progress');
       document.getElementById('loadingTitle').textContent = title || '\uB85C\uB529 \uC911...';
       document.getElementById('loadingText').textContent = text || '\uB370\uC774\uD130\uB97C \uBD88\uB7EC\uC624\uB294 \uC911...';
-      document.getElementById('loadingModal').classList.add('active');
+      document.getElementById('loadingProgressFill').style.width = '0%';
+      document.getElementById('loadingProgressText').textContent = '0%';
+      modal.classList.add('active');
     }
 
-    function hideLoadingModal() {
-      document.getElementById('loadingModal').classList.remove('active');
+    function hideLoadingModal(immediate) {
+      var modal = document.getElementById('loadingModal');
+      if (!modal.classList.contains('active')) return;
+      if (immediate) {
+        modal.classList.remove('active');
+        return;
+      }
+      document.getElementById('loadingProgressFill').style.width = '100%';
+      document.getElementById('loadingProgressText').textContent = '100%';
+      var sessionId = Number(modal._loadingSessionId || 0);
+      if (modal._loadingHideTimerId) window.clearTimeout(modal._loadingHideTimerId);
+      modal._loadingHideTimerId = window.setTimeout(function() {
+        modal._loadingHideTimerId = null;
+        if (sessionId === Number(modal._loadingSessionId || 0)) hideLoadingModal(true);
+      }, 500);
     }
 
     function escapeHtml(value) {

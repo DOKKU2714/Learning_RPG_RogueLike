@@ -1,4 +1,4 @@
-function canStartGame(playerId, authToken, workbookId) {
+function canStartGame_(playerId, authToken, workbookId, questionManifest) {
   var player = getCurrentPlayer_(authToken);
   if (player.playerId !== playerId) {
     throw new Error('현재 로그인한 학생 정보와 요청한 플레이어가 다릅니다.');
@@ -6,12 +6,16 @@ function canStartGame(playerId, authToken, workbookId) {
 
   var workbook = requireActiveWorkbookForRunStart_(workbookId);
   var settings = getAppSettings();
+  var runStartContext = getPlayerRunStartContext_(playerId);
   var reasons = [];
   if (!settings.gameEnabled) {
     reasons.push('선생님이 아직 게임 시작을 활성화하지 않았습니다.');
   }
 
-  var missingDifficulties = getMissingApprovedQuestionDifficulties_(workbook.workbookId);
+  var verifiedManifest = verifyRunStartQuestionManifest_(questionManifest, playerId, workbook.workbookId);
+  var missingDifficulties = verifiedManifest
+    ? (verifiedManifest.missingDifficulties || []).map(Number)
+    : getMissingApprovedQuestionDifficulties_(workbook.workbookId);
   if (missingDifficulties.length > 0) {
     reasons.push(
       '선택한 문제집에 난이도 ' + GAME_RULES.MIN_DIFFICULTY + '~' + GAME_RULES.MAX_DIFFICULTY +
@@ -20,12 +24,17 @@ function canStartGame(playerId, authToken, workbookId) {
   }
 
   if (settings.requireOwnQuestionForRunStart !== false) {
-    var myQuestionCount = getWorkbookQuestionsByCreator_(workbook.workbookId, playerId).length;
+    var myQuestionCount = verifiedManifest
+      ? Number(verifiedManifest.ownQuestionCount || 0)
+      : getWorkbookQuestionsByCreator_(workbook.workbookId, playerId).length;
     if (myQuestionCount < 1) {
       reasons.push('게임 시작 전 문제를 1개 이상 만들어야 합니다.');
     }
-    var latestCompletedRunEndedAt = getLatestCompletedRunEndedAtMs_(playerId);
-    if (latestCompletedRunEndedAt > 0 && getLatestCreatedWorkbookQuestionAtMs_(workbook.workbookId, playerId) <= latestCompletedRunEndedAt) {
+    var latestCompletedRunEndedAt = runStartContext.latestCompletedRunEndedAtMs;
+    var latestCreatedQuestionAt = verifiedManifest
+      ? Number(verifiedManifest.latestOwnQuestionCreatedAtMs || 0)
+      : getLatestCreatedWorkbookQuestionAtMs_(workbook.workbookId, playerId);
+    if (latestCompletedRunEndedAt > 0 && latestCreatedQuestionAt <= latestCompletedRunEndedAt) {
       reasons.push('지난 게임이 끝난 뒤 새 문제를 1개 만들어야 다음 게임을 시작할 수 있습니다.');
     }
   }
@@ -34,6 +43,8 @@ function canStartGame(playerId, authToken, workbookId) {
     canStart: reasons.length === 0,
     reasons: reasons,
     workbook: workbook,
+    questionManifest: verifiedManifest,
+    activeRuns: runStartContext.activeRuns,
   };
 }
 
@@ -57,14 +68,26 @@ function getMissingApprovedQuestionDifficulties_(workbookId) {
   return missingDifficulties;
 }
 
-function getLatestCompletedRunEndedAtMs_(playerId) {
-  return readTable_(DB_SHEETS.RUNS).reduce(function(latest, run) {
-    if (run.playerId !== playerId || (run.status !== STATUS.RUN_FAILED && run.status !== STATUS.RUN_CLEARED)) {
-      return latest;
+function getPlayerRunStartContext_(playerId) {
+  return readTable_(DB_SHEETS.RUNS).reduce(function(context, run) {
+    if (run.playerId !== playerId) {
+      return context;
     }
-    var endedAt = parseDateMs_(run.endedAt || run.updatedAt || run.startedAt);
-    return Math.max(latest, endedAt);
-  }, 0);
+    if (run.status === STATUS.RUN_ACTIVE) {
+      context.activeRuns.push(run);
+      return context;
+    }
+    if (run.status === STATUS.RUN_FAILED || run.status === STATUS.RUN_CLEARED) {
+      context.latestCompletedRunEndedAtMs = Math.max(
+        context.latestCompletedRunEndedAtMs,
+        parseDateMs_(run.endedAt || run.updatedAt || run.startedAt)
+      );
+    }
+    return context;
+  }, {
+    activeRuns: [],
+    latestCompletedRunEndedAtMs: 0,
+  });
 }
 
 function getLatestCreatedWorkbookQuestionAtMs_(workbookId, playerId) {
@@ -149,67 +172,16 @@ function findRunQuestionById_(run, questionId) {
   return question ? attachQuestionWorkbook_(question, context.workbookId) : null;
 }
 
-function startRun(playerId, authToken, workbookId) {
+function startRun(playerId, authToken, workbookId, questionManifest) {
   return withRunStartLock_(function() {
-    validatePlayerRequest_(playerId, authToken);
-    var existingRun = getActiveRun(playerId, workbookId);
-    if (existingRun) {
-      refreshBattleDefinitionCaches_();
-      getRunWorkbookContext_(existingRun);
-      var existingStageState = getStageState_(existingRun);
-      if (!existingStageState.battle) {
-        startBattle(existingRun.runId);
-        existingRun = requireRun_(existingRun.runId);
-        existingStageState = getStageState_(existingRun);
-      }
-      return buildBattleView_(existingRun, existingStageState);
-    }
-
-    var check = canStartGame(playerId, authToken, workbookId);
+    var check = canStartGame_(playerId, authToken, workbookId, questionManifest);
     if (!check.canStart) {
       throw new Error(check.reasons.join('\n'));
     }
-
-    return createNewRun_(playerId, check.workbook);
-  });
-}
-
-function getActiveRunSummary(playerId, authToken, workbookId) {
-  validatePlayerRequest_(playerId, authToken);
-  var existingRun = getActiveRun(playerId, workbookId);
-  if (existingRun) {
-    var workbookContext = getRunWorkbookContext_(existingRun);
-    return toClientObject_({
-      hasActiveRun: true,
-      run: buildRunResumeSummary_(existingRun),
-      workbookId: workbookContext.workbookId,
-      workbookName: workbookContext.workbookName,
-    });
-  }
-
-  var check = canStartGame(playerId, authToken, workbookId);
-  if (!check.canStart) {
-    throw new Error(check.reasons.join('\n'));
-  }
-
-  return toClientObject_({
-    hasActiveRun: false,
-    run: null,
-  });
-}
-
-function restartRun(playerId, authToken, workbookId) {
-  return withRunStartLock_(function() {
-    validatePlayerRequest_(playerId, authToken);
-    var check = canStartGame(playerId, authToken, workbookId);
-    if (!check.canStart) {
-      throw new Error(check.reasons.join('\n'));
-    }
-
-    getActiveRunsForPlayer_(playerId, check.workbook.workbookId).forEach(function(run) {
+    (check.activeRuns || []).forEach(function(run) {
       abandonActiveRun_(run);
     });
-    return createNewRun_(playerId, check.workbook);
+    return createNewRun_(playerId, check.workbook, check.questionManifest);
   });
 }
 
@@ -231,14 +203,16 @@ function withRunStartLock_(callback) {
   }
 }
 
-function createNewRun_(playerId, workbook) {
+function createNewRun_(playerId, workbook, questionManifest) {
   ensureTableColumns_(DB_SHEETS.RUNS, DB_COLUMNS.RUNS);
   workbook = requireActiveWorkbookForRunStart_(workbook && workbook.workbookId || workbook);
   var now = new Date();
   var stats = Object.assign({}, BASE_PLAYER_STATS);
-  var startingScore = typeof calculateQuestionLikeStartingScore_ === 'function'
-    ? calculateQuestionLikeStartingScore_(playerId)
-    : 0;
+  var startingScore = questionManifest
+    ? Math.max(0, Math.round(Number(questionManifest.startingScore || 0)))
+    : (typeof calculateQuestionLikeStartingScore_ === 'function'
+      ? Math.max(0, Math.round(Number(calculateQuestionLikeStartingScore_(playerId) || 0)))
+      : 0);
   var run = {
     runId: generateId_('run'),
     playerId: playerId,
@@ -255,7 +229,12 @@ function createNewRun_(playerId, workbook) {
       otherStudentQuestionShown: false,
       fallbackEvents: [],
       usedQuestionIds: [],
+      approvedQuestionCreatorIds: questionManifest && Array.isArray(questionManifest.approvedQuestionCreatorIds)
+        ? questionManifest.approvedQuestionCreatorIds.slice()
+        : [],
       scoreState: {
+        startingScoreInitialized: !!questionManifest,
+        startingScore: startingScore,
         floorStartedAtByFloor: {
           1: now.toISOString(),
         },
@@ -266,7 +245,7 @@ function createNewRun_(playerId, workbook) {
     endedAt: '',
     clearTimeMs: '',
     currency: 0,
-    score: Math.max(0, Math.round(Number(startingScore || 0))),
+    score: startingScore,
     workbookId: workbook.workbookId,
     workbookName: workbook.workbookName,
   };
@@ -275,33 +254,45 @@ function createNewRun_(playerId, workbook) {
   cacheRun_(run);
   startBattle(run.runId);
   var startedRun = requireRun_(run.runId);
-  return buildBattleView_(startedRun, getStageState_(startedRun));
+  var entryView = buildBattleEntryView_(startedRun, getStageState_(startedRun));
+  entryView.entryToken = createBattleEntryHandoffToken_(startedRun);
+  return entryView;
 }
 
-function buildRunResumeSummary_(run) {
-  var stageName = '';
-  var workbookContext = getRunWorkbookContext_(run);
-  try {
-    var stageState = getStageState_(run);
-    var stage = loadStage(stageState.stageId || buildStageId_(run.currentFloor, run.currentStage));
-    stageName = stage.name || '';
-  } catch (error) {
-    stageName = '';
+function createBattleEntryHandoffToken_(run) {
+  var token = Utilities.getUuid().replace(/-/g, '');
+  CacheService.getScriptCache().put(
+    'battle-entry-handoff:' + token,
+    safeJsonStringify_({
+      runId: String(run && run.runId || ''),
+      playerId: String(run && run.playerId || ''),
+      workbookId: String(run && run.workbookId || ''),
+    }),
+    120
+  );
+  return token;
+}
+
+function consumeBattleEntryHandoff(entryToken, authToken) {
+  var player = getCurrentPlayer_(authToken);
+  var token = String(entryToken || '').trim();
+  if (!/^[a-f0-9]{32}$/i.test(token)) {
+    throw new Error('새 전투 진입 정보가 올바르지 않습니다. 메인 화면에서 다시 시작해 주세요.');
   }
-  return {
-    runId: run.runId,
-    currentFloor: Number(run.currentFloor || 1),
-    currentStage: Number(run.currentStage || 1),
-    stageName: stageName,
-    currentHp: Number(run.currentHp || 0),
-    currentShield: Number(run.currentShield || 0),
-    currency: Number(run.currency || 0),
-    score: Number(run.score || 0),
-    workbookId: workbookContext.workbookId,
-    workbookName: workbookContext.workbookName,
-    startedAt: run.startedAt || '',
-    updatedAt: run.updatedAt || '',
-  };
+  var cache = CacheService.getScriptCache();
+  var cacheKey = 'battle-entry-handoff:' + token;
+  var handoff = safeJsonParse_(cache.get(cacheKey), null);
+  if (!handoff || String(handoff.playerId || '') !== String(player.playerId || '')) {
+    throw new Error('새 전투 진입 정보가 만료되었습니다. 메인 화면에서 다시 시작해 주세요.');
+  }
+  var run = requireRun_(handoff.runId);
+  if (run.status !== STATUS.RUN_ACTIVE
+      || String(run.playerId || '') !== String(player.playerId || '')
+      || String(run.workbookId || '') !== String(handoff.workbookId || '')) {
+    throw new Error('새 전투를 불러올 수 없습니다. 메인 화면에서 다시 시작해 주세요.');
+  }
+  cache.remove(cacheKey);
+  return buildBattleEntryView_(run, getStageState_(run));
 }
 
 function abandonActiveRun_(run) {
@@ -310,38 +301,6 @@ function abandonActiveRun_(run) {
     status: STATUS.RUN_FAILED,
     updatedAt: now,
     endedAt: now,
-  });
-}
-
-function getActiveRun(playerId, workbookId) {
-  var activeRun = getActiveRunsForPlayer_(playerId, workbookId)[0] || null;
-  if (!activeRun) {
-    return null;
-  }
-
-  var cachedRun = getCachedRun_(activeRun.runId);
-  if (isCachedRunFreshForRow_(cachedRun, activeRun)) {
-    return cachedRun;
-  }
-  return cacheRun_(activeRun);
-}
-
-function getActiveRunsForPlayer_(playerId, workbookId) {
-  var targetWorkbookId = String(workbookId || '').trim();
-  return readTable_(DB_SHEETS.RUNS).map(function(run, index) {
-    return { run: run, index: index };
-  }).filter(function(entry) {
-    if (entry.run.playerId !== playerId || entry.run.status !== STATUS.RUN_ACTIVE) {
-      return false;
-    }
-    if (!targetWorkbookId) {
-      return true;
-    }
-    return getRunWorkbookId_(entry.run) === targetWorkbookId;
-  }).sort(function(a, b) {
-    return (getRunUpdatedAtMs_(b.run) - getRunUpdatedAtMs_(a.run)) || (b.index - a.index);
-  }).map(function(entry) {
-    return entry.run;
   });
 }
 
@@ -554,7 +513,12 @@ function startBattle(runId) {
   }
   var battleId = generateId_('battle');
   var playerGhostSelection = selectPlayerGhostForBattle_(run, stage, stageState, battleId);
-  var monsters = createMonstersForStage_(stage, playerGhostSelection.monster);
+  var preloadedMonsters = !playerGhostSelection.monster && typeof consumePreloadedStageMonsters_ === 'function'
+    ? consumePreloadedStageMonsters_(run.runId, stage.stageId)
+    : null;
+  var monsters = preloadedMonsters && preloadedMonsters.length
+    ? preloadedMonsters
+    : createMonstersForStage_(stage, playerGhostSelection.monster);
   var baseStats = safeJsonParse_(run.statsJson, Object.assign({}, BASE_PLAYER_STATS));
   var items = normalizeOwnedItems_(safeJsonParse_(run.itemsJson, []));
   var stats = calculateStatsWithItemEffects_(baseStats, items);
@@ -633,23 +597,6 @@ function startBattle(runId) {
   return toClientObject_(getRunWithStageState_(runId));
 }
 
-function getBattleView(authToken, workbookId) {
-  var player = getCurrentPlayer_(authToken);
-  var run = getActiveRun(player.playerId, workbookId);
-  if (!run) {
-    throw new Error('진행 중인 런이 없습니다. 메인 화면에서 게임을 시작해 주세요.');
-  }
-
-  var stageState = getStageState_(run);
-  if (!stageState.battle) {
-    startBattle(run.runId);
-    run = requireRun_(run.runId);
-    stageState = getStageState_(run);
-  }
-
-  return buildBattleView_(run, stageState);
-}
-
 function surrenderBattle(runId, authToken) {
   var player = getCurrentPlayer_(authToken);
   var run = requireRun_(runId);
@@ -677,7 +624,7 @@ function surrenderBattle(runId, authToken) {
   refreshBattleDefinitionCaches_();
 
   var updatedRun = requireRun_(runId);
-  return buildBattleView_(updatedRun, getStageState_(updatedRun));
+  return buildBattleStateView_(updatedRun, getStageState_(updatedRun));
 }
 
 function passPlayerTurn(runId, authToken) {
@@ -737,7 +684,7 @@ function passPlayerTurn(runId, authToken) {
   flushQueuedBattleAnswerLogs_(battleState);
   stageState.battle = battleState;
   saveStageState_(run.runId, stageState, battleState);
-  return buildBattleView_(requireRun_(run.runId), getStageState_(requireRun_(run.runId)));
+  return buildBattleStateView_(requireRun_(run.runId), getStageState_(requireRun_(run.runId)));
 }
 
 function selectQuestionForAction(playerId, runId, actionType, difficultyBonus, authToken, targetId, skillId) {
@@ -921,7 +868,7 @@ function submitActionAnswer(answerPayload) {
   }
   saveStageState_(run.runId, stageState, battleState);
 
-  return buildBattleView_(requireRun_(run.runId), getStageState_(requireRun_(run.runId)));
+  return buildBattleStateView_(requireRun_(run.runId), getStageState_(requireRun_(run.runId)));
 }
 
 function calculateQuestionTimeLimit(difficulty, activeEffects) {
@@ -963,11 +910,11 @@ function calculateEfficiency(isCorrect, remainingMs, maxMs, wrongCountAfterTimeo
     if (ratio >= 0.5) {
       var highEfficiency = 1 + ((ratio - 0.5) * ((maxEfficiency - 1) / 0.5));
       highEfficiency += correctEfficiencyBonus;
-      return roundTo_(Math.min(maxEfficiency, highEfficiency), 3);
+      return roundTo_(Math.max(0, highEfficiency), 3);
     }
     var lowEfficiency = minEfficiency + (ratio * ((1 - minEfficiency) / 0.5));
     lowEfficiency += correctEfficiencyBonus;
-    return roundTo_(Math.min(maxEfficiency, lowEfficiency), 3);
+    return roundTo_(Math.max(0, lowEfficiency), 3);
   }
 
   return roundTo_(minEfficiency, 3);
@@ -1880,7 +1827,10 @@ function commitStageResult(stagePayload, authToken) {
     throw new Error('진행 중인 런만 저장할 수 있습니다.');
   }
 
-  var battleState = payload.battle || {};
+  var stageState = getStageState_(run);
+  var serverBattleState = stageState.battle || {};
+  var clientStageState = payload.stageState || {};
+  var battleState = hydrateStageResultBattleForCommit_(payload.battle || {}, serverBattleState);
   battleState.runId = battleState.runId || run.runId;
   if (battleState.status !== STATUS.BATTLE_VICTORY && battleState.status !== STATUS.BATTLE_DEFEAT) {
     throw new Error('종료된 전투 결과만 저장할 수 있습니다.');
@@ -1892,10 +1842,19 @@ function commitStageResult(stagePayload, authToken) {
   battleState.pendingAction = null;
   battleState.pendingAnswerLogs = [];
 
-  var stageState = getStageState_(run);
-  var serverBattleState = stageState.battle || {};
-  var clientStageState = payload.stageState || {};
-  var commitQuestionById = buildCommitQuestionMap_(run);
+  var commitQuestionById = null;
+
+  function resolveCommittedQuestion(answerPayload) {
+    var localQuestion = verifyLocalQuestionSnapshot_(answerPayload && answerPayload.questionSnapshot, answerPayload && answerPayload.questionSignature, getRunWorkbookContext_(run).workbookId);
+    if (localQuestion) {
+      return localQuestion;
+    }
+    // Backward compatibility for a battle opened before local snapshots existed.
+    if (!commitQuestionById) {
+      commitQuestionById = buildCommitQuestionMap_(run);
+    }
+    return commitQuestionById[String(answerPayload && answerPayload.questionId || '').trim()] || null;
+  }
   mergeMonsterScoreStateForCommit_(battleState, serverBattleState, stageState.scoreState || {});
   mergeQuestionReactionScoreStateForCommit_(battleState, serverBattleState, stageState.scoreState || {});
   normalizeUsedQuestionIds_(stageState, battleState);
@@ -1933,7 +1892,7 @@ function commitStageResult(stagePayload, authToken) {
   });
 
   (Array.isArray(payload.answerLogs) ? payload.answerLogs : []).forEach(function(answerPayload) {
-    var question = commitQuestionById[String(answerPayload.questionId || '').trim()] || null;
+    var question = resolveCommittedQuestion(answerPayload);
     if (!question) {
       throw new Error('문제를 찾을 수 없습니다: ' + answerPayload.questionId);
     }
@@ -1980,6 +1939,44 @@ function commitStageResult(stagePayload, authToken) {
   return buildStageResultCommitView_(updatedRun, getStageState_(updatedRun));
 }
 
+function hydrateStageResultBattleForCommit_(clientBattleState, serverBattleState) {
+  clientBattleState = clientBattleState || {};
+  serverBattleState = serverBattleState || {};
+  var hydrated = Object.assign({}, serverBattleState, clientBattleState);
+  hydrated.stage = Object.assign({}, serverBattleState.stage || {}, clientBattleState.stage || {});
+  hydrated.player = Object.assign({}, serverBattleState.player || {}, clientBattleState.player || {});
+  hydrated.player.baseStats = Object.assign(
+    {},
+    serverBattleState.player && serverBattleState.player.baseStats || {},
+    clientBattleState.player && clientBattleState.player.baseStats || {}
+  );
+  hydrated.player.stats = Object.assign(
+    {},
+    serverBattleState.player && serverBattleState.player.stats || {},
+    clientBattleState.player && clientBattleState.player.stats || {}
+  );
+  var clientItemModifiers = clientBattleState.player && clientBattleState.player.itemModifiers || {};
+  hydrated.player.itemModifiers = Object.keys(clientItemModifiers).length
+    ? clientItemModifiers
+    : serverBattleState.player && serverBattleState.player.itemModifiers || {};
+
+  var serverMonsters = serverBattleState.monsters || [];
+  hydrated.monsters = (clientBattleState.monsters || []).map(function(clientMonster, index) {
+    clientMonster = clientMonster || {};
+    var clientId = String(clientMonster.instanceId || clientMonster.monsterId || '');
+    var serverMonster = serverMonsters.filter(function(candidate) {
+      var candidateId = String(candidate && (candidate.instanceId || candidate.monsterId) || '');
+      return clientId && candidateId === clientId;
+    })[0] || serverMonsters[index] || {};
+    return Object.assign({}, serverMonster, clientMonster);
+  });
+  if (!hydrated.monsters.length && serverMonsters.length) {
+    hydrated.monsters = serverMonsters.slice();
+  }
+  delete hydrated.monster;
+  return hydrated;
+}
+
 function buildCommitQuestionMap_(run) {
   return readRunQuestionsForBattle_(run).reduce(function(map, question) {
     var questionId = String(question && question.questionId || '').trim();
@@ -1992,7 +1989,7 @@ function buildCommitQuestionMap_(run) {
 
 function buildStageResultCommitView_(run, stageState) {
   var battleState = stageState.battle;
-  if (battleState) {
+  if (battleState && battleState.status === STATUS.BATTLE_ACTIVE) {
     syncBattlePlayerItemsFromRun_(battleState, run);
     normalizeBattleStateEffects_(battleState);
     normalizeBattleMonsters_(battleState);
@@ -2364,9 +2361,22 @@ function updateQuestionStats(questionId, isCorrect, runId) {
   return updated;
 }
 
-function buildBattleView_(run, stageState) {
+function buildBattleEntryView_(run, stageState) {
+  return buildBattleView_(run, stageState, { includeQuestionCache: false });
+}
+
+function buildBattleStateView_(run, stageState) {
+  return buildBattleView_(run, stageState, {
+    includeQuestionCache: false,
+    questionCacheDeferred: false,
+  });
+}
+
+function buildBattleView_(run, stageState, options) {
+  options = options || {};
   var battleState = stageState.battle;
-  if (battleState) {
+  var hasActiveBattle = !!(battleState && battleState.status === STATUS.BATTLE_ACTIVE);
+  if (hasActiveBattle) {
     syncBattlePlayerItemsFromRun_(battleState, run);
     normalizeBattleStateEffects_(battleState);
     normalizeBattleMonsters_(battleState);
@@ -2381,7 +2391,7 @@ function buildBattleView_(run, stageState) {
     }
   }
   var runState = buildRunState_(run);
-  var availableSkills = battleState ? getAvailableSkills(runState, battleState) : [];
+  var availableSkills = hasActiveBattle ? getAvailableSkills(runState, battleState) : [];
   var workbookContext = getRunWorkbookContext_(run);
   return toClientObject_({
     runId: run.runId,
@@ -2393,8 +2403,12 @@ function buildBattleView_(run, stageState) {
     battle: battleState,
     clientConfig: getBattleClientConfig_(),
     availableSkills: availableSkills,
-    monsterAiRules: battleState ? buildClientMonsterAiRules_(battleState) : [],
-    questionCache: battleState ? buildBattleQuestionCache_(run, stageState, battleState) : [],
+    monsterAiRules: hasActiveBattle ? buildClientMonsterAiRules_(battleState) : [],
+    questionCache: hasActiveBattle && options.includeQuestionCache !== false
+      ? buildBattleQuestionCache_(run, stageState, battleState)
+      : [],
+    questionCacheDeferred: !!(hasActiveBattle && options.includeQuestionCache === false
+      && options.questionCacheDeferred !== false),
     stageState: {
       otherStudentQuestionShown: !!stageState.otherStudentQuestionShown,
       fallbackEvents: stageState.fallbackEvents || [],
@@ -2414,6 +2428,7 @@ function getBattleClientConfig_() {
   } catch (error) {
     settings = {};
   }
+  var timeSettings = getQuestionTimeSettings_();
   return {
     questionResultHoldMs: clampClientDelay_(settings.questionResultHoldMs, 900, 0, 5000),
     questionActionStartDelayMs: clampClientDelay_(settings.questionActionStartDelayMs, 0, 0, 2000),
@@ -2421,6 +2436,9 @@ function getBattleClientConfig_() {
     minAnswerEfficiency: getClientNumberSetting_(settings.minAnswerEfficiency, GAME_RULES.MIN_ANSWER_EFFICIENCY),
     maxAnswerEfficiency: getClientNumberSetting_(settings.maxAnswerEfficiency, GAME_RULES.MAX_ANSWER_EFFICIENCY),
     extraWrongEfficiencyPenalty: getClientNumberSetting_(settings.extraWrongEfficiencyPenalty, GAME_RULES.EXTRA_WRONG_EFFICIENCY_PENALTY),
+    baseQuestionTimeSec: Number(timeSettings.baseQuestionTimeSec || GAME_RULES.BASE_QUESTION_TIME_SEC),
+    questionTimePerDifficultySec: Number(timeSettings.questionTimePerDifficultySec || GAME_RULES.QUESTION_TIME_PER_DIFFICULTY_SEC),
+    maxQuestionTimeSec: Number(timeSettings.maxQuestionTimeSec || 0),
   };
 }
 
@@ -2558,8 +2576,229 @@ function preloadBattleQuestions(runId, authToken) {
   return buildBattleQuestionCache_(run, stageState, battleState);
 }
 
-function buildBattleQuestionCache_(run, stageState, battleState) {
+function preloadBattleEntryData(runId, authToken) {
+  var player = getCurrentPlayer_(authToken);
+  var run = requireRun_(runId);
+  if (run.playerId !== player.playerId || run.status !== STATUS.RUN_ACTIVE) {
+    throw new Error('진행 중인 런을 찾을 수 없습니다.');
+  }
+
+  var stageState = getStageState_(run);
+  var battleState = requireActiveBattle_(stageState);
+  stageState.scoreState = stageState.scoreState || {};
+  if (stageState.scoreState.startingScoreInitialized === false) {
+    var startingScore = typeof calculateQuestionLikeStartingScore_ === 'function'
+      ? Math.max(0, Math.round(Number(calculateQuestionLikeStartingScore_(run.playerId) || 0)))
+      : 0;
+    // The sheet scan above can overlap a client-side entrance/pass animation.
+    // Re-read the run before saving so a newer battle state is never overwritten.
+    run = requireRun_(run.runId);
+    if (run.playerId !== player.playerId || run.status !== STATUS.RUN_ACTIVE) {
+      throw new Error('진행 중인 런을 찾을 수 없습니다.');
+    }
+    stageState = getStageState_(run);
+    battleState = requireActiveBattle_(stageState);
+    stageState.scoreState = stageState.scoreState || {};
+    if (stageState.scoreState.startingScoreInitialized === false) {
+      stageState.scoreState.startingScoreInitialized = true;
+      stageState.scoreState.startingScore = startingScore;
+      run = updateRowByKey_(DB_SHEETS.RUNS, 'runId', run.runId, {
+        score: Math.max(Number(run.score || 0), startingScore),
+        stageStateJson: safeJsonStringify_(stageState),
+        updatedAt: new Date(),
+      }) || run;
+    }
+  }
+
+  normalizeBattleStateEffects_(battleState);
+  normalizeBattleMonsters_(battleState);
+  return toClientObject_({
+    score: Number(run.score || 0),
+  });
+}
+
+function getWorkbookBattleQuestionSnapshot(workbookId, authToken) {
+  var player = getCurrentPlayer_(authToken);
+  var workbook = requireWorkbook_(workbookId);
+  if (String(workbook.status || STATUS.WORKBOOK_ACTIVE) !== STATUS.WORKBOOK_ACTIVE) {
+    throw new Error('활성 상태인 문제집만 사용할 수 있습니다.');
+  }
+  var targetWorkbookId = String(workbook.workbookId || workbookId || '').trim();
+  var sourceQuestions = readWorkbookQuestionTable_(targetWorkbookId).map(function(question) {
+    return attachQuestionWorkbook_(question, targetWorkbookId);
+  });
+  var signingKey = getLocalQuestionSigningKey_();
+  var questions = sourceQuestions.filter(function(question) {
+    return question.status === STATUS.QUESTION_APPROVED;
+  }).map(function(question) {
+    var localQuestion = sanitizeQuestionForBattleCache_(question, player.playerId);
+    localQuestion.snapshotSignature = signLocalQuestionSnapshot_(localQuestion, signingKey);
+    return localQuestion;
+  });
+  var runStartManifest = buildRunStartQuestionManifest_(sourceQuestions, player.playerId, targetWorkbookId);
+  runStartManifest.signature = signRunStartQuestionManifest_(runStartManifest, signingKey);
+  return toClientObject_({
+    schemaVersion: 2,
+    workbookId: targetWorkbookId,
+    workbookName: workbook.workbookName || targetWorkbookId,
+    loadedAt: new Date().toISOString(),
+    questionCount: questions.length,
+    questions: questions,
+    runStartManifest: runStartManifest,
+  });
+}
+
+function buildRunStartQuestionManifest_(questions, playerId, workbookId) {
+  var approvedDifficultyMap = {};
+  var approvedCreatorMap = {};
+  var ownQuestionCount = 0;
+  var ownLikeCount = 0;
+  var latestOwnQuestionCreatedAtMs = 0;
+  (questions || []).forEach(function(question) {
+    if (question.status === STATUS.QUESTION_APPROVED) {
+      approvedDifficultyMap[Number(question.difficulty || 0)] = true;
+      if (question.creatorId) approvedCreatorMap[String(question.creatorId)] = true;
+    }
+    if (String(question.creatorId || '') === String(playerId || '')) {
+      ownQuestionCount += 1;
+      ownLikeCount += Math.max(0, Number(question.likeCount || 0));
+      latestOwnQuestionCreatedAtMs = Math.max(latestOwnQuestionCreatedAtMs, parseDateMs_(question.createdAt || question.updatedAt));
+    }
+  });
+  var missingDifficulties = [];
+  for (var difficulty = GAME_RULES.MIN_DIFFICULTY; difficulty <= GAME_RULES.MAX_DIFFICULTY; difficulty += 1) {
+    if (!approvedDifficultyMap[difficulty]) missingDifficulties.push(difficulty);
+  }
+  return {
+    schemaVersion: 2,
+    workbookId: String(workbookId || ''),
+    playerId: String(playerId || ''),
+    missingDifficulties: missingDifficulties,
+    approvedQuestionCreatorIds: Object.keys(approvedCreatorMap).sort(),
+    ownQuestionCount: ownQuestionCount,
+    ownLikeCount: ownLikeCount,
+    startingScore: (ownQuestionCount + ownLikeCount) * 5,
+    latestOwnQuestionCreatedAtMs: latestOwnQuestionCreatedAtMs,
+  };
+}
+
+function signRunStartQuestionManifest_(manifest, signingKey) {
+  var signature = Utilities.computeHmacSha256Signature(
+    buildRunStartQuestionManifestSignaturePayload_(manifest),
+    signingKey || getLocalQuestionSigningKey_(),
+    Utilities.Charset.UTF_8
+  );
+  return Utilities.base64EncodeWebSafe(signature);
+}
+
+function verifyRunStartQuestionManifest_(manifest, playerId, workbookId) {
+  if (!manifest || !manifest.signature
+      || String(manifest.playerId || '') !== String(playerId || '')
+      || String(manifest.workbookId || '') !== String(workbookId || '')) {
+    return null;
+  }
+  var expected = signRunStartQuestionManifest_(manifest);
+  if (!constantTimeStringEquals_(expected, manifest.signature)) {
+    throw new Error('로컬 문제집 요약 검증에 실패했습니다. 문제집을 다시 준비해 주세요.');
+  }
+  return manifest;
+}
+
+function buildRunStartQuestionManifestSignaturePayload_(manifest) {
+  manifest = manifest || {};
+  return safeJsonStringify_([
+    Number(manifest.schemaVersion || 0),
+    String(manifest.workbookId || ''),
+    String(manifest.playerId || ''),
+    (manifest.missingDifficulties || []).map(Number),
+    (manifest.approvedQuestionCreatorIds || []).map(String).sort(),
+    Number(manifest.ownQuestionCount || 0),
+    Number(manifest.ownLikeCount || 0),
+    Number(manifest.startingScore || 0),
+    Number(manifest.latestOwnQuestionCreatedAtMs || 0)
+  ]);
+}
+
+function signLocalQuestionSnapshot_(question, signingKey) {
+  var payload = buildLocalQuestionSignaturePayload_(question);
+  var signature = Utilities.computeHmacSha256Signature(
+    payload,
+    signingKey || getLocalQuestionSigningKey_(),
+    Utilities.Charset.UTF_8
+  );
+  return Utilities.base64EncodeWebSafe(signature);
+}
+
+function verifyLocalQuestionSnapshot_(question, signature, workbookId) {
+  if (!question || !signature || String(question.workbookId || '').trim() !== String(workbookId || '').trim()) {
+    return null;
+  }
+  var expected = signLocalQuestionSnapshot_(question);
+  if (!constantTimeStringEquals_(expected, String(signature || ''))) {
+    throw new Error('로컬 문제집 검증에 실패했습니다. 메인 화면에서 문제집을 다시 불러와 주세요.');
+  }
+  return Object.assign({}, question, {
+    snapshotSignature: undefined,
+    status: STATUS.QUESTION_APPROVED,
+  });
+}
+
+function buildLocalQuestionSignaturePayload_(question) {
+  question = question || {};
+  return safeJsonStringify_([
+    String(question.workbookId || ''),
+    String(question.questionId || ''),
+    String(question.type || ''),
+    String(question.prompt || ''),
+    String(question.choice1 || ''),
+    String(question.choice2 || ''),
+    String(question.choice3 || ''),
+    String(question.choice4 || ''),
+    String(question.answer || ''),
+    String(question.answerAliases || '[]'),
+    Number(question.difficulty || 0),
+    String(question.creatorId || ''),
+    String(question.creatorName || ''),
+    String(question.subject || ''),
+    String(question.unit || ''),
+    String(question.tags || '')
+  ]);
+}
+
+function getLocalQuestionSigningKey_() {
+  var properties = PropertiesService.getScriptProperties();
+  var propertyKey = 'LOCAL_QUESTION_SNAPSHOT_SIGNING_KEY';
+  var signingKey = properties.getProperty(propertyKey);
+  if (signingKey) return signingKey;
+  var lock = LockService.getScriptLock();
+  lock.waitLock(5000);
   try {
+    signingKey = properties.getProperty(propertyKey);
+    if (!signingKey) {
+      signingKey = Utilities.getUuid() + Utilities.getUuid();
+      properties.setProperty(propertyKey, signingKey);
+    }
+    return signingKey;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function constantTimeStringEquals_(left, right) {
+  left = String(left || '');
+  right = String(right || '');
+  var length = Math.max(left.length, right.length);
+  var difference = left.length ^ right.length;
+  for (var i = 0; i < length; i += 1) {
+    difference |= (left.charCodeAt(i % Math.max(1, left.length)) || 0)
+      ^ (right.charCodeAt(i % Math.max(1, right.length)) || 0);
+  }
+  return difference === 0;
+}
+
+function buildBattleQuestionCache_(run, stageState, battleState, options) {
+  try {
+    options = options || {};
     normalizeUsedQuestionIds_(stageState, battleState);
     var activeEffects = getActiveEffectsForQuestion_(battleState);
     var usedIdMap = getUsedQuestionIdMap_(stageState, battleState);
@@ -2568,7 +2807,10 @@ function buildBattleQuestionCache_(run, stageState, battleState) {
     var approvedQuestions = readRunQuestionsForBattle_(run).filter(function(question) {
       return question.status === STATUS.QUESTION_APPROVED;
     });
-    var cacheLimitPerDifficulty = Math.min(30, Math.max(1, approvedQuestions.length));
+    var requestedLimit = options.limitPerDifficulty !== undefined
+      ? Math.max(1, Math.round(Number(options.limitPerDifficulty || 1)))
+      : 30;
+    var cacheLimitPerDifficulty = Math.min(requestedLimit, Math.max(1, approvedQuestions.length));
     return targetDifficulties.reduce(function(cache, targetDifficulty) {
       var selectedQuestions = selectQuestionCacheRows_(run, run.playerId, battleState.stage, stageState.otherStudentQuestionShown, getForcedQuestionCreatorId_(battleState), questionModifiersForPick, stageState.usedQuestionIds, targetDifficulty, cacheLimitPerDifficulty, approvedQuestions);
       return cache.concat(selectedQuestions.map(function(question) {
@@ -3056,6 +3298,60 @@ function getQuestionReactionForPlayer_(question, playerId) {
   return normalizeQuestionReaction_(reactions[targetPlayerId]);
 }
 
+function buildPersistedBattleResult_(battleState) {
+  battleState = battleState || {};
+  var stage = battleState.stage || {};
+  var player = battleState.player || {};
+  var battleId = String(battleState.battleId || '');
+  return {
+    runId: String(battleState.runId || ''),
+    battleId: battleId,
+    status: battleState.status || '',
+    stage: {
+      stageId: stage.stageId || '',
+      floor: Number(stage.floor || 1),
+      stage: Number(stage.stage || 1),
+    },
+    player: {
+      hp: Number(player.hp || 0),
+      maxHp: Number(player.maxHp || player.stats && player.stats.hp || 1),
+      shield: Number(player.shield || 0),
+      stats: Object.assign({}, player.stats || {}),
+    },
+    monsters: (battleState.monsters || []).map(function(monster, index) {
+      monster = monster || {};
+      return {
+        instanceId: monster.instanceId || String(monster.monsterId || 'monster') + '_' + index,
+        monsterId: monster.monsterId || '',
+        name: monster.name || '',
+        type: monster.type || '',
+        avatarType: monster.avatarType || '',
+        avatarKey: monster.avatarKey || '',
+        currentHp: Number(monster.currentHp || 0),
+        maxHp: Number(monster.maxHp || 1),
+        shield: Number(monster.shield || 0),
+      };
+    }),
+    monsterScoreState: normalizeMonsterScoreStateForMerge_(battleState.monsterScoreState, battleId),
+    questionReactionScoreState: normalizeQuestionReactionScoreStateForMerge_(battleState.questionReactionScoreState, battleId),
+    skillUseCounts: Object.assign({}, battleState.skillUseCounts || {}),
+    usedSkillCountByTagThisBattle: Object.assign({}, battleState.usedSkillCountByTagThisBattle || {}),
+    usedSkillCountByTagThisTurn: Object.assign({}, battleState.usedSkillCountByTagThisTurn || {}),
+    lastMessage: battleState.lastMessage || '',
+  };
+}
+
+function compactCompletedStageState_(stageState, battleState) {
+  stageState = stageState || {};
+  stageState.battle = buildPersistedBattleResult_(battleState);
+  delete stageState.fallbackEvents;
+  delete stageState.otherStudentQuestionShown;
+  delete stageState.playerGhost;
+  delete stageState.playerGhostRollStageId;
+  delete stageState.playerGhostRollDone;
+  return stageState;
+}
+
 function saveStageState_(runId, stageState, battleState) {
   normalizeUsedQuestionIds_(stageState, battleState);
   normalizeBattleStateEffects_(battleState);
@@ -3073,6 +3369,9 @@ function saveStageState_(runId, stageState, battleState) {
     stageState.scoreState = stageState.scoreState || {};
     stageState.scoreState.questionReactionScoreBattleId = battleState.questionReactionScoreState.battleId || battleState.battleId || '';
     stageState.scoreState.questionReactionScore = Number(battleState.questionReactionScoreState.score || 0);
+  }
+  if (battleState.status === STATUS.BATTLE_VICTORY || battleState.status === STATUS.BATTLE_DEFEAT) {
+    compactCompletedStageState_(stageState, battleState);
   }
   var patch = {
     currentHp: battleState.player.hp,
@@ -3177,7 +3476,14 @@ function selectPlayerGhostForBattle_(run, stage, stageState, battleId) {
   try {
     ensurePlayerGhostSheet_();
     var workbookContext = getRunWorkbookContext_(run);
-    var approvedQuestionCreators = getApprovedQuestionCreatorMap_(workbookContext.workbookId);
+    var approvedQuestionCreators = {};
+    if (Array.isArray(stageState.approvedQuestionCreatorIds) && stageState.approvedQuestionCreatorIds.length) {
+      stageState.approvedQuestionCreatorIds.forEach(function(playerId) {
+        approvedQuestionCreators[String(playerId || '')] = true;
+      });
+    } else {
+      approvedQuestionCreators = getApprovedQuestionCreatorMap_(workbookContext.workbookId);
+    }
     var activeGhosts = readTable_(DB_SHEETS.PLAYER_GHOSTS).filter(function(ghost) {
       var ghostWorkbookId = String(ghost.workbookId || '').trim() || getDefaultWorkbookId_();
       return ghost.status === STATUS.GHOST_ACTIVE &&
@@ -3336,18 +3642,12 @@ function createMonstersForStage_(stage, playerGhostMonster) {
     throw new Error('몬스터 그룹을 찾을 수 없습니다: ' + stage.monsterGroupId);
   }
 
-  var monsterIds = safeJsonParse_(group.monsterIds, []);
-  if (!Array.isArray(monsterIds)) {
-    monsterIds = [];
-  }
+  var monsterIds = parseMonsterIdList_(group.monsterIds);
   var weights = safeJsonParse_(group.weights, []);
   if (!Array.isArray(weights)) {
     weights = [];
   }
-  var fixedMonsterIds = safeJsonParse_(group.fixedMonsterIds, []);
-  if (!Array.isArray(fixedMonsterIds)) {
-    fixedMonsterIds = [];
-  }
+  var fixedMonsterIds = parseMonsterIdList_(group.fixedMonsterIds);
   var requestedMonsterCount = Math.round(Number(group.monsterCount || 1));
   if (!isFinite(requestedMonsterCount)) {
     requestedMonsterCount = 1;
@@ -3380,6 +3680,54 @@ function createMonstersForStage_(stage, playerGhostMonster) {
     monsters.push(buildBattleMonster_(selectedOption.monster, i));
   }
   return applyMultiMonsterStatScaling_(monsters);
+}
+
+function parseMonsterIdList_(value) {
+  if (value === null || value === undefined || value === '') {
+    return [];
+  }
+
+  var normalizedText = typeof value === 'string'
+    ? value.replace(/[“”]/g, '"').replace(/[‘’]/g, "'")
+    : value;
+  var parsed = Array.isArray(value) ? value : safeJsonParse_(normalizedText, null);
+  var entries = Array.isArray(parsed)
+    ? parsed
+    : (typeof parsed === 'string' || typeof parsed === 'number' ? [parsed] : null);
+
+  if (!entries) {
+    entries = isDateValue_(value)
+      ? [value]
+      : String(normalizedText || '').trim().replace(/^\s*\[|\]\s*$/g, '').split(/[\r\n,;|]+/);
+  }
+
+  var seen = {};
+  return entries.map(function(entry) {
+    return normalizeMonsterIdValue_(entry);
+  }).filter(function(monsterId) {
+    if (!monsterId || seen[monsterId]) {
+      return false;
+    }
+    seen[monsterId] = true;
+    return true;
+  });
+}
+
+function normalizeMonsterIdValue_(value) {
+  if (isDateValue_(value)) {
+    return Utilities.formatDate(value, Session.getScriptTimeZone(), 'M-d');
+  }
+  var text = String(value === null || value === undefined ? '' : value)
+    .trim()
+    .replace(/^["']|["']$/g, '');
+  var cachedDateMatch = text.match(/^(\d{4})-(\d{2})-(\d{2})T\d{2}:\d{2}:\d{2}/);
+  return cachedDateMatch
+    ? Number(cachedDateMatch[2]) + '-' + Number(cachedDateMatch[3])
+    : text;
+}
+
+function isDateValue_(value) {
+  return Object.prototype.toString.call(value) === '[object Date]' && !isNaN(value.getTime());
 }
 
 function applyMultiMonsterStatScaling_(monsters) {
@@ -3417,7 +3765,7 @@ function isBossBattleMonster_(monster) {
 }
 
 function findMonsterRowById_(monsterId) {
-  var id = String(monsterId || '').trim();
+  var id = normalizeMonsterIdValue_(monsterId);
   if (!id) {
     return null;
   }
@@ -3434,7 +3782,7 @@ function findMonsterRowById_(monsterId) {
     rows = [];
   }
   var trimmed = rows.filter(function(monster) {
-    return String(monster.monsterId || '').trim() === id;
+    return normalizeMonsterIdValue_(monster.monsterId) === id;
   })[0];
   if (trimmed) {
     return trimmed;
@@ -3449,7 +3797,7 @@ function findMonsterRowById_(monsterId) {
   }
 
   return (MASTER_MONSTERS || []).filter(function(monster) {
-    return String(monster.monsterId || '').trim() === id;
+    return normalizeMonsterIdValue_(monster.monsterId) === id;
   })[0] || null;
 }
 
@@ -3568,19 +3916,13 @@ function findReplacementMonsterForLegacy_(battleState) {
 
   if (groupId) {
     var group = findCachedRowByKey_(DB_SHEETS.MONSTER_GROUPS, 'monsterGroupId', groupId, 600);
-    var fixedMonsterIds = safeJsonParse_(group && group.fixedMonsterIds, []);
-    var monsterIds = safeJsonParse_(group && group.monsterIds, []);
-    if (!Array.isArray(fixedMonsterIds)) {
-      fixedMonsterIds = [];
-    }
-    if (!Array.isArray(monsterIds)) {
-      monsterIds = [];
-    }
+    var fixedMonsterIds = parseMonsterIdList_(group && group.fixedMonsterIds);
+    var monsterIds = parseMonsterIdList_(group && group.monsterIds);
     var candidateMonsterIds = fixedMonsterIds.concat(monsterIds).filter(function(monsterId) {
       return monsterId && monsterId !== 'monster_training_dummy';
     });
     for (var i = 0; i < candidateMonsterIds.length; i += 1) {
-      var groupedMonster = findCachedRowByKey_(DB_SHEETS.MONSTERS, 'monsterId', candidateMonsterIds[i], 600);
+      var groupedMonster = findMonsterRowById_(candidateMonsterIds[i]);
       if (groupedMonster) {
         return groupedMonster;
       }

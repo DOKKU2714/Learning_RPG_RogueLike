@@ -391,7 +391,7 @@ function useSkill(runId, skillId, targetId, answerPayload) {
   }
   saveStageState_(run.runId, stageState, battleState);
 
-  return buildBattleView_(requireRun_(run.runId), getStageState_(requireRun_(run.runId)));
+  return buildBattleStateView_(requireRun_(run.runId), getStageState_(requireRun_(run.runId)));
 }
 
 function applySkillEffect(battleState, skill, efficiency, isCorrect) {

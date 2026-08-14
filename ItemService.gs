@@ -982,7 +982,7 @@ function applyItemQuestionEfficiencyModifiers_(efficiency, isCorrect, question, 
   }
   var modifiers = getItemQuestionModifiers_(battleState, question);
   next += getItemQuestionCorrectEfficiencyBonusPercent_(modifiers, question) / 100;
-  return roundTo_(Math.max(0, Math.min(Number(maxEfficiency || next), next)), 3);
+  return roundTo_(Math.max(0, next), 3);
 }
 
 function getItemQuestionCorrectEfficiencyBonusPercent_(questionModifiers, question) {

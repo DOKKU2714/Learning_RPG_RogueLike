@@ -617,14 +617,17 @@
     background: #000;
   }
 
+  .loading-overlay.opaque-background {
+    background: #000;
+    transition: none;
+  }
+
   .loading-overlay.page-transition .loading-box {
     opacity: 0;
     transform: translateY(12px) scale(0.98);
   }
 
   .loading-text {
-    text-align: center;
-    margin: 8px 0 12px;
     display: none;
   }
 
@@ -650,13 +653,13 @@
     width: min(420px, 100%);
     margin: 0 auto 8px;
     display: flex;
-    justify-content: center;
+    justify-content: space-between;
     color: #cfcfcf;
     font-size: 12px;
   }
 
   #loadingElapsedText {
-    display: none;
+    display: inline;
   }
 
   .loading-overlay.no-progress .loading-progress,
@@ -1900,6 +1903,18 @@
     padding-bottom: 5px;
   }
 
+  .question-cache-status {
+    grid-column: 1 / -1;
+    color: #fff0a8;
+    font-size: 12px;
+    text-align: center;
+    animation: battleCursorBlink 920ms steps(1, end) infinite;
+  }
+
+  .question-cache-status.hidden {
+    display: none;
+  }
+
   .ap-label {
     color: var(--muted);
   }
@@ -2430,6 +2445,14 @@
     text-shadow: 0 2px 0 #000, 0 0 12px rgba(255,216,74,0.8), 0 0 22px rgba(0,0,0,0.95);
   }
 
+  .damage-miss {
+    color: #f4f4f4;
+    font-size: 36px;
+    font-style: italic;
+    letter-spacing: 0.1em;
+    text-shadow: 0 2px 0 #000, 0 0 12px rgba(255,255,255,0.72), 0 0 22px rgba(0,0,0,0.95);
+  }
+
   .star-burst-layer {
     position: fixed;
     inset: 0;
@@ -2580,7 +2603,7 @@
     background: #000;
     opacity: 0;
     pointer-events: none;
-    transition: opacity 900ms ease;
+    transition: opacity 420ms ease;
   }
 
   .stage-intro-overlay.active {
@@ -2605,7 +2628,7 @@
     text-align: center;
     opacity: 0;
     transform: translateY(10px);
-    transition: opacity 700ms ease, transform 700ms ease;
+    transition: opacity 900ms ease, transform 900ms ease;
     text-shadow: 0 2px 8px rgba(0, 0, 0, 0.86);
   }
 
@@ -2630,7 +2653,7 @@
   .stage-entrance-playing .battle-hud {
     opacity: 0;
     pointer-events: none;
-    transition: opacity 900ms ease;
+    transition: opacity 280ms ease;
   }
 
   .stage-entrance-playing.stage-entrance-dialogue .battle-hud,
@@ -3739,7 +3762,7 @@
     background: #000;
     opacity: 0;
     pointer-events: none;
-    transition: opacity 360ms ease-out;
+    transition: opacity 220ms ease-out;
   }
 
   .battle-start-fade.active {
