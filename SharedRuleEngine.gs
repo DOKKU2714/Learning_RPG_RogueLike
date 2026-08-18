@@ -204,8 +204,14 @@ var RULE_ENGINE_SHARED = (function() {
     }
     target.effects = (target.effects || []).map(function(effect) {
       if (effect.durationType === 'turn') {
-        if (currentTurn !== undefined && effect.appliedAtTurn !== undefined && Number(effect.appliedAtTurn || 0) === Number(currentTurn || 0)) {
+        if (effect.effectId !== 'debuff_foolish'
+          && currentTurn !== undefined
+          && effect.appliedAtTurn !== undefined
+          && Number(effect.appliedAtTurn || 0) === Number(currentTurn || 0)) {
           return effect;
+        }
+        if (effect.effectId === 'debuff_foolish') {
+          effect.stacks = Math.max(0, Number(effect.stacks || 1) - 1);
         }
         effect.remainingTurns = Number(effect.remainingTurns || 0) - 1;
       }
@@ -720,7 +726,6 @@ var RULE_ENGINE_SHARED = (function() {
   function applyQuestionModifiers(questionView, effects) {
     if (!questionView || questionView.clientEffectsApplied) return questionView;
     var difficultyDelta = (effects || []).reduce(function(total, effect) {
-      if (effect.effectId === 'debuff_foolish') return total;
       return effect.statKey === 'questionDifficulty' && effect.effectType === 'flat'
         ? total + Number(effect.value || 0) * Math.max(1, Number(effect.stacks || 1))
         : total;

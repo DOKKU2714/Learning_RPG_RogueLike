@@ -238,7 +238,7 @@
     </section>
 
     <section id="mainPanel" class="rpg-panel screen">
-      <button class="menu-logout-button" type="button" onclick="logout()" aria-label="로그아웃" title="로그아웃">
+      <button class="menu-logout-button" type="button" data-main-navigation="true" onclick="logout(this)" aria-label="로그아웃" title="로그아웃">
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <path d="M10 4H5v16h5"></path>
           <path d="M14 8l4 4-4 4"></path>
@@ -251,12 +251,12 @@
       <div id="playerBadge" style="text-align:center;"></div>
       <div id="currentWorkbookBadge" class="workbook-current-badge"></div>
       <div class="vertical-menu">
-        <button onclick="showGameStartMessage()">게임 시작</button>
-        <button id="questionCreateButton" class="hidden" onclick="goToPage('question')">문제 만들기</button>
+        <button data-main-navigation="true" onclick="showGameStartMessage(this)">게임 시작</button>
+        <button id="questionCreateButton" class="hidden" data-main-navigation="true" onclick="goToPage('question', null, this)">문제 만들기</button>
         <button class="secondary" onclick="showWorkbookSelectModal({ force: true })">문제집(수업) 변경</button>
-        <button class="secondary" onclick="showMyInfo()">내 정보</button>
-        <button class="secondary" onclick="goToPage('leaderboard')">리더보드</button>
-        <button id="adminButton" class="secondary" onclick="goToPage('admin')" style="display:none;">관리자</button>
+        <button class="secondary" data-main-navigation="true" onclick="showMyInfo(this)">내 정보</button>
+        <button class="secondary" data-main-navigation="true" onclick="goToPage('leaderboard', null, this)">리더보드</button>
+        <button id="adminButton" class="secondary" data-main-navigation="true" onclick="goToPage('admin', null, this)" style="display:none;">관리자</button>
       </div>
       <div id="mainMessage" class="message"></div>
     </section>
@@ -349,11 +349,10 @@
     var questionSnapshotLoadingWorkbookId = '';
     var currentQuestionSnapshotManifest = null;
     var currentUserRequestTimer = null;
-    var loadingTimerId = null;
     var loadingHideTimerId = null;
     var loadingSessionId = 0;
-    var loadingStartedAt = 0;
     var loadingStepItems = [];
+    var mainNavigationInProgress = false;
     var LOADING_COMPLETE_HOLD_MS = 500;
     var GAME_START_LOADING_STEPS = [
       '브라우저 로컬 문제집 준비 상태 확인',
@@ -914,6 +913,7 @@
       if (!workbook || !workbook.workbookId) return;
       if (questionSnapshotLoadingWorkbookId === String(workbook.workbookId)) return;
       if (!window.LearningRpgQuestionStore || typeof google === 'undefined' || !google.script || !google.script.run) {
+        resetMainNavigation();
         setWorkbookSelectMessage('브라우저 로컬 저장소나 서버 연결을 사용할 수 없습니다.', 'error');
         showWorkbookSelectModal();
         return;
@@ -959,6 +959,7 @@
             });
             applySelectedWorkbook(workbook);
             setMainMessage('문제 ' + Number(snapshot.questions.length || 0).toLocaleString('ko-KR') + '개를 브라우저에 준비했습니다.', 'ok');
+            resetMainNavigation();
             window.setTimeout(function() { hideLoadingModal(true); }, LOADING_COMPLETE_HOLD_MS);
           }).catch(function(error) {
             handleWorkbookSnapshotFailure(workbook, error);
@@ -973,6 +974,7 @@
 
     function handleWorkbookSnapshotFailure(workbook, error) {
       questionSnapshotLoadingWorkbookId = '';
+      resetMainNavigation();
       hideLoadingModal();
       toggle('mainPanel', false);
       showWorkbookSelectModal();
@@ -1321,7 +1323,8 @@
         .loginPlayer(getAuthFormPayload());
     }
 
-    function logout() {
+    function logout(sourceButton) {
+      if (sourceButton && !beginMainNavigation(sourceButton)) return;
       var authToken = getAuthToken();
       showLoadingModal('로그아웃 중...', '세션을 정리하는 중...');
       if (typeof google === 'undefined' || !google.script || !google.script.run) {
@@ -1354,6 +1357,7 @@
       toggle('infoPanel', false);
       setRegisterMessage('로그아웃되었습니다.', 'ok');
       setMainMessage('', '');
+      resetMainNavigation();
     }
 
     function clearLoginSessionStorage() {
@@ -1367,7 +1371,7 @@
       clearSelectedWorkbookStorage();
     }
 
-    function showGameStartMessage() {
+    function showGameStartMessage(sourceButton) {
       if (!currentState || !currentState.player) {
         setMainMessage('먼저 로그인해 주세요.', 'error');
         return;
@@ -1377,6 +1381,7 @@
         setMainMessage('게임을 시작하려면 문제집(수업)을 먼저 선택해 주세요.', 'error');
         return;
       }
+      if (!beginMainNavigation(sourceButton)) return;
       showLoadingModal('게임을 준비하는 중...', '브라우저 로컬 문제집이 준비되었는지 확인합니다.', {
         steps: GAME_START_LOADING_STEPS,
         activeStep: 0,
@@ -1420,6 +1425,7 @@
           transitionToBattlePage(startedAt, view && view.entryToken);
         })
         .withFailureHandler(function(error) {
+          resetMainNavigation();
           hideLoadingModal();
           setMainMessage(error && error.message ? error.message : '게임을 시작하지 못했습니다.', 'error');
         })
@@ -1477,15 +1483,15 @@
       }
     }
 
-    function showLeaderboardMessage() {
-      goToPage('leaderboard');
+    function showLeaderboardMessage(sourceButton) {
+      goToPage('leaderboard', null, sourceButton);
     }
 
-    function showMyInfo() {
-      goToPage('mypage');
+    function showMyInfo(sourceButton) {
+      goToPage('mypage', null, sourceButton);
     }
 
-    function goToPage(page, options) {
+    function goToPage(page, options, sourceButton) {
       options = options || {};
       if (page === 'question' && !canCreateQuestions()) {
         hideLoadingModal();
@@ -1505,7 +1511,27 @@
         if (value === undefined || value === null || value === '') return;
         nextUrl += '&' + encodeURIComponent(key) + '=' + encodeURIComponent(String(value));
       });
+      if (sourceButton && !beginMainNavigation(sourceButton)) return;
       navigateTop(nextUrl);
+    }
+
+    function beginMainNavigation(sourceButton) {
+      if (!sourceButton) return true;
+      if (mainNavigationInProgress) return false;
+      mainNavigationInProgress = true;
+      Array.prototype.forEach.call(document.querySelectorAll('[data-main-navigation="true"]'), function(button) {
+        button.disabled = true;
+        button.setAttribute('aria-disabled', 'true');
+      });
+      return true;
+    }
+
+    function resetMainNavigation() {
+      mainNavigationInProgress = false;
+      Array.prototype.forEach.call(document.querySelectorAll('[data-main-navigation="true"]'), function(button) {
+        button.disabled = false;
+        button.setAttribute('aria-disabled', 'false');
+      });
     }
 
     function showNavigationLoading(page, options) {
@@ -1685,7 +1711,6 @@
       modal.classList.remove('no-progress');
       document.getElementById('loadingTitle').textContent = title || '로딩 중...';
       document.getElementById('loadingText').textContent = text || '데이터를 불러오는 중...';
-      loadingStartedAt = performance.now();
       loadingStepItems = (options.steps || []).map(function(step, index) {
         return {
           text: String(step || ''),
@@ -1694,9 +1719,6 @@
       });
       renderLoadingSteps();
       setLoadingProgress(options.progress !== undefined ? options.progress : 0);
-      updateLoadingElapsed();
-      if (loadingTimerId) window.clearInterval(loadingTimerId);
-      loadingTimerId = window.setInterval(updateLoadingElapsed, 100);
       modal.classList.add('active');
       modal.setAttribute('aria-hidden', 'false');
     }
@@ -1713,10 +1735,6 @@
           if (sessionId === loadingSessionId) hideLoadingModal(true);
         }, LOADING_COMPLETE_HOLD_MS);
         return;
-      }
-      if (loadingTimerId) {
-        window.clearInterval(loadingTimerId);
-        loadingTimerId = null;
       }
       if (loadingHideTimerId) {
         window.clearTimeout(loadingHideTimerId);
@@ -1737,7 +1755,6 @@
         });
         renderLoadingSteps();
       }
-      updateLoadingElapsed();
     }
 
     function setLoadingProgress(progress) {
@@ -1746,12 +1763,6 @@
       var label = document.getElementById('loadingProgressText');
       if (fill) fill.style.width = percent + '%';
       if (label) label.textContent = percent + '%';
-    }
-
-    function updateLoadingElapsed() {
-      var element = document.getElementById('loadingElapsedText');
-      if (!element || !loadingStartedAt) return;
-      element.textContent = '경과 ' + ((performance.now() - loadingStartedAt) / 1000).toFixed(1) + '초';
     }
 
     function renderLoadingSteps() {

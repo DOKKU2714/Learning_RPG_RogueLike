@@ -340,7 +340,6 @@
     var followingStageStaticPreloadInFlight = false;
     var combatActionPanelHtml = '';
     var shortAnswerEnterSubmitLock = false;
-    var loadingTimerId = null;
     var loadingHideTimerId = null;
     var loadingSessionId = 0;
     var loadingStartedAt = 0;
@@ -2797,7 +2796,7 @@
     function getClientQuestionDifficultyEffectDelta() {
       var effects = currentView && currentView.battle && currentView.battle.player && currentView.battle.player.effects || [];
       return effects.reduce(function(total, effect) {
-        if (!effect || effect.effectId === 'debuff_foolish') return total;
+        if (!effect) return total;
         if (effect.statKey !== 'questionDifficulty' || effect.effectType !== 'flat') return total;
         return total + Number(effect.value || 0) * Math.max(1, Number(effect.stacks || 1));
       }, 0);
@@ -4256,7 +4255,8 @@
             });
             continue;
           }
-          var result = applyOptimisticPlayerDamage(battle, damage);
+          var critical = rollClientMonsterCriticalDamage(monster, damage);
+          var result = applyOptimisticPlayerDamage(battle, critical.damage);
           battle.lastTurnEvents.push({
             actor: 'monster',
             type: actionType === 'skill' ? 'skill' : 'attack',
@@ -4266,11 +4266,17 @@
             damage: result.damage,
             shieldDamage: result.shieldDamage,
             hpDamage: result.hpDamage,
+            isCritical: critical.isCritical,
+            criticalMultiplier: critical.multiplier,
             hitIndex: hitIndex + 1,
             hitCount: hitCount,
-            message: actionType === 'skill' && intent.skillName
-              ? monster.name + '이 ' + intent.skillName + ' 사용!'
-              : monster.name + '의 공격!',
+            message: critical.isCritical
+              ? (actionType === 'skill' && intent.skillName
+                ? monster.name + '의 ' + intent.skillName + ' 치명타!'
+                : monster.name + '의 치명타 공격!')
+              : (actionType === 'skill' && intent.skillName
+                ? monster.name + '이 ' + intent.skillName + ' 사용!'
+                : monster.name + '의 공격!'),
           });
         }
       });
@@ -5536,8 +5542,18 @@
     }
 
     function rollClientCriticalDamage(battle, damage) {
+      return rollClientCriticalDamageFromStats(damage, getClientEffectiveStats(battle && battle.player || {}));
+    }
+
+    function rollClientMonsterCriticalDamage(monster, damage) {
+      return rollClientCriticalDamageFromStats(damage, {
+        criticalRate: getClientCombatStat(monster, 'criticalRate', 0),
+        criticalDamage: getClientCombatStat(monster, 'criticalDamage', 100),
+      });
+    }
+
+    function rollClientCriticalDamageFromStats(damage, stats) {
       var baseDamage = Math.max(0, Math.round(Number(damage || 0)));
-      var stats = getClientEffectiveStats(battle && battle.player || {});
       var criticalRate = Math.max(0, Number(stats.criticalRate || 0));
       var criticalDamage = Math.max(100, Number(stats.criticalDamage || 100));
       var isCritical = baseDamage > 0 && criticalRate > 0 && Math.random() * 100 < criticalRate;
@@ -8232,11 +8248,6 @@
       });
       renderLoadingSteps();
       setLoadingProgress(options.progress !== undefined ? options.progress : 0);
-      updateLoadingElapsed();
-      if (loadingTimerId) {
-        window.clearInterval(loadingTimerId);
-      }
-      loadingTimerId = window.setInterval(updateLoadingElapsed, 100);
       modal.classList.add('active');
       modal.setAttribute('aria-hidden', 'false');
     }
@@ -8318,10 +8329,6 @@
         window.clearTimeout(loadingHideTimerId);
         loadingHideTimerId = null;
       }
-      if (loadingTimerId) {
-        window.clearInterval(loadingTimerId);
-        loadingTimerId = null;
-      }
       modal.classList.remove('active', 'opaque-background');
       modal.setAttribute('aria-hidden', 'true');
     }
@@ -8353,7 +8360,6 @@
         }
         renderLoadingSteps();
       }
-      updateLoadingElapsed();
     }
 
     function setLoadingProgress(progress) {
@@ -8362,12 +8368,6 @@
       var text = document.getElementById('loadingProgressText');
       if (fill) fill.style.width = percent + '%';
       if (text) text.textContent = percent + '%';
-    }
-
-    function updateLoadingElapsed() {
-      var element = document.getElementById('loadingElapsedText');
-      if (!element || !loadingStartedAt) return;
-      element.textContent = '경과 ' + ((performance.now() - loadingStartedAt) / 1000).toFixed(1) + '초';
     }
 
     function renderLoadingSteps() {

@@ -1469,6 +1469,8 @@ function applyMonsterAttackIntent_(battleState, monster, intent) {
     defense: monster.defense,
     hp: monster.maxHp,
     evasion: monster.evasion,
+    criticalRate: monster.criticalRate,
+    criticalDamage: monster.criticalDamage,
     accuracy: 100,
   }, monster.effects || []);
   var playerStats = calculateEffectiveStats(battleState.player.stats || BASE_PLAYER_STATS, battleState.player.effects || []);
@@ -1495,7 +1497,8 @@ function applyMonsterAttackIntent_(battleState, monster, intent) {
     monster.intent = null;
     return battleState;
   }
-  var result = dealDamageToPlayer_(battleState, Math.max(0, Math.round(Number(monsterStats.attack || 0))));
+  var critical = rollCriticalDamage_(Math.max(0, Math.round(Number(monsterStats.attack || 0))), monsterStats);
+  var result = dealDamageToPlayer_(battleState, critical.damage);
   battleState.lastMonsterAction = {
     type: ACTION_TYPES.ATTACK,
     monsterId: monster.instanceId || monster.monsterId,
@@ -1503,6 +1506,8 @@ function applyMonsterAttackIntent_(battleState, monster, intent) {
     damage: result.damage,
     shieldDamage: result.shieldDamage,
     hpDamage: result.hpDamage,
+    isCritical: critical.isCritical,
+    criticalMultiplier: critical.multiplier,
   };
   battleState.lastTurnEvents.push({
     actor: 'monster',
@@ -1512,7 +1517,9 @@ function applyMonsterAttackIntent_(battleState, monster, intent) {
     damage: result.damage,
     shieldDamage: result.shieldDamage,
     hpDamage: result.hpDamage,
-    message: monster.name + '의 공격!',
+    isCritical: critical.isCritical,
+    criticalMultiplier: critical.multiplier,
+    message: critical.isCritical ? monster.name + '의 치명타 공격!' : monster.name + '의 공격!',
   });
   monster.intent = null;
   return battleState;
@@ -1544,6 +1551,8 @@ function applyMonsterSkillIntent_(battleState, monster, intent) {
     defense: monster.defense,
     hp: monster.maxHp,
     evasion: monster.evasion,
+    criticalRate: monster.criticalRate,
+    criticalDamage: monster.criticalDamage,
     accuracy: 100,
   }, monster.effects || []);
   if (skill.type === SKILL_TYPES.DAMAGE) {
@@ -1568,7 +1577,8 @@ function applyMonsterSkillIntent_(battleState, monster, intent) {
         continue;
       }
       var perHitDamage = calculateMonsterSkillDamage_(battleState, monster, skill, monsterStats);
-      var result = dealDamageToPlayer_(battleState, perHitDamage);
+      var critical = rollCriticalDamage_(perHitDamage, monsterStats);
+      var result = dealDamageToPlayer_(battleState, critical.damage);
       battleState.lastTurnEvents.push({
         actor: 'monster',
         type: ACTION_TYPES.SKILL,
@@ -1578,9 +1588,13 @@ function applyMonsterSkillIntent_(battleState, monster, intent) {
         damage: result.damage,
         shieldDamage: result.shieldDamage,
         hpDamage: result.hpDamage,
+        isCritical: critical.isCritical,
+        criticalMultiplier: critical.multiplier,
         hitIndex: hitIndex + 1,
         hitCount: hitCount,
-        message: monster.name + '이 ' + skill.name + ' 사용!',
+        message: critical.isCritical
+          ? monster.name + '의 ' + skill.name + ' 치명타!'
+          : monster.name + '이 ' + skill.name + ' 사용!',
       });
     }
   } else if (skill.type === SKILL_TYPES.DEBUFF) {
@@ -3844,6 +3858,9 @@ function buildBattleMonster_(monster, index) {
     maxHp: Number(monster.hp),
     attack: Number(monster.attack),
     defense: Number(monster.defense || 0),
+    evasion: Number(monster.evasion || 0),
+    criticalRate: Number(monster.criticalRate !== undefined && monster.criticalRate !== '' ? monster.criticalRate : BASE_PLAYER_STATS.criticalRate),
+    criticalDamage: Number(monster.criticalDamage !== undefined && monster.criticalDamage !== '' ? monster.criticalDamage : BASE_PLAYER_STATS.criticalDamage),
     aiId: monster.aiId || 'ai_basic_attack',
     skillIds: safeJsonParse_(monster.skillIds, []),
     shield: 0,
@@ -3866,6 +3883,20 @@ function normalizeBattleMonsters_(battleState) {
     monster.aiId = monster.aiId || 'ai_basic_attack';
     monster.skillIds = monster.skillIds || [];
     monster.shield = Number(monster.shield || 0);
+    var monsterDefinition = monster.monsterId ? findMonsterRowById_(monster.monsterId) : null;
+    if (monster.evasion === undefined || monster.evasion === '') {
+      monster.evasion = Number(monsterDefinition && monsterDefinition.evasion || 0);
+    }
+    if (monster.criticalRate === undefined || monster.criticalRate === '') {
+      monster.criticalRate = Number(monsterDefinition && monsterDefinition.criticalRate !== undefined && monsterDefinition.criticalRate !== ''
+        ? monsterDefinition.criticalRate
+        : BASE_PLAYER_STATS.criticalRate);
+    }
+    if (monster.criticalDamage === undefined || monster.criticalDamage === '') {
+      monster.criticalDamage = Number(monsterDefinition && monsterDefinition.criticalDamage !== undefined && monsterDefinition.criticalDamage !== ''
+        ? monsterDefinition.criticalDamage
+        : BASE_PLAYER_STATS.criticalDamage);
+    }
     monster.intent = monster.intent || null;
     normalizeTargetStatusBuckets_(monster);
     return monster;
@@ -4022,9 +4053,6 @@ function buildStageId_(floor, stage) {
 
 function getEffectFlatBonus_(activeEffects, statKey) {
   return (activeEffects || []).reduce(function(total, effect) {
-    if (effect.effectId === 'debuff_foolish' && statKey === STAT_KEYS.QUESTION_DIFFICULTY) {
-      return total;
-    }
     if (effect.statKey === statKey && effect.effectType === EFFECT_TYPES.FLAT) {
       return total + (Number(effect.value || 0) * Math.max(1, Number(effect.stacks || 1)));
     }

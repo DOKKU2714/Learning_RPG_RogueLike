@@ -861,14 +861,12 @@ function applyBattleStartItemEffects_(battleState) {
       maxStacks: Math.max(Number(effect.maxStacks || 1), stacks),
     });
     if (rule.effectId === 'debuff_foolish') {
-      configured.statKey = '';
-      configured.effectType = EFFECT_TYPES.CONTROL;
-      configured.value = 0;
+      configured.statKey = STAT_KEYS.QUESTION_DIFFICULTY;
+      configured.effectType = EFFECT_TYPES.FLAT;
+      configured.value = 1;
       configured.stackable = true;
       configured.maxStacks = Math.max(Number(configured.maxStacks || 1), stacks);
-      configured.description = configured.description && configured.description.indexOf('난이도') === -1
-        ? configured.description
-        : '정신이 흐려진 상태입니다.';
+      configured.description = 'N턴간 문제 난이도 +1.';
     }
     for (var i = 0; i < stacks; i += 1) {
       applyEffect(battleState.player, configured, { source: 'item', itemId: rule.itemId || '' });

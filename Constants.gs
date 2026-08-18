@@ -180,7 +180,7 @@ var STAT_KEYS = Object.freeze({
 var BASE_PLAYER_STATS = Object.freeze({
   attack: 10,
   hp: 100,
-  hpRegen: 5,
+  hpRegen: 3,
   evasion: 0,
   criticalRate: 5,
   criticalDamage: 150,
@@ -316,7 +316,7 @@ var MASTER_EFFECTS = Object.freeze([
   { effectId: 'debuff_weak', name: '약화', category: EFFECT_CATEGORIES.DEBUFF, statKey: STAT_KEYS.ATTACK, effectType: EFFECT_TYPES.PERCENT, value: -25, durationType: DURATION_TYPES.STAGE, durationTurns: '', stackable: false, maxStacks: 1, triggerTiming: TRIGGER_TIMINGS.PASSIVE, description: '공격력 25% 감소.' },
   { effectId: 'debuff_corrosion', name: '부식', category: EFFECT_CATEGORIES.DEBUFF, statKey: STAT_KEYS.DEFENSE, effectType: EFFECT_TYPES.PERCENT, value: -33, durationType: DURATION_TYPES.STAGE, durationTurns: '', stackable: false, maxStacks: 1, triggerTiming: TRIGGER_TIMINGS.PASSIVE, description: '방어력 33% 감소.' },
   { effectId: 'debuff_dazed', name: '멍해짐', category: EFFECT_CATEGORIES.DEBUFF, statKey: STAT_KEYS.QUESTION_TIME, effectType: EFFECT_TYPES.FLAT, value: -3, durationType: DURATION_TYPES.TURN, durationTurns: 3, stackable: false, maxStacks: 1, triggerTiming: TRIGGER_TIMINGS.PASSIVE, description: 'N턴간 문제 풀이 제한시간 -3초.' },
-  { effectId: 'debuff_foolish', name: '멍청해짐', category: EFFECT_CATEGORIES.DEBUFF, statKey: '', effectType: EFFECT_TYPES.CONTROL, value: 0, durationType: DURATION_TYPES.TURN, durationTurns: 3, stackable: true, maxStacks: 99, triggerTiming: TRIGGER_TIMINGS.PASSIVE, description: '정신이 흐려진 상태입니다.' },
+  { effectId: 'debuff_foolish', name: '멍청해짐', category: EFFECT_CATEGORIES.DEBUFF, statKey: STAT_KEYS.QUESTION_DIFFICULTY, effectType: EFFECT_TYPES.FLAT, value: 1, durationType: DURATION_TYPES.TURN, durationTurns: 3, stackable: true, maxStacks: 99, triggerTiming: TRIGGER_TIMINGS.PASSIVE, description: 'N턴간 문제 난이도 +1.' },
   { effectId: 'buff_power', name: '힘', category: EFFECT_CATEGORIES.BUFF, statKey: STAT_KEYS.ATTACK, effectType: EFFECT_TYPES.FLAT, value: 2, durationType: DURATION_TYPES.STAGE, durationTurns: '', stackable: true, maxStacks: 99, triggerTiming: TRIGGER_TIMINGS.PASSIVE, description: '공격력 n 증가. 스택 가능.' },
   { effectId: 'buff_hard', name: '단단함', category: EFFECT_CATEGORIES.BUFF, statKey: STAT_KEYS.DEFENSE, effectType: EFFECT_TYPES.FLAT, value: 2, durationType: DURATION_TYPES.STAGE, durationTurns: '', stackable: true, maxStacks: 99, triggerTiming: TRIGGER_TIMINGS.PASSIVE, description: '방어력 n 증가. 스택 가능.' },
   { effectId: 'buff_focus', name: '집중', category: EFFECT_CATEGORIES.BUFF, statKey: STAT_KEYS.CRITICAL_RATE, effectType: EFFECT_TYPES.FLAT, value: 20, durationType: DURATION_TYPES.STAGE, durationTurns: '', stackable: true, maxStacks: 99, triggerTiming: TRIGGER_TIMINGS.PASSIVE, description: '치명타 확률 n% 증가. 스택 가능.' },

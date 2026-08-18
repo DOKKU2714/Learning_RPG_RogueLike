@@ -2028,10 +2028,12 @@ function hydrateEffectDisplayFields_(effect) {
   if (effect && effect.effectId === 'debuff_foolish') {
     effect.name = effect.name || '멍청해짐';
     effect.category = EFFECT_CATEGORIES.DEBUFF;
-    effect.statKey = '';
-    effect.effectType = EFFECT_TYPES.CONTROL;
-    effect.value = 0;
-    effect.description = effect.description || '정신이 흐려진 상태입니다.';
+    effect.statKey = STAT_KEYS.QUESTION_DIFFICULTY;
+    effect.effectType = EFFECT_TYPES.FLAT;
+    effect.value = 1;
+    effect.stackable = true;
+    effect.maxStacks = Math.max(1, Number(effect.maxStacks || 99));
+    effect.description = 'N턴간 문제 난이도 +1.';
   }
   if (!effect || !effect.effectId) {
     return effect;
