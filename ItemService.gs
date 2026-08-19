@@ -821,7 +821,7 @@ function buildItemModifiers_(ownedItems) {
 }
 
 function calculateStatsWithItemEffects_(baseStats, ownedItems) {
-  var source = Object.assign({}, BASE_PLAYER_STATS, baseStats || {});
+  var source = Object.assign(getConfiguredBasePlayerStats_(), baseStats || {});
   var modifiers = buildItemModifiers_(ownedItems);
   var stats = Object.assign({}, source);
   Object.keys(modifiers.statPercent).forEach(function(statKey) {
@@ -882,8 +882,9 @@ function syncBattlePlayerItemsFromRun_(battleState, run) {
     return battleState;
   }
   var items = normalizeOwnedItems_(safeJsonParse_(run.itemsJson, []));
-  var baseStats = battleState.player.baseStats || safeJsonParse_(run.statsJson, Object.assign({}, BASE_PLAYER_STATS));
-  var currentMaxHp = Math.max(1, Number(battleState.player.maxHp || battleState.player.stats && battleState.player.stats.hp || baseStats.hp || BASE_PLAYER_STATS.hp));
+  var configuredBaseStats = getConfiguredBasePlayerStats_();
+  var baseStats = battleState.player.baseStats || safeJsonParse_(run.statsJson, configuredBaseStats);
+  var currentMaxHp = Math.max(1, Number(battleState.player.maxHp || battleState.player.stats && battleState.player.stats.hp || baseStats.hp || configuredBaseStats.hp));
   var nextStats = calculateStatsWithItemEffects_(baseStats, items);
   var nextMaxHp = Math.max(1, Number(nextStats.hp || 1));
   battleState.player.baseStats = baseStats;

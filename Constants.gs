@@ -177,7 +177,7 @@ var STAT_KEYS = Object.freeze({
   QUESTION_DIFFICULTY: 'questionDifficulty',
 });
 
-var BASE_PLAYER_STATS = Object.freeze({
+var DEFAULT_BASE_PLAYER_STATS = Object.freeze({
   attack: 10,
   hp: 100,
   hpRegen: 3,
@@ -304,7 +304,7 @@ var MASTER_SETTINGS = Object.freeze([
   { key: 'minAnswerEfficiency', value: '0.5', type: 'number', description: 'Minimum normal answer efficiency.' },
   { key: 'maxAnswerEfficiency', value: '1.25', type: 'number', description: 'Maximum answer efficiency.' },
   { key: 'extraWrongEfficiencyPenalty', value: '0.1', type: 'number', description: 'Efficiency penalty after timeout or repeated wrong answers.' },
-  { key: 'basePlayerStatsJson', value: JSON.stringify(BASE_PLAYER_STATS), type: 'json', description: 'Default player base stats.' },
+  { key: 'basePlayerStatsJson', value: JSON.stringify(DEFAULT_BASE_PLAYER_STATS), type: 'json', description: 'Default player base stats.' },
 ]);
 
 var MASTER_EFFECTS = Object.freeze([

@@ -798,7 +798,7 @@ function buildInitialBattleStatsPlayerData_(playerId) {
     correctAnswerCount: 0,
     averageAnswerTimeMs: 0,
     currency: 0,
-    baseStatsJson: safeJsonStringify_(BASE_PLAYER_STATS),
+    baseStatsJson: safeJsonStringify_(getConfiguredBasePlayerStats_()),
     ownedSkillsJson: safeJsonStringify_([]),
     ownedItemsJson: safeJsonStringify_([]),
     bestScore: 0,

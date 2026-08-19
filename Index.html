@@ -328,6 +328,7 @@
 
   <?!= include_('UiLoadingModal'); ?>
   <?!= include_('QuestionSnapshotStore'); ?>
+  <?!= include_('GameDataSnapshotStore'); ?>
 
   <script>
     var WEB_APP_URL = '<?= getWebAppUrl_() ?>';
@@ -622,13 +623,14 @@
         setMainMessage('서버 연결을 사용할 수 없습니다.', 'error');
         return;
       }
-      showLoadingModal('데이터 다시 불러오는 중...', '시트 데이터 캐시를 비우는 중...');
+      showLoadingModal('데이터 다시 불러오는 중...', '로컬 문제집과 게임 데이터를 초기화하는 중...');
       google.script.run
         .withSuccessHandler(function() {
           QUESTION_SNAPSHOT_REFRESH_REQUESTED = true;
           questionSnapshotRefreshConsumed = false;
           var cleared = window.LearningRpgQuestionStore ? window.LearningRpgQuestionStore.clear() : Promise.resolve();
-          cleared.finally(function() {
+          var gameDataCleared = window.LearningRpgGameDataStore ? window.LearningRpgGameDataStore.clear() : Promise.resolve();
+          Promise.all([cleared, gameDataCleared]).finally(function() {
             hideLoadingModal();
             setMainMessage('데이터를 다시 불러왔습니다.', 'ok');
             refreshCurrentUser(true);
@@ -1342,6 +1344,7 @@
     function completeLogout() {
       clearLoginSessionStorage();
       if (window.LearningRpgQuestionStore) window.LearningRpgQuestionStore.clear();
+      if (window.LearningRpgGameDataStore) window.LearningRpgGameDataStore.clear();
       currentState = null;
       activeWorkbooks = [];
       selectedWorkbookId = '';

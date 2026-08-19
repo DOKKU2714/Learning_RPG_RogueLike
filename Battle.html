@@ -221,6 +221,7 @@
 
   <?!= include_('UiLoadingModal'); ?>
   <?!= include_('QuestionSnapshotStore'); ?>
+  <?!= include_('GameDataSnapshotStore'); ?>
   <?!= getSharedRuleEngineScript_(); ?>
 
   <script>
@@ -266,6 +267,10 @@
     var questionSnapshotRefreshPromise = null;
     var nextFloorQuestionRefreshKey = '';
     var nextFloorQuestionRefreshPromise = null;
+    var localGameDataSnapshot = null;
+    var gameDataSnapshotRefreshPromise = null;
+    var nextFloorGameDataRefreshKey = '';
+    var nextFloorGameDataRefreshPromise = null;
     var BATTLE_STEP_DELAY_MS = 1000;
     var MONSTER_TURN_START_DELAY_MS = 1000;
     var ATTACK_EFFECT_DELAY_MS = 420;
@@ -528,6 +533,14 @@
     }
 
     function loadInitialBattleView(view) {
+      ensureGameDataSnapshot(true).then(function() {
+        applyInitialBattleView(view);
+      }).catch(function() {
+        applyInitialBattleView(view);
+      });
+    }
+
+    function applyInitialBattleView(view) {
       isDummyMode = false;
       currentView = normalizeBattleView(view);
       resetStageCommitState();
@@ -1073,6 +1086,7 @@
         battle.monsters = battle.monster ? [battle.monster] : [];
       }
       battle.monsters = battle.monsters.slice(0, 3);
+      applyLocalGameDataToView(view);
       battle.monsters.forEach(function(monster) {
         syncClientStatusBuckets(monster);
       });
@@ -5836,6 +5850,107 @@
       }
     }
 
+    function isUsableGameDataSnapshot(snapshot) {
+      return !!(snapshot
+        && Array.isArray(snapshot.monsters)
+        && Array.isArray(snapshot.skills)
+        && Array.isArray(snapshot.items));
+    }
+
+    function setLocalGameDataSnapshot(snapshot) {
+      localGameDataSnapshot = isUsableGameDataSnapshot(snapshot) ? snapshot : null;
+      return localGameDataSnapshot;
+    }
+
+    function requestGameDataSnapshot() {
+      if (gameDataSnapshotRefreshPromise) return gameDataSnapshotRefreshPromise;
+      if (typeof google === 'undefined' || !google.script || !google.script.run) {
+        return Promise.reject(new Error('서버 연결을 사용할 수 없습니다.'));
+      }
+      gameDataSnapshotRefreshPromise = new Promise(function(resolve, reject) {
+        google.script.run
+          .withSuccessHandler(resolve)
+          .withFailureHandler(reject)
+          .getGameDataSnapshot(getAuthToken());
+      }).then(function(snapshot) {
+        if (!isUsableGameDataSnapshot(snapshot)) {
+          throw new Error('서버 게임 데이터가 올바르지 않습니다.');
+        }
+        setLocalGameDataSnapshot(snapshot);
+        if (!window.LearningRpgGameDataStore) return snapshot;
+        return window.LearningRpgGameDataStore.replace(snapshot);
+      }).finally(function() {
+        gameDataSnapshotRefreshPromise = null;
+      });
+      return gameDataSnapshotRefreshPromise;
+    }
+
+    function ensureGameDataSnapshot(forceRefresh) {
+      if (forceRefresh) return requestGameDataSnapshot();
+      if (isUsableGameDataSnapshot(localGameDataSnapshot)) {
+        return Promise.resolve(localGameDataSnapshot);
+      }
+      if (!window.LearningRpgGameDataStore) return requestGameDataSnapshot();
+      return window.LearningRpgGameDataStore.get().then(function(snapshot) {
+        if (isUsableGameDataSnapshot(snapshot)) {
+          setLocalGameDataSnapshot(snapshot);
+          return snapshot;
+        }
+        return requestGameDataSnapshot();
+      });
+    }
+
+    function findLocalGameDataRow(collectionName, keyName, keyValue) {
+      var rows = localGameDataSnapshot && Array.isArray(localGameDataSnapshot[collectionName])
+        ? localGameDataSnapshot[collectionName]
+        : [];
+      return rows.filter(function(row) {
+        return row && String(row[keyName] || '') === String(keyValue || '');
+      })[0] || null;
+    }
+
+    function applyLocalGameDataToView(view) {
+      if (!view || !view.battle || !isUsableGameDataSnapshot(localGameDataSnapshot)) return view;
+      (view.battle.monsters || []).forEach(function(monster) {
+        var definition = findLocalGameDataRow('monsters', 'monsterId', monster.monsterId || monster.instanceId);
+        if (!definition) return;
+        ['name', 'type', 'aiId', 'skillIds', 'evasion', 'criticalRate', 'criticalDamage'].forEach(function(key) {
+          if (definition[key] !== undefined && definition[key] !== null && definition[key] !== '') {
+            monster[key] = definition[key];
+          }
+        });
+      });
+      if (Array.isArray(view.availableSkills)) {
+        view.availableSkills = view.availableSkills.map(function(skill) {
+          var definition = findLocalGameDataRow('skills', 'skillId', skill && skill.skillId);
+          if (!definition) return skill;
+          var next = Object.assign({}, skill);
+          ['name', 'description', 'type', 'target', 'baseValue', 'actionPointCost', 'cooldown',
+            'conditionJson', 'effectJson', 'upgradeJson', 'previewText'].forEach(function(key) {
+            if (definition[key] !== undefined && definition[key] !== null && definition[key] !== '') {
+              next[key] = definition[key];
+            }
+          });
+          return next;
+        });
+      }
+      var player = view.battle.player || {};
+      if (Array.isArray(player.itemDetails)) {
+        player.itemDetails = player.itemDetails.map(function(item) {
+          var definition = findLocalGameDataRow('items', 'itemId', item && (item.itemId || item.id));
+          if (!definition) return item;
+          var next = Object.assign({}, item);
+          ['name', 'rarity', 'description', 'effectSummary', 'rarityLabel'].forEach(function(key) {
+            if (definition[key] !== undefined && definition[key] !== null && definition[key] !== '') {
+              next[key] = definition[key];
+            }
+          });
+          return next;
+        });
+      }
+      return view;
+    }
+
     function commitStageResultIfNeeded(onSuccess, onFailure, options) {
       options = options || {};
       if (!currentView || !currentView.battle || currentView.battle.status === 'active') {
@@ -6927,6 +7042,22 @@
       return nextFloorQuestionRefreshPromise;
     }
 
+    function ensureNextFloorGameDataRefresh(response) {
+      var currentFloor = getCurrentBattleFloorForQuestionRefresh();
+      var nextFloor = getTargetFloorForQuestionRefresh(response);
+      if (!currentFloor || !nextFloor || nextFloor <= currentFloor) return null;
+      var runId = response && (response.runId || response.run && response.run.runId)
+        || currentView && currentView.runId
+        || '';
+      var key = [runId, nextFloor].join(':');
+      if (nextFloorGameDataRefreshKey === key) {
+        return nextFloorGameDataRefreshPromise || Promise.resolve(localGameDataSnapshot);
+      }
+      nextFloorGameDataRefreshKey = key;
+      nextFloorGameDataRefreshPromise = requestGameDataSnapshot();
+      return nextFloorGameDataRefreshPromise;
+    }
+
     function resetNextBattlePreload() {
       nextBattlePreloadKey = '';
       nextBattlePreloadLoading = false;
@@ -6970,6 +7101,8 @@
       }
       var floorQuestionRefresh = ensureNextFloorQuestionRefresh(response);
       if (floorQuestionRefresh) floorQuestionRefresh.catch(function() {});
+      var floorGameDataRefresh = ensureNextFloorGameDataRefresh(response);
+      if (floorGameDataRefresh) floorGameDataRefresh.catch(function() {});
       var runId = response.runId || (response.run && response.run.runId) || (currentView && currentView.runId);
       var key = getNextBattlePreloadKey(response);
       if (!runId || !key) {
@@ -7072,7 +7205,7 @@
       checkPreload();
     }
 
-    function waitForNextFloorQuestionRefresh(view, startedAt, loadingHandle) {
+    function waitForNextFloorQuestionRefresh(view, startedAt, loadingHandle, skipGameDataRefresh) {
       var refreshPromise = ensureNextFloorQuestionRefresh(view);
       if (!refreshPromise) return false;
       var loading = loadingHandle || startDelayedLoadingModal('다음 층 문제집을 업데이트하는 중...', '', {
@@ -7091,14 +7224,57 @@
           title: '다음 스테이지로 이동하는 중...',
           progress: 82,
         });
-        applyPreparedNextBattleView(view, startedAt, loading, { skipQuestionRefresh: true });
+        applyPreparedNextBattleView(view, startedAt, loading, {
+          skipQuestionRefresh: true,
+          skipGameDataRefresh: !!skipGameDataRefresh,
+        });
       }).catch(function(error) {
         pushLog((error && error.message ? error.message : '문제집 업데이트에 실패했습니다.') + ' 기존 문제집으로 진행합니다.');
         updateDelayedLoadingModal(loading, {
           title: '기존 문제집으로 다음 스테이지를 준비하는 중...',
           progress: 82,
         });
-        applyPreparedNextBattleView(view, startedAt, loading, { skipQuestionRefresh: true });
+        applyPreparedNextBattleView(view, startedAt, loading, {
+          skipQuestionRefresh: true,
+          skipGameDataRefresh: !!skipGameDataRefresh,
+        });
+      });
+      return true;
+    }
+
+    function waitForNextFloorGameDataRefresh(view, startedAt, loadingHandle) {
+      var refreshPromise = ensureNextFloorGameDataRefresh(view);
+      if (!refreshPromise) return false;
+      var loading = loadingHandle || startDelayedLoadingModal('다음 층 게임 데이터를 업데이트하는 중...', '', {
+        progress: 66,
+        steps: NEXT_BATTLE_LOADING_STEPS,
+        activeStep: 3,
+        opaqueBackground: true,
+      }, 0);
+      updateDelayedLoadingModal(loading, {
+        title: '다음 층 게임 데이터를 업데이트하는 중...',
+        progress: 70,
+        opaqueBackground: true,
+      });
+      refreshPromise.then(function() {
+        updateDelayedLoadingModal(loading, {
+          title: '다음 스테이지로 이동하는 중...',
+          progress: 78,
+        });
+        applyPreparedNextBattleView(view, startedAt, loading, {
+          skipQuestionRefresh: false,
+          skipGameDataRefresh: true,
+        });
+      }).catch(function(error) {
+        pushLog((error && error.message ? error.message : '게임 데이터 업데이트에 실패했습니다.') + ' 기존 게임 데이터로 진행합니다.');
+        updateDelayedLoadingModal(loading, {
+          title: '기존 게임 데이터로 다음 스테이지를 준비하는 중...',
+          progress: 78,
+        });
+        applyPreparedNextBattleView(view, startedAt, loading, {
+          skipQuestionRefresh: false,
+          skipGameDataRefresh: true,
+        });
       });
       return true;
     }
@@ -7114,7 +7290,10 @@
         pushLog('다음 전투 데이터를 아직 불러오지 못했습니다. 다시 시도해 주세요.');
         return true;
       }
-      if (!options.skipQuestionRefresh && waitForNextFloorQuestionRefresh(view, startedAt, loadingHandle)) {
+      if (!options.skipGameDataRefresh && waitForNextFloorGameDataRefresh(view, startedAt, loadingHandle)) {
+        return true;
+      }
+      if (!options.skipQuestionRefresh && waitForNextFloorQuestionRefresh(view, startedAt, loadingHandle, options.skipGameDataRefresh)) {
         return true;
       }
       if (loadingHandle) {
@@ -7356,8 +7535,16 @@
       var target = document.querySelector('[data-monster-id="' + cssEscape(monsterId) + '"] .compact-monster');
       if (!target) return Promise.resolve();
       var hpAnchor = target.closest('.monster-slot');
+      var dodgeAnimationToken = String(Number(target.dataset.dodgeAnimationToken || 0) + 1);
+      target.dataset.dodgeAnimationToken = dodgeAnimationToken;
+      target.classList.remove('monster-dodge', 'monster-dodge-left', 'monster-dodge-right');
+      void target.offsetWidth;
+      target.classList.add('monster-dodge', Math.random() < 0.5 ? 'monster-dodge-left' : 'monster-dodge-right');
       spawnFloatingText(hpAnchor && hpAnchor.querySelector('.monster-hp-text') || target, 'MISS', 'damage-miss');
-      return skippableAutoDelay(HIT_STATE_HOLD_MS);
+      return skippableAutoDelay(HIT_STATE_HOLD_MS).then(function() {
+        if (target.dataset.dodgeAnimationToken !== dodgeAnimationToken) return;
+        target.classList.remove('monster-dodge', 'monster-dodge-left', 'monster-dodge-right');
+      });
     }
 
     function isMonsterDefeatedInDom(monsterId) {

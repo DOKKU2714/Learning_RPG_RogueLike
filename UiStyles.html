@@ -1693,6 +1693,19 @@
     animation: monsterArtWhiteFlash 780ms ease-out forwards;
   }
 
+  .monster-dodge {
+    z-index: 6;
+    will-change: transform;
+  }
+
+  .monster-dodge-left {
+    animation: monsterDodgeLeft 560ms cubic-bezier(0.2, 0.82, 0.24, 1) forwards;
+  }
+
+  .monster-dodge-right {
+    animation: monsterDodgeRight 560ms cubic-bezier(0.2, 0.82, 0.24, 1) forwards;
+  }
+
   .monster-state-death .monster-art,
   .monster-defeated .monster-art {
     filter: grayscale(1) brightness(0.86) contrast(1.12) drop-shadow(0 18px 16px rgba(0, 0, 0, 0.7));
@@ -2824,6 +2837,24 @@
     44% { filter: brightness(1.8) saturate(1.4); transform: translateX(-6px) rotate(-0.6deg); }
     66% { transform: translateX(4px) rotate(0.3deg); }
     100% { filter: brightness(1); transform: translateX(0) rotate(0); }
+  }
+
+  @keyframes monsterDodgeLeft {
+    0% { transform: translateX(0) rotate(0); filter: brightness(1); }
+    18% { transform: translateX(-14px) rotate(-1deg); filter: brightness(1.12); }
+    40% { transform: translateX(-32px) rotate(-3deg); filter: brightness(1.2); }
+    66% { transform: translateX(13px) rotate(1.5deg); filter: brightness(1.06); }
+    84% { transform: translateX(7px) rotate(0.7deg); }
+    100% { transform: translateX(0) rotate(0); filter: brightness(1); }
+  }
+
+  @keyframes monsterDodgeRight {
+    0% { transform: translateX(0) rotate(0); filter: brightness(1); }
+    18% { transform: translateX(14px) rotate(1deg); filter: brightness(1.12); }
+    40% { transform: translateX(32px) rotate(3deg); filter: brightness(1.2); }
+    66% { transform: translateX(-13px) rotate(-1.5deg); filter: brightness(1.06); }
+    84% { transform: translateX(-7px) rotate(-0.7deg); }
+    100% { transform: translateX(0) rotate(0); filter: brightness(1); }
   }
 
   @keyframes monsterRedFlash {

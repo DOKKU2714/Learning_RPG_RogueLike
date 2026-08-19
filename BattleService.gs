@@ -207,7 +207,7 @@ function createNewRun_(playerId, workbook, questionManifest) {
   ensureTableColumns_(DB_SHEETS.RUNS, DB_COLUMNS.RUNS);
   workbook = requireActiveWorkbookForRunStart_(workbook && workbook.workbookId || workbook);
   var now = new Date();
-  var stats = Object.assign({}, BASE_PLAYER_STATS);
+  var stats = getConfiguredBasePlayerStats_();
   var startingScore = questionManifest
     ? Math.max(0, Math.round(Number(questionManifest.startingScore || 0)))
     : (typeof calculateQuestionLikeStartingScore_ === 'function'
@@ -519,7 +519,7 @@ function startBattle(runId) {
   var monsters = preloadedMonsters && preloadedMonsters.length
     ? preloadedMonsters
     : createMonstersForStage_(stage, playerGhostSelection.monster);
-  var baseStats = safeJsonParse_(run.statsJson, Object.assign({}, BASE_PLAYER_STATS));
+  var baseStats = safeJsonParse_(run.statsJson, getConfiguredBasePlayerStats_());
   var items = normalizeOwnedItems_(safeJsonParse_(run.itemsJson, []));
   var stats = calculateStatsWithItemEffects_(baseStats, items);
   var battleState = {
@@ -962,8 +962,9 @@ function getAnswerEfficiencyRules_() {
 function applyAttack(battleState, efficiency, targetId) {
   normalizeBattleStateEffects_(battleState);
   normalizeBattleMonsters_(battleState);
-  var effectiveStats = calculateEffectiveStats(battleState.player.stats || BASE_PLAYER_STATS, battleState.player.effects || []);
-  var attack = Number(effectiveStats.attack || BASE_PLAYER_STATS.attack);
+  var baseStats = getConfiguredBasePlayerStats_();
+  var effectiveStats = calculateEffectiveStats(battleState.player.stats || baseStats, battleState.player.effects || []);
+  var attack = Number(effectiveStats.attack || baseStats.attack);
   var baseDamage = Math.max(0, Math.round(attack * Number(efficiency || 0)));
   var target = getAliveMonsterById_(battleState, targetId) || getFirstAliveMonster_(battleState);
   if (!target) {
@@ -1045,7 +1046,7 @@ function rollHit_(attackerStats, defenderStats) {
 
 function applyGuard(battleState, efficiency) {
   normalizeBattleStateEffects_(battleState);
-  var effectiveStats = calculateEffectiveStats(battleState.player.stats || BASE_PLAYER_STATS, battleState.player.effects || []);
+  var effectiveStats = calculateEffectiveStats(battleState.player.stats || getConfiguredBasePlayerStats_(), battleState.player.effects || []);
   var defense = Number(effectiveStats.defense || 0);
   var shield = Math.max(0, Math.round((GAME_RULES.BASE_GUARD_SHIELD + defense) * Number(efficiency || 0)));
   battleState.player.shield = Number(battleState.player.shield || 0) + shield;
@@ -1473,7 +1474,7 @@ function applyMonsterAttackIntent_(battleState, monster, intent) {
     criticalDamage: monster.criticalDamage,
     accuracy: 100,
   }, monster.effects || []);
-  var playerStats = calculateEffectiveStats(battleState.player.stats || BASE_PLAYER_STATS, battleState.player.effects || []);
+  var playerStats = calculateEffectiveStats(battleState.player.stats || getConfiguredBasePlayerStats_(), battleState.player.effects || []);
   var hit = rollHit_(monsterStats, playerStats);
   if (!hit.hit) {
     battleState.lastMonsterAction = {
@@ -1556,7 +1557,7 @@ function applyMonsterSkillIntent_(battleState, monster, intent) {
     accuracy: 100,
   }, monster.effects || []);
   if (skill.type === SKILL_TYPES.DAMAGE) {
-    var playerStats = calculateEffectiveStats(battleState.player.stats || BASE_PLAYER_STATS, battleState.player.effects || []);
+    var playerStats = calculateEffectiveStats(battleState.player.stats || getConfiguredBasePlayerStats_(), battleState.player.effects || []);
     var hitCount = calculateMonsterSkillHitCount_(battleState, monster, skill, monsterStats);
     for (var hitIndex = 0; hitIndex < hitCount && Number(battleState.player.hp || 0) > 0; hitIndex += 1) {
       var hit = rollHit_(monsterStats, playerStats);
@@ -1656,7 +1657,7 @@ function applyMonsterSkillEffect_(target, skill, source, battleState) {
 }
 
 function dealDamageToPlayer_(battleState, damage) {
-  var effectiveStats = calculateEffectiveStats(battleState.player.stats || BASE_PLAYER_STATS, battleState.player.effects || []);
+  var effectiveStats = calculateEffectiveStats(battleState.player.stats || getConfiguredBasePlayerStats_(), battleState.player.effects || []);
   var modifiedDamage = applyIncomingItemDamageModifiers_(battleState, damage);
   var totalDamage = Math.max(0, Math.round(Number(modifiedDamage || 0) - Number(effectiveStats.defense || 0)));
   var shieldBefore = Number(battleState.player.shield || 0);
@@ -3849,6 +3850,7 @@ function buildBattleMonster_(monster, index) {
     throw new Error('몬스터를 찾을 수 없습니다.');
   }
 
+  var baseStats = getConfiguredBasePlayerStats_();
   return {
     instanceId: monster.monsterId + '_' + Number(index || 0),
     monsterId: monster.monsterId,
@@ -3859,8 +3861,8 @@ function buildBattleMonster_(monster, index) {
     attack: Number(monster.attack),
     defense: Number(monster.defense || 0),
     evasion: Number(monster.evasion || 0),
-    criticalRate: Number(monster.criticalRate !== undefined && monster.criticalRate !== '' ? monster.criticalRate : BASE_PLAYER_STATS.criticalRate),
-    criticalDamage: Number(monster.criticalDamage !== undefined && monster.criticalDamage !== '' ? monster.criticalDamage : BASE_PLAYER_STATS.criticalDamage),
+    criticalRate: Number(monster.criticalRate !== undefined && monster.criticalRate !== '' ? monster.criticalRate : baseStats.criticalRate),
+    criticalDamage: Number(monster.criticalDamage !== undefined && monster.criticalDamage !== '' ? monster.criticalDamage : baseStats.criticalDamage),
     aiId: monster.aiId || 'ai_basic_attack',
     skillIds: safeJsonParse_(monster.skillIds, []),
     shield: 0,
@@ -3884,18 +3886,19 @@ function normalizeBattleMonsters_(battleState) {
     monster.skillIds = monster.skillIds || [];
     monster.shield = Number(monster.shield || 0);
     var monsterDefinition = monster.monsterId ? findMonsterRowById_(monster.monsterId) : null;
+    var baseStats = getConfiguredBasePlayerStats_();
     if (monster.evasion === undefined || monster.evasion === '') {
       monster.evasion = Number(monsterDefinition && monsterDefinition.evasion || 0);
     }
     if (monster.criticalRate === undefined || monster.criticalRate === '') {
       monster.criticalRate = Number(monsterDefinition && monsterDefinition.criticalRate !== undefined && monsterDefinition.criticalRate !== ''
         ? monsterDefinition.criticalRate
-        : BASE_PLAYER_STATS.criticalRate);
+        : baseStats.criticalRate);
     }
     if (monster.criticalDamage === undefined || monster.criticalDamage === '') {
       monster.criticalDamage = Number(monsterDefinition && monsterDefinition.criticalDamage !== undefined && monsterDefinition.criticalDamage !== ''
         ? monsterDefinition.criticalDamage
-        : BASE_PLAYER_STATS.criticalDamage);
+        : baseStats.criticalDamage);
     }
     monster.intent = monster.intent || null;
     normalizeTargetStatusBuckets_(monster);

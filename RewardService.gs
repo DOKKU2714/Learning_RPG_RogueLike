@@ -73,7 +73,7 @@ function generateRewardChoices(runId, stageId, authToken) {
     stageClearRegenApplied: !!rewardState.stageClearRegenApplied,
     regenAmount: Number(rewardState.regenAmount || 0),
     currentHpAfterRegen: Number(rewardState.currentHpAfterRegen || run.currentHp || 0),
-    maxHpAfterRegen: Number(rewardState.maxHpAfterRegen || calculateStatsWithItemEffects_(safeJsonParse_(run.statsJson, BASE_PLAYER_STATS), safeJsonParse_(run.itemsJson, [])).hp || BASE_PLAYER_STATS.hp),
+    maxHpAfterRegen: Number(rewardState.maxHpAfterRegen || calculateStatsWithItemEffects_(safeJsonParse_(run.statsJson, getConfiguredBasePlayerStats_()), safeJsonParse_(run.itemsJson, [])).hp || getConfiguredBasePlayerStats_().hp),
     createdAt: new Date().toISOString(),
   };
   stageState.reward = rewardState;
@@ -140,8 +140,8 @@ function previewStageClearRegen_(run, battle) {
   var runItems = safeJsonParse_(run.itemsJson, []);
   var stats = battle && battle.player && battle.player.stats
     ? battle.player.stats
-    : calculateStatsWithItemEffects_(safeJsonParse_(run.statsJson, Object.assign({}, BASE_PLAYER_STATS)), runItems);
-  var maxHp = Math.max(1, Number(stats.hp || battle && battle.player && battle.player.maxHp || BASE_PLAYER_STATS.hp));
+    : calculateStatsWithItemEffects_(safeJsonParse_(run.statsJson, getConfiguredBasePlayerStats_()), runItems);
+  var maxHp = Math.max(1, Number(stats.hp || battle && battle.player && battle.player.maxHp || getConfiguredBasePlayerStats_().hp));
   var currentHp = Math.max(0, Number(battle && battle.player && battle.player.hp || run.currentHp || 0));
   var regen = Math.max(0, Math.round(Number(stats.hpRegen || 0)));
   var amount = Math.max(0, Math.min(regen, maxHp - currentHp));
@@ -257,7 +257,7 @@ function buildFloorRestRewardViewForRun_(run, stageState) {
     stageClearRegenApplied: true,
     regenAmount: 0,
     currentHpAfterRegen: Number(run.currentHp || 0),
-    maxHpAfterRegen: Number(calculateStatsWithItemEffects_(safeJsonParse_(run.statsJson, BASE_PLAYER_STATS), ownedItems).hp || BASE_PLAYER_STATS.hp),
+    maxHpAfterRegen: Number(calculateStatsWithItemEffects_(safeJsonParse_(run.statsJson, getConfiguredBasePlayerStats_()), ownedItems).hp || getConfiguredBasePlayerStats_().hp),
     createdAt: new Date().toISOString(),
   };
   stageState.reward = rewardState;
@@ -302,8 +302,8 @@ function previewFloorRestHeal_(run, battle) {
   var runItems = safeJsonParse_(run.itemsJson, []);
   var stats = battle && battle.player && battle.player.stats
     ? battle.player.stats
-    : calculateStatsWithItemEffects_(safeJsonParse_(run.statsJson, Object.assign({}, BASE_PLAYER_STATS)), runItems);
-  var maxHp = Math.max(1, Number(stats.hp || battle && battle.player && battle.player.maxHp || BASE_PLAYER_STATS.hp));
+    : calculateStatsWithItemEffects_(safeJsonParse_(run.statsJson, getConfiguredBasePlayerStats_()), runItems);
+  var maxHp = Math.max(1, Number(stats.hp || battle && battle.player && battle.player.maxHp || getConfiguredBasePlayerStats_().hp));
   var battleHp = Number(battle && battle.player && battle.player.hp || 0);
   var runHp = Number(run.currentHp || 0);
   var currentHp = Math.max(0, Math.max(battleHp, runHp));
@@ -426,7 +426,7 @@ function selectReward(runId, rewardId, authToken, rewardView) {
 
   var runState = {
     run: run,
-    stats: safeJsonParse_(run.statsJson, Object.assign({}, BASE_PLAYER_STATS)),
+    stats: safeJsonParse_(run.statsJson, getConfiguredBasePlayerStats_()),
     skills: safeJsonParse_(run.skillsJson, []),
     items: safeJsonParse_(run.itemsJson, []),
     currentHp: Number(run.currentHp || 0),
@@ -453,7 +453,7 @@ function selectReward(runId, rewardId, authToken, rewardView) {
   rewardState.selectedAt = new Date().toISOString();
   stageState.reward = rewardState;
   var runRewardPatch = {
-    currentHp: Math.min(Number(calculateStatsWithItemEffects_(runState.stats, runState.items).hp || BASE_PLAYER_STATS.hp), Number(runState.currentHp || 0)),
+    currentHp: Math.min(Number(calculateStatsWithItemEffects_(runState.stats, runState.items).hp || getConfiguredBasePlayerStats_().hp), Number(runState.currentHp || 0)),
     currency: nextRunCurrency,
     statsJson: safeJsonStringify_(runState.stats),
     skillsJson: safeJsonStringify_(runState.skills),
@@ -913,8 +913,8 @@ function grantStageClearRegenForRun_(run, stageState) {
     return { run: run, stageState: stageState, amount: Number(rewardState.regenAmount || 0) };
   }
 
-  var stats = calculateStatsWithItemEffects_(safeJsonParse_(run.statsJson, Object.assign({}, BASE_PLAYER_STATS)), safeJsonParse_(run.itemsJson, []));
-  var maxHp = Math.max(1, Number(stats.hp || BASE_PLAYER_STATS.hp));
+  var stats = calculateStatsWithItemEffects_(safeJsonParse_(run.statsJson, getConfiguredBasePlayerStats_()), safeJsonParse_(run.itemsJson, []));
+  var maxHp = Math.max(1, Number(stats.hp || getConfiguredBasePlayerStats_().hp));
   var currentHp = Math.max(0, Number(run.currentHp || 0));
   var regen = Math.max(0, Math.round(Number(stats.hpRegen || 0)));
   var amount = Math.max(0, Math.min(regen, maxHp - currentHp));
@@ -1065,7 +1065,7 @@ function applyItemReward_(runState, reward) {
 
 function applyRestReward_(runState, reward) {
   var stats = calculateStatsWithItemEffects_(runState.stats, runState.items);
-  var maxHp = Math.max(1, Number(stats.hp || BASE_PLAYER_STATS.hp));
+  var maxHp = Math.max(1, Number(stats.hp || getConfiguredBasePlayerStats_().hp));
   var percent = Number(reward.value || GAME_RULES.FLOOR_REST_HEAL_PERCENT || 0);
   var amount = Math.ceil(maxHp * (percent / 100));
   runState.currentHp = Math.min(maxHp, Math.max(0, Number(runState.currentHp || 0)) + Math.max(0, amount));
@@ -1573,7 +1573,7 @@ function buildRewardSkillPreviewBattleState_(battleState) {
   if (!battleState || !battleState.player) {
     return {
       player: {
-        stats: Object.assign({}, BASE_PLAYER_STATS),
+        stats: getConfiguredBasePlayerStats_(),
         effects: [],
       },
       monsters: [],
@@ -1586,7 +1586,7 @@ function buildRewardSkillPreviewBattleState_(battleState) {
 
   var preview = {
     player: Object.assign({}, battleState.player, {
-      stats: Object.assign({}, battleState.player.stats || BASE_PLAYER_STATS),
+      stats: Object.assign({}, battleState.player.stats || getConfiguredBasePlayerStats_()),
       effects: [],
       buffs: [],
       debuffs: [],

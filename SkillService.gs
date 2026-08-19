@@ -102,7 +102,7 @@ function buildClientSkillEffects_(skill) {
 function buildSkillEffectDetails_(skill) {
   var rule = getSkillExecutionRule_(skill);
   var previewBattleState = {
-    player: { stats: Object.assign({}, BASE_PLAYER_STATS), effects: [] },
+    player: { stats: getConfiguredBasePlayerStats_(), effects: [] },
     monsters: [],
     usedSkillCountByTagThisBattle: {},
     usedSkillCountByTagThisTurn: {},
@@ -1882,7 +1882,7 @@ function buildRunState_(run) {
     playerId: run.playerId,
     currentFloor: Number(run.currentFloor || 1),
     currentStage: Number(run.currentStage || 1),
-    stats: safeJsonParse_(run.statsJson, Object.assign({}, BASE_PLAYER_STATS)),
+    stats: safeJsonParse_(run.statsJson, getConfiguredBasePlayerStats_()),
     skills: normalizeOwnedSkills_(safeJsonParse_(run.skillsJson, [])),
     skillsJson: run.skillsJson,
     items: safeJsonParse_(run.itemsJson, []),

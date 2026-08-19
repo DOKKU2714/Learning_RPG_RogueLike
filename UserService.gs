@@ -217,6 +217,23 @@ function getAppSettings() {
   }, defaults);
 }
 
+function getConfiguredBasePlayerStats_() {
+  var fallback = Object.assign({}, DEFAULT_BASE_PLAYER_STATS);
+  var configured = null;
+  try {
+    var settings = getAppSettings();
+    configured = settings && settings.basePlayerStatsJson;
+  } catch (error) {
+    configured = null;
+  }
+
+  if (!configured || typeof configured !== 'object' || Array.isArray(configured)) {
+    return fallback;
+  }
+
+  return Object.assign(fallback, configured);
+}
+
 function getDefaultSettingTypes_() {
   return (typeof MASTER_SETTINGS !== 'undefined' ? MASTER_SETTINGS : []).reduce(function(types, row) {
     var key = String(row.key || '').trim();
@@ -395,7 +412,7 @@ function ensurePlayerData_(playerId) {
     correctAnswerCount: 0,
     averageAnswerTimeMs: 0,
     currency: 0,
-    baseStatsJson: safeJsonStringify_(BASE_PLAYER_STATS),
+    baseStatsJson: safeJsonStringify_(getConfiguredBasePlayerStats_()),
     ownedSkillsJson: safeJsonStringify_([]),
     ownedItemsJson: safeJsonStringify_([]),
     bestScore: 0,

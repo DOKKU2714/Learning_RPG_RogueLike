@@ -116,7 +116,23 @@ function readTable_(sheetName) {
   });
 }
 
+function isFreshGameDataSheet_(sheetName) {
+  return [
+    DB_SHEETS.STAGES,
+    DB_SHEETS.MONSTER_GROUPS,
+    DB_SHEETS.MONSTERS,
+    DB_SHEETS.MONSTER_AI,
+    DB_SHEETS.SKILLS,
+    DB_SHEETS.EFFECTS,
+    DB_SHEETS.ITEMS,
+    DB_SHEETS.REWARDS,
+  ].indexOf(sheetName) !== -1;
+}
+
 function readTableCached_(sheetName, ttlSeconds) {
+  if (isFreshGameDataSheet_(sheetName)) {
+    return readTable_(sheetName);
+  }
   var ttl = Number(ttlSeconds || 300);
   var cacheKey = 'table:' + sheetName;
   try {
@@ -190,21 +206,6 @@ function refreshBattleDefinitionCaches_() {
 
 function warmupGameData(authToken) {
   var startedAt = new Date().getTime();
-  [
-    DB_SHEETS.SETTINGS,
-    DB_SHEETS.WORKBOOKS,
-    DB_SHEETS.STAGES,
-    DB_SHEETS.MONSTER_GROUPS,
-    DB_SHEETS.MONSTERS,
-    DB_SHEETS.MONSTER_AI,
-    DB_SHEETS.SKILLS,
-    DB_SHEETS.EFFECTS,
-    DB_SHEETS.ITEMS,
-    DB_SHEETS.REWARDS,
-    DB_SHEETS.NOTICES,
-  ].forEach(function(sheetName) {
-    readTableCached_(sheetName, 1800);
-  });
   var user = null;
   if (authToken) {
     try {
@@ -218,6 +219,30 @@ function warmupGameData(authToken) {
     isRegistered: !!(user && user.isRegistered),
     elapsedMs: new Date().getTime() - startedAt,
   };
+}
+
+function getGameDataSnapshot(authToken) {
+  getCurrentPlayer_(authToken);
+  var settings = {};
+  try {
+    settings = getAppSettings();
+  } catch (error) {
+    settings = {};
+  }
+  return toClientObject_({
+    schemaVersion: 1,
+    snapshotKey: 'global',
+    loadedAt: new Date(),
+    dataVersion: String(settings.appVersion || settings.dataVersion || ''),
+    stages: readTable_(DB_SHEETS.STAGES),
+    monsterGroups: readTable_(DB_SHEETS.MONSTER_GROUPS),
+    monsters: readTable_(DB_SHEETS.MONSTERS),
+    monsterAi: readTable_(DB_SHEETS.MONSTER_AI),
+    skills: readTable_(DB_SHEETS.SKILLS),
+    effects: readTable_(DB_SHEETS.EFFECTS),
+    items: readTable_(DB_SHEETS.ITEMS),
+    rewards: readTable_(DB_SHEETS.REWARDS),
+  });
 }
 
 function appendRowObject_(sheetName, object) {
