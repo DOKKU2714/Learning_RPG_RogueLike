@@ -1,0 +1,125 @@
+<script>
+(function(global) {
+  'use strict';
+
+  var scheduled = false;
+
+  function removeAdminButtons() {
+    var adminButton = document.getElementById('adminButton');
+    if (adminButton) {
+      adminButton.style.display = 'none';
+      adminButton.disabled = true;
+      adminButton.setAttribute('aria-hidden', 'true');
+    }
+
+    Array.prototype.forEach.call(document.querySelectorAll('button'), function(button) {
+      var text = String(button.textContent || '').replace(/\s+/g, ' ').trim();
+      if ((text === '관리자 접속' || text === '관리자') && button.id !== 'adminButton' && button.parentNode) {
+        button.parentNode.removeChild(button);
+      }
+    });
+  }
+
+  function getSelectedWorkbook() {
+    var state = global.currentState || null;
+    var workbook = state && state.selectedWorkbook || null;
+    var workbookId = '';
+    try {
+      workbookId = sessionStorage.getItem('learningRpgSelectedWorkbookId') || '';
+    } catch (error) {}
+
+    if (!workbook && state && Array.isArray(state.activeWorkbooks)) {
+      workbook = state.activeWorkbooks.filter(function(item) {
+        return String(item.workbookId || '').trim() === String(workbookId || state.selectedWorkbookId || '').trim();
+      })[0] || null;
+    }
+    return workbook;
+  }
+
+  function refreshQuestionManagementButton() {
+    removeAdminButtons();
+
+    var questionCreateButton = document.getElementById('questionCreateButton');
+    if (!questionCreateButton || !questionCreateButton.parentNode) return;
+
+    var state = global.currentState || null;
+    var player = state && state.player || null;
+    var workbook = getSelectedWorkbook();
+    var isOwner = !!(
+      player &&
+      workbook &&
+      String(player.playerId || '').trim() &&
+      String(player.playerId || '').trim() === String(workbook.createdBy || '').trim()
+    );
+
+    var managementButton = document.getElementById('questionManagementButton');
+    if (!isOwner) {
+      if (managementButton && managementButton.parentNode) {
+        managementButton.parentNode.removeChild(managementButton);
+      }
+      return;
+    }
+
+    if (!managementButton) {
+      managementButton = document.createElement('button');
+      managementButton.id = 'questionManagementButton';
+      managementButton.className = 'secondary';
+      managementButton.setAttribute('data-main-navigation', 'true');
+      managementButton.type = 'button';
+      managementButton.textContent = '문제 관리';
+      managementButton.addEventListener('click', function() {
+        var base = (typeof WEB_APP_URL !== 'undefined' && WEB_APP_URL)
+          ? WEB_APP_URL
+          : global.location.href.split('?')[0];
+        global.location.href = base + '?page=questionmanagement&skipIntro=1';
+      });
+      questionCreateButton.parentNode.insertBefore(managementButton, questionCreateButton.nextSibling);
+    }
+
+    managementButton.classList.remove('hidden');
+    managementButton.style.display = '';
+    managementButton.disabled = false;
+  }
+
+  function scheduleRefresh() {
+    if (scheduled) return;
+    scheduled = true;
+    var run = function() {
+      scheduled = false;
+      refreshQuestionManagementButton();
+    };
+    if (global.requestAnimationFrame) {
+      global.requestAnimationFrame(run);
+    } else {
+      global.setTimeout(run, 0);
+    }
+  }
+
+  function start() {
+    refreshQuestionManagementButton();
+
+    if (global.MutationObserver && document.body) {
+      var observer = new MutationObserver(function() {
+        scheduleRefresh();
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+    }
+
+    // Covers state changes that only update JavaScript/sessionStorage without a DOM mutation.
+    var attempts = 0;
+    var timer = global.setInterval(function() {
+      attempts += 1;
+      refreshQuestionManagementButton();
+      if (attempts >= 120) {
+        global.clearInterval(timer);
+      }
+    }, 250);
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', start);
+  } else {
+    start();
+  }
+})(window);
+</script>
