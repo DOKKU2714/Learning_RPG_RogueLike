@@ -974,7 +974,7 @@ function applyAttack(battleState, efficiency, targetId) {
     attack: target.attack,
     defense: target.defense,
     hp: target.maxHp,
-    evasion: target.evasion,
+    evasion: clampPercent_(target.evasion),
     accuracy: 100,
   }, target.effects || []);
   var hit = rollHit_(effectiveStats, targetStats);
@@ -1035,8 +1035,12 @@ function rollCriticalDamage_(damage, stats) {
 }
 
 function rollHit_(attackerStats, defenderStats) {
-  var accuracy = attackerStats && attackerStats.accuracy !== undefined ? Number(attackerStats.accuracy || 0) : 100;
-  var evasion = defenderStats && defenderStats.evasion !== undefined ? Number(defenderStats.evasion || 0) : 0;
+  var rawAccuracy = attackerStats && attackerStats.accuracy;
+  var rawEvasion = defenderStats && defenderStats.evasion;
+  var accuracy = normalizeAccuracy_(rawAccuracy);
+  var evasion = rawEvasion === undefined || rawEvasion === null || rawEvasion === ''
+    ? 0
+    : clampPercent_(rawEvasion);
   var chance = clampPercent_(accuracy - evasion);
   return {
     hit: chance >= 100 || Math.random() * 100 < chance,
@@ -3860,7 +3864,7 @@ function buildBattleMonster_(monster, index) {
     maxHp: Number(monster.hp),
     attack: Number(monster.attack),
     defense: Number(monster.defense || 0),
-    evasion: Number(monster.evasion || 0),
+    evasion: clampPercent_(monster.evasion),
     criticalRate: Number(monster.criticalRate !== undefined && monster.criticalRate !== '' ? monster.criticalRate : baseStats.criticalRate),
     criticalDamage: Number(monster.criticalDamage !== undefined && monster.criticalDamage !== '' ? monster.criticalDamage : baseStats.criticalDamage),
     aiId: monster.aiId || 'ai_basic_attack',
@@ -3888,7 +3892,9 @@ function normalizeBattleMonsters_(battleState) {
     var monsterDefinition = monster.monsterId ? findMonsterRowById_(monster.monsterId) : null;
     var baseStats = getConfiguredBasePlayerStats_();
     if (monster.evasion === undefined || monster.evasion === '') {
-      monster.evasion = Number(monsterDefinition && monsterDefinition.evasion || 0);
+      monster.evasion = clampPercent_(monsterDefinition && monsterDefinition.evasion);
+    } else {
+      monster.evasion = clampPercent_(monster.evasion);
     }
     if (monster.criticalRate === undefined || monster.criticalRate === '') {
       monster.criticalRate = Number(monsterDefinition && monsterDefinition.criticalRate !== undefined && monsterDefinition.criticalRate !== ''

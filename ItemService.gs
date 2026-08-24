@@ -836,13 +836,32 @@ function calculateStatsWithItemEffects_(baseStats, ownedItems) {
   stats.hpRegen = Math.round(Number(stats.hpRegen || 0));
   stats.evasion = clampPercent_(stats.evasion);
   stats.criticalRate = clampPercent_(stats.criticalRate);
-  stats.accuracy = clampPercent_(stats.accuracy === undefined ? 100 : stats.accuracy);
+  stats.accuracy = normalizeAccuracy_(stats.accuracy);
   stats.criticalDamage = Math.max(0, Math.round(Number(stats.criticalDamage || 0)));
   return stats;
 }
 
 function clampPercent_(value) {
-  return Math.max(0, Math.min(100, Number(value || 0)));
+  var normalized = value;
+  if (typeof normalized === 'string') {
+    normalized = normalized.trim().replace(/%$/, '');
+  }
+  var numeric = Number(normalized);
+  if (!isFinite(numeric)) {
+    return 0;
+  }
+  return Math.max(0, Math.min(100, numeric));
+}
+
+function normalizeAccuracy_(value) {
+  if (value === undefined || value === null || value === '') {
+    return 100;
+  }
+  var normalized = typeof value === 'string'
+    ? value.trim().replace(/%$/, '')
+    : value;
+  var numeric = Number(normalized);
+  return isFinite(numeric) ? clampPercent_(numeric) : 100;
 }
 
 function applyBattleStartItemEffects_(battleState) {

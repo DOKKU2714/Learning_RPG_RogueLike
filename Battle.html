@@ -5510,12 +5510,22 @@
       target = target || {};
       var hasDirectValue = target[statKey] !== undefined && target[statKey] !== null && target[statKey] !== '';
       var hasStatsValue = target.stats && target.stats[statKey] !== undefined && target.stats[statKey] !== null && target.stats[statKey] !== '';
+      var fallback = Number(fallbackValue || 0);
+      function parseClientNumber(value, defaultValue) {
+        var normalized = value;
+        if (typeof normalized === 'string') {
+          normalized = normalized.trim().replace(/%$/, '');
+        }
+        var numeric = Number(normalized);
+        return isFinite(numeric) ? numeric : defaultValue;
+      }
       var baseValue = hasDirectValue
-        ? Number(target[statKey] || 0)
-        : (hasStatsValue ? Number(target.stats[statKey] || 0) : Number(fallbackValue || 0));
+        ? parseClientNumber(target[statKey], fallback)
+        : (hasStatsValue ? parseClientNumber(target.stats[statKey], fallback) : fallback);
       var statTarget = { effects: getClientStatEffects(target) };
       statTarget[statKey] = baseValue;
-      return Number(RULE_ENGINE_SHARED.getEffectiveStat(statTarget, statKey) || 0);
+      var effectiveValue = Number(RULE_ENGINE_SHARED.getEffectiveStat(statTarget, statKey));
+      return isFinite(effectiveValue) ? effectiveValue : baseValue;
     }
 
     function rollClientHit(attacker, defender) {

@@ -641,6 +641,7 @@ function executeSkillByRule_(battleState, skill, rule, efficiency, isCorrect) {
     warnSkillRule_(battleState, skill, 'No valid skill target.', { targetMode: rule.targetMode || skill.target });
   }
 
+  applySkillRuleCopyActions_(battleState, skill, rule, targets);
   applySkillRuleShield_(battleState, skill, rule, context, efficiency);
   applySkillRuleHeal_(battleState, skill, rule, context);
   applySkillRuleSelfDamage_(battleState, skill, rule, context);
@@ -843,6 +844,64 @@ function applySkillRuleShield_(battleState, skill, rule, context, efficiency) {
   shield = Math.max(0, Math.round(shield));
   battleState.player.shield = Number(battleState.player.shield || 0) + shield;
   battleState.lastTurnEvents.push({ actor: 'player', type: ACTION_TYPES.GUARD, skillId: skill.skillId, shield: shield, message: skill.name + '으로 방어막 ' + shield + '을 얻었습니다.' });
+}
+
+function applySkillRuleCopyActions_(battleState, skill, rule, targets) {
+  if (!battleState || !battleState.player || !rule || !targets || !targets.length) {
+    return;
+  }
+  var source = targets.filter(function(target) {
+    return target && target.currentHp !== undefined;
+  })[0];
+  if (!source) {
+    return;
+  }
+  var skillId = skill && skill.skillId || '';
+  var skillName = skill && skill.name || '스킬';
+  var copyShield = rule.copyTargetShield === true || String(rule.copyTargetShield).toLowerCase() === 'true' || String(rule.copyTargetShield) === '1';
+  var copyBuffs = rule.copyTargetBuffs === true || String(rule.copyTargetBuffs).toLowerCase() === 'true' || String(rule.copyTargetBuffs) === '1';
+
+  if (copyShield) {
+    var copiedShield = Math.max(0, Math.round(Number(source.shield || 0)));
+    if (copiedShield > 0) {
+      battleState.player.shield = Number(battleState.player.shield || 0) + copiedShield;
+      battleState.lastTurnEvents.push({
+        actor: 'player',
+        type: ACTION_TYPES.GUARD,
+        skillId: skillId,
+        shield: copiedShield,
+        message: skillName + '으로 적의 방어막 ' + copiedShield + '을 흉내냈습니다.'
+      });
+    }
+  }
+
+  if (copyBuffs) {
+    var sourceBuffs = (source.effects || []).filter(function(effect) {
+      return normalizeEffectCategory_(effect, '') === EFFECT_CATEGORIES.BUFF;
+    });
+    if (!sourceBuffs.length) {
+      sourceBuffs = source.buffs || [];
+    }
+    sourceBuffs.forEach(function(sourceEffect) {
+      if (!sourceEffect || !sourceEffect.effectId) {
+        return;
+      }
+      var copiedEffect = applyEffect(
+        battleState.player,
+        Object.assign({}, sourceEffect),
+        { source: 'skillCopy', skillId: skillId, turn: battleState.turn }
+      );
+      if (copiedEffect) {
+        battleState.lastTurnEvents.push({
+          actor: 'player',
+          type: ACTION_TYPES.BUFF,
+          skillId: skillId,
+          message: skillName + '으로 ' + (copiedEffect.name || copiedEffect.effectId) + ' 버프를 흉내냈습니다.'
+        });
+      }
+    });
+    normalizeBattleStateEffects_(battleState);
+  }
 }
 
 function applySkillRuleHeal_(battleState, skill, rule, context) {

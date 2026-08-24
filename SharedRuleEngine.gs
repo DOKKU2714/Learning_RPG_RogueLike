@@ -373,7 +373,7 @@ var RULE_ENGINE_SHARED = (function() {
       'onBlock', 'onCorrect', 'onWrong', 'onTurnStart', 'onTurnEnd', 'cooldownModify',
       'actionPointModify', 'failPenalty', 'tagBonus', 'scaleByEfficiency', 'randomMin',
       'randomMax', 'extraDamageFormula', 'healFormula', 'healFromDamageFormula',
-      'healFromDamagePercentFormula'
+      'healFromDamagePercentFormula', 'copyTargetShield', 'copyTargetBuffs'
     ];
   }
 
@@ -436,6 +436,58 @@ var RULE_ENGINE_SHARED = (function() {
       warn(options, 'Unsupported targetMode: ' + mode, { targetMode: mode });
     }
     return [findMonsterById(battle, targetId) || getAliveMonsters(battle)[0]].filter(Boolean);
+  }
+
+  function applyRuleCopyActions(battle, skill, rule, targets) {
+    if (!battle || !battle.player || !rule || !targets || !targets.length) return;
+    var source = targets.filter(function(target) {
+      return target && target.currentHp !== undefined;
+    })[0];
+    if (!source) return;
+    var skillId = skill && skill.skillId || '';
+    var skillName = skill && skill.name || '스킬';
+    var copyShield = isTruthy(rule.copyTargetShield);
+    var copyBuffs = isTruthy(rule.copyTargetBuffs);
+
+    if (copyShield) {
+      var copiedShield = Math.max(0, Math.round(Number(source.shield || 0)));
+      if (copiedShield > 0) {
+        battle.player.shield = Number(battle.player.shield || 0) + copiedShield;
+        battle.lastTurnEvents.push({
+          actor: 'player',
+          type: 'guard',
+          skillId: skillId,
+          shield: copiedShield,
+          message: skillName + '으로 적의 방어막 ' + copiedShield + '을 흉내냈습니다.'
+        });
+      }
+    }
+
+    if (copyBuffs) {
+      var sourceBuffs = (source.effects || []).filter(function(effect) {
+        return getEffectCategory(effect, '') === 'buff';
+      });
+      if (!sourceBuffs.length) {
+        sourceBuffs = source.buffs || [];
+      }
+      sourceBuffs.forEach(function(sourceEffect) {
+        if (!sourceEffect || !sourceEffect.effectId) return;
+        var copiedEffect = applyEffect(
+          battle.player,
+          Object.assign({}, sourceEffect),
+          { source: 'skillCopy', skillId: skillId },
+          battle.turn
+        );
+        if (copiedEffect) {
+          battle.lastTurnEvents.push({
+            actor: 'player',
+            type: 'buff',
+            skillId: skillId,
+            message: skillName + '으로 ' + (copiedEffect.name || copiedEffect.effectId) + ' 버프를 흉내냈습니다.'
+          });
+        }
+      });
+    }
   }
 
   function normalizeTargetMode(mode) {
@@ -613,6 +665,7 @@ var RULE_ENGINE_SHARED = (function() {
         if (randomTarget) targets.push(randomTarget);
       }
     }
+    applyRuleCopyActions(battle, skill, rule, targets);
     if (rule.shieldFormula !== undefined && rule.shieldFormula !== null && rule.shieldFormula !== '') {
       var shield = evaluateFormula(rule.shieldFormula, context, options);
       if (rule.scaleByEfficiency !== false) shield *= efficiency;
