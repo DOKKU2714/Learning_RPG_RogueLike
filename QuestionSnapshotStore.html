@@ -132,3 +132,82 @@
   };
 })(window);
 </script>
+
+<script>
+(function(global) {
+  'use strict';
+
+  function removeAdminButtons() {
+    var adminButton = document.getElementById('adminButton');
+    if (adminButton && adminButton.parentNode) adminButton.parentNode.removeChild(adminButton);
+    var buttons = document.querySelectorAll('button');
+    Array.prototype.forEach.call(buttons, function(button) {
+      var text = String(button.textContent || '').replace(/\s+/g, ' ').trim();
+      if (text === '관리자 접속' || text === '관리자') {
+        if (button.parentNode) button.parentNode.removeChild(button);
+      }
+    });
+  }
+
+  function getCurrentWorkbook() {
+    var state = global.currentState || null;
+    var workbook = state && state.selectedWorkbook || null;
+    var workbookId = '';
+    try { workbookId = sessionStorage.getItem('learningRpgSelectedWorkbookId') || ''; } catch (error) {}
+    if (!workbook && state && Array.isArray(state.activeWorkbooks)) {
+      workbook = state.activeWorkbooks.filter(function(item) {
+        return String(item.workbookId || '') === String(workbookId || state.selectedWorkbookId || '');
+      })[0] || null;
+    }
+    return workbook;
+  }
+
+  function installQuestionManagementButton() {
+    removeAdminButtons();
+    var questionButton = document.getElementById('questionCreateButton');
+    if (!questionButton) return;
+
+    var state = global.currentState || null;
+    var player = state && state.player || null;
+    var workbook = getCurrentWorkbook();
+    var isOwner = !!(player && workbook && String(player.playerId || '') === String(workbook.createdBy || ''));
+    if (!isOwner) {
+      var oldManagementButton = document.getElementById('questionManagementButton');
+      if (oldManagementButton && oldManagementButton.parentNode) oldManagementButton.parentNode.removeChild(oldManagementButton);
+      return;
+    }
+
+    var managementButton = document.getElementById('questionManagementButton');
+    if (!managementButton) {
+      managementButton = document.createElement('button');
+      managementButton.id = 'questionManagementButton';
+      managementButton.className = 'secondary';
+      managementButton.setAttribute('data-main-navigation', 'true');
+      managementButton.textContent = '문제 관리';
+      managementButton.onclick = function() {
+        var base = (typeof WEB_APP_URL !== 'undefined' && WEB_APP_URL) ? WEB_APP_URL : global.location.href.split('?')[0];
+        global.location.href = base + '?page=questionmanagement&skipIntro=1';
+      };
+      questionButton.parentNode.insertBefore(managementButton, questionButton.nextSibling);
+    }
+    managementButton.classList.remove('hidden');
+    managementButton.disabled = false;
+  }
+
+  function start() {
+    removeAdminButtons();
+    var attempts = 0;
+    var timer = global.setInterval(function() {
+      attempts += 1;
+      installQuestionManagementButton();
+      if (attempts >= 40) global.clearInterval(timer);
+    }, 250);
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', start);
+  } else {
+    start();
+  }
+})(window);
+</script>

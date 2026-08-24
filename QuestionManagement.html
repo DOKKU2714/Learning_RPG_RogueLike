@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <base target="_top">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <?!= include_('UiStyles'); ?>
+  <style>
+    .management-shell { max-width: 1180px; margin: 0 auto; padding: 22px 14px 48px; }
+    .management-header { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; flex-wrap:wrap; }
+    .management-title { margin:0 0 6px; }
+    .management-toolbar { position:sticky; top:0; z-index:10; margin-top:14px; padding:12px; border:1px solid var(--line); background:rgba(10,10,10,.96); backdrop-filter:blur(8px); }
+    .filter-grid { display:grid; grid-template-columns:minmax(220px,2fr) repeat(4,minmax(120px,1fr)) auto; gap:9px; align-items:end; }
+    .filter-grid label { margin-bottom:4px; }
+    .filter-field { min-width:0; }
+    .filter-field input,.filter-field select { width:100%; }
+    .management-summary { display:flex; justify-content:space-between; gap:12px; align-items:center; flex-wrap:wrap; margin:14px 0 8px; }
+    .question-list { display:grid; gap:7px; }
+    .managed-question { border:1px solid var(--line); background:rgba(12,12,12,.88); overflow:hidden; }
+    .managed-question.open { border-color:rgba(217,166,66,.6); }
+    .question-row { display:grid; grid-template-columns:minmax(0,1fr) auto auto; gap:12px; align-items:center; padding:12px 14px; cursor:pointer; }
+    .question-row:hover { background:rgba(255,255,255,.035); }
+    .question-main { min-width:0; }
+    .question-title { margin:0; font-size:15px; line-height:1.45; font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .question-meta { display:flex; gap:8px; flex-wrap:wrap; margin-top:5px; color:var(--muted); font-size:12px; }
+    .question-badge { display:inline-flex; align-items:center; padding:2px 7px; border:1px solid var(--line-dark); background:#111; }
+    .difficulty-stars { display:inline-flex; gap:1px; white-space:nowrap; color:#d9a642; font-size:17px; letter-spacing:-2px; }
+    .difficulty-stars .empty { color:#3a3224; }
+    .row-actions { display:flex; gap:6px; align-items:center; }
+    .row-actions button { min-height:34px; padding:5px 10px; }
+    .question-expanded { display:none; padding:0 14px 14px; border-top:1px solid var(--line-dark); }
+    .managed-question.open .question-expanded { display:block; }
+    .expanded-grid { display:grid; grid-template-columns:1.2fr 1fr; gap:14px; padding-top:14px; }
+    .expanded-block { min-width:0; }
+    .expanded-label { margin-bottom:5px; color:var(--accent); font-size:11px; font-weight:800; letter-spacing:.08em; }
+    .expanded-content { white-space:pre-wrap; word-break:break-word; line-height:1.55; }
+    .choice-list { display:grid; gap:6px; }
+    .choice-item { padding:7px 9px; border:1px solid var(--line-dark); background:#101010; }
+    .choice-item.correct { border-color:rgba(217,166,66,.65); color:var(--accent); }
+    .management-modal-overlay { display:none; position:fixed; inset:0; z-index:100; align-items:center; justify-content:center; padding:18px; background:rgba(0,0,0,.76); }
+    .management-modal-overlay.open { display:flex; }
+    .management-modal { width:min(760px,100%); max-height:calc(100vh - 36px); overflow:auto; }
+    .modal-grid { display:grid; gap:11px; margin:14px 0; }
+    .modal-choice-grid { display:grid; gap:8px; }
+    .modal-actions { display:flex; justify-content:flex-end; gap:8px; flex-wrap:wrap; }
+    .danger { color:#ffb2a8; border-color:rgba(255,100,80,.45); }
+    .empty-state { padding:38px 18px; border:1px dashed var(--line); text-align:center; color:var(--muted); }
+    .loading-state { padding:36px; text-align:center; color:var(--muted); }
+    @media (max-width: 900px) {
+      .filter-grid { grid-template-columns:1fr 1fr; }
+      .filter-field.search { grid-column:1 / -1; }
+      .expanded-grid { grid-template-columns:1fr; }
+    }
+    @media (max-width: 620px) {
+      .filter-grid { grid-template-columns:1fr; }
+      .filter-field.search { grid-column:auto; }
+      .question-row { grid-template-columns:minmax(0,1fr) auto; }
+      .difficulty-stars { grid-column:2; grid-row:1; }
+      .row-actions { grid-column:1 / -1; justify-content:flex-end; }
+      .question-title { white-space:normal; }
+    }
+  </style>
+</head>
+<body>
+  <main class="management-shell fade-in">
+    <section class="rpg-panel">
+      <div class="management-header">
+        <div>
+          <h1 class="management-title">문제 관리</h1>
+          <p id="workbookSummary" class="muted">문제집 정보를 불러오는 중...</p>
+        </div>
+        <div class="inline-actions">
+          <button class="secondary" type="button" onclick="refreshQuestions()">↻ 새로고침</button>
+          <button class="secondary" type="button" onclick="goHome()">메인으로</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="rpg-panel management-toolbar">
+      <div class="filter-grid">
+        <div class="filter-field search">
+          <label for="questionSearch">검색</label>
+          <input id="questionSearch" type="search" placeholder="문제, 만든 사람, 과목, 단원, 태그 검색" oninput="applyFilters()">
+        </div>
+        <div class="filter-field">
+          <label for="difficultyFilter">난이도</label>
+          <select id="difficultyFilter" onchange="applyFilters()">
+            <option value="">전체</option><option value="1">★ 1</option><option value="2">★★ 2</option><option value="3">★★★ 3</option><option value="4">★★★★ 4</option><option value="5">★★★★★ 5</option>
+          </select>
+        </div>
+        <div class="filter-field">
+          <label for="typeFilter">유형</label>
+          <select id="typeFilter" onchange="applyFilters()">
+            <option value="">전체</option><option value="multipleChoice">객관식</option><option value="shortAnswer">주관식</option>
+          </select>
+        </div>
+        <div class="filter-field">
+          <label for="creatorFilter">작성자</label>
+          <select id="creatorFilter" onchange="applyFilters()"><option value="">전체</option></select>
+        </div>
+        <div class="filter-field">
+          <label for="sortFilter">정렬</label>
+          <select id="sortFilter" onchange="applyFilters()">
+            <option value="newest">최신 등록순</option><option value="oldest">오래된 등록순</option><option value="difficultyDesc">난이도 높은순</option><option value="difficultyAsc">난이도 낮은순</option><option value="creator">작성자순</option><option value="prompt">문제 내용순</option>
+          </select>
+        </div>
+        <button class="secondary" type="button" onclick="resetFilters()">초기화</button>
+      </div>
+    </section>
+
+    <section class="management-summary">
+      <span id="resultSummary" class="muted"></span>
+      <span id="lastUpdated" class="muted"></span>
+    </section>
+
+    <section id="questionList" class="question-list">
+      <div class="loading-state">문제를 불러오는 중...</div>
+    </section>
+  </main>
+
+  <div id="editModalOverlay" class="management-modal-overlay" onclick="closeEditModalOnBackdrop(event)">
+    <section class="rpg-panel management-modal" role="dialog" aria-modal="true" aria-labelledby="editModalTitle">
+      <div class="management-header">
+        <div><h2 id="editModalTitle" style="margin:0;">문제 수정</h2><p class="muted">현재 문제집의 문제를 수정합니다.</p></div>
+        <button class="secondary" type="button" onclick="closeEditModal()">닫기</button>
+      </div>
+      <div class="modal-grid">
+        <div>
+          <label>문제 유형</label>
+          <div class="type-radio-row">
+            <label><input type="radio" name="managementQuestionType" value="multipleChoice" checked onchange="toggleModalChoices()"> 객관식</label>
+            <label><input type="radio" name="managementQuestionType" value="shortAnswer" onchange="toggleModalChoices()"> 주관식</label>
+          </div>
+        </div>
+        <div><label for="editPrompt">문제 내용</label><textarea id="editPrompt" maxlength="200"></textarea></div>
+        <div id="editChoicesArea"><label>선택지</label><div class="modal-choice-grid"><input id="editChoice1" maxlength="60" placeholder="보기 1"><input id="editChoice2" maxlength="60" placeholder="보기 2"><input id="editChoice3" maxlength="60" placeholder="보기 3"><input id="editChoice4" maxlength="60" placeholder="보기 4"></div></div>
+        <div><label for="editAnswer">정답</label><input id="editAnswer" maxlength="80" placeholder="객관식은 1~4, 주관식은 정답 내용"></div>
+        <div><label for="editAnswerAliases">복수 정답 / 별칭</label><input id="editAnswerAliases" maxlength="200" placeholder="쉼표 또는 줄바꿈으로 구분"></div>
+        <div><label for="editExplanation">해설</label><textarea id="editExplanation" maxlength="300"></textarea></div>
+        <div class="form-grid">
+          <div><label for="editDifficulty">난이도</label><select id="editDifficulty"><option value="1">★ 1</option><option value="2">★★ 2</option><option value="3">★★★ 3</option><option value="4">★★★★ 4</option><option value="5">★★★★★ 5</option></select></div>
+          <div><label for="editSubject">과목</label><input id="editSubject" maxlength="40"></div>
+          <div><label for="editUnit">단원</label><input id="editUnit" maxlength="40"></div>
+          <div><label for="editTags">태그</label><input id="editTags" maxlength="80" placeholder="쉼표로 구분"></div>
+        </div>
+      </div>
+      <div id="editMessage" class="message"></div>
+      <div class="modal-actions"><button class="secondary" type="button" onclick="closeEditModal()">취소</button><button id="saveEditButton" type="button" onclick="saveEditedQuestion()">저장</button></div>
+    </section>
+  </div>
+
+  <?!= include_('UiLoadingModal'); ?>
+  <script>
+    var WEB_APP_URL = '<?= getWebAppUrl_() ?>';
+    var selectedWorkbookId = '';
+    var selectedWorkbookName = '';
+    var allQuestions = [];
+    var visibleQuestions = [];
+    var editingQuestion = null;
+    var expandedQuestionId = '';
+
+    function getAuthToken() {
+      try { return sessionStorage.getItem('learningRpgAuthToken') || ''; } catch (error) { return ''; }
+    }
+    function getSelectedWorkbook() {
+      try {
+        selectedWorkbookId = sessionStorage.getItem('learningRpgSelectedWorkbookId') || '';
+        selectedWorkbookName = sessionStorage.getItem('learningRpgSelectedWorkbookName') || '';
+      } catch (error) {}
+      return selectedWorkbookId;
+    }
+    function init() {
+      getSelectedWorkbook();
+      if (!getAuthToken() || !selectedWorkbookId) {
+        document.getElementById('questionList').innerHTML = '<div class="empty-state">로그인하거나 문제집을 먼저 선택해 주세요.</div>';
+        return;
+      }
+      refreshQuestions();
+    }
+    function refreshQuestions() {
+      getSelectedWorkbook();
+      if (!selectedWorkbookId) return;
+      document.getElementById('questionList').innerHTML = '<div class="loading-state">문제를 새로 불러오는 중...</div>';
+      google.script.run.withSuccessHandler(function(data) {
+        allQuestions = Array.isArray(data && data.questions) ? data.questions : [];
+        var workbook = data && data.workbook || {};
+        selectedWorkbookName = workbook.workbookName || selectedWorkbookName || selectedWorkbookId;
+        document.getElementById('workbookSummary').textContent = selectedWorkbookName + ' · 전체 ' + allQuestions.length + '문제';
+        renderCreatorFilter();
+        applyFilters();
+        document.getElementById('lastUpdated').textContent = '마지막 새로고침: ' + new Date().toLocaleTimeString('ko-KR');
+      }).withFailureHandler(function(error) {
+        document.getElementById('questionList').innerHTML = '<div class="empty-state">' + escapeHtml(error && error.message || '문제를 불러오지 못했습니다.') + '</div>';
+      }).getQuestionManagementData(getAuthToken(), selectedWorkbookId);
+    }
+    function renderCreatorFilter() {
+      var select = document.getElementById('creatorFilter');
+      var current = select.value;
+      var names = {};
+      allQuestions.forEach(function(q) { var name = String(q.creatorName || '알 수 없음'); names[name] = true; });
+      var values = Object.keys(names).sort(function(a,b){return a.localeCompare(b,'ko');});
+      select.innerHTML = '<option value="">전체</option>' + values.map(function(name){ return '<option value="' + escapeAttr(name) + '">' + escapeHtml(name) + '</option>'; }).join('');
+      if (values.indexOf(current) !== -1) select.value = current;
+    }
+    function applyFilters() {
+      var search = String(document.getElementById('questionSearch').value || '').trim().toLowerCase();
+      var difficulty = document.getElementById('difficultyFilter').value;
+      var type = document.getElementById('typeFilter').value;
+      var creator = document.getElementById('creatorFilter').value;
+      var sort = document.getElementById('sortFilter').value;
+      visibleQuestions = allQuestions.filter(function(q) {
+        if (difficulty && String(q.difficulty) !== difficulty) return false;
+        if (type && String(q.type) !== type) return false;
+        if (creator && String(q.creatorName || '') !== creator) return false;
+        if (search) {
+          var haystack = [q.prompt,q.creatorName,q.subject,q.unit,q.tags,q.explanation].map(function(v){return String(v || '').toLowerCase();}).join(' ');
+          if (haystack.indexOf(search) === -1) return false;
+        }
+        return true;
+      });
+      visibleQuestions.sort(function(a,b){
+        if (sort === 'oldest') return dateValue(a.createdAt) - dateValue(b.createdAt);
+        if (sort === 'difficultyDesc') return Number(b.difficulty || 0) - Number(a.difficulty || 0) || dateValue(b.createdAt) - dateValue(a.createdAt);
+        if (sort === 'difficultyAsc') return Number(a.difficulty || 0) - Number(b.difficulty || 0) || dateValue(b.createdAt) - dateValue(a.createdAt);
+        if (sort === 'creator') return String(a.creatorName || '').localeCompare(String(b.creatorName || ''),'ko') || dateValue(b.createdAt) - dateValue(a.createdAt);
+        if (sort === 'prompt') return String(a.prompt || '').localeCompare(String(b.prompt || ''),'ko');
+        return dateValue(b.createdAt) - dateValue(a.createdAt);
+      });
+      document.getElementById('resultSummary').textContent = '표시 ' + visibleQuestions.length + ' / 전체 ' + allQuestions.length + '문제';
+      renderQuestionList();
+    }
+    function resetFilters() {
+      document.getElementById('questionSearch').value = '';
+      document.getElementById('difficultyFilter').value = '';
+      document.getElementById('typeFilter').value = '';
+      document.getElementById('creatorFilter').value = '';
+      document.getElementById('sortFilter').value = 'newest';
+      applyFilters();
+    }
+    function renderQuestionList() {
+      var container = document.getElementById('questionList');
+      if (!visibleQuestions.length) { container.innerHTML = '<div class="empty-state">조건에 맞는 문제가 없습니다.</div>'; return; }
+      container.innerHTML = visibleQuestions.map(function(q){ return renderQuestion(q); }).join('');
+    }
+    function renderQuestion(q) {
+      var id = escapeAttr(q.questionId);
+      var open = String(expandedQuestionId) === String(q.questionId);
+      var typeLabel = q.type === 'shortAnswer' ? '주관식' : '객관식';
+      var stars = renderStars(q.difficulty);
+      var choices = q.type === 'multipleChoice' ? '<div class="choice-list">' + [q.choice1,q.choice2,q.choice3,q.choice4].map(function(choice,index){ return '<div class="choice-item ' + (String(q.answer) === String(index+1) ? 'correct' : '') + '">' + (index+1) + '. ' + escapeHtml(choice || '') + '</div>'; }).join('') + '</div>' : '';
+      return '<article class="managed-question ' + (open ? 'open' : '') + '" data-question-id="' + id + '">' +
+        '<div class="question-row" onclick="toggleQuestion(\'' + id + '\')">' +
+          '<div class="question-main"><p class="question-title">' + escapeHtml(q.prompt || '(문제 내용 없음)') + '</p><div class="question-meta"><span class="question-badge">' + typeLabel + '</span><span>' + escapeHtml(q.creatorName || '알 수 없음') + '</span>' + (q.subject ? '<span>' + escapeHtml(q.subject) + '</span>' : '') + '</div></div>' +
+          '<div class="difficulty-stars" aria-label="난이도 ' + Number(q.difficulty || 0) + '점">' + stars + '</div>' +
+          '<div class="row-actions"><button class="secondary" type="button" onclick="event.stopPropagation(); openEditModal(\'' + id + '\')">수정</button><button class="secondary danger" type="button" onclick="event.stopPropagation(); deleteQuestion(\'' + id + '\')">삭제</button></div>' +
+        '</div>' +
+        '<div class="question-expanded"><div class="expanded-grid">' +
+          '<div class="expanded-block"><div class="expanded-label">문제</div><div class="expanded-content">' + escapeHtml(q.prompt || '') + '</div>' + (choices ? '<div style="margin-top:12px;"><div class="expanded-label">선택지</div>' + choices + '</div>' : '') + '</div>' +
+          '<div class="expanded-block"><div class="expanded-label">상세 정보</div><div class="expanded-content">정답: ' + escapeHtml(q.answer || '') + '\n난이도: ' + Number(q.difficulty || 0) + '/5\n작성자: ' + escapeHtml(q.creatorName || '') + (q.subject ? '\n과목: ' + escapeHtml(q.subject) : '') + (q.unit ? '\n단원: ' + escapeHtml(q.unit) : '') + (q.tags ? '\n태그: ' + escapeHtml(q.tags) : '') + (q.explanation ? '\n\n해설\n' + escapeHtml(q.explanation) : '') + '</div></div>' +
+        '</div></div>' +
+      '</article>';
+    }
+    function toggleQuestion(id) { expandedQuestionId = expandedQuestionId === id ? '' : id; renderQuestionList(); }
+    function renderStars(value) { var n = Math.max(0, Math.min(5, Number(value || 0))); return '★★★★★'.split('').map(function(s,i){ return '<span class="' + (i < n ? '' : 'empty') + '">' + s + '</span>'; }).join(''); }
+    function openEditModal(id) {
+      editingQuestion = allQuestions.filter(function(q){ return String(q.questionId) === String(id); })[0] || null;
+      if (!editingQuestion) return;
+      var q = editingQuestion;
+      document.querySelectorAll('input[name="managementQuestionType"]').forEach(function(input){ input.checked = input.value === q.type; });
+      document.getElementById('editPrompt').value = q.prompt || '';
+      document.getElementById('editChoice1').value = q.choice1 || '';
+      document.getElementById('editChoice2').value = q.choice2 || '';
+      document.getElementById('editChoice3').value = q.choice3 || '';
+      document.getElementById('editChoice4').value = q.choice4 || '';
+      document.getElementById('editAnswer').value = q.answer || '';
+      document.getElementById('editAnswerAliases').value = Array.isArray(q.answerAliases) ? q.answerAliases.join(', ') : (q.answerAliases || '');
+      document.getElementById('editExplanation').value = q.explanation || '';
+      document.getElementById('editDifficulty').value = String(q.difficulty || 1);
+      document.getElementById('editSubject').value = q.subject || '';
+      document.getElementById('editUnit').value = q.unit || '';
+      document.getElementById('editTags').value = q.tags || '';
+      document.getElementById('editMessage').textContent = '';
+      document.getElementById('editModalOverlay').classList.add('open');
+      toggleModalChoices();
+      document.getElementById('editPrompt').focus();
+    }
+    function closeEditModal() { document.getElementById('editModalOverlay').classList.remove('open'); editingQuestion = null; }
+    function closeEditModalOnBackdrop(event) { if (event.target.id === 'editModalOverlay') closeEditModal(); }
+    function toggleModalChoices() {
+      var type = document.querySelector('input[name="managementQuestionType"]:checked').value;
+      document.getElementById('editChoicesArea').style.display = type === 'multipleChoice' ? '' : 'none';
+      document.getElementById('editAnswer').placeholder = type === 'multipleChoice' ? '객관식은 1~4' : '정답 내용';
+    }
+    function saveEditedQuestion() {
+      if (!editingQuestion) return;
+      var button = document.getElementById('saveEditButton');
+      button.disabled = true;
+      var type = document.querySelector('input[name="managementQuestionType"]:checked').value;
+      var payload = {
+        type:type, prompt:document.getElementById('editPrompt').value, choice1:document.getElementById('editChoice1').value, choice2:document.getElementById('editChoice2').value, choice3:document.getElementById('editChoice3').value, choice4:document.getElementById('editChoice4').value,
+        answer:document.getElementById('editAnswer').value, answerAliases:document.getElementById('editAnswerAliases').value, explanation:document.getElementById('editExplanation').value, difficulty:Number(document.getElementById('editDifficulty').value), subject:document.getElementById('editSubject').value, unit:document.getElementById('editUnit').value, tags:document.getElementById('editTags').value
+      };
+      google.script.run.withSuccessHandler(function(updated){
+        button.disabled = false;
+        allQuestions = allQuestions.map(function(q){ return String(q.questionId) === String(updated.questionId) ? updated : q; });
+        closeEditModal();
+        applyFilters();
+      }).withFailureHandler(function(error){
+        button.disabled = false;
+        var message = document.getElementById('editMessage'); message.textContent = error && error.message || '수정하지 못했습니다.'; message.className = 'message error';
+      }).updateManagedQuestion(editingQuestion.questionId, payload, getAuthToken(), selectedWorkbookId);
+    }
+    function deleteQuestion(id) {
+      var q = allQuestions.filter(function(item){ return String(item.questionId) === String(id); })[0];
+      if (!q) return;
+      if (!window.confirm('이 문제를 삭제할까요?\n\n' + String(q.prompt || '').slice(0,120))) return;
+      google.script.run.withSuccessHandler(function(){
+        allQuestions = allQuestions.filter(function(item){ return String(item.questionId) !== String(id); });
+        if (expandedQuestionId === String(id)) expandedQuestionId = '';
+        renderCreatorFilter(); applyFilters();
+      }).withFailureHandler(function(error){ window.alert(error && error.message || '삭제하지 못했습니다.'); }).deleteManagedQuestion(id, getAuthToken(), selectedWorkbookId);
+    }
+    function goHome() { window.location.href = WEB_APP_URL + '?skipIntro=1'; }
+    function dateValue(value) { var time = new Date(value).getTime(); return isNaN(time) ? 0 : time; }
+    function escapeHtml(value) { return String(value == null ? '' : value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;').replace(/'/g,'&#39;'); }
+    function escapeAttr(value) { return escapeHtml(value); }
+    document.addEventListener('keydown', function(event){ if (event.key === 'Escape') closeEditModal(); });
+    window.addEventListener('load', init);
+  </script>
+</body>
+</html>
