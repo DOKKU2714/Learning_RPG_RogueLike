@@ -4,17 +4,22 @@ function doGet(e) {
   var template = HtmlService.createTemplateFromFile(route.file);
   template.requestParams = (e && e.parameter) || {};
 
-  return template
+  var output = template
     .evaluate()
     .setTitle(route.title)
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+
+  if (route.file === 'Index') {
+    output.append(HtmlService.createHtmlOutputFromFile('QuestionManagementBoot').getContent());
+  }
+
+  return output;
 }
 
 function getRoute_(page) {
   var routes = {
     index: { file: 'Index', title: 'Learning Roguelike' },
     question: { file: 'QuestionForm', title: 'Question Form' },
-    questionmanagement: { file: 'QuestionManagement', title: 'Question Management' },
     mypage: { file: 'MyPage', title: 'My Page' },
     admin: { file: 'Admin', title: 'Admin' },
     battle: { file: 'Battle', title: 'Battle' },
