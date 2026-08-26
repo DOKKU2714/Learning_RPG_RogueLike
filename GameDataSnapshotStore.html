@@ -121,24 +121,22 @@
   };
 
   // The main menu's game-start button is a user gesture, so request browser
-  // fullscreen here. If the browser or embedding iframe denies the request,
-  // the normal battle fallback modal remains available.
+  // fullscreen here without waiting for the fullscreen promise. This keeps
+  // the existing loading/navigation flow synchronous and intact.
   var fullscreenStartHookInstalled = false;
 
   function requestLearningRpgFullscreen() {
-    if (document.fullscreenElement) return Promise.resolve(true);
+    if (document.fullscreenElement) return;
 
     var fullscreenTarget = document.documentElement || document.body;
-    if (!fullscreenTarget || typeof fullscreenTarget.requestFullscreen !== 'function') {
-      return Promise.reject(new Error('Fullscreen API is not available.'));
-    }
+    if (!fullscreenTarget || typeof fullscreenTarget.requestFullscreen !== 'function') return;
 
     try {
-      return Promise.resolve(fullscreenTarget.requestFullscreen({ navigationUI: 'hide' }))
-        .then(function() { return true; });
-    } catch (error) {
-      return Promise.reject(error);
-    }
+      var fullscreenPromise = fullscreenTarget.requestFullscreen({ navigationUI: 'hide' });
+      if (fullscreenPromise && typeof fullscreenPromise.catch === 'function') {
+        fullscreenPromise.catch(function() {});
+      }
+    } catch (error) {}
   }
 
   function installFullscreenStartHook() {
@@ -156,14 +154,8 @@
 
     global.__learningRpgShowGameStartMessageOriginal = original;
     global.showGameStartMessage = function(button) {
-      var context = this;
-      return requestLearningRpgFullscreen()
-        .catch(function() {
-          return false;
-        })
-        .then(function() {
-          return original.call(context, button);
-        });
+      requestLearningRpgFullscreen();
+      return original.call(this, button);
     };
     global.showGameStartMessage.__learningRpgFullscreenStartWrapped = true;
     fullscreenStartHookInstalled = true;
