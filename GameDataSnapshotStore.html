@@ -119,5 +119,63 @@
     get: get,
     clear: clear,
   };
+
+  // Battle pages must start in browser fullscreen. F11 itself cannot be read
+  // directly, so fullscreen is inferred from the viewport matching the screen.
+  if (document.getElementById('battleShell')) {
+    var guardStyle = document.createElement('style');
+    guardStyle.id = 'battleFullscreenGuardStyle';
+    guardStyle.textContent = '\n'
+      + '#battleFullscreenGuard{position:fixed;inset:0;z-index:99999;display:grid;place-items:center;padding:24px;background:#000;color:#ededed;font-family:"Galmuri11","DungGeunMo","NeoDunggeunmo","Apple SD Gothic Neo","Malgun Gothic",monospace;}\n'
+      + '#battleFullscreenGuard.hidden{display:none;}\n'
+      + '.battle-fullscreen-guard-panel{width:min(460px,92vw);box-sizing:border-box;border:2px solid #777;background:#171717;box-shadow:inset -3px -3px 0 #080808,0 18px 50px rgba(0,0,0,.65);padding:28px 26px 24px;text-align:center;}\n'
+      + '.battle-fullscreen-guard-title{margin:0 0 12px;font-size:24px;}\n'
+      + '.battle-fullscreen-guard-text{margin:0 0 22px;color:#bdbdbd;line-height:1.8;}\n'
+      + '.battle-fullscreen-guard-key{display:inline-flex;align-items:center;justify-content:center;min-width:74px;min-height:46px;padding:6px 12px;box-sizing:border-box;border:2px solid #ddd;border-bottom-width:4px;border-radius:3px;background:#242424;color:#f5f5f5;box-shadow:inset 0 -2px 0 #111,0 2px 0 #090909;font-family:Arial,sans-serif;font-size:17px;font-weight:800;letter-spacing:.04em;}\n'
+      + '.battle-fullscreen-guard-status{min-height:24px;margin-top:18px;color:#9bc9a6;font-size:13px;}';
+    document.head.appendChild(guardStyle);
+
+    var fullscreenGuard = document.createElement('div');
+    fullscreenGuard.id = 'battleFullscreenGuard';
+    fullscreenGuard.setAttribute('role', 'dialog');
+    fullscreenGuard.setAttribute('aria-modal', 'true');
+    fullscreenGuard.innerHTML = '\n'
+      + '<section class="battle-fullscreen-guard-panel">\n'
+      + '  <h2 class="battle-fullscreen-guard-title">전체화면으로 시작해 주세요</h2>\n'
+      + '  <p class="battle-fullscreen-guard-text">원활한 게임 진행을 위해 브라우저를 전체화면으로 전환해야 합니다.<br>키보드의 <kbd class="battle-fullscreen-guard-key">F11</kbd> 키를 눌러주세요.</p>\n'
+      + '  <div class="battle-fullscreen-guard-status" aria-live="polite">전체화면 전환을 기다리는 중...</div>\n'
+      + '</section>';
+    document.body.appendChild(fullscreenGuard);
+
+    function isBattleFullscreen() {
+      if (document.fullscreenElement) return true;
+      var width = Number(global.innerWidth || 0);
+      var height = Number(global.innerHeight || 0);
+      var screenWidth = Number(global.screen && global.screen.width || 0);
+      var screenHeight = Number(global.screen && global.screen.height || 0);
+      return screenWidth > 0 && screenHeight > 0
+        && width >= screenWidth - 2
+        && height >= screenHeight - 2;
+    }
+
+    function releaseBattleFullscreenGuard() {
+      if (!fullscreenGuard || fullscreenGuard.classList.contains('hidden')) return;
+      var status = fullscreenGuard.querySelector('.battle-fullscreen-guard-status');
+      if (status) status.textContent = '전체화면 확인 완료';
+      fullscreenGuard.classList.add('hidden');
+      global.removeEventListener('resize', checkBattleFullscreen);
+      document.removeEventListener('fullscreenchange', checkBattleFullscreen);
+    }
+
+    function checkBattleFullscreen() {
+      if (isBattleFullscreen()) {
+        releaseBattleFullscreenGuard();
+      }
+    }
+
+    global.addEventListener('resize', checkBattleFullscreen);
+    document.addEventListener('fullscreenchange', checkBattleFullscreen);
+    checkBattleFullscreen();
+  }
 })(window);
 </script>
