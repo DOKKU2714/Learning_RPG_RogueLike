@@ -120,8 +120,6 @@
     clear: clear,
   };
 
-  // Battle pages must start in browser fullscreen. F11 itself cannot be read
-  // directly, so fullscreen is inferred from the viewport matching the screen.
   if (document.getElementById('battleShell')) {
     var guardStyle = document.createElement('style');
     guardStyle.id = 'battleFullscreenGuardStyle';
@@ -147,6 +145,9 @@
       + '</section>';
     document.body.appendChild(fullscreenGuard);
 
+    var pendingBattleInitialView = null;
+    var fullscreenGuardHookInstalled = false;
+
     function isBattleFullscreen() {
       if (document.fullscreenElement) return true;
       var width = Number(global.innerWidth || 0);
@@ -167,14 +168,66 @@
       document.removeEventListener('fullscreenchange', checkBattleFullscreen);
     }
 
+    function showBattleFullscreenGuard() {
+      if (!fullscreenGuard) return;
+      fullscreenGuard.classList.remove('hidden');
+      var status = fullscreenGuard.querySelector('.battle-fullscreen-guard-status');
+      if (status) status.textContent = '전체화면 전환을 기다리는 중...';
+    }
+
+    function releasePendingBattleInitialView() {
+      if (!pendingBattleInitialView || !global.__learningRpgApplyInitialBattleViewOriginal) return;
+      var view = pendingBattleInitialView;
+      pendingBattleInitialView = null;
+      global.__learningRpgApplyInitialBattleViewOriginal.call(global, view);
+    }
+
+    function installBattleFullscreenGuardHook() {
+      if (fullscreenGuardHookInstalled) return;
+      if (typeof global.applyInitialBattleView !== 'function') {
+        global.setTimeout(installBattleFullscreenGuardHook, 0);
+        return;
+      }
+
+      var original = global.applyInitialBattleView;
+      if (original.__learningRpgFullscreenGuardWrapped) {
+        fullscreenGuardHookInstalled = true;
+        return;
+      }
+
+      global.__learningRpgApplyInitialBattleViewOriginal = original;
+      var wrapped = function(view) {
+        if (!isBattleFullscreen()) {
+          pendingBattleInitialView = view;
+          showBattleFullscreenGuard();
+          return;
+        }
+        return original.call(this, view);
+      };
+      wrapped.__learningRpgFullscreenGuardWrapped = true;
+      global.applyInitialBattleView = wrapped;
+      fullscreenGuardHookInstalled = true;
+
+      if (isBattleFullscreen()) {
+        releaseBattleFullscreenGuard();
+        releasePendingBattleInitialView();
+      } else {
+        showBattleFullscreenGuard();
+      }
+    }
+
     function checkBattleFullscreen() {
       if (isBattleFullscreen()) {
         releaseBattleFullscreenGuard();
+        releasePendingBattleInitialView();
+      } else if (fullscreenGuardHookInstalled) {
+        showBattleFullscreenGuard();
       }
     }
 
     global.addEventListener('resize', checkBattleFullscreen);
     document.addEventListener('fullscreenchange', checkBattleFullscreen);
+    installBattleFullscreenGuardHook();
     checkBattleFullscreen();
   }
 })(window);
