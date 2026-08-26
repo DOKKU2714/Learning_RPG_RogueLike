@@ -147,16 +147,37 @@
 
     var pendingBattleInitialView = null;
     var fullscreenGuardHookInstalled = false;
+    var fullscreenGuardPollId = null;
 
     function isBattleFullscreen() {
       if (document.fullscreenElement) return true;
+
       var width = Number(global.innerWidth || 0);
       var height = Number(global.innerHeight || 0);
+      var outerWidth = Number(global.outerWidth || 0);
+      var outerHeight = Number(global.outerHeight || 0);
       var screenWidth = Number(global.screen && global.screen.width || 0);
       var screenHeight = Number(global.screen && global.screen.height || 0);
-      return screenWidth > 0 && screenHeight > 0
-        && width >= screenWidth - 2
-        && height >= screenHeight - 2;
+      var availWidth = Number(global.screen && global.screen.availWidth || 0);
+      var availHeight = Number(global.screen && global.screen.availHeight || 0);
+
+      if (!screenWidth || !screenHeight) return false;
+
+      var innerMatchesScreen = width >= screenWidth - 2 && height >= screenHeight - 2;
+      var outerMatchesScreen = outerWidth >= screenWidth - 8 && outerHeight >= screenHeight - 8;
+      var viewportMatchesWorkArea = availWidth > 0 && availHeight > 0
+        && width >= availWidth - 2
+        && height >= availHeight - 2
+        && outerHeight >= availHeight - 8
+        && availHeight === screenHeight;
+
+      return innerMatchesScreen || outerMatchesScreen || viewportMatchesWorkArea;
+    }
+
+    function stopBattleFullscreenPolling() {
+      if (!fullscreenGuardPollId) return;
+      global.clearInterval(fullscreenGuardPollId);
+      fullscreenGuardPollId = null;
     }
 
     function releaseBattleFullscreenGuard() {
@@ -166,6 +187,7 @@
       fullscreenGuard.classList.add('hidden');
       global.removeEventListener('resize', checkBattleFullscreen);
       document.removeEventListener('fullscreenchange', checkBattleFullscreen);
+      stopBattleFullscreenPolling();
     }
 
     function showBattleFullscreenGuard() {
@@ -227,6 +249,7 @@
 
     global.addEventListener('resize', checkBattleFullscreen);
     document.addEventListener('fullscreenchange', checkBattleFullscreen);
+    fullscreenGuardPollId = global.setInterval(checkBattleFullscreen, 200);
     installBattleFullscreenGuardHook();
     checkBattleFullscreen();
   }
