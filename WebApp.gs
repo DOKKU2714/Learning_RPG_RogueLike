@@ -10,6 +10,7 @@ function doGet(e) {
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 
   if (route.file === 'Index') {
+    output.append(HtmlService.createHtmlOutputFromFile('PlayPermissionFix').getContent());
     output.append(HtmlService.createHtmlOutputFromFile('QuestionManagementBoot').getContent());
   }
 
