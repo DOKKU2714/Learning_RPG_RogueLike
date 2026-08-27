@@ -1,0 +1,105 @@
+<script>
+(function(global) {
+  'use strict';
+
+  var checkInProgress = false;
+  var modal = null;
+
+  function getAuthToken() {
+    try { return sessionStorage.getItem('learningRpgAuthToken') || ''; } catch (error) { return ''; }
+  }
+
+  function getWorkbookId() {
+    try { return String(sessionStorage.getItem('learningRpgSelectedWorkbookId') || '').trim(); } catch (error) { return ''; }
+  }
+
+  function getPlayer() {
+    return global.currentState && global.currentState.player ? global.currentState.player : null;
+  }
+
+  function isTeacher() {
+    var player = getPlayer();
+    return !!player && String(player.role || '').trim() === 'teacher';
+  }
+
+  function showPermissionModal() {
+    if (!modal) {
+      var style = document.createElement('style');
+      style.textContent = '#learningRpgPlayPermissionModal{position:fixed;inset:0;z-index:100000;display:none;place-items:center;padding:20px;background:rgba(0,0,0,.78);font-family:"Galmuri11","DungGeunMo","NeoDunggeunmo","Apple SD Gothic Neo","Malgun Gothic",monospace}#learningRpgPlayPermissionModal.open{display:grid}#learningRpgPlayPermissionModal .panel{width:min(430px,92vw);padding:28px 24px 22px;border:2px solid #777;background:#171717;color:#ededed;text-align:center;box-shadow:inset -3px -3px 0 #080808,0 18px 50px rgba(0,0,0,.65)}#learningRpgPlayPermissionModal h2{margin:0 0 14px;font-size:22px}#learningRpgPlayPermissionModal p{margin:0 0 22px;color:#c8c8c8;line-height:1.7}#learningRpgPlayPermissionModal button{min-width:120px}';
+      document.head.appendChild(style);
+      modal = document.createElement('div');
+      modal.id = 'learningRpgPlayPermissionModal';
+      modal.setAttribute('role', 'dialog');
+      modal.setAttribute('aria-modal', 'true');
+      modal.innerHTML = '<section class="panel"><h2>게임 시작 불가</h2><p>현재 문제집이 비활성화되어 있습니다.</p><button type="button" id="learningRpgPlayPermissionConfirm">확인</button></section>';
+      document.body.appendChild(modal);
+      document.getElementById('learningRpgPlayPermissionConfirm').addEventListener('click', function() {
+        modal.classList.remove('open');
+        modal.setAttribute('aria-hidden', 'true');
+      });
+    }
+    modal.classList.add('open');
+    modal.setAttribute('aria-hidden', 'false');
+  }
+
+  function beginStart(button) {
+    var original = global.showGameStartMessage;
+    if (typeof original === 'function') {
+      original.call(button, button);
+    }
+  }
+
+  function install() {
+    document.addEventListener('click', function(event) {
+      var target = event.target;
+      if (!target || !target.closest) return;
+      var button = target.closest('button[data-main-navigation="true"]');
+      if (!button) return;
+      var text = String(button.textContent || '').replace(/\s+/g, ' ').trim();
+      if (text !== '게임 시작') return;
+      if (isTeacher()) return;
+      if (checkInProgress) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        return;
+      }
+
+      var workbookId = getWorkbookId();
+      if (!workbookId || typeof google === 'undefined' || !google.script || !google.script.run) return;
+
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      checkInProgress = true;
+
+      if (typeof global.showLoadingModal === 'function') {
+        global.showLoadingModal('게임 시작 확인 중...', '현재 문제집의 플레이 가능 여부를 확인하는 중입니다.');
+      }
+
+      google.script.run
+        .withSuccessHandler(function(result) {
+          checkInProgress = false;
+          if (typeof global.hideLoadingModal === 'function') global.hideLoadingModal();
+          if (!result || result.allowed !== true) {
+            if (typeof global.resetMainNavigation === 'function') global.resetMainNavigation();
+            showPermissionModal();
+            return;
+          }
+          beginStart(button);
+        })
+        .withFailureHandler(function() {
+          checkInProgress = false;
+          if (typeof global.hideLoadingModal === 'function') global.hideLoadingModal();
+          if (typeof global.resetMainNavigation === 'function') global.resetMainNavigation();
+          showPermissionModal();
+        })
+        .canStartWorkbookPlay(getAuthToken(), workbookId);
+    }, true);
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', install);
+  } else {
+    install();
+  }
+})(window);
+</script>
