@@ -86,8 +86,6 @@
       try { return sessionStorage.getItem('learningRpgAuthToken') || ''; } catch (error) { return ''; }
     }
 
-    // UiLoadingModal keeps its implementation scoped inside an IIFE, so its helpers
-    // are not available to this page. Reuse the rendered loading modal elements locally.
     function showLoadingModal(title, text) {
       var modal = document.getElementById('loadingModal');
       if (!modal) return;
@@ -252,9 +250,9 @@
     function goHome() {
       var base = String(WEB_APP_URL || '').split('#')[0].split('?')[0];
       if (base) {
-        window.location.href = base + '?skipIntro=1';
+        window.top.location.href = base + '?skipIntro=1';
       } else {
-        window.location.href = '?skipIntro=1';
+        window.top.location.href = '?skipIntro=1';
       }
     }
 

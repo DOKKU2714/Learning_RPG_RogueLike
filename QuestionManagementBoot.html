@@ -148,6 +148,13 @@
       return;
     }
     var wrapped = function(sourceButton) {
+      var state = global.currentState || null;
+      var player = state && state.player || null;
+      var isTeacher = !!player && String(player.role || '').trim() === 'teacher';
+      if (isTeacher) {
+        return original.call(this, sourceButton);
+      }
+
       var workbookId = '';
       try { workbookId = sessionStorage.getItem('learningRpgSelectedWorkbookId') || ''; } catch (error) {}
       workbookId = String(workbookId || '').trim();
