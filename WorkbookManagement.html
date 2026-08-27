@@ -86,6 +86,30 @@
       try { return sessionStorage.getItem('learningRpgAuthToken') || ''; } catch (error) { return ''; }
     }
 
+    // UiLoadingModal keeps its implementation scoped inside an IIFE, so its helpers
+    // are not available to this page. Reuse the rendered loading modal elements locally.
+    function showLoadingModal(title, text) {
+      var modal = document.getElementById('loadingModal');
+      if (!modal) return;
+      var titleElement = document.getElementById('loadingTitle');
+      var textElement = document.getElementById('loadingText');
+      var progressText = document.getElementById('loadingProgressText');
+      var progressFill = document.getElementById('loadingProgressFill');
+      if (titleElement) titleElement.textContent = title || '로딩 중...';
+      if (textElement) textElement.textContent = text || '처리 중입니다...';
+      if (progressText) progressText.textContent = '처리 중';
+      if (progressFill) progressFill.style.width = '100%';
+      modal.setAttribute('aria-hidden', 'false');
+      modal.classList.add('open');
+    }
+
+    function hideLoadingModal() {
+      var modal = document.getElementById('loadingModal');
+      if (!modal) return;
+      modal.setAttribute('aria-hidden', 'true');
+      modal.classList.remove('open');
+    }
+
     function refreshWorkbookManagement() {
       setPageMessage('', '');
       document.getElementById('workbookList').innerHTML = '<div class="wm-loading">문제집을 불러오는 중...</div>';
@@ -247,7 +271,7 @@
     }
 
     function escapeHtml(value) {
-      return String(value == null ? '' : value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+      return String(value == null ? '' : value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;').replace(/'/g, '&#039;');
     }
     function escapeAttr(value) { return escapeHtml(value).replace(/\\/g, '\\\\'); }
   </script>
