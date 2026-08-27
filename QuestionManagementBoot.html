@@ -3,6 +3,8 @@
   'use strict';
 
   var scheduled = false;
+  var playPermissionHookInstalled = false;
+  var playPermissionModal = null;
 
   function removeAdminButtons() {
     var adminButton = document.getElementById('adminButton');
@@ -36,11 +38,42 @@
     return workbook;
   }
 
+  function addWorkbookManagementButton(questionCreateButton) {
+    var state = global.currentState || null;
+    var player = state && state.player || null;
+    var isTeacher = !!player && String(player.role || '').trim() === 'teacher';
+    var button = document.getElementById('workbookManagementButton');
+    if (!isTeacher) {
+      if (button && button.parentNode) button.parentNode.removeChild(button);
+      return;
+    }
+    if (!button) {
+      button = document.createElement('button');
+      button.id = 'workbookManagementButton';
+      button.className = 'secondary';
+      button.setAttribute('data-main-navigation', 'true');
+      button.type = 'button';
+      button.textContent = '문제집 관리';
+      button.addEventListener('click', function() {
+        var base = (typeof WEB_APP_URL !== 'undefined' && WEB_APP_URL)
+          ? WEB_APP_URL
+          : global.location.href.split('?')[0];
+        global.location.href = base + '?page=workbookmanagement&skipIntro=1';
+      });
+      questionCreateButton.parentNode.insertBefore(button, questionCreateButton);
+    }
+    button.classList.remove('hidden');
+    button.style.display = '';
+    button.disabled = false;
+  }
+
   function refreshQuestionManagementButton() {
     removeAdminButtons();
 
     var questionCreateButton = document.getElementById('questionCreateButton');
     if (!questionCreateButton || !questionCreateButton.parentNode) return;
+
+    addWorkbookManagementButton(questionCreateButton);
 
     var state = global.currentState || null;
     var player = state && state.player || null;
@@ -81,12 +114,75 @@
     managementButton.disabled = false;
   }
 
+  function ensurePlayPermissionModal() {
+    if (playPermissionModal && playPermissionModal.parentNode) return playPermissionModal;
+    var style = document.createElement('style');
+    style.id = 'learningRpgPlayPermissionModalStyle';
+    style.textContent = '#learningRpgPlayPermissionModal{position:fixed;inset:0;z-index:100000;display:none;place-items:center;padding:20px;background:rgba(0,0,0,.78);font-family:"Galmuri11","DungGeunMo","NeoDunggeunmo","Apple SD Gothic Neo","Malgun Gothic",monospace;}#learningRpgPlayPermissionModal.open{display:grid;}#learningRpgPlayPermissionModal .panel{width:min(430px,92vw);padding:28px 24px 22px;border:2px solid #777;background:#171717;box-shadow:inset -3px -3px 0 #080808,0 18px 50px rgba(0,0,0,.65);color:#ededed;text-align:center;}#learningRpgPlayPermissionModal h2{margin:0 0 14px;font-size:22px;}#learningRpgPlayPermissionModal p{margin:0 0 22px;color:#c8c8c8;line-height:1.7;white-space:pre-wrap;}#learningRpgPlayPermissionModal button{min-width:120px;}';
+    document.head.appendChild(style);
+    playPermissionModal = document.createElement('div');
+    playPermissionModal.id = 'learningRpgPlayPermissionModal';
+    playPermissionModal.setAttribute('role', 'dialog');
+    playPermissionModal.setAttribute('aria-modal', 'true');
+    playPermissionModal.innerHTML = '<section class="panel"><h2>게임 시작 불가</h2><p>현재는 게임 시작이 불가능합니다.</p><button type="button" id="learningRpgPlayPermissionConfirm">확인</button></section>';
+    document.body.appendChild(playPermissionModal);
+    document.getElementById('learningRpgPlayPermissionConfirm').addEventListener('click', function() {
+      global.location.reload();
+    });
+    return playPermissionModal;
+  }
+
+  function showPlayPermissionModal() {
+    ensurePlayPermissionModal().classList.add('open');
+  }
+
+  function installPlayPermissionHook() {
+    if (playPermissionHookInstalled) return;
+    if (typeof global.showGameStartMessage !== 'function') {
+      global.setTimeout(installPlayPermissionHook, 0);
+      return;
+    }
+    var original = global.showGameStartMessage;
+    if (original.__learningRpgPlayPermissionWrapped) {
+      playPermissionHookInstalled = true;
+      return;
+    }
+    var wrapped = function(sourceButton) {
+      var workbookId = '';
+      try { workbookId = sessionStorage.getItem('learningRpgSelectedWorkbookId') || ''; } catch (error) {}
+      workbookId = String(workbookId || '').trim();
+      if (!workbookId || typeof google === 'undefined' || !google.script || !google.script.run) {
+        return original.call(this, sourceButton);
+      }
+      google.script.run
+        .withSuccessHandler(function(result) {
+          if (!result || result.allowed !== true) {
+            showPlayPermissionModal();
+            return;
+          }
+          original.call(this, sourceButton);
+        })
+        .withFailureHandler(function() {
+          showPlayPermissionModal();
+        })
+        .canStartWorkbookPlay(getAuthTokenSafe(), workbookId);
+    };
+    wrapped.__learningRpgPlayPermissionWrapped = true;
+    global.showGameStartMessage = wrapped;
+    playPermissionHookInstalled = true;
+  }
+
+  function getAuthTokenSafe() {
+    try { return sessionStorage.getItem('learningRpgAuthToken') || ''; } catch (error) { return ''; }
+  }
+
   function scheduleRefresh() {
     if (scheduled) return;
     scheduled = true;
     var run = function() {
       scheduled = false;
       refreshQuestionManagementButton();
+      installPlayPermissionHook();
     };
     if (global.requestAnimationFrame) {
       global.requestAnimationFrame(run);
@@ -97,6 +193,7 @@
 
   function start() {
     refreshQuestionManagementButton();
+    installPlayPermissionHook();
 
     if (global.MutationObserver && document.body) {
       var observer = new MutationObserver(function() {
@@ -109,6 +206,7 @@
     var timer = global.setInterval(function() {
       attempts += 1;
       refreshQuestionManagementButton();
+      installPlayPermissionHook();
       if (attempts >= 120) {
         global.clearInterval(timer);
       }
