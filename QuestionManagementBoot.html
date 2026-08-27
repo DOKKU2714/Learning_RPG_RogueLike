@@ -26,10 +26,7 @@
     var state = global.currentState || null;
     var workbook = state && state.selectedWorkbook || null;
     var workbookId = '';
-    try {
-      workbookId = sessionStorage.getItem('learningRpgSelectedWorkbookId') || '';
-    } catch (error) {}
-
+    try { workbookId = sessionStorage.getItem('learningRpgSelectedWorkbookId') || ''; } catch (error) {}
     if (!workbook && state && Array.isArray(state.activeWorkbooks)) {
       workbook = state.activeWorkbooks.filter(function(item) {
         return String(item.workbookId || '').trim() === String(workbookId || state.selectedWorkbookId || '').trim();
@@ -55,27 +52,13 @@
       button.type = 'button';
       button.textContent = '문제집 관리';
       button.addEventListener('click', function(event) {
-        if (event) {
-          event.preventDefault();
-          event.stopPropagation();
-        }
-        var base = (typeof WEB_APP_URL !== 'undefined' && WEB_APP_URL)
-          ? WEB_APP_URL
-          : global.location.href.split('?')[0];
+        if (event) { event.preventDefault(); event.stopPropagation(); }
+        var base = (typeof WEB_APP_URL !== 'undefined' && WEB_APP_URL) ? WEB_APP_URL : global.location.href.split('?')[0];
         var nextUrl = base + '?page=workbookmanagement&skipIntro=1';
-        if (typeof global.showLoadingModal === 'function') {
-          global.showLoadingModal('문제집 관리로 이동 중...', '문제집 관리 화면을 준비하는 중입니다.');
-        }
+        if (typeof global.showLoadingModal === 'function') global.showLoadingModal('문제집 관리로 이동 중...', '문제집 관리 화면을 준비하는 중입니다.');
         global.setTimeout(function() {
-          if (typeof global.navigateTop === 'function') {
-            global.navigateTop(nextUrl);
-          } else {
-            try {
-              global.top.location.assign(nextUrl);
-            } catch (error) {
-              global.location.href = nextUrl;
-            }
-          }
+          if (typeof global.navigateTop === 'function') global.navigateTop(nextUrl);
+          else { try { global.top.location.assign(nextUrl); } catch (error) { global.location.href = nextUrl; } }
         }, 60);
       });
       questionCreateButton.parentNode.insertBefore(button, questionCreateButton);
@@ -87,30 +70,18 @@
 
   function refreshQuestionManagementButton() {
     removeAdminButtons();
-
     var questionCreateButton = document.getElementById('questionCreateButton');
     if (!questionCreateButton || !questionCreateButton.parentNode) return;
-
     addWorkbookManagementButton(questionCreateButton);
-
     var state = global.currentState || null;
     var player = state && state.player || null;
     var workbook = getSelectedWorkbook();
-    var isOwner = !!(
-      player &&
-      workbook &&
-      String(player.playerId || '').trim() &&
-      String(player.playerId || '').trim() === String(workbook.createdBy || '').trim()
-    );
-
+    var isOwner = !!(player && workbook && String(player.playerId || '').trim() && String(player.playerId || '').trim() === String(workbook.createdBy || '').trim());
     var managementButton = document.getElementById('questionManagementButton');
     if (!isOwner) {
-      if (managementButton && managementButton.parentNode) {
-        managementButton.parentNode.removeChild(managementButton);
-      }
+      if (managementButton && managementButton.parentNode) managementButton.parentNode.removeChild(managementButton);
       return;
     }
-
     if (!managementButton) {
       managementButton = document.createElement('button');
       managementButton.id = 'questionManagementButton';
@@ -119,14 +90,11 @@
       managementButton.type = 'button';
       managementButton.textContent = '문제 관리';
       managementButton.addEventListener('click', function() {
-        var base = (typeof WEB_APP_URL !== 'undefined' && WEB_APP_URL)
-          ? WEB_APP_URL
-          : global.location.href.split('?')[0];
+        var base = (typeof WEB_APP_URL !== 'undefined' && WEB_APP_URL) ? WEB_APP_URL : global.location.href.split('?')[0];
         global.location.href = base + '?page=questionmanagement&skipIntro=1';
       });
       questionCreateButton.parentNode.insertBefore(managementButton, questionCreateButton.nextSibling);
     }
-
     managementButton.classList.remove('hidden');
     managementButton.style.display = '';
     managementButton.disabled = false;
@@ -145,31 +113,27 @@
     playPermissionModal.innerHTML = '<section class="panel"><h2>게임 시작 불가</h2><p>현재는 게임 시작이 불가능합니다.</p><button type="button" id="learningRpgPlayPermissionConfirm">확인</button></section>';
     document.body.appendChild(playPermissionModal);
     document.getElementById('learningRpgPlayPermissionConfirm').addEventListener('click', function() {
+      playPermissionModal.classList.remove('open');
+      playPermissionModal.setAttribute('aria-hidden', 'true');
       if (typeof global.resetMainNavigation === 'function') global.resetMainNavigation();
-      global.location.reload();
+      var base = (typeof WEB_APP_URL !== 'undefined' && WEB_APP_URL) ? WEB_APP_URL : global.location.href.split('?')[0];
+      var nextUrl = base + '?skipIntro=1';
+      if (typeof global.showLoadingModal === 'function') global.showLoadingModal('메인 화면으로 이동 중...', '잠시만 기다려 주세요.');
+      global.setTimeout(function() {
+        if (typeof global.navigateTop === 'function') global.navigateTop(nextUrl);
+        else { try { global.top.location.assign(nextUrl); } catch (error) { global.location.href = nextUrl; } }
+      }, 60);
     });
     return playPermissionModal;
   }
 
-  function showPlayPermissionModal() {
-    ensurePlayPermissionModal().classList.add('open');
-  }
+  function showPlayPermissionModal() { ensurePlayPermissionModal().classList.add('open'); }
 
   function installPlayPermissionHook() {
     if (playPermissionHookInstalled) return;
-    if (typeof global.showGameStartMessage !== 'function') {
-      global.setTimeout(installPlayPermissionHook, 0);
-      return;
-    }
-
+    if (typeof global.showGameStartMessage !== 'function') { global.setTimeout(installPlayPermissionHook, 0); return; }
     var original = global.showGameStartMessage;
-    if (original.__learningRpgPlayPermissionWrapped) {
-      playPermissionHookInstalled = true;
-      return;
-    }
-
-    // Capture the click before the inline onclick handler. This prevents a race where
-    // the original game-start flow could begin before the permission check is installed.
+    if (original.__learningRpgPlayPermissionWrapped) { playPermissionHookInstalled = true; return; }
     document.addEventListener('click', function(event) {
       var target = event.target;
       if (!target || !target.closest) return;
@@ -177,20 +141,16 @@
       if (!button) return;
       var text = String(button.textContent || '').replace(/\s+/g, ' ').trim();
       if (text !== '게임 시작') return;
-
       var state = global.currentState || null;
       var player = state && state.player || null;
       var isTeacher = !!player && String(player.role || '').trim() === 'teacher';
       if (isTeacher) return;
-
       var workbookId = '';
       try { workbookId = sessionStorage.getItem('learningRpgSelectedWorkbookId') || ''; } catch (error) {}
       workbookId = String(workbookId || '').trim();
       if (!workbookId || typeof google === 'undefined' || !google.script || !google.script.run) return;
-
       event.preventDefault();
       event.stopImmediatePropagation();
-
       google.script.run
         .withSuccessHandler(function(result) {
           if (!result || result.allowed !== true) {
@@ -206,55 +166,34 @@
         })
         .canStartWorkbookPlay(getAuthTokenSafe(), workbookId);
     }, true);
-
     playPermissionHookInstalled = true;
   }
 
-  function getAuthTokenSafe() {
-    try { return sessionStorage.getItem('learningRpgAuthToken') || ''; } catch (error) { return ''; }
-  }
+  function getAuthTokenSafe() { try { return sessionStorage.getItem('learningRpgAuthToken') || ''; } catch (error) { return ''; } }
 
   function scheduleRefresh() {
     if (scheduled) return;
     scheduled = true;
-    var run = function() {
-      scheduled = false;
-      refreshQuestionManagementButton();
-      installPlayPermissionHook();
-    };
-    if (global.requestAnimationFrame) {
-      global.requestAnimationFrame(run);
-    } else {
-      global.setTimeout(run, 0);
-    }
+    var run = function() { scheduled = false; refreshQuestionManagementButton(); installPlayPermissionHook(); };
+    if (global.requestAnimationFrame) global.requestAnimationFrame(run); else global.setTimeout(run, 0);
   }
 
   function start() {
     refreshQuestionManagementButton();
     installPlayPermissionHook();
-
     if (global.MutationObserver && document.body) {
-      var observer = new MutationObserver(function() {
-        scheduleRefresh();
-      });
+      var observer = new MutationObserver(function() { scheduleRefresh(); });
       observer.observe(document.body, { childList: true, subtree: true });
     }
-
     var attempts = 0;
     var timer = global.setInterval(function() {
       attempts += 1;
       refreshQuestionManagementButton();
       installPlayPermissionHook();
-      if (attempts >= 120) {
-        global.clearInterval(timer);
-      }
+      if (attempts >= 120) global.clearInterval(timer);
     }, 250);
   }
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', start);
-  } else {
-    start();
-  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
 })(window);
 </script>
