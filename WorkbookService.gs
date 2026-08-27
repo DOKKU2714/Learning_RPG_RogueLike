@@ -29,7 +29,7 @@ function checkWorkbookSystemSettings() {
     pushWorkbookSystemCheck_(checks, 'questionsSpreadsheetId', 'error', 'Question spreadsheet is not configured or cannot be opened.', error.message);
   }
 
-  pushMainSheetCheck_(checks, DB_SHEETS.WORKBOOKS, DB_COLUMNS.WORKBOOKS);
+  pushMainSheetCheck_(checks, DB_SHEETS.WORKBOOKS, DB_COLUMNS.WORKBOOKS.concat(['playEnabled']));
   pushMainSheetCheck_(checks, DB_SHEETS.WORKBOOK_PLAYER_DATA, DB_COLUMNS.WORKBOOK_PLAYER_DATA);
 
   var activeWorkbooks = [];
@@ -59,7 +59,7 @@ function createWorkbook(authToken, workbookPayload) {
   var lock = LockService.getScriptLock();
   lock.waitLock(5000);
   try {
-    ensureTableColumns_(DB_SHEETS.WORKBOOKS, DB_COLUMNS.WORKBOOKS);
+    ensureTableColumns_(DB_SHEETS.WORKBOOKS, DB_COLUMNS.WORKBOOKS.concat(['playEnabled']));
     var now = new Date();
     var workbookId = generateId_('workbook');
     var workbook = {
@@ -71,6 +71,7 @@ function createWorkbook(authToken, workbookPayload) {
       createdBy: actor.player.playerId,
       createdByName: actor.player.displayName || actor.player.studentName || '',
       status: STATUS.WORKBOOK_ACTIVE,
+      playEnabled: false,
       sortOrder: getNextWorkbookSortOrder_(),
       createdAt: now,
       updatedAt: now,
@@ -88,6 +89,116 @@ function createWorkbook(authToken, workbookPayload) {
   } finally {
     lock.releaseLock();
   }
+}
+
+function getTeacherWorkbookManagementData(authToken) {
+  var actor = requireWorkbookManager_(authToken);
+  ensureTableColumns_(DB_SHEETS.WORKBOOKS, DB_COLUMNS.WORKBOOKS.concat(['playEnabled']));
+  var playerId = String(actor.player.playerId || '').trim();
+  return {
+    currentPlayerId: playerId,
+    workbooks: readTable_(DB_SHEETS.WORKBOOKS).filter(function(workbook) {
+      return String(workbook.createdBy || '').trim() === playerId
+        && String(workbook.status || STATUS.WORKBOOK_ACTIVE) !== STATUS.WORKBOOK_ARCHIVED;
+    }).map(function(workbook) {
+      return toClientObject_({
+        workbookId: workbook.workbookId,
+        workbookName: workbook.workbookName,
+        description: workbook.description,
+        subject: workbook.subject,
+        questionSheetName: workbook.questionSheetName,
+        createdBy: workbook.createdBy || '',
+        createdByName: workbook.createdByName || '',
+        status: workbook.status || STATUS.WORKBOOK_ACTIVE,
+        playEnabled: toBoolean_(workbook.playEnabled),
+        sortOrder: workbook.sortOrder || 0,
+        createdAt: workbook.createdAt || '',
+        updatedAt: workbook.updatedAt || '',
+      });
+    }).sort(function(a, b) {
+      return Number(a.sortOrder || 0) - Number(b.sortOrder || 0);
+    }),
+  };
+}
+
+function updateWorkbook(authToken, workbookId, workbookPayload) {
+  var actor = requireWorkbookManager_(authToken);
+  var targetWorkbookId = String(workbookId || '').trim();
+  if (!targetWorkbookId) throw new Error('수정할 문제집을 선택해 주세요.');
+  var payload = normalizeWorkbookPayload_(workbookPayload);
+  var lock = LockService.getScriptLock();
+  lock.waitLock(5000);
+  try {
+    ensureTableColumns_(DB_SHEETS.WORKBOOKS, DB_COLUMNS.WORKBOOKS.concat(['playEnabled']));
+    var workbook = findRowByKey_(DB_SHEETS.WORKBOOKS, 'workbookId', targetWorkbookId);
+    if (!workbook) throw new Error('문제집을 찾을 수 없습니다.');
+    if (String(workbook.createdBy || '').trim() !== String(actor.player.playerId || '').trim()) {
+      throw new Error('자신이 만든 문제집만 수정할 수 있습니다.');
+    }
+    if (String(workbook.status || STATUS.WORKBOOK_ACTIVE) === STATUS.WORKBOOK_ARCHIVED) {
+      throw new Error('삭제된 문제집은 수정할 수 없습니다.');
+    }
+    var updated = updateRowByKey_(DB_SHEETS.WORKBOOKS, 'workbookId', targetWorkbookId, {
+      workbookName: payload.workbookName,
+      subject: payload.subject,
+      description: payload.description,
+      updatedAt: new Date(),
+    });
+    clearTableCache_(DB_SHEETS.WORKBOOKS);
+    return { ok: true, workbook: toClientObject_(updated) };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function setWorkbookPlayEnabled(authToken, workbookId, playEnabled) {
+  var actor = requireWorkbookManager_(authToken);
+  var targetWorkbookId = String(workbookId || '').trim();
+  if (!targetWorkbookId) throw new Error('상태를 변경할 문제집을 선택해 주세요.');
+  var enabled = toBoolean_(playEnabled);
+  var lock = LockService.getScriptLock();
+  lock.waitLock(5000);
+  try {
+    ensureTableColumns_(DB_SHEETS.WORKBOOKS, DB_COLUMNS.WORKBOOKS.concat(['playEnabled']));
+    var workbook = findRowByKey_(DB_SHEETS.WORKBOOKS, 'workbookId', targetWorkbookId);
+    if (!workbook) throw new Error('문제집을 찾을 수 없습니다.');
+    if (String(workbook.createdBy || '').trim() !== String(actor.player.playerId || '').trim()) {
+      throw new Error('자신이 만든 문제집만 상태를 변경할 수 있습니다.');
+    }
+    if (String(workbook.status || STATUS.WORKBOOK_ACTIVE) === STATUS.WORKBOOK_ARCHIVED) {
+      throw new Error('삭제된 문제집은 상태를 변경할 수 없습니다.');
+    }
+    var updated = updateRowByKey_(DB_SHEETS.WORKBOOKS, 'workbookId', targetWorkbookId, {
+      playEnabled: enabled,
+      updatedAt: new Date(),
+    });
+    clearTableCache_(DB_SHEETS.WORKBOOKS);
+    return {
+      ok: true,
+      workbook: toClientObject_(Object.assign({}, updated, { playEnabled: enabled })),
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function canStartWorkbookPlay(authToken, workbookId) {
+  getCurrentPlayer_(authToken);
+  var targetWorkbookId = String(workbookId || '').trim();
+  if (!targetWorkbookId) throw new Error('게임을 시작하려면 문제집을 선택해 주세요.');
+  ensureTableColumns_(DB_SHEETS.WORKBOOKS, DB_COLUMNS.WORKBOOKS.concat(['playEnabled']));
+  // Deliberately read the Workbooks sheet directly instead of using table cache so
+  // a teacher's activation/deactivation is reflected on the very next start attempt.
+  var workbook = findRowByKey_(DB_SHEETS.WORKBOOKS, 'workbookId', targetWorkbookId);
+  if (!workbook) throw new Error('선택한 문제집을 찾을 수 없습니다.');
+  var status = String(workbook.status || STATUS.WORKBOOK_ACTIVE);
+  var allowed = status === STATUS.WORKBOOK_ACTIVE && toBoolean_(workbook.playEnabled);
+  return {
+    allowed: allowed,
+    workbookId: targetWorkbookId,
+    playEnabled: toBoolean_(workbook.playEnabled),
+    status: status,
+  };
 }
 
 function archiveWorkbook(authToken, workbookId) {
@@ -110,6 +221,7 @@ function archiveWorkbook(authToken, workbookId) {
 
     var archivedWorkbook = updateRowByKey_(DB_SHEETS.WORKBOOKS, 'workbookId', targetWorkbookId, {
       status: STATUS.WORKBOOK_ARCHIVED,
+      playEnabled: false,
       updatedAt: new Date(),
     });
     if (!archivedWorkbook) {
@@ -136,6 +248,7 @@ function getActiveWorkbooksForClient_() {
       subject: workbook.subject,
       questionSheetName: workbook.questionSheetName,
       status: workbook.status || STATUS.WORKBOOK_ACTIVE,
+      playEnabled: toBoolean_(workbook.playEnabled),
       sortOrder: workbook.sortOrder || 0,
       createdBy: workbook.createdBy || '',
       createdByName: workbook.createdByName || '',
@@ -268,4 +381,11 @@ function pushDefaultWorkbookCheck_(checks, defaultWorkbookId) {
   } catch (error) {
     pushWorkbookSystemCheck_(checks, 'defaultWorkbookId', 'error', 'defaultWorkbookId points to a missing workbook.', targetWorkbookId);
   }
+}
+
+function toBoolean_(value) {
+  if (value === true) return true;
+  if (typeof value === 'number') return value !== 0;
+  var normalized = String(value == null ? '' : value).trim().toLowerCase();
+  return normalized === 'true' || normalized === '1' || normalized === 'yes' || normalized === 'y' || normalized === 'on';
 }
