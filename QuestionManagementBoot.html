@@ -110,19 +110,12 @@
     playPermissionModal.id = 'learningRpgPlayPermissionModal';
     playPermissionModal.setAttribute('role', 'dialog');
     playPermissionModal.setAttribute('aria-modal', 'true');
-    playPermissionModal.innerHTML = '<section class="panel"><h2>게임 시작 불가</h2><p>현재는 게임 시작이 불가능합니다.</p><button type="button" id="learningRpgPlayPermissionConfirm">확인</button></section>';
+    playPermissionModal.innerHTML = '<section class="panel"><h2>게임 시작 불가</h2><p>현재 문제집이 비활성화되어 있습니다.</p><button type="button" id="learningRpgPlayPermissionConfirm">확인</button></section>';
     document.body.appendChild(playPermissionModal);
     document.getElementById('learningRpgPlayPermissionConfirm').addEventListener('click', function() {
       playPermissionModal.classList.remove('open');
       playPermissionModal.setAttribute('aria-hidden', 'true');
       if (typeof global.resetMainNavigation === 'function') global.resetMainNavigation();
-      var base = (typeof WEB_APP_URL !== 'undefined' && WEB_APP_URL) ? WEB_APP_URL : global.location.href.split('?')[0];
-      var nextUrl = base + '?skipIntro=1';
-      if (typeof global.showLoadingModal === 'function') global.showLoadingModal('메인 화면으로 이동 중...', '잠시만 기다려 주세요.');
-      global.setTimeout(function() {
-        if (typeof global.navigateTop === 'function') global.navigateTop(nextUrl);
-        else { try { global.top.location.assign(nextUrl); } catch (error) { global.location.href = nextUrl; } }
-      }, 60);
     });
     return playPermissionModal;
   }
@@ -151,8 +144,12 @@
       if (!workbookId || typeof google === 'undefined' || !google.script || !google.script.run) return;
       event.preventDefault();
       event.stopImmediatePropagation();
+      if (typeof global.showLoadingModal === 'function') {
+        global.showLoadingModal('게임 시작 확인 중...', '문제집의 플레이 가능 여부를 확인하는 중입니다.');
+      }
       google.script.run
         .withSuccessHandler(function(result) {
+          if (typeof global.hideLoadingModal === 'function') global.hideLoadingModal();
           if (!result || result.allowed !== true) {
             if (typeof global.resetMainNavigation === 'function') global.resetMainNavigation();
             showPlayPermissionModal();
@@ -161,6 +158,7 @@
           original.call(button, button);
         })
         .withFailureHandler(function() {
+          if (typeof global.hideLoadingModal === 'function') global.hideLoadingModal();
           if (typeof global.resetMainNavigation === 'function') global.resetMainNavigation();
           showPlayPermissionModal();
         })
