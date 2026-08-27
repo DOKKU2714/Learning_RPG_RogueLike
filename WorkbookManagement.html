@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <base target="_top">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <?!= include_('UiStyles'); ?>
+  <style>
+    .workbook-management-shell{max-width:980px;margin:0 auto;padding:24px 14px 48px;}
+    .wm-header{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;flex-wrap:wrap;}
+    .wm-title{margin:0 0 6px;}
+    .wm-list{display:grid;gap:10px;margin-top:14px;}
+    .wm-card{border:1px solid var(--line);background:rgba(12,12,12,.9);padding:16px;}
+    .wm-card-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;}
+    .wm-name{margin:0;font-size:19px;}
+    .wm-meta{margin-top:6px;color:var(--muted);font-size:12px;line-height:1.5;}
+    .wm-status{display:inline-flex;align-items:center;padding:4px 9px;border:1px solid currentColor;font-size:12px;font-weight:800;white-space:nowrap;}
+    .wm-status.enabled{color:#7ee787;background:rgba(46,160,67,.12);}
+    .wm-status.disabled{color:#ff7b72;background:rgba(248,81,73,.1);}
+    .wm-description{margin:12px 0;color:#ddd;white-space:pre-wrap;word-break:break-word;line-height:1.5;}
+    .wm-actions{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin-top:12px;}
+    .wm-actions button{min-height:34px;}
+    .wm-empty{padding:40px 18px;border:1px dashed var(--line);text-align:center;color:var(--muted);}
+    .wm-loading{padding:38px;text-align:center;color:var(--muted);}
+    .wm-modal-overlay{display:none;position:fixed;inset:0;z-index:100;align-items:center;justify-content:center;padding:18px;background:rgba(0,0,0,.78);}
+    .wm-modal-overlay.open{display:flex;}
+    .wm-modal{width:min(620px,100%);}
+    .wm-form{display:grid;gap:12px;margin:16px 0;}
+    .wm-modal-actions{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;}
+    .wm-message{min-height:22px;}
+  </style>
+</head>
+<body>
+  <main class="workbook-management-shell fade-in">
+    <section class="rpg-panel">
+      <div class="wm-header">
+        <div>
+          <h1 class="wm-title">문제집 관리</h1>
+          <p class="muted">내가 만든 문제집(수업)을 관리합니다.</p>
+        </div>
+        <div class="inline-actions">
+          <button class="secondary" type="button" onclick="refreshWorkbookManagement()">↻ 새로고침</button>
+          <button class="secondary" type="button" onclick="goHome()">메인으로</button>
+          <button type="button" onclick="showWorkbookEditor()">+ 문제집 추가</button>
+        </div>
+      </div>
+      <div id="pageMessage" class="message wm-message"></div>
+    </section>
+
+    <section id="workbookList" class="wm-list">
+      <div class="wm-loading">문제집을 불러오는 중...</div>
+    </section>
+  </main>
+
+  <div id="workbookEditorOverlay" class="wm-modal-overlay" aria-hidden="true">
+    <section class="rpg-panel wm-modal" role="dialog" aria-modal="true" aria-labelledby="workbookEditorTitle">
+      <div class="wm-header">
+        <div>
+          <h2 id="workbookEditorTitle" class="rpg-title" style="margin:0;">문제집 추가</h2>
+          <p class="muted">문제집 이름과 수업 정보를 입력합니다.</p>
+        </div>
+        <button class="secondary" type="button" onclick="hideWorkbookEditor()">닫기</button>
+      </div>
+      <div class="wm-form">
+        <div><label for="wmName">문제집 이름</label><input id="wmName" maxlength="60"></div>
+        <div><label for="wmSubject">과목</label><input id="wmSubject" maxlength="40"></div>
+        <div><label for="wmDescription">설명</label><textarea id="wmDescription" maxlength="300"></textarea></div>
+      </div>
+      <div id="editorMessage" class="message wm-message"></div>
+      <div class="wm-modal-actions">
+        <button class="secondary" type="button" onclick="hideWorkbookEditor()">취소</button>
+        <button id="saveWorkbookButton" type="button" onclick="saveWorkbook()">저장</button>
+      </div>
+    </section>
+  </div>
+
+  <?!= include_('UiLoadingModal'); ?>
+  <script>
+    var WEB_APP_URL = '<?= getWebAppUrl_() ?>';
+    var workbooks = [];
+    var editingWorkbookId = '';
+
+    document.addEventListener('DOMContentLoaded', refreshWorkbookManagement);
+
+    function getAuthToken() {
+      try { return sessionStorage.getItem('learningRpgAuthToken') || ''; } catch (error) { return ''; }
+    }
+
+    function refreshWorkbookManagement() {
+      setPageMessage('', '');
+      document.getElementById('workbookList').innerHTML = '<div class="wm-loading">문제집을 불러오는 중...</div>';
+      google.script.run
+        .withSuccessHandler(function(data) {
+          workbooks = Array.isArray(data && data.workbooks) ? data.workbooks : [];
+          renderWorkbooks();
+        })
+        .withFailureHandler(function(error) {
+          workbooks = [];
+          document.getElementById('workbookList').innerHTML = '<div class="wm-empty">' + escapeHtml(error && error.message ? error.message : '문제집을 불러오지 못했습니다.') + '</div>';
+        })
+        .getTeacherWorkbookManagementData(getAuthToken());
+    }
+
+    function renderWorkbooks() {
+      var list = document.getElementById('workbookList');
+      if (!workbooks.length) {
+        list.innerHTML = '<div class="wm-empty">아직 만든 문제집이 없습니다.<br>오른쪽 위의 <b>+ 문제집 추가</b>로 시작해 주세요.</div>';
+        return;
+      }
+      list.innerHTML = workbooks.map(function(workbook) {
+        var enabled = !!workbook.playEnabled;
+        var statusClass = enabled ? 'enabled' : 'disabled';
+        var statusText = enabled ? '플레이 활성화' : '플레이 비활성화';
+        var toggleText = enabled ? '플레이 비활성화' : '플레이 활성화';
+        return '<article class="wm-card">' +
+          '<div class="wm-card-head">' +
+            '<div>' +
+              '<h2 class="wm-name">' + escapeHtml(workbook.workbookName || workbook.workbookId) + '</h2>' +
+              '<div class="wm-meta">' + escapeHtml(workbook.subject || '과목 미지정') + ' · ID ' + escapeHtml(workbook.workbookId || '') + '</div>' +
+            '</div>' +
+            '<span class="wm-status ' + statusClass + '">' + statusText + '</span>' +
+          '</div>' +
+          '<p class="wm-description">' + escapeHtml(workbook.description || '설명 없음') + '</p>' +
+          '<div class="wm-actions">' +
+            '<button class="secondary" type="button" onclick="toggleWorkbookPlay(\'' + escapeAttr(workbook.workbookId) + '\',' + (!enabled) + ',this)">' + toggleText + '</button>' +
+            '<button class="secondary" type="button" onclick="showWorkbookEditor(\'' + escapeAttr(workbook.workbookId) + '\')">수정</button>' +
+            '<button class="secondary danger" type="button" onclick="deleteWorkbook(\'' + escapeAttr(workbook.workbookId) + '\',this)">삭제</button>' +
+          '</div>' +
+        '</article>';
+      }).join('');
+    }
+
+    function showWorkbookEditor(workbookId) {
+      editingWorkbookId = String(workbookId || '');
+      var workbook = workbooks.filter(function(item) { return String(item.workbookId) === editingWorkbookId; })[0] || null;
+      document.getElementById('workbookEditorTitle').textContent = workbook ? '문제집 수정' : '문제집 추가';
+      document.getElementById('wmName').value = workbook ? workbook.workbookName || '' : '';
+      document.getElementById('wmSubject').value = workbook ? workbook.subject || '' : '';
+      document.getElementById('wmDescription').value = workbook ? workbook.description || '' : '';
+      setEditorMessage('', '');
+      document.getElementById('workbookEditorOverlay').classList.add('open');
+      document.getElementById('workbookEditorOverlay').setAttribute('aria-hidden', 'false');
+      window.setTimeout(function(){ document.getElementById('wmName').focus(); }, 0);
+    }
+
+    function hideWorkbookEditor() {
+      var modal = document.getElementById('workbookEditorOverlay');
+      modal.classList.remove('open');
+      modal.setAttribute('aria-hidden', 'true');
+      editingWorkbookId = '';
+    }
+
+    function saveWorkbook() {
+      var payload = {
+        workbookName: document.getElementById('wmName').value,
+        subject: document.getElementById('wmSubject').value,
+        description: document.getElementById('wmDescription').value,
+      };
+      if (!String(payload.workbookName || '').trim()) {
+        setEditorMessage('문제집 이름을 입력해 주세요.', 'error');
+        return;
+      }
+      var button = document.getElementById('saveWorkbookButton');
+      button.disabled = true;
+      setEditorMessage('저장하는 중입니다.', 'ok');
+      showLoadingModal(editingWorkbookId ? '문제집 수정 중...' : '문제집 생성 중...', '문제집 정보를 저장하는 중입니다.');
+      var request = editingWorkbookId
+        ? google.script.run.withSuccessHandler(function(){ finishWorkbookSave(); }).withFailureHandler(handleWorkbookSaveFailure).updateWorkbook(getAuthToken(), editingWorkbookId, payload)
+        : google.script.run.withSuccessHandler(function(){ finishWorkbookSave(); }).withFailureHandler(handleWorkbookSaveFailure).createWorkbook(getAuthToken(), payload);
+      return request;
+    }
+
+    function finishWorkbookSave() {
+      document.getElementById('saveWorkbookButton').disabled = false;
+      hideLoadingModal();
+      hideWorkbookEditor();
+      setPageMessage('문제집을 저장했습니다.', 'ok');
+      refreshWorkbookManagement();
+    }
+
+    function handleWorkbookSaveFailure(error) {
+      document.getElementById('saveWorkbookButton').disabled = false;
+      hideLoadingModal();
+      setEditorMessage(error && error.message ? error.message : '문제집 저장에 실패했습니다.', 'error');
+    }
+
+    function toggleWorkbookPlay(workbookId, enabled, button) {
+      if (button) button.disabled = true;
+      showLoadingModal(enabled ? '플레이 활성화 중...' : '플레이 비활성화 중...', '문제집 플레이 가능 상태를 변경하는 중입니다.');
+      google.script.run
+        .withSuccessHandler(function(response) {
+          hideLoadingModal();
+          if (response && response.workbook) {
+            workbooks = workbooks.map(function(item) {
+              return String(item.workbookId) === String(workbookId) ? Object.assign({}, item, response.workbook, { playEnabled: !!response.workbook.playEnabled }) : item;
+            });
+          }
+          renderWorkbooks();
+          setPageMessage(enabled ? '플레이를 활성화했습니다.' : '플레이를 비활성화했습니다.', 'ok');
+        })
+        .withFailureHandler(function(error) {
+          hideLoadingModal();
+          if (button) button.disabled = false;
+          setPageMessage(error && error.message ? error.message : '플레이 상태 변경에 실패했습니다.', 'error');
+        })
+        .setWorkbookPlayEnabled(getAuthToken(), workbookId, enabled);
+    }
+
+    function deleteWorkbook(workbookId, button) {
+      var workbook = workbooks.filter(function(item){ return String(item.workbookId) === String(workbookId); })[0];
+      if (!workbook || !window.confirm('"' + workbook.workbookName + '" 문제집을 삭제할까요?\n문제와 진행 기록은 보존됩니다.')) return;
+      if (button) button.disabled = true;
+      showLoadingModal('문제집 삭제 중...', '문제집을 목록에서 삭제하는 중입니다.');
+      google.script.run
+        .withSuccessHandler(function() {
+          hideLoadingModal();
+          setPageMessage('문제집을 삭제했습니다.', 'ok');
+          refreshWorkbookManagement();
+        })
+        .withFailureHandler(function(error) {
+          hideLoadingModal();
+          if (button) button.disabled = false;
+          setPageMessage(error && error.message ? error.message : '문제집 삭제에 실패했습니다.', 'error');
+        })
+        .archiveWorkbook(getAuthToken(), workbookId);
+    }
+
+    function goHome() {
+      var base = String(WEB_APP_URL || '').split('#')[0].split('?')[0];
+      if (base) {
+        window.location.href = base + '?skipIntro=1';
+      } else {
+        window.location.href = '?skipIntro=1';
+      }
+    }
+
+    function setPageMessage(message, type) {
+      var element = document.getElementById('pageMessage');
+      element.textContent = message || '';
+      element.className = 'message wm-message ' + (type || '');
+    }
+
+    function setEditorMessage(message, type) {
+      var element = document.getElementById('editorMessage');
+      element.textContent = message || '';
+      element.className = 'message wm-message ' + (type || '');
+    }
+
+    function escapeHtml(value) {
+      return String(value == null ? '' : value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+    }
+    function escapeAttr(value) { return escapeHtml(value).replace(/\\/g, '\\\\'); }
+  </script>
+</body>
+</html>
