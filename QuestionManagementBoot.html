@@ -54,11 +54,29 @@
       button.setAttribute('data-main-navigation', 'true');
       button.type = 'button';
       button.textContent = '문제집 관리';
-      button.addEventListener('click', function() {
+      button.addEventListener('click', function(event) {
+        if (event) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
         var base = (typeof WEB_APP_URL !== 'undefined' && WEB_APP_URL)
           ? WEB_APP_URL
           : global.location.href.split('?')[0];
-        global.location.href = base + '?page=workbookmanagement&skipIntro=1';
+        var nextUrl = base + '?page=workbookmanagement&skipIntro=1';
+        if (typeof global.showLoadingModal === 'function') {
+          global.showLoadingModal('문제집 관리로 이동 중...', '문제집 관리 화면을 준비하는 중입니다.');
+        }
+        global.setTimeout(function() {
+          if (typeof global.navigateTop === 'function') {
+            global.navigateTop(nextUrl);
+          } else {
+            try {
+              global.top.location.assign(nextUrl);
+            } catch (error) {
+              global.location.href = nextUrl;
+            }
+          }
+        }, 60);
       });
       questionCreateButton.parentNode.insertBefore(button, questionCreateButton);
     }
@@ -127,6 +145,7 @@
     playPermissionModal.innerHTML = '<section class="panel"><h2>게임 시작 불가</h2><p>현재는 게임 시작이 불가능합니다.</p><button type="button" id="learningRpgPlayPermissionConfirm">확인</button></section>';
     document.body.appendChild(playPermissionModal);
     document.getElementById('learningRpgPlayPermissionConfirm').addEventListener('click', function() {
+      if (typeof global.resetMainNavigation === 'function') global.resetMainNavigation();
       global.location.reload();
     });
     return playPermissionModal;
@@ -142,40 +161,52 @@
       global.setTimeout(installPlayPermissionHook, 0);
       return;
     }
+
     var original = global.showGameStartMessage;
     if (original.__learningRpgPlayPermissionWrapped) {
       playPermissionHookInstalled = true;
       return;
     }
-    var wrapped = function(sourceButton) {
+
+    // Capture the click before the inline onclick handler. This prevents a race where
+    // the original game-start flow could begin before the permission check is installed.
+    document.addEventListener('click', function(event) {
+      var target = event.target;
+      if (!target || !target.closest) return;
+      var button = target.closest('button[data-main-navigation="true"]');
+      if (!button) return;
+      var text = String(button.textContent || '').replace(/\s+/g, ' ').trim();
+      if (text !== '게임 시작') return;
+
       var state = global.currentState || null;
       var player = state && state.player || null;
       var isTeacher = !!player && String(player.role || '').trim() === 'teacher';
-      if (isTeacher) {
-        return original.call(this, sourceButton);
-      }
+      if (isTeacher) return;
 
       var workbookId = '';
       try { workbookId = sessionStorage.getItem('learningRpgSelectedWorkbookId') || ''; } catch (error) {}
       workbookId = String(workbookId || '').trim();
-      if (!workbookId || typeof google === 'undefined' || !google.script || !google.script.run) {
-        return original.call(this, sourceButton);
-      }
+      if (!workbookId || typeof google === 'undefined' || !google.script || !google.script.run) return;
+
+      event.preventDefault();
+      event.stopImmediatePropagation();
+
       google.script.run
         .withSuccessHandler(function(result) {
           if (!result || result.allowed !== true) {
+            if (typeof global.resetMainNavigation === 'function') global.resetMainNavigation();
             showPlayPermissionModal();
             return;
           }
-          original.call(this, sourceButton);
+          original.call(button, button);
         })
         .withFailureHandler(function() {
+          if (typeof global.resetMainNavigation === 'function') global.resetMainNavigation();
           showPlayPermissionModal();
         })
         .canStartWorkbookPlay(getAuthTokenSafe(), workbookId);
-    };
-    wrapped.__learningRpgPlayPermissionWrapped = true;
-    global.showGameStartMessage = wrapped;
+    }, true);
+
     playPermissionHookInstalled = true;
   }
 

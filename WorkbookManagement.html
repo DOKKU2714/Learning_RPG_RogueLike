@@ -80,7 +80,10 @@
     var workbooks = [];
     var editingWorkbookId = '';
 
-    document.addEventListener('DOMContentLoaded', refreshWorkbookManagement);
+    document.addEventListener('DOMContentLoaded', function() {
+      showLoadingModal('문제집 관리 불러오는 중...', '내가 만든 문제집을 불러오는 중입니다.');
+      refreshWorkbookManagement();
+    });
 
     function getAuthToken() {
       try { return sessionStorage.getItem('learningRpgAuthToken') || ''; } catch (error) { return ''; }
@@ -98,14 +101,14 @@
       if (progressText) progressText.textContent = '처리 중';
       if (progressFill) progressFill.style.width = '100%';
       modal.setAttribute('aria-hidden', 'false');
-      modal.classList.add('open');
+      modal.classList.add('active');
     }
 
     function hideLoadingModal() {
       var modal = document.getElementById('loadingModal');
       if (!modal) return;
       modal.setAttribute('aria-hidden', 'true');
-      modal.classList.remove('open');
+      modal.classList.remove('active');
     }
 
     function refreshWorkbookManagement() {
@@ -115,10 +118,12 @@
         .withSuccessHandler(function(data) {
           workbooks = Array.isArray(data && data.workbooks) ? data.workbooks : [];
           renderWorkbooks();
+          hideLoadingModal();
         })
         .withFailureHandler(function(error) {
           workbooks = [];
           document.getElementById('workbookList').innerHTML = '<div class="wm-empty">' + escapeHtml(error && error.message ? error.message : '문제집을 불러오지 못했습니다.') + '</div>';
+          hideLoadingModal();
         })
         .getTeacherWorkbookManagementData(getAuthToken());
     }
