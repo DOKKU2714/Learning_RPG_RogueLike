@@ -21,6 +21,7 @@ function getRoute_(page) {
     index: { file: 'Index', title: 'Learning Roguelike' },
     question: { file: 'QuestionForm', title: 'Question Form' },
     questionmanagement: { file: 'QuestionManagement', title: 'Question Management' },
+    workbookmanagement: { file: 'WorkbookManagement', title: 'Workbook Management' },
     mypage: { file: 'MyPage', title: 'My Page' },
     admin: { file: 'Admin', title: 'Admin' },
     battle: { file: 'Battle', title: 'Battle' },
