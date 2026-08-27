@@ -1,0 +1,59 @@
+name: Fix play permission modal
+
+on:
+  push:
+    branches: ["fix/game-start-permission-modal-final"]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply targeted fixes
+        shell: python
+        run: |
+          from pathlib import Path
+          path = Path('QuestionManagementBoot.html')
+          text = path.read_text(encoding='utf-8')
+
+          old_modal = '''    document.getElementById('learningRpgPlayPermissionConfirm').addEventListener('click', function() {\n      playPermissionModal.classList.remove('open');\n      playPermissionModal.setAttribute('aria-hidden', 'true');\n      if (typeof global.resetMainNavigation === 'function') global.resetMainNavigation();\n      var base = (typeof WEB_APP_URL !== 'undefined' && WEB_APP_URL) ? WEB_APP_URL : global.location.href.split('?')[0];\n      var nextUrl = base + '?skipIntro=1';\n      if (typeof global.showLoadingModal === 'function') global.showLoadingModal('메인 화면으로 이동 중...', '잠시만 기다려 주세요.');\n      global.setTimeout(function() {\n        if (typeof global.navigateTop === 'function') global.navigateTop(nextUrl);\n        else { try { global.top.location.assign(nextUrl); } catch (error) { global.location.href = nextUrl; } }\n      }, 60);\n    });'''
+          new_modal = '''    document.getElementById('learningRpgPlayPermissionConfirm').addEventListener('click', function() {\n      playPermissionModal.classList.remove('open');\n      playPermissionModal.setAttribute('aria-hidden', 'true');\n      if (typeof global.resetMainNavigation === 'function') global.resetMainNavigation();\n    });'''
+
+          if old_modal not in text:
+              raise SystemExit('expected modal handler was not found')
+          text = text.replace(old_modal, new_modal, 1)
+
+          old_request = '''      event.preventDefault();\n      event.stopImmediatePropagation();\n      google.script.run\n        .withSuccessHandler(function(result) {\n          if (!result || result.allowed !== true) {\n            if (typeof global.resetMainNavigation === 'function') global.resetMainNavigation();\n            showPlayPermissionModal();\n            return;\n          }\n          original.call(button, button);\n        })\n        .withFailureHandler(function() {\n          if (typeof global.resetMainNavigation === 'function') global.resetMainNavigation();\n          showPlayPermissionModal();\n        })\n        .canStartWorkbookPlay(getAuthTokenSafe(), workbookId);'''
+          new_request = '''      event.preventDefault();\n      event.stopImmediatePropagation();\n      if (typeof global.showLoadingModal === 'function') {\n        global.showLoadingModal('게임 시작 확인 중...', '문제집의 플레이 가능 여부를 확인하는 중입니다.');\n      }\n      google.script.run\n        .withSuccessHandler(function(result) {\n          if (typeof global.hideLoadingModal === 'function') global.hideLoadingModal();\n          if (!result || result.allowed !== true) {\n            if (typeof global.resetMainNavigation === 'function') global.resetMainNavigation();\n            showPlayPermissionModal();\n            return;\n          }\n          original.call(button, button);\n        })\n        .withFailureHandler(function() {\n          if (typeof global.hideLoadingModal === 'function') global.hideLoadingModal();\n          if (typeof global.resetMainNavigation === 'function') global.resetMainNavigation();\n          showPlayPermissionModal();\n        })\n        .canStartWorkbookPlay(getAuthTokenSafe(), workbookId);'''
+
+          if old_request not in text:
+              raise SystemExit('expected permission request block was not found')
+          text = text.replace(old_request, new_request, 1)
+
+          old_message = 'playPermissionModal.innerHTML = \'<section class="panel"><h2>게임 시작 불가</h2><p>현재는 게임 시작이 불가능합니다.</p><button type="button" id="learningRpgPlayPermissionConfirm">확인</button></section>\';'
+          new_message = 'playPermissionModal.innerHTML = \'<section class="panel"><h2>게임 시작 불가</h2><p>현재 문제집이 비활성화되어 있습니다.</p><button type="button" id="learningRpgPlayPermissionConfirm">확인</button></section>\';'
+          if old_message not in text:
+              raise SystemExit('expected modal message was not found')
+          text = text.replace(old_message, new_message, 1)
+
+          path.write_text(text, encoding='utf-8')
+      - name: Validate targeted changes
+        shell: bash
+        run: |
+          grep -F "현재 문제집이 비활성화되어 있습니다." QuestionManagementBoot.html
+          grep -F "게임 시작 확인 중..." QuestionManagementBoot.html
+          grep -F "playPermissionModal.classList.remove('open');" QuestionManagementBoot.html
+      - name: Commit changes and remove workflow
+        shell: bash
+        run: |
+          rm -f .github/workflows/fix-play-modal.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add QuestionManagementBoot.html .github/workflows/fix-play-modal.yml
+          git commit -m "fix: simplify play permission modal flow"
+          git push origin HEAD
