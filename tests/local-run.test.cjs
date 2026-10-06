@@ -1,0 +1,259 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const vm = require('node:vm');
+const fs = require('node:fs');
+const path = require('node:path');
+const {context,start,copy} = require('./run-session.test.cjs');
+const progressSheets = ['Runs','PlayerData','WorkbookPlayerData','AnswerLogs','BattleLogs','RunSettlements'];
+
+function localGame() {
+  const x=context(), initial=start(x);
+  const source=x.c.getLocalRunEngineSource_();
+  const engine=vm.runInNewContext(source,{Date:x.c.Date});
+  let view=initial, run=initial.localRunState, token=initial.runSessionToken, journal=[], prepared=null;
+  const game={x,engine,initial,source,get view(){return view;},get run(){return run;},get token(){return token;},get journal(){return journal;}};
+  game.prepare=()=>{
+    x.tick(5000);
+    const payload={runId:view.runId,runSessionToken:token,localAdvanceEnabled:true,localTransitions:copy(journal),
+      battle:copy(view.battle),stageState:copy(view.stageState),answerLogs:[]};
+    payload.battle.status='victory';
+    payload.battle.monsters.forEach(m=>{m.currentHp=0;});
+    payload.battle.monsterScoreState={battleId:payload.battle.battleId,monsterScore:payload.battle.monsters.length?100:0,byMonsterId:{},scoreAwardedToRun:0};
+    let reward=view.rewardView;
+    if(!reward){
+      const prior=run;
+      reward=x.c.previewRewardChoicesForStageResult(payload,'auth');
+      assert.ok(reward.localTransitionToken);
+      token=reward.runSessionToken;
+      journal=journal.filter(event=>!reward.acknowledgedLocalTransitions.includes(event.rewardToken.split('.')[1]));
+      run=reward.localRunState;
+      for(const key of ['statsJson','skillsJson','itemsJson','currentFloor','currentStage','currentHp','currency','score']) assert.deepEqual(run[key],prior[key],key);
+    }
+    payload.stageState.reward=copy(reward);
+    delete payload.runSessionToken;delete payload.localAdvanceEnabled;delete payload.localTransitions;
+    prepared={payload,reward};return prepared;
+  };
+  game.choose=(type)=>{
+    if(!prepared)game.prepare();
+    const {payload,reward}=prepared;
+    const choice=reward.choices.find(c=>c.type===type)||reward.choices.find(c=>c.type!=='rest')||reward.choices[0];
+    const selectedAtMs=x.c.Date.now();
+    view=engine.advance(run,initial.gameDataSnapshot,payload,choice.rewardId,reward,{selectedAtMs});
+    run=view.localRunState;
+    journal.push({payload,rewardId:choice.rewardId,rewardToken:reward.localTransitionToken,selectedAtMs});
+    prepared=null;return view;
+  };
+  return game;
+}
+
+test('the browser bundle contains the server rules and has no external service dependency',()=>{
+  const g=localGame();
+  assert.doesNotMatch(g.source,/\b(?:SpreadsheetApp|CacheService|PropertiesService|LockService|UrlFetchApp|google\.script)\b/);
+  assert.ok(g.source.includes(String(g.x.c.applyStatReward)));
+  assert.ok(g.source.includes(String(g.x.c.calculateStageClearScoreForReward_)));
+  assert.ok(g.source.includes(String(g.x.c.createMonstersForStage_)));
+});
+
+test('reward selection and next battle creation complete without any server operation',()=>{
+  const g=localGame();g.prepare();g.x.reads.length=0;g.x.writes.length=0;
+  const response=g.choose();
+  assert.equal(response.battle.stage.stage,2);assert.equal(response.battle.status,'active');
+  assert.equal(g.x.reads.length,0);assert.equal(g.x.writes.length,0);
+  assert.equal(g.journal.length,1);assert.ok(response.availableSkills.length);
+});
+
+test('local selection matches the previous server flow for stats, currency and score',()=>{
+  const g=localGame(),{payload,reward}=g.prepare(),choice=reward.choices[0];
+  const result=g.choose();
+  const server=g.x.c.advanceRunStage({...copy(payload),runSessionToken:g.token},choice.rewardId,'auth',reward);
+  const authoritative=g.x.c.decodeRunSession_(server.runSessionToken).run;
+  for(const key of ['statsJson','skillsJson','itemsJson','currentHp','currentFloor','currentStage','currency','score']) assert.deepEqual(result.localRunState[key],authoritative[key],key);
+});
+
+test('HP, new skills, skill upgrades and item effects use exactly the previous reward rules',()=>{
+  for(const type of ['stat','skill','skillUpgrade','item']){
+    const g=localGame(),c=g.x.c;
+    if(type==='skillUpgrade'){
+      const first=g.prepare();
+      first.reward.choices=[{rewardId:'learn-before-upgrade',type:'skill',targetId:c.MASTER_SKILLS[0].skillId,value:1,rarity:'common'}];
+      c.signLocalRewardView_(first.reward);first.payload.stageState.reward=copy(first.reward);g.choose('skill');
+    }
+    const {payload,reward}=g.prepare();
+    const owned=JSON.parse(g.run.skillsJson);
+    const targetId=type==='stat'?'hp':type==='item'?c.MASTER_ITEMS[0].itemId:
+      type==='skillUpgrade'?owned[0].skillId:c.MASTER_SKILLS.find(s=>!owned.some(o=>o.skillId===s.skillId)).skillId;
+    reward.choices=[{rewardId:'parity-'+type,type,targetId,value:type==='stat'?10:1,rarity:'common'}];
+    c.signLocalRewardView_(reward);payload.stageState.reward=copy(reward);
+    const result=g.choose(type);
+    const server=c.advanceRunStage({...copy(payload),runSessionToken:g.token},reward.choices[0].rewardId,'auth',reward);
+    const authoritative=c.decodeRunSession_(server.runSessionToken).run;
+    for(const key of ['statsJson','skillsJson','itemsJson','currentHp','currentFloor','currentStage','currency','score']) assert.deepEqual(result.localRunState[key],authoritative[key],type+':'+key);
+    assert.deepEqual(copy(result.battle.player.stats),copy(server.battle.player.stats));
+    assert.deepEqual(copy(result.availableSkills),copy(server.availableSkills));
+  }
+});
+
+test('all 29 selections, rest healing, floor changes and victory settle only at the end',()=>{
+  const g=localGame();let count=0,rests=0;
+  while(!g.view.cleared){
+    g.x.writes.length=0;
+    if(g.view.rewardView){rests++;g.view.battle.player.hp=Math.max(1,g.run.currentHp-10);}
+    g.prepare();
+    assert.equal(g.x.writes.filter(s=>progressSheets.includes(s)).length,0);
+    g.choose(g.view.rewardView?'rest':['stat','skill','item','skillUpgrade'][count%4]);
+    count++;assert.ok(count<=29);
+  }
+  assert.equal(count,29);assert.equal(rests,4);
+  assert.equal(g.x.c.findRowByKeyUncached_('Runs','runId',g.run.runId).status,'active');
+  const saved=g.x.c.finishLocalRun(g.run.runId,g.token,copy(g.journal),'auth');
+  assert.equal(saved.cleared,true);
+  const row=g.x.c.findRowByKeyUncached_('Runs','runId',g.run.runId);
+  assert.equal(row.status,'cleared');assert.equal(row.sessionSettled,true);
+  assert.equal(row.score,g.run.score);assert.equal(row.currency,g.run.currency);
+  assert.equal(g.x.c.getWorkbookPlayerData_('w','p').bestScore,row.score);
+  const writes=g.x.writes.length;
+  const retry=g.x.c.finishLocalRun(g.run.runId,g.token,copy(g.journal),'auth');
+  assert.equal(retry.score,row.score);assert.equal(g.x.writes.length,writes);
+  g.x.cache.clear();
+  const coldRetry=g.x.c.finishLocalRun(g.run.runId,g.token,copy(g.journal),'auth');
+  assert.equal(coldRetry.score,row.score);assert.equal(g.x.writes.length,writes);
+});
+
+test('defeat replays unacknowledged transitions and saves accumulated rewards once',()=>{
+  const g=localGame();g.prepare();g.choose();
+  const battle=copy(g.view.battle);battle.player.hp=0;battle.status='defeat';
+  const payload={runId:g.run.runId,runSessionToken:g.token,localTransitions:copy(g.journal),battle,stageState:copy(g.view.stageState),answerLogs:[]};
+  const saved=g.x.c.commitStageResult(payload,'auth');
+  assert.equal(saved.battle.status,'defeat');assert.equal(saved.score,g.run.score);
+  const row=g.x.c.findRowByKeyUncached_('Runs','runId',g.run.runId);
+  assert.equal(row.currentStage,2);assert.equal(row.sessionSettled,true);
+  assert.equal(g.x.c.getWorkbookPlayerData_('w','p').currency,g.run.currency);
+  const writes=g.x.writes.length;g.x.c.commitStageResult(payload,'auth');assert.equal(g.x.writes.length,writes);
+});
+
+test('cache eviction replays the journal using the original signed reward options and snapshot',()=>{
+  const g=localGame();g.prepare();g.choose();g.x.cache.clear();g.x.reads.length=0;g.x.writes.length=0;
+  g.prepare();
+  assert.equal(g.journal.length,0);assert.equal(g.run.currentStage,2);
+  assert.equal(g.x.reads.filter(s=>['Monsters','Skills','Stages','Items','Rewards'].includes(s)).length,0);
+  assert.equal(g.x.writes.filter(s=>progressSheets.includes(s)).length,0);
+});
+
+test('signed reward tampering, invalid selection and altered base stats are rejected',()=>{
+  for(const kind of ['token','choice','stats']){
+    const g=localGame();g.prepare();g.choose();const events=copy(g.journal);
+    if(kind==='token')events[0].rewardToken+='x';
+    if(kind==='choice')events[0].rewardId='unissued-reward';
+    if(kind==='stats')events[0].payload.battle.player.baseStats.attack+=10000;
+    assert.throws(()=>g.x.c.withRunSession_(g.run.runId,g.token,'auth',()=>g.x.c.replayLocalRunTransitions_(events,'auth')),/검증|후보|능력치/);
+    assert.equal(g.x.c.findRowByKeyUncached_('Runs','runId',g.run.runId).status,'active');
+  }
+});
+
+test('an acknowledged journal can be retried without granting rewards or moving twice',()=>{
+  const g=localGame();g.prepare();g.choose();const events=copy(g.journal);
+  const synced=g.x.c.withRunSession_(g.run.runId,g.token,'auth',()=>{g.x.c.replayLocalRunTransitions_(events,'auth');return {score:g.x.c.requireRun_(g.run.runId).score};});
+  const retried=g.x.c.withRunSession_(g.run.runId,g.token,'auth',()=>{g.x.c.replayLocalRunTransitions_(events,'auth');return {score:g.x.c.requireRun_(g.run.runId).score};});
+  assert.equal(retried.score,synced.score);
+  assert.equal(g.x.c.decodeRunSession_(retried.runSessionToken).run.currentStage,2);
+});
+
+test('deadline defeat retains transitions selected before expiry and ends the current battle',()=>{
+  const g=localGame();g.prepare();g.choose();const deadline=g.x.c.Date.now()+1000;
+  g.x.c.updateRowByKey_('Workbooks','workbookId','w',{playTimeLimitEnabled:true,playEndsAt:new Date(deadline)});g.x.tick(2000);
+  const payload={runId:g.run.runId,runSessionToken:g.token,localTransitions:copy(g.journal),battle:copy(g.view.battle),stageState:copy(g.view.stageState),answerLogs:[]};
+  const saved=g.x.c.commitStageResult(payload,'auth');
+  assert.equal(saved.battle.status,'defeat');assert.equal(saved.score,g.run.score);
+  assert.equal(saved.localRunState.currentStage,2);
+});
+
+test('a deadline shortened before a local selection causes a saved defeat without applying that reward',()=>{
+  const g=localGame();g.prepare();g.x.tick(1000);g.choose();
+  g.x.c.updateRowByKey_('Workbooks','workbookId','w',{playTimeLimitEnabled:true,playEndsAt:new Date(g.journal[0].selectedAtMs-500)});
+  const payload={runId:g.run.runId,runSessionToken:g.token,localTransitions:copy(g.journal),battle:copy(g.view.battle),stageState:copy(g.view.stageState),answerLogs:[]};
+  const saved=g.x.c.commitStageResult(payload,'auth');
+  assert.equal(saved.battle.status,'defeat');assert.equal(saved.localRunState.currentStage,1);
+  assert.equal(saved.localRunState.currency,0);assert.equal(saved.localRunState.sessionSettled,true);
+});
+
+test('reaction requests acknowledge local progress and attach the reaction score to the new battle',()=>{
+  const g=localGame();g.prepare();g.choose();
+  let question={questionId:'q',workbookId:'w',creatorId:'other',likeCount:0,dislikeCount:0,reactionJson:'{}'};
+  g.x.c.findRunQuestionById_=()=>question;
+  g.x.c.updateWorkbookQuestionById_=(w,id,patch)=>(question={...question,...patch});
+  g.x.c.clearWorkbookQuestionCache_=()=>{};
+  const result=g.x.c.setQuestionReaction('q','like','auth',g.run.runId,g.token,copy(g.journal));
+  assert.equal(result.acknowledgedLocalTransitions.length,1);assert.equal(result.localRunState.currentStage,2);
+  assert.equal(result.localRunState.score,g.run.score+10);
+});
+
+test('player ghost selection preserves the encounter and does not take a nested lock or consume twice',()=>{
+  const g=localGame();
+  let locked=false;
+  g.x.c.LockService={getScriptLock:()=>({waitLock(){if(locked)throw Error('nested lock');locked=true;},releaseLock(){locked=false;}})};
+  g.x.seed('PlayerGhosts',[{ghostId:'eligible-ghost',sourceRunId:'fallen',sourcePlayerId:'other',sourceDisplayName:'Other',
+    floor:1,stage:1,status:'active',workbookId:'w'}]);
+  const {payload,reward}=g.prepare();
+  assert.equal(reward.localTransition.ghostSelection.context.ghostId,'eligible-ghost');
+  const response=g.choose();
+  assert.equal(response.battle.playerGhost.ghostId,'eligible-ghost');
+  assert.equal(response.battle.forcedQuestionCreatorId,'other');
+  assert.equal(response.battle.monsters[0].type,'playerGhost');
+  assert.equal(response.battle.monsters[0].currentHp,g.x.c.PLAYER_GHOST_FLOOR_CONFIGS[1].hp);
+  const before=g.x.writes.filter(s=>s==='PlayerGhosts').length;
+  g.x.c.previewRewardChoicesForStageResult({...copy(payload),runSessionToken:g.token,localAdvanceEnabled:true},'auth');
+  assert.equal(g.x.writes.filter(s=>s==='PlayerGhosts').length,before);
+});
+
+test('answer and battle logs from locally finished stages stay deferred until defeat',()=>{
+  const g=localGame(),{payload}=g.prepare();
+  const question={questionId:'q',workbookId:'w',creatorId:'other',type:'shortAnswer',prompt:'One?',answer:'1',difficulty:1,answerAliases:'[]'};
+  payload.answerLogs=[{questionId:'q',questionSnapshot:question,questionSignature:g.x.c.signLocalQuestionSnapshot_(question),
+    selectedAnswer:'1',elapsedMs:1000,maxTimeMs:10000,actionType:'attack',finalDifficulty:1}];
+  g.choose();g.x.cache.clear();g.prepare();
+  assert.equal(g.x.c.readTableUncached_('BattleAnswerLogQueue').length,0);
+  assert.equal(g.x.c.readTableUncached_('BattleLogs').length,0);
+  const battle=copy(g.view.battle);battle.status='defeat';battle.player.hp=0;
+  g.x.c.commitStageResult({runId:g.run.runId,runSessionToken:g.token,localTransitions:copy(g.journal),battle,stageState:copy(g.view.stageState),answerLogs:[]},'auth');
+  assert.equal(g.x.c.readTableUncached_('BattleAnswerLogQueue').length,1);
+  assert.equal(g.x.c.readTableUncached_('BattleLogs').filter(log=>log.result==='victory').length,1);
+});
+
+test('normal selection runs through the browser handler without a server call',()=>{
+  const g=localGame(),{payload,reward}=g.prepare();let handled;
+  const nodes=new Map();
+  const document={getElementById:id=>{if(!nodes.has(id))nodes.set(id,{disabled:false,classList:{remove(){}},textContent:''});return nodes.get(id);}};
+  const c=vm.createContext({localRunState:g.run,localRunTransitions:[],localVictoryPendingResponse:null,
+    localGameDataSnapshot:g.initial.gameDataSnapshot,currentRewardView:reward,pendingStageAnswerLogs:[{questionId:'q'}],
+    workbookDeadlineExpired:false,workbookDeadlineMs:0,rewardSelectionApplying:false,
+    workbookClockServerMs:g.x.c.Date.now(),workbookClockPerformanceMs:0,performance:{now:()=>0},
+    window:{LearningRpgLocalRunEngine:g.engine},document,buildStageResultPayload:()=>copy(payload),
+    shouldShowScoreModal:()=>false,handleRewardSelectionResponse:r=>{handled=r;},
+    google:{get script(){throw Error('unexpected server request');}},updateWorkbookCountdown(){}});
+  const html=fs.readFileSync(path.join(__dirname,'..','Battle.html'),'utf8');
+  for(const name of ['selectRewardChoice','selectRewardChoiceLocally'])vm.runInContext(html.match(new RegExp('    function '+name+'\\([^]*?\\n    \\}'))[0],c);
+  c.selectRewardChoice(reward.choices[0].rewardId);
+  assert.equal(handled.battle.stage.stage,2);assert.equal(c.localRunTransitions.length,1);
+  assert.equal(c.pendingStageAnswerLogs.length,0);assert.equal(c.rewardSelectionApplying,false);
+});
+
+test('late server acknowledgements cannot overwrite a more recent local selection',()=>{
+  const html=fs.readFileSync(path.join(__dirname,'..','Battle.html'),'utf8');
+  const original={currentStage:3};
+  const c=vm.createContext({runSessionRevision:1,runSessionToken:'old',localRunState:original,
+    localRunTransitions:[{rewardToken:'payload.first'},{rewardToken:'payload.second'}]});
+  vm.runInContext(html.match(/    function rememberRunSession\([^]*?\n    \}/)[0],c);
+  c.rememberRunSession({runSessionToken:'new',runSessionRevision:2,acknowledgedLocalTransitions:['first'],localRunState:{currentStage:2}});
+  assert.equal(c.localRunTransitions.length,1);assert.equal(c.localRunState,original);
+  c.rememberRunSession({runSessionToken:'newer',runSessionRevision:3,acknowledgedLocalTransitions:['first','second'],localRunState:{currentStage:3}});
+  assert.equal(c.localRunTransitions.length,0);assert.equal(c.localRunState.currentStage,3);
+});
+
+test('the browser chooses locally, keeps terminal saves and sends its journal on existing requests',()=>{
+  const html=fs.readFileSync(path.join(__dirname,'..','Battle.html'),'utf8');
+  const extract=n=>html.match(new RegExp('    function '+n+'\\([^]*?\\n    \\}'))[0];
+  assert.match(extract('selectRewardChoice'),/selectRewardChoiceLocally\(rewardId\)/);
+  assert.doesNotMatch(extract('selectRewardChoiceLocally'),/google\.script|advanceRunStage/);
+  assert.match(extract('saveLocalRunVictory'),/\.finishLocalRun\(/);
+  assert.match(extract('buildStageResultPayload'),/localTransitions: localRunTransitions\.slice/);
+});

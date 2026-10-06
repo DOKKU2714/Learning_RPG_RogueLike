@@ -5,8 +5,15 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <?!= include_('UiStyles'); ?>
+  <style>
+    .workbook-countdown { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 85; padding: 6px 16px; border: 1px solid #c6b77f; background: rgba(8,11,7,.9); color: #fff3c9; text-align: center; pointer-events: none; }
+    .workbook-countdown span { display: block; font-size: 10px; }
+    .workbook-countdown strong { font-size: 22px; font-variant-numeric: tabular-nums; }
+    .workbook-countdown.urgent { color: #ff8f83; border-color: #ff8f83; }
+  </style>
 </head>
 <body class="battle-page-body">
+  <div id="workbookCountdown" class="workbook-countdown hidden" role="timer" aria-label="플레이 남은 시간"><span>플레이 남은 시간</span><strong id="workbookCountdownValue">00:00</strong></div>
   <main id="battleShell" class="battle-shell battle-video-shell fade-in">
     <section class="battle-scene" aria-label="전투 화면">
       <video id="battleBackgroundVideo" class="battle-background-video" muted loop playsinline></video>
@@ -56,8 +63,8 @@
       <div id="actionPanel" class="action-panel compact-actions">
         <div id="actionPanelApGauge" class="action-point-gauge action-panel-ap-gauge"></div>
         <div id="questionCacheStatus" class="question-cache-status hidden" role="status">브라우저에 저장된 로컬 문제집을 불러오는 중...</div>
-        <button id="attackActionButton" class="action-detail-button action-detail-attack" onclick="chooseAction('attack')">
-          <span class="action-button-label">공격</span>
+        <button id="attackActionButton" class="combat-icon-button action-detail-button action-detail-attack" data-ap-cost="1" aria-label="공격" onclick="chooseAction('attack')">
+          <svg class="combat-action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m14 3 7 0 0 7-12 12-7-7Z M3 14l7 7 M3 21l4-4 M14 3l7 7"/></svg><span class="action-button-label">공격</span>
           <span class="skill-detail-card action-detail-card" aria-hidden="true">
             <span class="skill-detail-header">
               <strong class="skill-detail-name">기본 공격</strong>
@@ -68,8 +75,8 @@
             <span class="skill-detail-line">문제 풀이 효율에 따라 피해량이 변합니다.</span>
           </span>
         </button>
-        <button id="guardActionButton" class="action-detail-button action-detail-guard" onclick="chooseAction('guard')">
-          <span class="action-button-label">수비</span>
+        <button id="guardActionButton" class="combat-icon-button action-detail-button action-detail-guard" data-ap-cost="1" aria-label="수비" onclick="chooseAction('guard')">
+          <svg class="combat-action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 21 6v6c0 5-9 10-9 10S3 17 3 12V6Z M12 6v11 M7 11h10"/></svg><span class="action-button-label">수비</span>
           <span class="skill-detail-card action-detail-card" aria-hidden="true">
             <span class="skill-detail-header">
               <strong class="skill-detail-name">기본 수비</strong>
@@ -80,8 +87,8 @@
             <span class="skill-detail-line">문제 풀이 효율에 따라 방어막 수치가 변합니다.</span>
           </span>
         </button>
-        <button id="skillToggleButton" type="button" onclick="toggleSkillPanel()">스킬</button>
-        <button id="passTurnButton" type="button" onclick="passTurn()">턴 종료</button>
+        <button id="skillToggleButton" class="combat-icon-button" aria-label="스킬" type="button" onclick="toggleSkillPanel()"><svg class="combat-action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m14 2-9 12h7l-2 8 9-12h-7Z"/></svg><span class="action-button-label">스킬</span></button>
+        <button id="passTurnButton" class="combat-icon-button" aria-label="턴 종료" type="button" onclick="passTurn()"><svg class="combat-action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5a9 9 0 1 1-2 10 M5 2v6H1 M12 6v6l4 2"/></svg><span class="action-button-label">턴 종료</span></button>
         <div id="skillPanel" class="skill-panel hidden"></div>
       </div>
 
@@ -223,6 +230,7 @@
   <?!= include_('QuestionSnapshotStore'); ?>
   <?!= include_('GameDataSnapshotStore'); ?>
   <?!= getSharedRuleEngineScript_(); ?>
+  <?!= getLocalRunEngineScript_(); ?>
 
   <script>
     var WEB_APP_URL = '<?= getWebAppUrl_() ?>';
@@ -250,6 +258,11 @@
     var activeBattleSounds = [];
     var pendingBattleSoundKeys = [];
     var currentView = null;
+    var runSessionToken = '';
+    var runSessionRevision = -1;
+    var localRunState = null;
+    var localRunTransitions = [];
+    var localVictoryPendingResponse = null;
     var currentQuestionView = null;
     var questionStartedAt = 0;
     var questionTimerId = null;
@@ -288,6 +301,16 @@
     var MIN_ANSWER_EFFICIENCY = 0.5;
     var MAX_ANSWER_EFFICIENCY = 1.25;
     var EXTRA_WRONG_EFFICIENCY_PENALTY = 0.1;
+    var workbookDeadlineMs = 0;
+    var workbookClockServerMs = 0;
+    var workbookClockPerformanceMs = 0;
+    var workbookClockRevision = 0;
+    var workbookDeadlineExpired = false;
+    var workbookDeadlineSaved = false;
+    var workbookDeadlineTicker = null;
+    var workbookDeadlinePoll = null;
+    var workbookDeadlinePollInFlight = false;
+    var workbookDeadlineSaveScheduled = false;
     var defeatSequenceStarted = false;
     var stageIntroPlaying = false;
     var battleLogTypingTimer = null;
@@ -467,7 +490,113 @@
       },
     };
 
+
+    function applyWorkbookPlayWindow(windowInfo) {
+      if (!windowInfo || Number(windowInfo.serverNowMs || 0) <= workbookClockRevision) return;
+      workbookClockRevision = Number(windowInfo.serverNowMs || 0);
+      workbookClockServerMs = workbookClockRevision;
+      workbookClockPerformanceMs = performance.now();
+      workbookDeadlineMs = Number(windowInfo.endsAtMs || 0);
+      updateWorkbookCountdown();
+    }
+
+    function startWorkbookDeadlineMonitor() {
+      if (isDummyMode || !currentView || currentView.runId === 'dummy-run') return;
+      if (currentView.playWindow) applyWorkbookPlayWindow(currentView.playWindow);
+      if (!workbookDeadlineTicker) workbookDeadlineTicker = window.setInterval(updateWorkbookCountdown, 200);
+      if (!workbookDeadlinePoll) workbookDeadlinePoll = window.setInterval(refreshWorkbookPlayWindow, 10000);
+      refreshWorkbookPlayWindow();
+      document.addEventListener('visibilitychange', function() {
+        updateWorkbookCountdown();
+        if (!document.hidden) refreshWorkbookPlayWindow();
+      });
+      window.addEventListener('focus', updateWorkbookCountdown);
+    }
+
+    function refreshWorkbookPlayWindow() {
+      if (workbookDeadlineExpired || workbookDeadlinePollInFlight || !currentView) return;
+      workbookDeadlinePollInFlight = true;
+      google.script.run.withSuccessHandler(function(info) {
+        workbookDeadlinePollInFlight = false;
+        applyWorkbookPlayWindow(info);
+      }).withFailureHandler(function() {
+        workbookDeadlinePollInFlight = false;
+        // Continue enforcing the last known deadline when the network is unavailable.
+      }).getRunPlayWindow(getAuthToken(), currentView.runId);
+    }
+
+    function formatWorkbookCountdown(remainingMs) {
+      var seconds = Math.max(0, Math.ceil(remainingMs / 1000));
+      return String(Math.floor(seconds / 60)).padStart(2, '0') + ':' + String(seconds % 60).padStart(2, '0');
+    }
+
+    function updateWorkbookCountdown() {
+      var timer = document.getElementById('workbookCountdown');
+      if (!timer) return;
+      timer.classList.toggle('hidden', !workbookDeadlineMs);
+      if (!workbookDeadlineMs) return;
+      var now = workbookClockServerMs + (performance.now() - workbookClockPerformanceMs);
+      var remaining = Math.max(0, workbookDeadlineMs - now);
+      document.getElementById('workbookCountdownValue').textContent = formatWorkbookCountdown(remaining);
+      timer.classList.toggle('urgent', remaining <= 60000);
+      if (!remaining && !defeatSequenceStarted && !localVictoryPendingResponse) expireWorkbookPlay();
+    }
+
+    function forceWorkbookDeadlineDefeat(view) {
+      if (!view || !view.battle) return;
+      view.battle.player = view.battle.player || {};
+      view.battle.player.hp = 0;
+      view.battle.player.shield = 0;
+      view.battle.status = 'defeat';
+      view.battle.pendingAction = null;
+      view.battle.lastMessage = '문제집 플레이 종료 시간이 되어 패배했습니다.';
+      view.showReward = false;
+      view.rewardView = null;
+    }
+
+    function expireWorkbookPlay() {
+      if (workbookDeadlineExpired || !currentView || !currentView.battle) return;
+      workbookDeadlineExpired = true;
+      window.clearInterval(workbookDeadlinePoll);
+      forceWorkbookDeadlineDefeat(currentView);
+      setBattleInputLocked(true);
+      setPlayerTurn(false);
+      finishBattleStartFade();
+      hideLoadingModal(true);
+      ['rewardModal', 'scoreModal'].forEach(function(id) {
+        var modal = document.getElementById(id);
+        if (modal) modal.classList.remove('active');
+      });
+      showDefeatSequence({ skipCommit: true });
+      saveWorkbookDeadlineResult();
+    }
+
+    function saveWorkbookDeadlineResult() {
+      if (workbookDeadlineSaved || workbookDeadlineSaveScheduled) return;
+      if (stageResultCommitInFlight) {
+        workbookDeadlineSaveScheduled = true;
+        window.setTimeout(function() { workbookDeadlineSaveScheduled = false; saveWorkbookDeadlineResult(); }, 200);
+        return;
+      }
+      forceWorkbookDeadlineDefeat(currentView);
+      commitStageResultIfNeeded(function() {
+        workbookDeadlineSaved = true;
+        currentOutcomeContext = buildOutcomeContext('defeat', null);
+        refreshOutcomeResult();
+      }, function(error) {
+        pushLog(error && error.message || '종료 점수 저장을 다시 시도합니다.');
+        workbookDeadlineSaveScheduled = true;
+        window.setTimeout(function() { workbookDeadlineSaveScheduled = false; saveWorkbookDeadlineResult(); }, 3000);
+      }, { silent: true });
+    }
+
     function init() {
+      try { initializeBattlePage(); }
+      catch (error) { showBattleEntryFailure(error && error.message || '전투 화면 초기화에 실패했습니다.'); }
+    }
+
+    function initializeBattlePage() {
+      if (window.installBattleFullscreenGuardHook) window.installBattleFullscreenGuardHook();
       setupBattleUi();
       var initialView = consumeInitialBattleView();
       if (initialView) {
@@ -494,7 +623,14 @@
     }
 
     function showBattleEntryFailure(message) {
+      if (window.dismissBattleFullscreenGuard) window.dismissBattleFullscreenGuard();
+      var fade = document.getElementById('battleStartFade');
+      if (fade) fade.classList.remove('active');
+      var intro = document.getElementById('stageIntroOverlay');
+      if (intro) intro.classList.remove('active', 'instant-black');
       showLoadingModal('전투 진입 실패', '', { progress: 100 });
+      var failureModal = document.getElementById('loadingModal');
+      if (failureModal) failureModal.style.zIndex = '100001';
       var box = document.querySelector('#loadingModal .loading-box');
       if (!box) return;
       var oldButton = document.getElementById('battleEntryHomeButton');
@@ -533,21 +669,64 @@
     }
 
     function loadInitialBattleView(view) {
-      ensureGameDataSnapshot(true).then(function() {
-        applyInitialBattleView(view);
-      }).catch(function() {
-        applyInitialBattleView(view);
+      try {
+        validateInitialBattleView(view);
+        rememberRunSession(view);
+        if (isUsableGameDataSnapshot(view.gameDataSnapshot)) {
+          setLocalGameDataSnapshot(view.gameDataSnapshot);
+          // Persistence is optional here; the received definitions are already in memory.
+          try {
+            if (window.LearningRpgGameDataStore) Promise.resolve(window.LearningRpgGameDataStore.replace(view.gameDataSnapshot)).catch(function() {});
+          } catch (storageError) {}
+          delete view.gameDataSnapshot;
+          applyInitialBattleView(view);
+          return;
+        }
+        ensureGameDataSnapshot(false).then(function() { applyInitialBattleView(view); })
+          .catch(function(error) { showBattleEntryFailure(error && error.message || '전투 데이터를 준비하지 못했습니다.'); });
+      } catch (error) {
+        showBattleEntryFailure(error && error.message || '전투 데이터를 준비하지 못했습니다.');
+      }
+    }
+
+    function validateInitialBattleView(view) {
+      if (!view || !view.runId || !view.battle || !view.battle.stage || !view.battle.player) {
+        throw new Error('전투 시작 데이터를 받지 못했습니다. 메인 화면에서 다시 시작해 주세요.');
+      }
+    }
+
+    function rememberRunSession(response) {
+      if (!response || !response.runSessionToken) return;
+      var revision = Number(response.runSessionRevision || 0);
+      if (revision < runSessionRevision) return;
+      runSessionToken = response.runSessionToken;
+      runSessionRevision = revision;
+      var acknowledged = response.acknowledgedLocalTransitions || [];
+      localRunTransitions = localRunTransitions.filter(function(event) {
+        return acknowledged.indexOf(String(event.rewardToken).split('.')[1]) === -1;
       });
+      if (response.localRunState && !localRunTransitions.length) localRunState = response.localRunState;
     }
 
     function applyInitialBattleView(view) {
+      try {
+        validateInitialBattleView(view);
+        initializeBattleView(view);
+      } catch (error) {
+        showBattleEntryFailure(error && error.message || '전투 화면을 표시하지 못했습니다.');
+      }
+    }
+
+    function initializeBattleView(view) {
       isDummyMode = false;
       currentView = normalizeBattleView(view);
       resetStageCommitState();
       applyBattleClientConfig(currentView.clientConfig);
       resetBattleQuestionCacheFromView(currentView, []);
       preloadMissingBattleQuestionCache();
+      startWorkbookDeadlineMonitor();
       renderBattle(currentView);
+      if (workbookDeadlineExpired) return;
       preloadFollowingStageStatic();
       if (isFloorIntermissionView(currentView)) {
         startFloorIntermissionEntrance();
@@ -573,6 +752,7 @@
       }
       bindHoverTooltips();
       bindBattleLogReveal();
+      bindActionPointPreview();
       var actionPanel = document.getElementById('actionPanel');
       combatActionPanelHtml = actionPanel ? actionPanel.innerHTML : '';
       renderActionMode();
@@ -1079,6 +1259,7 @@
         return view;
       }
       var battle = view.battle;
+      if (workbookDeadlineExpired) forceWorkbookDeadlineDefeat(view);
       battle.stage = battle.stage || null;
       battle.player = battle.player || {};
       battle.player.stats = battle.player.stats || {};
@@ -1243,6 +1424,7 @@
 
     function renderBattle(view) {
       view = normalizeBattleView(view);
+      if (view.playWindow) applyWorkbookPlayWindow(view.playWindow);
       var battle = view.battle;
       if (!battle || !battle.stage) {
         if (!view.nextBattlePending && !view.showReward && !view.rewardView) {
@@ -1299,7 +1481,7 @@
         var rarityClass = normalizeRewardRarity(skill.rarity);
         var reasonText = reason || description || '';
         var detailDescription = buildSkillDetailDescription(skill, description || reasonText || '-');
-        return '<button class="skill-button rarity-' + escapeHtml(rarityClass) + (shouldHighlightZeroCostSkill ? ' zero-cost-skill-attention' : '') + '" data-skill-id="' + escapeHtml(skill.skillId) + '" data-skill-disabled="' + escapeHtml(isDisabled ? 'true' : 'false') + '" data-unavailable-reason="' + escapeHtml(reason || '') + '"' + disabled + '>' +
+        return '<button class="skill-button rarity-' + escapeHtml(rarityClass) + (shouldHighlightZeroCostSkill ? ' zero-cost-skill-attention' : '') + '" data-ap-cost="' + escapeHtml(apCost) + '" data-skill-id="' + escapeHtml(skill.skillId) + '" data-skill-disabled="' + escapeHtml(isDisabled ? 'true' : 'false') + '" data-unavailable-reason="' + escapeHtml(reason || '') + '"' + disabled + '>' +
           '<span class="skill-button-name">' + escapeHtml(skill.name) + '</span>' +
           '<span class="skill-ap-badge">' + escapeHtml(apCost) + '</span>' +
           '<span class="skill-detail-card rarity-' + escapeHtml(rarityClass) + '" aria-hidden="true">' +
@@ -2107,19 +2289,55 @@
       var max = Math.max(0, Number(player && player.maxActionPoint || player && player.baseMaxActionPoint || 3));
       var icons = '';
       for (var i = 0; i < max; i += 1) {
-        icons += '<span class="ap-dot">' + (i < current ? '●' : '○') + '</span>';
+        icons += '<span class="ap-pip ' + (i < current ? 'filled' : 'empty') + '" data-ap-index="' + i + '" aria-hidden="true"></span>';
       }
-      var html = '<span class="ap-label">행동력</span><span class="ap-icons">' + icons + '</span><strong>' + current + ' / ' + max + '</strong>';
+      var html = '<span class="ap-label">행동력</span><span class="ap-icons">' + icons + '</span><strong>' + current + ' / ' + max + '</strong><span class="ap-cost-preview" aria-live="polite"></span>';
       ['actionPanelApGauge'].forEach(function(id) {
         var element = document.getElementById(id);
-        if (element) element.innerHTML = html;
+        if (element) { element.innerHTML = html; element.setAttribute('aria-label', '행동력 ' + current + ' / ' + max); }
       });
+      refreshActionPointPreview();
       var passTurnButton = document.getElementById('passTurnButton');
       if (passTurnButton) {
         var shouldHighlightPassTurn = current <= 0;
         passTurnButton.classList.toggle('pass-turn-attention', shouldHighlightPassTurn);
         passTurnButton.setAttribute('aria-label', shouldHighlightPassTurn ? '행동력 0, 턴 종료' : '턴 종료');
       }
+    }
+
+    var actionPointPreviewTarget = null;
+    function bindActionPointPreview() {
+      var panel = document.getElementById('actionPanel');
+      if (!panel || panel.apPreviewBound) return;
+      panel.apPreviewBound = true;
+      function enter(event) {
+        actionPointPreviewTarget = event.target.closest('[data-ap-cost]');
+        refreshActionPointPreview();
+      }
+      function leave(event) {
+        if (actionPointPreviewTarget && event.relatedTarget && actionPointPreviewTarget.contains(event.relatedTarget)) return;
+        actionPointPreviewTarget = null;
+        refreshActionPointPreview();
+      }
+      panel.addEventListener('mouseover', enter);
+      panel.addEventListener('mouseout', leave);
+      panel.addEventListener('focusin', enter);
+      panel.addEventListener('focusout', leave);
+    }
+    function refreshActionPointPreview() {
+      var gauge = document.getElementById('actionPanelApGauge');
+      if (!gauge) return;
+      var target = actionPointPreviewTarget;
+      var active = target && target.isConnected && !target.closest('.hidden') && !isAnimatingTurn;
+      var cost = active ? Number(target.getAttribute('data-ap-cost')) : 0;
+      var current = getCurrentActionPoint();
+      gauge.querySelectorAll('[data-ap-index]').forEach(function(pip) {
+        var index = Number(pip.getAttribute('data-ap-index'));
+        pip.classList.toggle('ap-will-spend', active && index < current && index >= Math.max(0, current - cost));
+      });
+      gauge.classList.toggle('ap-insufficient', active && cost > current);
+      var label = gauge.querySelector('.ap-cost-preview');
+      if (label) label.textContent = active ? (cost === 0 ? '소모 없음' : '−' + cost + (cost > current ? ' · 부족' : '')) : '';
     }
 
     function getCurrentActionPoint() {
@@ -2329,6 +2547,15 @@
         showDefeatSequence({ skipCommit: true });
         return;
       }
+      if (runSessionToken) {
+        currentView.battle.player.hp = 0;
+        currentView.battle.player.shield = 0;
+        currentView.battle.status = 'defeat';
+        currentView.battle.lastMessage = '전투를 포기했습니다.';
+        renderBattle(currentView);
+        showDefeatSequence();
+        return;
+      }
       showLoadingModal('전투 포기 중...', '이번 전투를 패배로 처리하는 중...');
       google.script.run
         .withSuccessHandler(function(view) {
@@ -2360,7 +2587,8 @@
     }
 
     function setPlayerTurn(active) {
-      isPlayerTurn = !!active;
+      active = !!active && !workbookDeadlineExpired;
+      isPlayerTurn = active;
       document.getElementById('actionPanel').classList.toggle('disabled-actions', !active || isAnimatingTurn);
       updateBattleHudMode();
       updateBattleInputLockState();
@@ -2381,6 +2609,8 @@
     }
 
     function chooseAction(actionType) {
+      updateWorkbookCountdown();
+      if (workbookDeadlineExpired) return;
       if (!isPlayerTurn || isAnimatingTurn || isBattleResultLoading()) {
         pushLog('지금은 행동할 수 없습니다.');
         return;
@@ -2399,6 +2629,8 @@
     }
 
     function startActionQuestion(actionType, targetId) {
+      updateWorkbookCountdown();
+      if (workbookDeadlineExpired) return;
       cancelTargetSelection(false);
       if (isDummyMode || !currentView || currentView.runId === 'dummy-run') {
         openDummyQuestionModal(actionType, '', targetId || '');
@@ -2413,6 +2645,8 @@
     }
 
     function chooseSkill(skillId) {
+      updateWorkbookCountdown();
+      if (workbookDeadlineExpired) return;
       if (!isPlayerTurn || isAnimatingTurn || isBattleResultLoading()) {
         pushLog('지금은 행동할 수 없습니다.');
         return;
@@ -2444,6 +2678,8 @@
     }
 
     function startSkillQuestion(skillId, targetId) {
+      updateWorkbookCountdown();
+      if (workbookDeadlineExpired) return;
       cancelTargetSelection(false);
       if (isDummyMode || !currentView || currentView.runId === 'dummy-run') {
         openDummyQuestionModal('skill', skillId, targetId);
@@ -2547,6 +2783,8 @@
     }
 
     function passTurn() {
+      updateWorkbookCountdown();
+      if (workbookDeadlineExpired) return;
       if (!isPlayerTurn || isAnimatingTurn || isBattleResultLoading()) {
         pushLog('지금은 턴을 종료할 수 없습니다.');
         return;
@@ -3083,6 +3321,7 @@
       google.script.run
         .withSuccessHandler(function(result) {
           questionReactionSaving = false;
+          rememberRunSession(result);
           question.likeCount = Number(result && result.likeCount || 0);
           question.dislikeCount = Number(result && result.dislikeCount || 0);
           question.myReaction = result && result.myReaction || '';
@@ -3106,7 +3345,7 @@
             document.getElementById('questionMessage').className = 'message error';
           }
         })
-        .setQuestionReaction(questionId, nextReaction, getAuthToken(), currentView && currentView.runId || '');
+        .setQuestionReaction(questionId, nextReaction, getAuthToken(), currentView && currentView.runId || '', runSessionToken, localRunTransitions.slice());
     }
 
     function applyQuestionReactionScoreResult(result) {
@@ -3114,7 +3353,7 @@
       var delta = Number(result.scoreDelta || 0);
       var totalScore = Number(result.totalScore || 0);
       if (currentView && (delta > 0 || totalScore > 0)) {
-        currentView.score = totalScore > 0 ? totalScore : Number(currentView.score || 0) + delta;
+        currentView.score = Math.max(Number(currentView.score || 0), totalScore > 0 ? totalScore : Number(currentView.score || 0) + delta);
       }
       if (delta > 0) {
         addQuestionReactionScoreToCurrentBattle(delta);
@@ -3338,6 +3577,8 @@
     }
 
     function submitQuestionAnswer() {
+      updateWorkbookCountdown();
+      if (workbookDeadlineExpired) return;
       if (!currentQuestionView) return;
       if (currentQuestionView.resultHolding) {
         requestQuestionResultProceed();
@@ -3776,7 +4017,7 @@
     }
 
     function setBattleInputLocked(locked) {
-      var shouldLock = !!locked || isBattleResultLoading();
+      var shouldLock = workbookDeadlineExpired || !!locked || isBattleResultLoading();
       var questionActionsWaiting = isInitialQuestionCachePreparing();
       var questionActionsUnavailable = isLocalQuestionSnapshotUnavailable();
       var cacheStatus = document.getElementById('questionCacheStatus');
@@ -3853,7 +4094,13 @@
       return normalizeClientAnswer(value).replace(/\s+/g, '');
     }
 
+    function finishActionDescription() {
+      revealBattleLog();
+      return skippableAutoDelay(350);
+    }
+
     async function playTurnSequence(nextView) {
+      if (workbookDeadlineExpired) return;
       cancelTargetSelection();
       isAnimatingTurn = true;
       setBattleInputLocked(true);
@@ -3865,6 +4112,7 @@
       var consumedSimultaneousEvents = {};
 
       for (var i = 0; i < events.length; i += 1) {
+        if (workbookDeadlineExpired) { isAnimatingTurn = false; return; }
         if (consumedSimultaneousEvents[i]) {
           continue;
         }
@@ -3877,14 +4125,14 @@
             await skippableAutoDelay(ATTACK_EFFECT_DELAY_MS);
             pushLog(effectEventMessage);
             await animateMonsterHit(event.targetMonsterId, event.damage, event.hpDamage, event.shieldDamage, event.isCritical);
-            await waitForBattleLogAdvance();
+            await finishActionDescription();
           } else if (event.target === 'player') {
             pushLog(effectEventMessage);
             animatePlayerHit(event.damage, event.hpDamage || event.damage, event.shieldDamage, event.isCritical);
-            await waitForBattleLogAdvance();
+            await finishActionDescription();
           } else {
             pushLog(effectEventMessage);
-            await waitForBattleLogAdvance();
+            await finishActionDescription();
           }
         }
         if (event.actor === 'player') {
@@ -3892,7 +4140,7 @@
             var simultaneousEvents = collectSimultaneousEvents(events, i, consumedSimultaneousEvents);
             if (simultaneousEvents.length > 1) {
               await playSimultaneousMonsterHits(simultaneousEvents);
-              await waitForBattleLogAdvance();
+              await finishActionDescription();
               continue;
             }
           }
@@ -3918,7 +4166,7 @@
           } else {
             pushLog(playerEventMessage);
           }
-          await waitForBattleLogAdvance();
+          await finishActionDescription();
         }
       }
 
@@ -5651,6 +5899,11 @@
         .withSuccessHandler(function(rewardView) {
           if (victoryRewardPreload !== preload) return;
           preload.loading = false;
+          rememberRunSession(rewardView);
+          if (rewardView && rewardView.battle && rewardView.battle.status === 'defeat') {
+            handleRewardSelectionResponse(rewardView);
+            return;
+          }
           preload.rewardView = rewardView;
         })
         .withFailureHandler(function(error) {
@@ -5663,6 +5916,7 @@
     }
 
     function openRewardAfterVictory() {
+      if (workbookDeadlineExpired) return;
       if (!currentView || !currentView.battle || currentView.battle.status !== 'victory') return;
       preloadVictoryRewardChoices(currentView);
       if (victoryRewardFlowStarted) {
@@ -5687,6 +5941,7 @@
     }
 
     function showPreparedVictoryReward() {
+      if (workbookDeadlineExpired) return;
       if (victoryRewardDisplayStarted) return;
       var preload = preloadVictoryRewardChoices(currentView);
       if (!preload) return;
@@ -5717,6 +5972,7 @@
       currentView.stageState = currentView.stageState || {};
       currentView.stageState.reward = {
         stageId: rewardView.stageId,
+        battleCompletionReceipt: rewardView.battleCompletionReceipt || null,
         rewardGroupId: rewardView.rewardGroupId,
         choices: rewardView.choices || [],
         selectedRewardId: '',
@@ -5742,6 +5998,9 @@
       getClientUsedQuestionIds(view);
       return {
         runId: view.runId,
+        runSessionToken: runSessionToken,
+        localAdvanceEnabled: !!(localRunState && window.LearningRpgLocalRunEngine),
+        localTransitions: localRunTransitions.slice(),
         battle: buildStageResultBattlePayload(view.battle || {}),
         answerLogs: options.includeAnswerLogs === false
           ? []
@@ -5963,6 +6222,11 @@
 
     function commitStageResultIfNeeded(onSuccess, onFailure, options) {
       options = options || {};
+      // Stage victories are evaluated together with the chosen reward, in memory.
+      if (runSessionToken && currentView && currentView.battle && currentView.battle.status === 'victory') {
+        if (onSuccess) onSuccess(currentView);
+        return;
+      }
       if (!currentView || !currentView.battle || currentView.battle.status === 'active') {
         if (onSuccess) onSuccess(currentView);
         return;
@@ -5999,11 +6263,13 @@
           stageResultCommitFailureCallbacks = [];
           stageResultCommitInFlight = false;
           stageResultCommittedKey = commitKey;
+          rememberRunSession(view);
           pendingStageAnswerLogs = [];
           if (view && view.battle) {
             currentView = normalizeBattleView(view);
             resetBattleQuestionCacheFromView(currentView, battleQuestionCache);
           }
+          if (view && view.playWindow && view.playWindow.expired) expireWorkbookPlay();
           callbacks.forEach(function(callback) {
             callback(currentView);
           });
@@ -6025,6 +6291,7 @@
     }
 
     function renderRewardChoices(rewardView) {
+      if (workbookDeadlineExpired) return;
       selectedRewardId = '';
       rewardSelectionApplying = false;
       var regenAmount = Number(rewardView.regenAmount || 0);
@@ -6047,6 +6314,14 @@
         var title = reward.displayTitle || getRewardDisplayTitle(reward.type);
         var name = reward.description || reward.rewardId;
         var detailCard = renderRewardDetailCard(reward, rarity, name);
+        if (reward.type === 'stat') {
+          title = name;
+          name = '스텟 증가';
+        } else if (reward.type === 'skill' || reward.type === 'skillUpgrade' || reward.type === 'item') {
+          title = reward.skillDetail && reward.skillDetail.name || reward.itemDetail && reward.itemDetail.name
+            || name.replace(/^(스킬 획득|스킬 강화|아이템 획득)\s*:\s*/, '');
+          name = getRewardDisplayTitle(reward.type);
+        }
         var rarityBadge = reward.type === 'rest' ? '회복' : (reward.rarityLabel || getRewardRarityLabel(rarity));
         return '<button class="reward-choice-card rarity-' + escapeHtml(rarity) + '" data-reward-id="' + escapeHtml(reward.rewardId) + '">' +
           renderRewardRarityGems(rarity) +
@@ -6066,7 +6341,6 @@
           selectRewardCandidate(button.getAttribute('data-reward-id'));
         });
       });
-      fitRewardCardText();
       var confirmButton = document.getElementById('rewardConfirmButton');
       if (confirmButton) {
         confirmButton.disabled = true;
@@ -6081,6 +6355,7 @@
       rewardModal.classList.toggle('floor-rest-reward-overlay', !!rewardView.floorRestChoice);
       rewardModal.setAttribute('aria-hidden', 'false');
       window.requestAnimationFrame(function() {
+        fitRewardCardText();
         spawnStageClearBurst();
       });
     }
@@ -6225,13 +6500,22 @@
 
     function fitRewardCardText() {
       Array.prototype.forEach.call(document.querySelectorAll('.reward-choice-heading, .reward-choice-body strong'), function(element) {
-        var baseSize = Number(window.getComputedStyle(element).fontSize.replace('px', '')) || 20;
-        var minSize = element.classList.contains('reward-choice-heading') ? 16 : 10;
-        element.style.fontSize = baseSize + 'px';
+        // Hidden cards have no measurable width; fit after the modal is visible.
+        if (!element.clientWidth) return;
+        element.style.fontSize = '';
+        element.style.whiteSpace = '';
+        element.style.overflowWrap = '';
+        var baseSize = parseFloat(window.getComputedStyle(element).fontSize) || 20;
+        var minSize = element.classList.contains('reward-choice-heading') ? 14 : 10;
         var size = baseSize;
+        element.style.fontSize = size + 'px';
         while (element.scrollWidth > element.clientWidth && size > minSize) {
-          size -= 1;
+          size = Math.max(minSize, size - 1);
           element.style.fontSize = size + 'px';
+        }
+        if (element.scrollWidth > element.clientWidth) {
+          element.style.whiteSpace = 'normal';
+          element.style.overflowWrap = 'anywhere';
         }
       });
     }
@@ -6471,6 +6755,7 @@
     }
 
     function confirmRewardChoice() {
+      if (workbookDeadlineExpired) return;
       if (!selectedRewardId || rewardSelectionApplying) {
         document.getElementById('rewardMessage').textContent = '먼저 보상을 선택하세요.';
         document.getElementById('rewardMessage').className = 'message error';
@@ -6480,6 +6765,134 @@
     }
 
     function selectRewardChoice(rewardId) {
+      if (localRunState && window.LearningRpgLocalRunEngine && currentRewardView && currentRewardView.localTransitionToken) {
+        selectRewardChoiceLocally(rewardId);
+        return;
+      }
+      if (!runSessionToken) { selectRewardChoiceLegacy(rewardId); return; }
+      if (workbookDeadlineExpired || rewardSelectionApplying) return;
+      rewardSelectionApplying = true;
+      stageResultCommitInFlight = true;
+      var payload = buildStageResultPayload();
+      var modal = document.getElementById('rewardModal');
+      var button = document.getElementById('rewardConfirmButton');
+      button.disabled = true;
+      button.textContent = '적용 중...';
+      modal.classList.add('reward-applying');
+      Array.prototype.forEach.call(document.querySelectorAll('.reward-choice-card'), function(card) { card.disabled = true; });
+      document.getElementById('rewardMessage').textContent = '보상을 적용하고 다음 전투를 준비하는 중...';
+      var summary = currentRewardView && currentRewardView.scorePreviewSummary;
+      var preview = shouldShowScoreModal(summary);
+      if (preview) {
+        modal.classList.remove('active');
+        showScoreModal(summary, null, { awaitFinalResponse: true });
+      }
+      var loading = preview ? null : startDelayedLoadingModal('다음 스테이지 준비 중...', '선택한 보상을 적용하고 전투를 준비하는 중입니다.');
+      google.script.run.withSuccessHandler(function(response) {
+        rememberRunSession(response);
+        stageResultCommitInFlight = false;
+        rewardSelectionApplying = false;
+        pendingStageAnswerLogs = [];
+        finishDelayedLoadingModal(loading);
+        modal.classList.remove('active', 'stage-clear-reward-overlay', 'floor-rest-reward-overlay', 'reward-applying');
+        if (workbookDeadlineExpired && !(response && response.cleared)) {
+          closeScoreModal();
+          saveWorkbookDeadlineResult();
+          return;
+        }
+        if (response && response.battle && response.battle.status === 'defeat') {
+          closeScoreModal();
+          handleRewardSelectionResponse(response);
+          return;
+        }
+        if (preview) { finishPreviewScoreModalAfterReward(response); return; }
+        if (response && response.cleared) { handleRewardSelectionResponse(response); return; }
+        if (shouldShowScoreModal(response && response.scoreSummary)) { showScoreModal(response.scoreSummary, response); return; }
+        handleRewardSelectionResponse(response);
+      }).withFailureHandler(function(error) {
+        stageResultCommitInFlight = false;
+        rewardSelectionApplying = false;
+        finishDelayedLoadingModal(loading);
+        modal.classList.remove('reward-applying');
+        if (workbookDeadlineExpired) { closeScoreModal(); saveWorkbookDeadlineResult(); return; }
+        if (preview) {
+          closeScoreModal();
+          scoreModalAwaitingFinalResponse = false;
+          scoreModalDismissedWhileWaiting = false;
+          pendingScoreModalResponse = null;
+          finishPostScoreLoading(postScoreLoadingHandle);
+          modal.classList.add('active', 'stage-clear-reward-overlay');
+        }
+        button.disabled = false;
+        button.textContent = '확인';
+        Array.prototype.forEach.call(document.querySelectorAll('.reward-choice-card'), function(card) { card.disabled = false; });
+        document.getElementById('rewardMessage').textContent = error && error.message || '보상을 적용하지 못했습니다. 다시 시도해 주세요.';
+        document.getElementById('rewardMessage').className = 'message error';
+      }).advanceRunStage(payload, rewardId, getAuthToken(), currentRewardView);
+    }
+
+    function selectRewardChoiceLocally(rewardId) {
+      if (workbookDeadlineExpired || rewardSelectionApplying) return;
+      if (localVictoryPendingResponse) { saveLocalRunVictory(localVictoryPendingResponse); return; }
+      rewardSelectionApplying = true;
+      var button = document.getElementById('rewardConfirmButton');
+      button.disabled = true;
+      try {
+        var payload = buildStageResultPayload();
+        delete payload.runSessionToken;
+        delete payload.localTransitions;
+        delete payload.localAdvanceEnabled;
+        var permit = currentRewardView.localTransition;
+        var selectedAtMs = Math.max(Number(permit.issuedAtMs || 0), workbookClockServerMs
+          ? workbookClockServerMs + (performance.now() - workbookClockPerformanceMs) : Date.now());
+        var response = window.LearningRpgLocalRunEngine.advance(localRunState, localGameDataSnapshot, payload,
+          rewardId, currentRewardView, { selectedAtMs: selectedAtMs, playWindow: { endsAtMs: workbookDeadlineMs, expired: workbookDeadlineExpired } });
+        localRunTransitions.push({payload:payload,rewardId:rewardId,rewardToken:currentRewardView.localTransitionToken,selectedAtMs:selectedAtMs});
+        localRunState = response.localRunState;
+        pendingStageAnswerLogs = [];
+        rewardSelectionApplying = false;
+        if (response.cleared) { localVictoryPendingResponse = response; saveLocalRunVictory(response); return; }
+        document.getElementById('rewardModal').classList.remove('active', 'stage-clear-reward-overlay', 'floor-rest-reward-overlay', 'reward-applying');
+        if (shouldShowScoreModal(response.scoreSummary)) { showScoreModal(response.scoreSummary, response); return; }
+        handleRewardSelectionResponse(response);
+      } catch (error) {
+        rewardSelectionApplying = false;
+        button.disabled = false;
+        document.getElementById('rewardMessage').textContent = error && error.message || '보상을 적용하지 못했습니다.';
+        document.getElementById('rewardMessage').className = 'message error';
+        updateWorkbookCountdown();
+      }
+    }
+
+    function saveLocalRunVictory(response) {
+      rewardSelectionApplying = true;
+      stageResultCommitInFlight = true;
+      var button = document.getElementById('rewardConfirmButton');
+      button.disabled = true;
+      button.textContent = '최종 결과 저장 중...';
+      var loading = startDelayedLoadingModal('탈출 결과 저장 중...', '누적 점수와 보상을 저장합니다.');
+      google.script.run.withSuccessHandler(function(saved) {
+        rememberRunSession(saved);
+        localVictoryPendingResponse = null;
+        stageResultCommitInFlight = false;
+        rewardSelectionApplying = false;
+        finishDelayedLoadingModal(loading);
+        document.getElementById('rewardModal').classList.remove('active', 'stage-clear-reward-overlay', 'reward-applying');
+        handleRewardSelectionResponse(saved && saved.battle && saved.battle.status === 'defeat'
+          ? saved : Object.assign({}, response, saved));
+      }).withFailureHandler(function(error) {
+        stageResultCommitInFlight = false;
+        rewardSelectionApplying = false;
+        finishDelayedLoadingModal(loading);
+        button.disabled = false;
+        button.textContent = '저장 다시 시도';
+        document.getElementById('rewardMessage').textContent = error && error.message || '최종 결과 저장에 실패했습니다.';
+        document.getElementById('rewardMessage').className = 'message error';
+      }).finishLocalRun(currentView.runId, runSessionToken, localRunTransitions.slice(), getAuthToken());
+    }
+
+    function selectRewardChoiceLegacy(rewardId) {
+      if (workbookDeadlineExpired) return;
       rewardSelectionApplying = true;
       var rewardModal = document.getElementById('rewardModal');
       var confirmButton = document.getElementById('rewardConfirmButton');
@@ -6738,6 +7151,7 @@
     function showScoreModal(scoreSummary, response, options) {
       options = options || {};
       response = response || {};
+      if (workbookDeadlineExpired && !response.outcomeFinal) return false;
       var summary = normalizeClientScoreSummary(scoreSummary, response);
       response.scoreSummary = summary;
       pendingScoreModalResponse = response || null;
@@ -6781,10 +7195,11 @@
       var modal = document.getElementById('scoreModal');
       modal.classList.add('active');
       modal.setAttribute('aria-hidden', 'false');
-      preloadNextBattleAfterReward(response);
+      if (!response.outcomeFinal) preloadNextBattleAfterReward(response);
       queueScoreAnimation(function() {
         animateScoreSequence(summary);
       }, 260);
+      return true;
     }
 
     function confirmScoreModal() {
@@ -7053,19 +7468,7 @@
     }
 
     function ensureNextFloorGameDataRefresh(response) {
-      var currentFloor = getCurrentBattleFloorForQuestionRefresh();
-      var nextFloor = getTargetFloorForQuestionRefresh(response);
-      if (!currentFloor || !nextFloor || nextFloor <= currentFloor) return null;
-      var runId = response && (response.runId || response.run && response.run.runId)
-        || currentView && currentView.runId
-        || '';
-      var key = [runId, nextFloor].join(':');
-      if (nextFloorGameDataRefreshKey === key) {
-        return nextFloorGameDataRefreshPromise || Promise.resolve(localGameDataSnapshot);
-      }
-      nextFloorGameDataRefreshKey = key;
-      nextFloorGameDataRefreshPromise = requestGameDataSnapshot();
-      return nextFloorGameDataRefreshPromise;
+      return null;
     }
 
     function resetNextBattlePreload() {
@@ -7078,30 +7481,7 @@
     }
 
     function preloadFollowingStageStatic() {
-      if (isDummyMode || !currentView || !currentView.runId || !currentView.battle || !currentView.battle.stage) {
-        return;
-      }
-      var key = [
-        String(currentView.runId || ''),
-        String(currentView.battle.stage.stageId || ''),
-      ].join(':');
-      if (!key || followingStageStaticPreloadKey === key) {
-        return;
-      }
-      followingStageStaticPreloadKey = key;
-      followingStageStaticPreloadInFlight = true;
-      google.script.run
-        .withSuccessHandler(function() {
-          if (followingStageStaticPreloadKey === key) {
-            followingStageStaticPreloadInFlight = false;
-          }
-        })
-        .withFailureHandler(function() {
-          if (followingStageStaticPreloadKey === key) {
-            followingStageStaticPreloadInFlight = false;
-          }
-        })
-        .preloadNextStageStatic(currentView.runId, currentView.battle.stage.stageId, getAuthToken());
+      // All static battle definitions already belong to the initial run snapshot.
     }
 
     function preloadNextBattleAfterReward(response) {
@@ -7142,7 +7522,7 @@
           nextBattlePreloadLoading = false;
           nextBattlePreloadError = error || { message: '다음 전투 준비에 실패했습니다.' };
         })
-        .prepareNextBattleAfterReward(runId, getAuthToken());
+        .prepareNextBattleAfterReward(runId, getAuthToken(), runSessionToken);
     }
 
     function consumePreloadedNextBattle(response, loadingHandle) {
@@ -7290,6 +7670,8 @@
     }
 
     function applyPreparedNextBattleView(view, startedAt, loadingHandle, options) {
+      rememberRunSession(view);
+      if (workbookDeadlineExpired) return;
       options = options || {};
       if (view && view.showReward && view.rewardView) {
         handleRewardSelectionResponse(view, loadingHandle);
@@ -7399,6 +7781,24 @@
 
     function handleRewardSelectionResponse(response, loadingHandle) {
       response = response || {};
+      rememberRunSession(response);
+      if (response.battle && response.battle.status === 'defeat') {
+        currentView = normalizeBattleView(response);
+        if (response.playWindow && response.playWindow.expired) workbookDeadlineExpired = true;
+        workbookDeadlineSaved = true;
+        finishPostScoreLoading(loadingHandle);
+        renderBattle(currentView);
+        showDefeatSequence({ skipCommit: true });
+        return;
+      }
+      if (response.cleared) {
+        window.clearInterval(workbookDeadlineTicker);
+        window.clearInterval(workbookDeadlinePoll);
+      }
+      if (workbookDeadlineExpired) {
+        if (response.cleared) workbookDeadlineSaved = true;
+        return;
+      }
       if (isStandaloneRewardViewResponse(response)) {
         response = {
           showReward: true,
@@ -8128,14 +8528,20 @@
       closeQuestionModal();
       currentOutcomeContext = buildOutcomeContext('defeat', options.response || null);
       if (!options.skipCommit) {
-        commitStageResultIfNeeded(function() {
-          hideLoadingModal();
-          currentOutcomeContext = buildOutcomeContext('defeat', options.response || null);
-          refreshOutcomeResult();
-        }, function(error) {
-          hideLoadingModal();
-          pushLog(error.message || '패배 결과 저장에 실패했습니다.');
-        });
+        var saveAttempt = 0;
+        function saveDefeatResult() {
+          commitStageResultIfNeeded(function() {
+            hideLoadingModal();
+            currentOutcomeContext = buildOutcomeContext('defeat', options.response || null);
+            refreshOutcomeResult();
+          }, function(error) {
+            hideLoadingModal();
+            pushLog(error.message || '패배 결과 저장을 다시 시도합니다.');
+            saveAttempt += 1;
+            window.setTimeout(saveDefeatResult, Math.min(15000, 3000 * saveAttempt));
+          }, { silent: saveAttempt > 0 });
+        }
+        saveDefeatResult();
       }
 
       var shell = document.getElementById('battleShell');
@@ -8298,6 +8704,11 @@
       if (!currentOutcomeContext) {
         currentOutcomeContext = buildOutcomeContext('defeat', null);
       }
+      var opened = showScoreModal(currentOutcomeContext.scoreSummary, {
+        outcomeFinal: true,
+        scoreSummary: currentOutcomeContext.scoreSummary,
+      });
+      if (!opened) return;
       var overlay = document.getElementById('defeatOverlay');
       var nextButton = document.getElementById('defeatNextButton');
       if (nextButton) nextButton.classList.add('hidden');
@@ -8305,10 +8716,6 @@
         overlay.classList.remove('active');
         overlay.setAttribute('aria-hidden', 'true');
       }
-      showScoreModal(currentOutcomeContext.scoreSummary, {
-        outcomeFinal: true,
-        scoreSummary: currentOutcomeContext.scoreSummary,
-      });
     }
 
     function completeOutcomeScoreDetails() {
@@ -8403,6 +8810,11 @@
     }
 
     function goHome() {
+      if (workbookDeadlineExpired && !workbookDeadlineSaved) {
+        pushLog('종료 점수를 저장하는 중입니다. 잠시 기다려 주세요.');
+        saveWorkbookDeadlineResult();
+        return;
+      }
       navigateTop(WEB_APP_URL + '?skipIntro=1&refreshQuestions=1');
     }
 
@@ -8597,6 +9009,8 @@
         .replace(/'/g, '&#039;');
     }
 
+    window.addEventListener('resize', fitRewardCardText);
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitRewardCardText);
     init();
   </script>
 </body>

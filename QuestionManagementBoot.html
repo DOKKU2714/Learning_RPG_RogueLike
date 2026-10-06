@@ -47,10 +47,12 @@
     if (!button) {
       button = document.createElement('button');
       button.id = 'workbookManagementButton';
-      button.className = 'secondary';
+      button.className = 'lobby-icon-button';
       button.setAttribute('data-main-navigation', 'true');
       button.type = 'button';
-      button.textContent = '문제집 관리';
+      button.setAttribute('aria-label', '문제집 관리');
+      button.title = '문제집 관리';
+      button.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v15M12 5C9 3 5 3 2 4v15c3-1 7-1 10 1 3-2 7-2 10-1V4c-3-1-7-1-10 1z"/></svg><span class="lobby-tooltip" aria-hidden="true">문제집 관리</span>';
       button.addEventListener('click', function(event) {
         if (event) { event.preventDefault(); event.stopPropagation(); }
         var base = (typeof WEB_APP_URL !== 'undefined' && WEB_APP_URL) ? WEB_APP_URL : global.location.href.split('?')[0];
@@ -85,10 +87,12 @@
     if (!managementButton) {
       managementButton = document.createElement('button');
       managementButton.id = 'questionManagementButton';
-      managementButton.className = 'secondary';
+      managementButton.className = 'lobby-icon-button';
       managementButton.setAttribute('data-main-navigation', 'true');
       managementButton.type = 'button';
-      managementButton.textContent = '문제 관리';
+      managementButton.setAttribute('aria-label', '문제 관리');
+      managementButton.title = '문제 관리';
+      managementButton.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h10v16H4zM7 8h4M7 12h3M15 15l5-5 2 2-5 5-3 1 1-3z"/></svg><span class="lobby-tooltip" aria-hidden="true">문제 관리</span>';
       managementButton.addEventListener('click', function() {
         var base = (typeof WEB_APP_URL !== 'undefined' && WEB_APP_URL) ? WEB_APP_URL : global.location.href.split('?')[0];
         global.location.href = base + '?page=questionmanagement&skipIntro=1';

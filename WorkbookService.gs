@@ -72,6 +72,7 @@ function createWorkbook(authToken, workbookPayload) {
       createdByName: actor.player.displayName || actor.player.studentName || '',
       status: STATUS.WORKBOOK_ACTIVE,
       playEnabled: false,
+      playEndsAt: payload.playEndsAt || '',
       sortOrder: getNextWorkbookSortOrder_(),
       createdAt: now,
       updatedAt: now,
@@ -111,6 +112,8 @@ function getTeacherWorkbookManagementData(authToken) {
         createdByName: workbook.createdByName || '',
         status: workbook.status || STATUS.WORKBOOK_ACTIVE,
         playEnabled: toBoolean_(workbook.playEnabled),
+      playEndsAt: workbook.playEndsAt || '',
+      playTimeLimitEnabled: isWorkbookPlayTimeLimitEnabled_(workbook),
         sortOrder: workbook.sortOrder || 0,
         createdAt: workbook.createdAt || '',
         updatedAt: workbook.updatedAt || '',
@@ -142,6 +145,7 @@ function updateWorkbook(authToken, workbookId, workbookPayload) {
       workbookName: payload.workbookName,
       subject: payload.subject,
       description: payload.description,
+      playEndsAt: payload.playEndsAt === undefined ? (workbook.playEndsAt || '') : payload.playEndsAt,
       updatedAt: new Date(),
     });
     clearTableCache_(DB_SHEETS.WORKBOOKS);
@@ -192,11 +196,15 @@ function canStartWorkbookPlay(authToken, workbookId) {
   var workbook = findRowByKey_(DB_SHEETS.WORKBOOKS, 'workbookId', targetWorkbookId);
   if (!workbook) throw new Error('선택한 문제집을 찾을 수 없습니다.');
   var status = String(workbook.status || STATUS.WORKBOOK_ACTIVE);
-  var allowed = status === STATUS.WORKBOOK_ACTIVE && toBoolean_(workbook.playEnabled);
+  var window = buildWorkbookPlayWindow_(workbook);
+  var allowed = status === STATUS.WORKBOOK_ACTIVE && toBoolean_(workbook.playEnabled) && !window.expired;
   return {
     allowed: allowed,
+    playWindow: window,
     workbookId: targetWorkbookId,
     playEnabled: toBoolean_(workbook.playEnabled),
+      playEndsAt: workbook.playEndsAt || '',
+      playTimeLimitEnabled: isWorkbookPlayTimeLimitEnabled_(workbook),
     status: status,
   };
 }
@@ -249,6 +257,8 @@ function getActiveWorkbooksForClient_() {
       questionSheetName: workbook.questionSheetName,
       status: workbook.status || STATUS.WORKBOOK_ACTIVE,
       playEnabled: toBoolean_(workbook.playEnabled),
+      playEndsAt: workbook.playEndsAt || '',
+      playTimeLimitEnabled: isWorkbookPlayTimeLimitEnabled_(workbook),
       sortOrder: workbook.sortOrder || 0,
       createdBy: workbook.createdBy || '',
       createdByName: workbook.createdByName || '',
@@ -276,6 +286,7 @@ function normalizeWorkbookPayload_(payload) {
   return {
     workbookName: normalizeWorkbookText_('문제집 이름', payload.workbookName, 60, true),
     subject: normalizeWorkbookText_('과목', payload.subject, 40, false),
+    playEndsAt: Object.prototype.hasOwnProperty.call(payload, 'playEndsAt') ? normalizeWorkbookPlayEndsAt_(payload.playEndsAt) : undefined,
     description: normalizeWorkbookText_('설명', payload.description, 300, false),
   };
 }
@@ -388,4 +399,85 @@ function toBoolean_(value) {
   if (typeof value === 'number') return value !== 0;
   var normalized = String(value == null ? '' : value).trim().toLowerCase();
   return normalized === 'true' || normalized === '1' || normalized === 'yes' || normalized === 'y' || normalized === 'on';
+}
+
+// Dates are stored as UTC ISO timestamps; the editor explicitly uses Korea time.
+function normalizeWorkbookPlayEndsAt_(value) {
+  if (value === '' || value === null) return '';
+  var text = String(value || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{3})?)?(?:Z|[+-]\d{2}:\d{2})$/.test(text)) {
+    throw new Error('종료 날짜와 시간을 올바르게 입력해 주세요.');
+  }
+  var date = new Date(text);
+  if (!isFinite(date.getTime())) throw new Error('종료 날짜와 시간이 올바르지 않습니다.');
+  return date.toISOString();
+}
+
+function buildWorkbookPlayWindow_(workbook) {
+  var now = Date.now();
+  var deadline = isWorkbookPlayTimeLimitEnabled_(workbook) && workbook.playEndsAt ? new Date(workbook.playEndsAt).getTime() : 0;
+  if (!isFinite(deadline)) throw new Error('문제집 종료 시간 설정이 올바르지 않습니다.');
+  return { serverNowMs: now, endsAtMs: deadline, expired: !!deadline && now >= deadline };
+}
+
+function getWorkbookPlayWindow_(workbookId) {
+  // Read directly so edits are visible during ongoing games as well as new starts.
+  var workbook = findRowByKey_(DB_SHEETS.WORKBOOKS, 'workbookId', String(workbookId || '').trim());
+  if (!workbook) throw new Error('문제집을 찾을 수 없습니다.');
+  var window = buildWorkbookPlayWindow_(workbook);
+  if (typeof ACTIVE_LOCAL_REPLAY_TIME_ !== 'undefined' && ACTIVE_LOCAL_REPLAY_TIME_) {
+    window.expired = !!window.endsAtMs && ACTIVE_LOCAL_REPLAY_TIME_ >= window.endsAtMs;
+  }
+  return window;
+}
+
+function getRunPlayWindow(authToken, runId) {
+  var player = getCurrentPlayer_(authToken);
+  var run = requireRun_(runId);
+  if (run.playerId !== player.playerId) throw new Error('현재 플레이어의 런이 아닙니다.');
+  return getWorkbookPlayWindow_(getRunWorkbookContext_(run).workbookId);
+}
+
+function requireRunBeforeWorkbookDeadline_(run) {
+  var window = getWorkbookPlayWindow_(getRunWorkbookContext_(run).workbookId);
+  if (window.expired) throw new Error('문제집 플레이 종료 시간이 지났습니다.');
+  return window;
+}
+
+function setWorkbookPlayEndsAt(authToken, workbookId, playEndsAt, enabled) {
+  var actor = requireWorkbookManager_(authToken);
+  var targetWorkbookId = String(workbookId || '').trim();
+  if (!targetWorkbookId) throw new Error('시간을 변경할 문제집을 선택해 주세요.');
+  var deadline = normalizeWorkbookPlayEndsAt_(playEndsAt);
+  var limitEnabled = enabled === undefined ? !!deadline : toBoolean_(enabled);
+  if (limitEnabled && !deadline) throw new Error('플레이 가능 시간을 입력해 주세요.');
+  var lock = LockService.getScriptLock();
+  lock.waitLock(5000);
+  try {
+    ensureTableColumns_(DB_SHEETS.WORKBOOKS, DB_COLUMNS.WORKBOOKS);
+    var workbook = findRowByKey_(DB_SHEETS.WORKBOOKS, 'workbookId', targetWorkbookId);
+    if (!workbook) throw new Error('문제집을 찾을 수 없습니다.');
+    if (String(workbook.createdBy || '').trim() !== String(actor.player.playerId || '').trim()) {
+      throw new Error('자신이 만든 문제집만 시간을 변경할 수 있습니다.');
+    }
+    if (String(workbook.status || STATUS.WORKBOOK_ACTIVE) === STATUS.WORKBOOK_ARCHIVED) {
+      throw new Error('삭제된 문제집은 시간을 변경할 수 없습니다.');
+    }
+    var updated = updateRowByKey_(DB_SHEETS.WORKBOOKS, 'workbookId', targetWorkbookId, {
+      playEndsAt: deadline,
+      playTimeLimitEnabled: limitEnabled,
+      updatedAt: new Date(),
+    });
+    clearTableCache_(DB_SHEETS.WORKBOOKS);
+    return { ok: true, workbook: toClientObject_(updated) };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function isWorkbookPlayTimeLimitEnabled_(workbook) {
+  if (!workbook) return false;
+  var value = workbook.playTimeLimitEnabled;
+  // Existing workbooks with a deadline retain their previous behavior.
+  return value === undefined || value === null || value === '' ? !!workbook.playEndsAt : toBoolean_(value);
 }

@@ -110,6 +110,7 @@ function requireActiveWorkbookForRunStart_(workbookId) {
     throw new Error('게임을 시작하려면 문제집을 선택해 주세요.');
   }
   var workbook = requireWorkbook_(targetWorkbookId);
+  if (getWorkbookPlayWindow_(targetWorkbookId).expired) throw new Error('문제집 플레이 종료 시간이 지났습니다.');
   if (String(workbook.status || STATUS.WORKBOOK_ACTIVE) !== STATUS.WORKBOOK_ACTIVE) {
     throw new Error('활성 상태인 문제집만 선택할 수 있습니다.');
   }
@@ -181,7 +182,18 @@ function startRun(playerId, authToken, workbookId, questionManifest) {
     (check.activeRuns || []).forEach(function(run) {
       abandonActiveRun_(run);
     });
-    return createNewRun_(playerId, check.workbook, check.questionManifest);
+    var snapshot = getGameDataSnapshot(authToken);
+    snapshot.clientConfig = getBattleClientConfig_();
+    snapshot.basePlayerStats = getConfiguredBasePlayerStats_();
+    var snapshotId = storeRunGameDataSnapshot_(snapshot);
+    return withGameDataSnapshot_(snapshot, function() {
+      var entry = createNewRun_(playerId, check.workbook, check.questionManifest, snapshotId);
+      entry.gameDataSnapshot = snapshot;
+      entry.runSessionToken = beginRunSession_(requireRun_(entry.runId));
+      entry.runSessionRevision = 0;
+      entry.localRunState = cloneGameDataRows_(requireRun_(entry.runId));
+      return entry;
+    });
   });
 }
 
@@ -196,14 +208,17 @@ function validatePlayerRequest_(playerId, authToken) {
 function withRunStartLock_(callback) {
   var lock = LockService.getScriptLock();
   lock.waitLock(5000);
+  var previousLockHeld = RUN_SESSION_LOCK_HELD_;
+  RUN_SESSION_LOCK_HELD_ = true;
   try {
     return callback();
   } finally {
+    RUN_SESSION_LOCK_HELD_ = previousLockHeld;
     lock.releaseLock();
   }
 }
 
-function createNewRun_(playerId, workbook, questionManifest) {
+function createNewRun_(playerId, workbook, questionManifest, snapshotId) {
   ensureTableColumns_(DB_SHEETS.RUNS, DB_COLUMNS.RUNS);
   workbook = requireActiveWorkbookForRunStart_(workbook && workbook.workbookId || workbook);
   var now = new Date();
@@ -215,6 +230,8 @@ function createNewRun_(playerId, workbook, questionManifest) {
       : 0);
   var run = {
     runId: generateId_('run'),
+    gameDataSnapshotId: snapshotId || '',
+    sessionSettled: false,
     playerId: playerId,
     status: STATUS.RUN_ACTIVE,
     currentFloor: 1,
@@ -292,7 +309,14 @@ function consumeBattleEntryHandoff(entryToken, authToken) {
     throw new Error('새 전투를 불러올 수 없습니다. 메인 화면에서 다시 시작해 주세요.');
   }
   cache.remove(cacheKey);
-  return buildBattleEntryView_(run, getStageState_(run));
+  if (!run.gameDataSnapshotId) return buildBattleEntryView_(run, getStageState_(run));
+  var snapshot = loadRunGameDataSnapshot_(run.gameDataSnapshotId);
+  var view = withGameDataSnapshot_(snapshot, function() { return buildBattleEntryView_(run, getStageState_(run)); });
+  view.gameDataSnapshot = snapshot;
+  view.runSessionToken = getChunkedRunCache_('run-session:' + run.runId) || beginRunSession_(run);
+  view.runSessionRevision = decodeRunSession_(view.runSessionToken).revision;
+  view.localRunState = cloneGameDataRows_(decodeRunSession_(view.runSessionToken).run);
+  return view;
 }
 
 function abandonActiveRun_(run) {
@@ -502,6 +526,7 @@ function normalizePlayerActionPointFields_(player) {
 
 function startBattle(runId) {
   var run = requireRun_(runId);
+  requireRunBeforeWorkbookDeadline_(run);
   var workbookContext = getRunWorkbookContext_(run);
   var stageState = getStageState_(run);
   var stage = loadStage(stageState.stageId || buildStageId_(run.currentFloor, run.currentStage));
@@ -630,6 +655,7 @@ function surrenderBattle(runId, authToken) {
 function passPlayerTurn(runId, authToken) {
   var player = getCurrentPlayer_(authToken);
   var run = requireRun_(runId);
+  requireRunBeforeWorkbookDeadline_(run);
   if (run.playerId !== player.playerId || run.status !== STATUS.RUN_ACTIVE) {
     throw new Error('진행 중인 전투를 찾을 수 없습니다.');
   }
@@ -695,6 +721,7 @@ function selectQuestionForAction(playerId, runId, actionType, difficultyBonus, a
 
   var normalizedAction = normalizeActionType_(actionType);
   var run = requireRun_(runId);
+  requireRunBeforeWorkbookDeadline_(run);
   if (run.playerId !== playerId || run.status !== STATUS.RUN_ACTIVE) {
     throw new Error('진행 중인 런을 찾을 수 없습니다.');
   }
@@ -769,6 +796,7 @@ function submitActionAnswer(answerPayload) {
   var payload = answerPayload || {};
   var player = getCurrentPlayer_(payload.authToken);
   var run = requireRun_(payload.runId);
+  requireRunBeforeWorkbookDeadline_(run);
   if (run.playerId !== player.playerId) {
     throw new Error('현재 플레이어의 런이 아닙니다.');
   }
@@ -1827,6 +1855,7 @@ function applyStageQuestionDifficultyBonus_(stage, questionDifficulty) {
 
 function saveRunState(runId, battleState) {
   var run = requireRun_(runId);
+  requireRunBeforeWorkbookDeadline_(run);
   var stageState = getStageState_(run);
   battleState.runId = battleState.runId || runId;
   stageState.battle = battleState;
@@ -1834,6 +1863,18 @@ function saveRunState(runId, battleState) {
 }
 
 function commitStageResult(stagePayload, authToken) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    return withRunSession_(stagePayload.runId, stagePayload.runSessionToken, authToken, function() {
+      replayLocalRunTransitions_(stagePayload.localTransitions, authToken);
+      return commitStageResultUnlocked_(stagePayload, authToken);
+    });
+  }
+  finally { lock.releaseLock(); }
+}
+
+function commitStageResultUnlocked_(stagePayload, authToken) {
   ensureTableColumns_(DB_SHEETS.RUNS, DB_COLUMNS.RUNS);
   ensureTableColumns_(DB_SHEETS.ANSWER_LOGS, DB_COLUMNS.ANSWER_LOGS);
   var payload = stagePayload || {};
@@ -1843,14 +1884,26 @@ function commitStageResult(stagePayload, authToken) {
     throw new Error('현재 플레이어의 런이 아닙니다.');
   }
   if (run.status !== STATUS.RUN_ACTIVE) {
+    if (run.status === STATUS.RUN_FAILED || run.status === STATUS.RUN_CLEARED) return buildStageResultCommitView_(run, getStageState_(run));
     throw new Error('진행 중인 런만 저장할 수 있습니다.');
   }
 
   var stageState = getStageState_(run);
   var serverBattleState = stageState.battle || {};
+  var deadlineWindow = getWorkbookPlayWindow_(getRunWorkbookContext_(run).workbookId);
+  if (deadlineWindow.expired) payload = sanitizeWorkbookDeadlinePayload_(payload, run, stageState);
   var clientStageState = payload.stageState || {};
   var battleState = hydrateStageResultBattleForCommit_(payload.battle || {}, serverBattleState);
   battleState.runId = battleState.runId || run.runId;
+  if (deadlineWindow.expired) {
+    battleState.player = battleState.player || {};
+    battleState.player.hp = 0;
+    battleState.player.shield = 0;
+    battleState.status = STATUS.BATTLE_DEFEAT;
+    battleState.lastMessage = '문제집 플레이 종료 시간이 되어 패배했습니다.';
+    delete clientStageState.reward;
+    delete stageState.reward;
+  }
   if (battleState.status !== STATUS.BATTLE_VICTORY && battleState.status !== STATUS.BATTLE_DEFEAT) {
     throw new Error('종료된 전투 결과만 저장할 수 있습니다.');
   }
@@ -1895,7 +1948,10 @@ function commitStageResult(stagePayload, authToken) {
   if (battleIdForScore) {
     stageState.scoreState.battleClearedAtByBattleId = stageState.scoreState.battleClearedAtByBattleId || {};
     if (!stageState.scoreState.battleClearedAtByBattleId[battleIdForScore]) {
-      stageState.scoreState.battleClearedAtByBattleId[battleIdForScore] = new Date().toISOString();
+      var completionReceipt = clientStageState.reward && clientStageState.reward.battleCompletionReceipt;
+      var completionMs = typeof getVerifiedBattleCompletionMs_ === 'function'
+        ? getVerifiedBattleCompletionMs_(completionReceipt, run, battleIdForScore) : 0;
+      stageState.scoreState.battleClearedAtByBattleId[battleIdForScore] = new Date(completionMs || new Date().getTime()).toISOString();
     }
   }
 
@@ -2020,6 +2076,7 @@ function buildStageResultCommitView_(run, stageState) {
     playerId: run.playerId,
     workbookId: workbookContext.workbookId,
     workbookName: workbookContext.workbookName,
+    playWindow: getWorkbookPlayWindow_(workbookContext.workbookId),
     currency: Number(run.currency || 0),
     score: Number(run.score || 0),
     battle: battleState,
@@ -2184,6 +2241,7 @@ function getCachedRun_(runId) {
 }
 
 function cacheRun_(run) {
+  if (typeof ACTIVE_RUN_SESSION_ !== 'undefined' && ACTIVE_RUN_SESSION_ && run) return patchDeferredRun_(run.runId, run);
   if (!run || !run.runId) {
     return run;
   }
@@ -2212,6 +2270,16 @@ function queueBattleAnswerLog_(battleState, answerPayload) {
 }
 
 function flushQueuedBattleAnswerLogs_(battleState) {
+  if (typeof ACTIVE_RUN_SESSION_ !== 'undefined' && ACTIVE_RUN_SESSION_) {
+    var logs = (battleState.pendingAnswerLogs || []).map(function(payload) {
+      return buildAnswerLog_(Object.assign({}, payload, { statsProcessed: false, statsProcessedAt: '', statsProcessError: '', scoreDelta: 0 }));
+    });
+    battleState.pendingAnswerLogs = [];
+    if (logs.length && !ACTIVE_RUN_SESSION_.answerBatches.some(function(batch) { return batch.battle.battleId === battleState.battleId; })) {
+      ACTIVE_RUN_SESSION_.answerBatches.push({ battle: { runId: battleState.runId, battleId: battleState.battleId }, logs: logs });
+    }
+    return logs.length;
+  }
   ensureBattleAnswerLogQueueSheet_();
   var queuedLogs = (battleState.pendingAnswerLogs || []).slice();
   battleState.pendingAnswerLogs = [];
@@ -2417,6 +2485,7 @@ function buildBattleView_(run, stageState, options) {
     playerId: run.playerId,
     workbookId: workbookContext.workbookId,
     workbookName: workbookContext.workbookName,
+    playWindow: getWorkbookPlayWindow_(workbookContext.workbookId),
     currency: Number(run.currency || 0),
     score: Number(run.score || 0),
     battle: battleState,
@@ -2441,6 +2510,7 @@ function buildBattleView_(run, stageState, options) {
 }
 
 function getBattleClientConfig_() {
+  if (typeof ACTIVE_GAME_DATA_SNAPSHOT_ !== 'undefined' && ACTIVE_GAME_DATA_SNAPSHOT_ && ACTIVE_GAME_DATA_SNAPSHOT_.clientConfig) return cloneGameDataRows_(ACTIVE_GAME_DATA_SNAPSHOT_.clientConfig);
   var settings = {};
   try {
     settings = getAppSettings();
@@ -3442,6 +3512,10 @@ function syncDefeatedMonsterTotal_(stageState, battleState) {
 }
 
 function createPlayerGhostForDefeat_(runId, battleState) {
+  if (typeof ACTIVE_RUN_SESSION_ !== 'undefined' && ACTIVE_RUN_SESSION_) {
+    ACTIVE_RUN_SESSION_.defeatBattle = { stage: battleState.stage };
+    return null;
+  }
   ensurePlayerGhostSheet_();
   if (findRowByKey_(DB_SHEETS.PLAYER_GHOSTS, 'sourceRunId', runId)) {
     return null;
@@ -3485,9 +3559,9 @@ function selectPlayerGhostForBattle_(run, stage, stageState, battleId) {
   stageState.playerGhostRollStageId = stageId;
   stageState.playerGhostRollDone = true;
 
-  var lock = LockService.getScriptLock();
+  var lock = typeof RUN_SESSION_LOCK_HELD_ !== 'undefined' && RUN_SESSION_LOCK_HELD_ ? null : LockService.getScriptLock();
   try {
-    lock.waitLock(3000);
+    if (lock) lock.waitLock(3000);
   } catch (error) {
     return emptySelection;
   }
@@ -3558,7 +3632,7 @@ function selectPlayerGhostForBattle_(run, stage, stageState, battleId) {
     };
   } finally {
     try {
-      lock.releaseLock();
+      if (lock) lock.releaseLock();
     } catch (error) {
       // Lock release is best-effort.
     }
@@ -4010,6 +4084,7 @@ function areAllMonstersDefeated_(battleState) {
 }
 
 function requireRun_(runId) {
+  if (typeof ACTIVE_RUN_SESSION_ !== 'undefined' && ACTIVE_RUN_SESSION_ && String(ACTIVE_RUN_SESSION_.run.runId) === String(runId)) return ACTIVE_RUN_SESSION_.run;
   var cachedRun = getCachedRun_(runId);
   if (cachedRun) {
     return cachedRun;
@@ -4132,7 +4207,7 @@ function normalizeShortAnswer_(value) {
 }
 
 function logBattleEvent_(run, result, summary) {
-  appendRowObject_(DB_SHEETS.BATTLE_LOGS, {
+  var log = {
     battleLogId: generateId_('battleLog'),
     runId: run.runId,
     playerId: run.playerId,
@@ -4141,10 +4216,37 @@ function logBattleEvent_(run, result, summary) {
     result: result,
     summaryJson: safeJsonStringify_(summary || {}),
     createdAt: new Date(),
-  });
+  };
+  if (typeof ACTIVE_RUN_SESSION_ !== 'undefined' && ACTIVE_RUN_SESSION_) {
+    var battleId = summary && summary.battleId;
+    if (!ACTIVE_RUN_SESSION_.battleLogs.some(function(row) { return safeJsonParse_(row.summaryJson, {}).battleId === battleId; })) ACTIVE_RUN_SESSION_.battleLogs.push(log);
+    return log;
+  }
+  return appendRowObject_(DB_SHEETS.BATTLE_LOGS, log);
 }
 
 function roundTo_(value, digits) {
   var unit = Math.pow(10, digits || 0);
   return Math.round(value * unit) / unit;
+}
+
+// A reward request may have moved the run while the deadline screen was opening.
+// Preserve the saved total and never award the previous stage's score twice.
+function sanitizeWorkbookDeadlinePayload_(payload, run, stageState) {
+  var client = payload.battle || {};
+  var server = stageState.battle || {};
+  var clientStage = client.stage || {};
+  var movedStage = clientStage.floor !== undefined && clientStage.stage !== undefined
+    && (Number(clientStage.floor) !== Number(run.currentFloor) || Number(clientStage.stage) !== Number(run.currentStage));
+  var changedBattle = server.battleId && client.battleId && server.battleId !== client.battleId;
+  if (!movedStage && !changedBattle) return payload;
+  if (Object.keys(server).length) return { runId: payload.runId, battle: server, answerLogs: [], stageState: {} };
+  var fallback = {
+    battleId: 'deadline-' + run.runId,
+    stage: loadStage(stageState.stageId || buildStageId_(run.currentFloor, run.currentStage)),
+    player: { hp: 0, shield: 0, baseStats: safeJsonParse_(run.statsJson, {}) },
+    monsters: [],
+    status: STATUS.BATTLE_DEFEAT,
+  };
+  return { runId: payload.runId, battle: fallback, answerLogs: [], stageState: {} };
 }

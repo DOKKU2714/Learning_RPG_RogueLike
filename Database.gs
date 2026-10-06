@@ -73,6 +73,7 @@ function ensureSheet_(sheetName, headers) {
 }
 
 function ensureTableColumns_(sheetName, headers) {
+  if (getPinnedGameDataTable_(sheetName) !== null || isDeferredRunTable_(sheetName)) return headers;
   var sheet = getSheet_(sheetName);
   var currentHeaders = getHeaderRow_(sheet);
   var existing = {};
@@ -94,7 +95,20 @@ function ensureTableColumns_(sheetName, headers) {
   return currentHeaders.concat(missing);
 }
 
+var GAME_DATA_REQUEST_TABLES_ = {};
+
 function readTable_(sheetName) {
+  var pinnedRows = getPinnedGameDataTable_(sheetName);
+  if (pinnedRows !== null) return cloneGameDataRows_(pinnedRows);
+  if (isFreshGameDataSheet_(sheetName) && Object.prototype.hasOwnProperty.call(GAME_DATA_REQUEST_TABLES_, sheetName)) {
+    return cloneGameDataRows_(GAME_DATA_REQUEST_TABLES_[sheetName]);
+  }
+  var rows = readTableUncached_(sheetName);
+  if (isFreshGameDataSheet_(sheetName)) GAME_DATA_REQUEST_TABLES_[sheetName] = rows;
+  return isFreshGameDataSheet_(sheetName) ? cloneGameDataRows_(rows) : rows;
+}
+
+function readTableUncached_(sheetName) {
   var sheet = getSheet_(sheetName);
   var lastRow = sheet.getLastRow();
   var lastColumn = sheet.getLastColumn();
@@ -160,6 +174,7 @@ function findCachedRowByKey_(sheetName, keyColumn, keyValue, ttlSeconds) {
 }
 
 function clearTableCache_(sheetName) {
+  delete GAME_DATA_REQUEST_TABLES_[sheetName];
   try {
     CacheService.getScriptCache().remove('table:' + sheetName);
   } catch (error) {
@@ -272,6 +287,7 @@ function appendRowObjects_(sheetName, objects) {
 }
 
 function updateRowByKey_(sheetName, keyColumn, keyValue, patchObject) {
+  if (sheetName === DB_SHEETS.RUNS && ACTIVE_RUN_SESSION_) return patchDeferredRun_(keyValue, patchObject);
   var sheet = getSheet_(sheetName);
   var headers = getHeaderRow_(sheet);
   var keyIndex = headers.indexOf(keyColumn);
@@ -302,6 +318,13 @@ function updateRowByKey_(sheetName, keyColumn, keyValue, patchObject) {
 }
 
 function findRowByKey_(sheetName, keyColumn, keyValue) {
+  if (sheetName === DB_SHEETS.RUNS && ACTIVE_RUN_SESSION_ && String(ACTIVE_RUN_SESSION_.run[keyColumn]) === String(keyValue)) return ACTIVE_RUN_SESSION_.run;
+  var pinnedRows = getPinnedGameDataTable_(sheetName);
+  if (pinnedRows !== null) return cloneGameDataRows_(pinnedRows).filter(function(row) { return String(row[keyColumn]) === String(keyValue); })[0] || null;
+  return findRowByKeyUncached_(sheetName, keyColumn, keyValue);
+}
+
+function findRowByKeyUncached_(sheetName, keyColumn, keyValue) {
   var sheet = getSheet_(sheetName);
   var headers = getHeaderRow_(sheet);
   var keyIndex = headers.indexOf(keyColumn);

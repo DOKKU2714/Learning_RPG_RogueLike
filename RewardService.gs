@@ -11,6 +11,7 @@ var ALLOWED_REWARD_STAT_KEYS_ = Object.freeze([
 
 function generateRewardChoices(runId, stageId, authToken) {
   var run = requireRun_(runId);
+  requireRunBeforeWorkbookDeadline_(run);
   requireRewardRunOwner_(run, authToken);
   if (run.status !== STATUS.RUN_ACTIVE) {
     throw new Error('진행 중인 런에서만 보상을 생성할 수 있습니다.');
@@ -86,8 +87,43 @@ function generateRewardChoices(runId, stageId, authToken) {
 }
 
 function previewRewardChoicesForStageResult(stagePayload, authToken) {
+  var lock = LockService.getScriptLock(); lock.waitLock(10000);
+  var previousLockHeld = RUN_SESSION_LOCK_HELD_;
+  RUN_SESSION_LOCK_HELD_ = true;
+  try {
+    return withRunSession_(stagePayload.runId, stagePayload.runSessionToken, authToken, function() {
+      if (replayLocalRunTransitions_(stagePayload.localTransitions, authToken)) {
+        var expiredRun = requireRun_(stagePayload.runId);
+        return buildStageResultCommitView_(expiredRun, getStageState_(expiredRun));
+      }
+      var cacheKey = 'local-rewards:' + stagePayload.runId + ':' + (stagePayload.battle && stagePayload.battle.battleId || 'rest');
+      var cached = stagePayload.localAdvanceEnabled ? getChunkedRunCache_(cacheKey) : null;
+      if (cached) {
+        var cachedView = JSON.parse(cached);
+        cachedView.localRunState = cloneGameDataRows_(requireRun_(stagePayload.runId));
+        return cachedView;
+      }
+      var view = previewRewardChoicesForStageResult_(stagePayload, authToken);
+      if (ACTIVE_RUN_SESSION_) {
+        var receipt = stagePayload.stageState && stagePayload.stageState.reward && stagePayload.stageState.reward.battleCompletionReceipt;
+        var run = requireRun_(stagePayload.runId);
+        var battleId = stagePayload.battle && stagePayload.battle.battleId;
+        view.battleCompletionReceipt = getVerifiedBattleCompletionMs_(receipt, run, battleId) ? receipt : createBattleCompletionReceipt_(run, battleId);
+        if (stagePayload.localAdvanceEnabled) {
+          ACTIVE_RUN_SESSION_.localAdvanceEnabled = true;
+          view = prepareLocalRewardTransitions_(view, stagePayload, authToken);
+          putChunkedRunCache_(cacheKey, safeJsonStringify_(view));
+        }
+      }
+      return view;
+    }, !stagePayload.localAdvanceEnabled);
+  } finally { RUN_SESSION_LOCK_HELD_ = previousLockHeld; lock.releaseLock(); }
+}
+
+function previewRewardChoicesForStageResult_(stagePayload, authToken) {
   var payload = stagePayload || {};
   var run = requireRun_(payload.runId);
+  requireRunBeforeWorkbookDeadline_(run);
   requireRewardRunOwner_(run, authToken);
   if (run.status !== STATUS.RUN_ACTIVE) {
     throw new Error('진행 중인 런에서만 보상을 생성할 수 있습니다.');
@@ -317,6 +353,13 @@ function previewFloorRestHeal_(run, battle) {
 }
 
 function selectReward(runId, rewardId, authToken, rewardView) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try { return withRunSession_(runId, null, authToken, function() { return selectRewardUnlocked_(runId, rewardId, authToken, rewardView); }); }
+  finally { lock.releaseLock(); }
+}
+
+function selectRewardUnlocked_(runId, rewardId, authToken, rewardView) {
   var timingStartedAt = new Date().getTime();
   var timingMarks = {};
   function markTiming(label) {
@@ -355,6 +398,7 @@ function selectReward(runId, rewardId, authToken, rewardView) {
   ensureTableColumns_(DB_SHEETS.PLAYER_DATA, DB_COLUMNS.PLAYER_DATA);
   markTiming('columnsChecked');
   var run = requireRun_(runId);
+  requireRunBeforeWorkbookDeadline_(run);
   markTiming('runLoaded');
   requireRewardRunOwner_(run, authToken);
   markTiming('ownerChecked');
@@ -475,6 +519,7 @@ function selectReward(runId, rewardId, authToken, rewardView) {
 
   var moveResult = buildNextStageMoveForRun_(runAfterScore, stageState);
   markTiming('stageMoved');
+  requireRunBeforeWorkbookDeadline_(run);
   var movedRun = updateRowByKey_(DB_SHEETS.RUNS, 'runId', runId, Object.assign(
     {},
     runRewardPatch,
@@ -533,8 +578,13 @@ function selectReward(runId, rewardId, authToken, rewardView) {
   };
 }
 
-function prepareNextBattleAfterReward(runId, authToken) {
+function prepareNextBattleAfterReward(runId, authToken, runSessionToken) {
+  return withRunSession_(runId, runSessionToken, authToken, function() { return prepareNextBattleAfterReward_(runId, authToken); });
+}
+
+function prepareNextBattleAfterReward_(runId, authToken) {
   var run = requireRun_(runId);
+  requireRunBeforeWorkbookDeadline_(run);
   requireRewardRunOwner_(run, authToken);
   if (run.status !== STATUS.RUN_ACTIVE) {
     throw new Error('진행 중인 런만 전투를 준비할 수 있습니다.');
@@ -1153,6 +1203,7 @@ function updatePlayerProgressFromRun(runId, authToken) {
 }
 
 function updatePlayerProgressFromRun_(run, currencyDelta) {
+  if (typeof ACTIVE_RUN_SESSION_ !== 'undefined' && ACTIVE_RUN_SESSION_) return null;
   ensureTableColumns_(DB_SHEETS.PLAYER_DATA, DB_COLUMNS.PLAYER_DATA);
   var playerData = getPlayerData_(run.playerId) || ensurePlayerData_(run.playerId);
   var patch = buildPlayerProgressPatch_(run, playerData, currencyDelta);
@@ -1173,6 +1224,11 @@ function updateWorkbookPlayerProgressFromRun_(run, currencyDelta) {
 
 function buildPlayerProgressPatch_(run, playerData, currencyDelta) {
   playerData = playerData || {};
+  var settledIds = safeJsonParse_(playerData.currencySettledRunIdsJson, []);
+  if (!Array.isArray(settledIds)) settledIds = [];
+  var terminalSession = !!run.gameDataSnapshotId && (run.status === STATUS.RUN_FAILED || run.status === STATUS.RUN_CLEARED);
+  var alreadySettled = terminalSession && settledIds.indexOf(String(run.runId)) !== -1;
+  if (alreadySettled) currencyDelta = 0;
   var currentBestIndex = (Number(playerData.maxFloor || 1) * 100) + Number(playerData.maxStage || 1);
   var runIndex = (Number(run.currentFloor || 1) * 100) + Number(run.currentStage || 1);
   var patch = {
@@ -1180,6 +1236,10 @@ function buildPlayerProgressPatch_(run, playerData, currencyDelta) {
     updatedAt: new Date(),
   };
 
+  if (terminalSession && !alreadySettled) {
+    settledIds.push(String(run.runId));
+    patch.currencySettledRunIdsJson = safeJsonStringify_(settledIds);
+  }
   if (runIndex > currentBestIndex || run.status === STATUS.RUN_CLEARED) {
     patch.maxFloor = Number(run.currentFloor || 1);
     patch.maxStage = Number(run.currentStage || 1);

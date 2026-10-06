@@ -3,7 +3,7 @@
   'use strict';
 
   var DB_NAME = 'LearningRpgLocalData';
-  var DB_VERSION = 1;
+  var DB_VERSION = 2;
   var STORE_NAME = 'questionSnapshots';
   var SESSION_PREFIX = 'learningRpgQuestionSnapshot:';
   var memorySnapshots = {};
@@ -14,15 +14,38 @@
         reject(new Error('이 브라우저는 IndexedDB를 사용할 수 없습니다.'));
         return;
       }
-      var request = global.indexedDB.open(DB_NAME, DB_VERSION);
+      var settled = false;
+      var timeout = global.setTimeout(function() {
+        fail(new Error('로컬 저장소가 응답하지 않아 임시 저장소를 사용합니다.'));
+      }, 5000);
+      function fail(error) {
+        if (settled) return;
+        settled = true;
+        global.clearTimeout(timeout);
+        reject(error);
+      }
+      var request;
+      try { request = global.indexedDB.open(DB_NAME, DB_VERSION); }
+      catch (error) { fail(error); return; }
       request.onupgradeneeded = function() {
         var database = request.result;
-        if (!database.objectStoreNames.contains(STORE_NAME)) {
-          database.createObjectStore(STORE_NAME, { keyPath: 'workbookId' });
+        if (!database.objectStoreNames.contains('questionSnapshots')) {
+          database.createObjectStore('questionSnapshots', { keyPath: 'workbookId' });
+        }
+        if (!database.objectStoreNames.contains('gameDataSnapshots')) {
+          database.createObjectStore('gameDataSnapshots', { keyPath: 'snapshotKey' });
         }
       };
-      request.onsuccess = function() { resolve(request.result); };
-      request.onerror = function() { reject(request.error || new Error('로컬 문제 저장소를 열지 못했습니다.')); };
+      request.onsuccess = function() {
+        var database = request.result;
+        if (settled) { database.close(); return; }
+        settled = true;
+        global.clearTimeout(timeout);
+        database.onversionchange = function() { database.close(); };
+        resolve(database);
+      };
+      request.onerror = function() { fail(request.error || new Error('로컬 저장소를 열지 못했습니다.')); };
+      request.onblocked = function() { fail(new Error('다른 화면에서 로컬 저장소를 사용 중입니다.')); };
     });
   }
 

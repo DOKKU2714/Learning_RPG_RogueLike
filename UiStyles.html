@@ -3254,8 +3254,8 @@
     letter-spacing: 0;
     line-height: 1.1;
     white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    overflow: visible;
+    text-overflow: clip;
   }
 
   .reward-rarity-badge {
@@ -3839,4 +3839,27 @@
       grid-template-columns: 1fr;
     }
   }
+
+  .compact-actions > .combat-icon-button { position: relative; min-height: 48px; display: flex; align-items: center; justify-content: center; background: linear-gradient(180deg,#343733,#191c19); border-color: #6e7763; box-shadow: inset 0 2px 0 #ffffff15,0 2px 3px #0008; }
+  .combat-action-icon { width: 28px; height: 28px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .combat-icon-button.action-detail-attack { color: #ffad89; }
+  .combat-icon-button.action-detail-guard { color: #8bd5ff; }
+  #skillToggleButton { color: #d6b2ff; }
+  .combat-icon-button .action-button-label { position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%); padding: 6px 10px; border: 1px solid #867d5c; background: #151711; color: #fff2c7; font-size: 13px; white-space: nowrap; pointer-events: none; opacity: 0; z-index: 25; }
+  .combat-icon-button:hover .action-button-label,.combat-icon-button:focus-visible .action-button-label { opacity: 1; }
+  .combat-icon-button.action-detail-button .action-button-label { bottom: 4px; font-size: 10px; padding: 1px 4px; }
+  .action-panel-ap-gauge { min-height: 36px; gap: 10px; padding-bottom: 8px; }
+  .action-panel-ap-gauge .ap-label { color: #f5d987; font-weight: bold; }
+  .ap-icons { gap: 5px; flex-wrap: wrap; }
+  .ap-pip { width: 22px; height: 18px; border: 1px solid #6e7763; transform: skewX(-12deg); background: #141915; }
+  .ap-pip.filled { border-color: #f5da87; background: linear-gradient(180deg,#fff0aa,#c4a648); box-shadow: 0 0 6px #e9c65c55,inset 0 2px 0 #fff8; }
+  .ap-cost-preview { min-width: 45px; color: #ffdb7f; font-size: 11px; }
+  .ap-will-spend { animation: ap-spend-preview 650ms ease-in-out infinite; }
+  .disabled-actions .ap-will-spend { animation: none; }
+  .disabled-actions .ap-cost-preview { visibility: hidden; }
+  .ap-insufficient .ap-cost-preview { color: #ff8a80; }
+  .ap-insufficient .ap-will-spend { border-color: #ff8a80; }
+  @keyframes ap-spend-preview { 50% { opacity: .25; box-shadow: 0 0 12px #ffd970; } }
+  @media (prefers-reduced-motion: reduce) { .ap-will-spend { animation: none; outline: 2px solid #fff; outline-offset: 2px; } }
+  @media (max-width: 760px) { .compact-actions:not(.floor-intermission-actions) { grid-template-columns: repeat(4,minmax(0,1fr)); } .ap-pip { width: 17px; } .action-panel-ap-gauge { gap: 6px; } }
 </style>

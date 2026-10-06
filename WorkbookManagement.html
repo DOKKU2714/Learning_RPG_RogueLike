@@ -28,6 +28,21 @@
     .wm-form{display:grid;gap:12px;margin:16px 0;}
     .wm-modal-actions{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;}
     .wm-message{min-height:22px;}
+    .wm-play-window{margin-top:12px;padding:12px;border:1px solid var(--line-dark);background:#171717;}
+    .wm-play-window-controls{display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap;margin-top:10px;}
+    .wm-play-window-controls label{flex:1 1 240px;margin:0;font-size:12px;}
+    .wm-play-window-controls input{display:block;margin-top:6px;color-scheme:dark;}
+    .wm-play-window .wm-meta{margin-bottom:0;}
+    .wm-time-toggle{display:flex;align-items:center;gap:10px;margin:0;cursor:pointer;}
+    .wm-time-toggle input{appearance:none;width:40px;min-height:22px;height:22px;padding:2px;border:1px solid #777;border-radius:12px;background:#333;cursor:pointer;flex:none;}
+    .wm-time-toggle input::before{content:"";display:block;width:16px;height:16px;border-radius:50%;background:#ddd;}
+    .wm-time-toggle input:checked{background:#52763d;border-color:#b8d49b;}
+    .wm-time-toggle input:checked::before{transform:translateX(18px);}
+    .wm-time-toggle input:focus-visible{outline:2px solid var(--accent);outline-offset:3px;}
+    .wm-time-input-row{display:flex;align-items:center;gap:10px;}
+    .wm-time-input-row input{flex:1;min-width:0;}
+    .wm-time-input-row>span{flex:none;}
+    .wm-play-window-settings[hidden]{display:none;}
   </style>
 </head>
 <body>
@@ -136,6 +151,7 @@
       }
       list.innerHTML = workbooks.map(function(workbook) {
         var enabled = !!workbook.playEnabled;
+        var timeEnabled = isWorkbookTimeLimitEnabled(workbook);
         var statusClass = enabled ? 'enabled' : 'disabled';
         var statusText = enabled ? '플레이 활성화' : '플레이 비활성화';
         var toggleText = enabled ? '플레이 비활성화' : '플레이 활성화';
@@ -147,6 +163,14 @@
             '</div>' +
             '<span class="wm-status ' + statusClass + '">' + statusText + '</span>' +
           '</div>' +
+          '<div class="wm-play-window">' +
+            '<label class="wm-time-toggle"><input type="checkbox" role="switch" ' + (timeEnabled ? 'checked' : '') + ' onchange="toggleWorkbookTimeLimit(\'' + escapeAttr(workbook.workbookId) + '\',this)"><span>플레이 가능 시간 설정</span></label>' +
+            '<div class="wm-play-window-settings"' + (timeEnabled ? '' : ' hidden') + '>' +
+              '<div class="wm-play-window-controls"><label>한국 시간<span class="wm-time-input-row"><input type="datetime-local" step="60" required value="' + escapeHtml(formatKoreaDateTimeInput(workbook.playEndsAt)) + '"><span>까지</span></span></label>' +
+              '<button type="button" class="secondary" onclick="saveWorkbookPlayEndsAt(\'' + escapeAttr(workbook.workbookId) + '\',this)">시간 저장</button></div>' +
+              '<p class="wm-meta">시간을 설정한 뒤 저장해 주세요.</p>' +
+            '</div>' +
+          '</div>' +
           '<p class="wm-description">' + escapeHtml(workbook.description || '설명 없음') + '</p>' +
           '<div class="wm-actions">' +
             '<button class="secondary" type="button" onclick="toggleWorkbookPlay(\'' + escapeAttr(workbook.workbookId) + '\',' + (!enabled) + ',this)">' + toggleText + '</button>' +
@@ -155,6 +179,63 @@
           '</div>' +
         '</article>';
       }).join('');
+    }
+
+    function formatKoreaDateTimeInput(value) {
+      var ms = value ? new Date(value).getTime() : NaN;
+      return isFinite(ms) ? new Date(ms + 9 * 60 * 60 * 1000).toISOString().slice(0, 16) : '';
+    }
+
+    function isWorkbookTimeLimitEnabled(workbook) {
+      var value = workbook.playTimeLimitEnabled;
+      return value === undefined || value === null || value === '' ? !!workbook.playEndsAt : value === true || String(value).toLowerCase() === 'true';
+    }
+
+    function toggleWorkbookTimeLimit(workbookId, toggle) {
+      var card = toggle.closest('.wm-play-window');
+      card.querySelector('.wm-play-window-settings').hidden = !toggle.checked;
+      var workbook = workbooks.filter(function(item) { return String(item.workbookId) === String(workbookId); })[0];
+      if (toggle.checked && !workbook.playEndsAt) {
+        card.querySelector('input[type="datetime-local"]').focus();
+        return;
+      }
+      persistWorkbookTimeLimit(workbookId, card, workbook.playEndsAt || '', toggle.checked);
+    }
+
+    function saveWorkbookPlayEndsAt(workbookId, button) {
+      var card = button.closest('.wm-play-window');
+      var input = card.querySelector('input[type="datetime-local"]');
+      if (!input.reportValidity()) return;
+      persistWorkbookTimeLimit(workbookId, card, input.value + ':00+09:00', true);
+    }
+
+    function persistWorkbookTimeLimit(workbookId, card, deadline, enabled) {
+      var toggle = card.querySelector('input[type="checkbox"]');
+      var input = card.querySelector('input[type="datetime-local"]');
+      var button = card.querySelector('button');
+      [toggle, input, button].forEach(function(control) { control.disabled = true; });
+      button.textContent = '저장 중...';
+      function finish() {
+        [toggle, input, button].forEach(function(control) { control.disabled = false; });
+        button.textContent = '시간 저장';
+      }
+      google.script.run.withSuccessHandler(function(response) {
+        var saved = response.workbook;
+        workbooks = workbooks.map(function(item) {
+          return String(item.workbookId) === String(workbookId) ? Object.assign({}, item, saved) : item;
+        });
+        toggle.checked = isWorkbookTimeLimitEnabled(saved);
+        card.querySelector('.wm-play-window-settings').hidden = !toggle.checked;
+        input.value = formatKoreaDateTimeInput(saved.playEndsAt);
+        finish();
+        setPageMessage(enabled ? '플레이 가능 시간을 켰습니다.' : '플레이 가능 시간을 껐습니다.', 'ok');
+      }).withFailureHandler(function(error) {
+        var previous = workbooks.filter(function(item) { return String(item.workbookId) === String(workbookId); })[0];
+        toggle.checked = isWorkbookTimeLimitEnabled(previous);
+        card.querySelector('.wm-play-window-settings').hidden = !toggle.checked;
+        finish();
+        setPageMessage(error && error.message ? error.message : '플레이 가능 시간 저장에 실패했습니다.', 'error');
+      }).setWorkbookPlayEndsAt(getAuthToken(), workbookId, deadline, enabled);
     }
 
     function showWorkbookEditor(workbookId) {

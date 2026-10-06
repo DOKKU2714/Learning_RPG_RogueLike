@@ -158,7 +158,7 @@ function updateQuestion(questionId, questionPayload, authToken, workbookId) {
   return toClientObject_(updated);
 }
 
-function setQuestionReaction(questionId, reaction, authToken, runId) {
+function setQuestionReaction(questionId, reaction, authToken, runId, runSessionToken, localTransitions) {
   var player = getCurrentPlayer_(authToken);
   var targetQuestionId = String(questionId || '').trim();
   if (!targetQuestionId) {
@@ -176,6 +176,10 @@ function setQuestionReaction(questionId, reaction, authToken, runId) {
       lock = LockService.getScriptLock();
       lock.waitLock(5000);
     }
+    if (runId) return withRunSession_(runId, runSessionToken, authToken, function() {
+      replayLocalRunTransitions_(localTransitions, authToken);
+      return setQuestionReactionLocked_(targetQuestionId, normalizedReaction, player, runId);
+    });
     return setQuestionReactionLocked_(targetQuestionId, normalizedReaction, player, runId);
   } finally {
     if (lock) {

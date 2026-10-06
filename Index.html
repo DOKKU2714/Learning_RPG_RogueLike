@@ -146,6 +146,61 @@
       background: #111;
       text-align: center;
     }
+
+    #appScreen { width: min(1040px, 100%); padding: 54px 24px 18px; }
+    #registerPanel, #infoPanel { max-width: 472px; margin: auto; }
+    #mainPanel { max-width: 620px; margin: auto; padding: 0; border: 0; background: transparent; box-shadow: none; }
+    .lobby-section-label { color: #b8bfae; font-size: 11px; letter-spacing: 2px; }
+    .lobby-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; width: min(520px, 100%); margin: 0 auto; padding: 0 0 14px; }
+    .lobby-player { align-self: center; padding: 12px 16px; border: 1px solid #41463b; background: #1b1e19; text-align: center; }
+    #mainPanel #playerBadge { margin: 0; }
+    #mainPanel .player-name-line { font-size: 22px; color: #f1edda; overflow-wrap: anywhere; }
+    #mainPanel .starting-score-bonus { width: 100%; margin-top: 0; padding: 0; border: 0; background: transparent; }
+    #mainPanel .score-bonus-value { color: #e5cd7c; font-size: 26px; margin: 2px 0; }
+
+    .lobby-adventure { text-align: center; padding: 0; min-width: 0; }
+    #mainPanel .main-menu-logo { width: min(580px, 100%); min-height: 0; margin: 0 auto 12px; }
+    .lobby-workbook { margin: 0 0 10px; padding: 8px 12px; border: 1px solid #41463b; background: #141713; }
+    #mainPanel .workbook-current-badge { border: 0; background: transparent; margin: 8px 0 0; padding: 0; color: #ece9dc; overflow-wrap: anywhere; }
+    #mainPanel .lobby-play-button { width: 100%; min-height: 52px; color: #191b14; background: #e1cd88; border: 2px solid #f2e1a8; font-size: 22px; font-weight: 700; box-shadow: inset -3px -3px 0 #aa9555, 0 5px 0 #080a07; }
+    #mainPanel .lobby-play-button:hover:not(:disabled), #mainPanel .lobby-play-button:focus-visible { background: #f3dfa0; outline: 2px solid #fff3c9; outline-offset: 4px; }
+    .lobby-footer { border-top: 1px solid #42463e; padding-top: 10px; text-align: center; }
+    .lobby-tools { display: flex; justify-content: center; flex-wrap: wrap; gap: 12px; margin-top: 8px; }
+    #mainPanel .lobby-icon-button { position: relative; display: inline-grid; place-items: center; width: 54px; height: 54px; padding: 0; border-color: #555e4d; background: #242a20; color: #dedfcf; }
+    #mainPanel .lobby-icon-button.hidden { display: none; }
+    .lobby-icon-button svg { width: 25px; height: 25px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+    #mainPanel .lobby-icon-button:hover:not(:disabled), #mainPanel .lobby-icon-button:focus-visible { background: #3a4230; border-color: #e1cd88; color: #f4df9b; outline: 2px solid #e1cd88; outline-offset: 3px; }
+    .lobby-tooltip { position: absolute; bottom: calc(100% + 10px); left: 50%; transform: translateX(-50%); padding: 7px 10px; background: #080b07; border: 1px solid #c6b77f; color: #fff3c9; font-size: 12px; white-space: nowrap; pointer-events: none; visibility: hidden; opacity: 0; z-index: 30; }
+    .lobby-icon-button:hover .lobby-tooltip, .lobby-icon-button:focus-visible .lobby-tooltip { visibility: visible; opacity: 1; }
+    .lobby-menu-hint { margin: 8px 0 0; color: #a9afa2; font-size: 11px; word-break: keep-all; }
+    #mainPanel #mainMessage:empty { display: none; }
+    @media (max-width: 640px) {
+      #appScreen { padding: 54px 14px 14px; }
+      #mainPanel { padding: 0; }
+      .lobby-layout { grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 0 0 12px; }
+      .lobby-player { padding: 10px 12px; }
+      #mainPanel #playerBadge { margin-top: 0; }
+      #mainPanel .starting-score-bonus { margin-top: 0; padding: 0; }
+      #mainPanel .score-bonus-value { font-size: 24px; }
+
+      .lobby-adventure { padding: 0; }
+      .lobby-tools { gap: 10px; }
+    }
+    #mainPanel .main-menu-logo img { max-height: 215px; }
+    @media (max-height: 700px) {
+      #appScreen { padding-top: 48px; padding-bottom: 10px; }
+      #mainPanel .main-menu-logo { width: min(480px, 95%); margin-bottom: 8px; }
+      #mainPanel .main-menu-logo img { max-height: 175px; }
+      .lobby-player { padding: 8px 12px; }
+      #mainPanel .player-name-line { font-size: 20px; margin-bottom: 4px; }
+      #mainPanel .starting-score-bonus { margin-top: 0; padding: 0; }
+      .lobby-menu-hint { display: none; }
+    }
+    .corner-tooltip { position: absolute; top: calc(100% + 8px); padding: 6px 10px; border: 1px solid #c6b77f; background: #080b07; color: #fff3c9; font-size: 12px; white-space: nowrap; pointer-events: none; visibility: hidden; opacity: 0; }
+    .menu-sound-toggle .corner-tooltip { left: 0; }
+    .menu-logout-button .corner-tooltip { right: 0; }
+    .menu-sound-toggle:hover .corner-tooltip, .menu-sound-toggle:focus-visible .corner-tooltip,
+    .menu-logout-button:hover .corner-tooltip, .menu-logout-button:focus-visible .corner-tooltip { visibility: visible; opacity: 1; }
   </style>
 </head>
 <body>
@@ -162,6 +217,7 @@
         <path d="m16 9 5 5"></path>
         <path d="m21 9-5 5"></path>
       </svg>
+    <span class="corner-tooltip" aria-hidden="true">소리 켜기</span>
     </button>
     <div>
       <div id="introLogo" class="intro-logo intro-logo-image">
@@ -190,6 +246,7 @@
         <path d="m16 9 5 5"></path>
         <path d="m21 9-5 5"></path>
       </svg>
+    <span class="corner-tooltip" aria-hidden="true">소리 켜기</span>
     </button>
     <section id="registerPanel" class="rpg-panel screen <?= skipIntroOnLoad ? 'active' : '' ?>">
       <h1 id="authTitle" class="rpg-title">로그인</h1>
@@ -244,20 +301,29 @@
           <path d="M14 8l4 4-4 4"></path>
           <path d="M18 12H9"></path>
         </svg>
+      <span class="corner-tooltip" aria-hidden="true">로그아웃</span>
       </button>
-      <div class="main-menu-logo" aria-hidden="true">
-        <img src="<?= getAssetUrl_('Resources/Intro_logo.png') ?>" alt="" onerror="this.style.display='none'">
+      <div class="main-menu-logo" aria-hidden="true"><img src="<?= getAssetUrl_('Resources/Intro_logo.png') ?>" alt="" onerror="this.style.display='none'"></div>
+      <div class="lobby-layout">
+        <section class="lobby-player" aria-label="문제 추가 시작 점수">
+          <div id="playerBadge"></div>
+        </section>
+        <section class="lobby-adventure" aria-label="게임 시작">
+          <div class="lobby-workbook"><span class="lobby-section-label">선택한 문제집 · 수업</span><div id="currentWorkbookBadge" class="workbook-current-badge"></div></div>
+          <button type="button" class="lobby-play-button" data-main-navigation="true" onclick="showGameStartMessage(this)">게임 시작</button>
+        </section>
       </div>
-      <div id="playerBadge" style="text-align:center;"></div>
-      <div id="currentWorkbookBadge" class="workbook-current-badge"></div>
-      <div class="vertical-menu">
-        <button data-main-navigation="true" onclick="showGameStartMessage(this)">게임 시작</button>
-        <button id="questionCreateButton" class="hidden" data-main-navigation="true" onclick="goToPage('question', null, this)">문제 만들기</button>
-        <button class="secondary" onclick="showWorkbookSelectModal({ force: true })">문제집(수업) 변경</button>
-        <button class="secondary" data-main-navigation="true" onclick="showMyInfo(this)">내 정보</button>
-        <button class="secondary" data-main-navigation="true" onclick="goToPage('leaderboard', null, this)">리더보드</button>
-        <button id="adminButton" class="secondary" data-main-navigation="true" onclick="goToPage('admin', null, this)" style="display:none;">관리자</button>
-      </div>
+      <footer class="lobby-footer">
+        <span class="lobby-section-label">빠른 메뉴</span>
+        <nav class="lobby-tools" aria-label="메인 메뉴">
+          <button type="button" class="lobby-icon-button hidden" aria-label="문제 만들기" title="문제 만들기" id="questionCreateButton" data-main-navigation="true" onclick="goToPage('question', null, this)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span class="lobby-tooltip" aria-hidden="true">문제 만들기</span></button>
+          <button type="button" class="lobby-icon-button" aria-label="문제집(수업) 변경" title="문제집(수업) 변경" onclick="showWorkbookSelectModal({ force: true })"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h15l-3-3M20 17H5l3 3M20 7l-4 4M4 17l4-4"/></svg><span class="lobby-tooltip" aria-hidden="true">문제집(수업) 변경</span></button>
+          <button type="button" class="lobby-icon-button" aria-label="내 정보" title="내 정보" data-main-navigation="true" onclick="showMyInfo(this)"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="7" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/></svg><span class="lobby-tooltip" aria-hidden="true">내 정보</span></button>
+          <button type="button" class="lobby-icon-button" aria-label="리더보드" title="리더보드" data-main-navigation="true" onclick="goToPage('leaderboard', null, this)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3h8v5a4 4 0 0 1-8 0V3zM8 5H4v2a4 4 0 0 0 4 4M16 5h4v2a4 4 0 0 1-4 4M12 12v5M8 21h8M9 17h6v4"/></svg><span class="lobby-tooltip" aria-hidden="true">리더보드</span></button>
+          <button type="button" class="lobby-icon-button" aria-label="관리자" title="관리자" id="adminButton" data-main-navigation="true" onclick="goToPage('admin', null, this)" style="display:none;"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 4v5c0 5-8 9-8 9s-8-4-8-9V7l8-4zM9 12l2 2 4-4"/></svg><span class="lobby-tooltip" aria-hidden="true">관리자</span></button>
+        </nav>
+        <p class="lobby-menu-hint">아이콘에 마우스를 올리거나 키보드로 선택하면 메뉴 이름이 표시됩니다.</p>
+      </footer>
       <div id="mainMessage" class="message"></div>
     </section>
 
@@ -348,6 +414,7 @@
     var questionSnapshotRefreshConsumed = false;
     var questionSnapshotRequestId = 0;
     var questionSnapshotLoadingWorkbookId = '';
+    var questionSnapshotReadyCallbacks = [];
     var currentQuestionSnapshotManifest = null;
     var currentUserRequestTimer = null;
     var loadingHideTimerId = null;
@@ -429,7 +496,11 @@
         button.classList.toggle('sound-muted', !enabled);
         button.setAttribute('aria-pressed', enabled ? 'true' : 'false');
         button.setAttribute('aria-label', enabled ? '\uC18C\uB9AC \uCF1C\uC9D0' : '\uC18C\uB9AC \uAEBC\uC9D0');
-        button.title = enabled ? '\uC18C\uB9AC \uCF1C\uC9D0' : '\uC18C\uB9AC \uAEBC\uC9D0';
+        var actionLabel = enabled ? '소리 끄기' : '소리 켜기';
+        button.setAttribute('aria-label', actionLabel);
+        button.title = actionLabel;
+        var tooltip = button.querySelector('.corner-tooltip');
+        if (tooltip) tooltip.textContent = actionLabel;
       });
     }
 
@@ -600,6 +671,7 @@
       google.script.run
         .withSuccessHandler(function(state) {
           clearCurrentUserRequestTimer();
+          if (mainNavigationInProgress) return;
           hideLoadingModal();
           saveCurrentState(state);
           renderCurrentUser(state);
@@ -682,24 +754,17 @@
     }
 
     function renderPlayerBadge(state) {
-      var player = state && state.player || {};
       var bonus = state && state.startingScoreBonus || {};
-      var displayName = player.displayName || player.studentName || '플레이어';
       var startingScore = Number(bonus.startingScore || 0);
       var questionCount = Number(bonus.questionCount || 0);
       var likeCount = Number(bonus.likeCount || 0);
       document.getElementById('playerBadge').innerHTML =
-        '<strong class="player-name-line">' + escapeHtml(displayName) + '</strong>' +
         '<div class="starting-score-bonus">' +
-          '<span class="score-bonus-title">문제 기여 시작 점수</span>' +
+          '<span class="score-bonus-title">문제 추가 시작 점수</span>' +
           '<span class="score-bonus-value">+' + escapeHtml(formatScore(startingScore)) + '</span>' +
           '<span class="score-bonus-detail">문제 ' + escapeHtml(questionCount) + '개 · 좋아요 ' + escapeHtml(likeCount) + '개</span>' +
         '</div>';
-      return;
-      document.getElementById('playerBadge').innerHTML =
-        '<strong>' + escapeHtml(displayName) + '</strong>' +
-        '<div class="starting-score-bonus">문제 생성/좋아요로 인한 시작 점수 +' + escapeHtml(formatScore(startingScore)) +
-          ' <span class="muted">(문제 ' + escapeHtml(questionCount) + '개, 좋아요 ' + escapeHtml(likeCount) + '개)</span></div>';
+
     }
 
     function normalizeWorkbookList(workbooks) {
@@ -806,7 +871,9 @@
         element.textContent = '';
         return;
       }
-      element.textContent = '현재 문제집(수업): ' + (selectedWorkbookName || selectedWorkbookId);
+      var workbook = findActiveWorkbookById(selectedWorkbookId);
+      var subject = String(workbook && workbook.subject || '').trim();
+      element.textContent = (selectedWorkbookName || selectedWorkbookId) + (subject ? ' (' + subject + ')' : '');
     }
 
     function renderWorkbookSelectOptions() {
@@ -888,6 +955,7 @@
         return;
       }
       window.LearningRpgQuestionStore.get(workbook.workbookId).then(function(snapshot) {
+        if (mainNavigationInProgress) return;
         if (!forceReload && isUsableQuestionSnapshot(snapshot, workbook.workbookId)) {
           currentQuestionSnapshotManifest = snapshot.runStartManifest || null;
           applyQuestionSnapshotContribution(snapshot);
@@ -897,6 +965,7 @@
         }
         prepareWorkbookSnapshotAndEnterMain(workbook, { forceReload: true });
       }).catch(function() {
+        if (mainNavigationInProgress) return;
         prepareWorkbookSnapshotAndEnterMain(workbook, { forceReload: true });
       });
     }
@@ -912,14 +981,21 @@
 
     function prepareWorkbookSnapshotAndEnterMain(workbook, options) {
       options = options || {};
-      if (!workbook || !workbook.workbookId) return;
-      if (questionSnapshotLoadingWorkbookId === String(workbook.workbookId)) return;
+      if (!workbook || !workbook.workbookId) {
+        handleGameStartFailure(new Error('선택한 문제집을 찾을 수 없습니다. 문제집을 다시 선택해 주세요.'));
+        return;
+      }
+      if (questionSnapshotLoadingWorkbookId === String(workbook.workbookId)) {
+        if (options.onReady) questionSnapshotReadyCallbacks.push(options.onReady);
+        return;
+      }
       if (!window.LearningRpgQuestionStore || typeof google === 'undefined' || !google.script || !google.script.run) {
         resetMainNavigation();
         setWorkbookSelectMessage('브라우저 로컬 저장소나 서버 연결을 사용할 수 없습니다.', 'error');
         showWorkbookSelectModal();
         return;
       }
+      questionSnapshotReadyCallbacks = options.onReady ? [options.onReady] : [];
       var requestId = ++questionSnapshotRequestId;
       questionSnapshotLoadingWorkbookId = String(workbook.workbookId);
       toggle('mainPanel', false);
@@ -961,8 +1037,17 @@
             });
             applySelectedWorkbook(workbook);
             setMainMessage('문제 ' + Number(snapshot.questions.length || 0).toLocaleString('ko-KR') + '개를 브라우저에 준비했습니다.', 'ok');
+            var readyCallbacks = questionSnapshotReadyCallbacks.slice();
+            questionSnapshotReadyCallbacks = [];
+            if (readyCallbacks.length) {
+              readyCallbacks.forEach(function(callback) { callback(snapshot); });
+              return;
+            }
             resetMainNavigation();
-            window.setTimeout(function() { hideLoadingModal(true); }, LOADING_COMPLETE_HOLD_MS);
+            var completedLoadingSession = loadingSessionId;
+            window.setTimeout(function() {
+              if (completedLoadingSession === loadingSessionId) hideLoadingModal(true);
+            }, LOADING_COMPLETE_HOLD_MS);
           }).catch(function(error) {
             handleWorkbookSnapshotFailure(workbook, error);
           });
@@ -975,6 +1060,7 @@
     }
 
     function handleWorkbookSnapshotFailure(workbook, error) {
+      questionSnapshotReadyCallbacks = [];
       questionSnapshotLoadingWorkbookId = '';
       resetMainNavigation();
       hideLoadingModal();
@@ -1391,22 +1477,32 @@
         progress: 5
       });
       if (!window.LearningRpgQuestionStore) {
-        hideLoadingModal();
-        prepareWorkbookSnapshotAndEnterMain(findActiveWorkbookById(selectedWorkbookId), { forceReload: true });
+        prepareWorkbookSnapshotAndStartGame();
         return;
       }
       window.LearningRpgQuestionStore.get(selectedWorkbookId).then(function(snapshot) {
         if (!isUsableQuestionSnapshot(snapshot, selectedWorkbookId)) {
-          hideLoadingModal();
-          prepareWorkbookSnapshotAndEnterMain(findActiveWorkbookById(selectedWorkbookId), { forceReload: true });
+          prepareWorkbookSnapshotAndStartGame();
           return;
         }
         currentQuestionSnapshotManifest = snapshot.runStartManifest || null;
         beginGameStartRequest();
       }).catch(function() {
-        hideLoadingModal();
-        prepareWorkbookSnapshotAndEnterMain(findActiveWorkbookById(selectedWorkbookId), { forceReload: true });
+        prepareWorkbookSnapshotAndStartGame();
       });
+    }
+
+    function prepareWorkbookSnapshotAndStartGame() {
+      prepareWorkbookSnapshotAndEnterMain(findActiveWorkbookById(selectedWorkbookId), {
+        forceReload: true,
+        onReady: function() { beginGameStartRequest(); },
+      });
+    }
+
+    function handleGameStartFailure(error) {
+      resetMainNavigation();
+      hideLoadingModal(true);
+      setMainMessage(error && error.message || '게임을 시작하지 못했습니다.', 'error');
     }
 
     function beginGameStartRequest() {
@@ -1419,6 +1515,10 @@
       });
       google.script.run
         .withSuccessHandler(function(view) {
+          if (!view || !view.runId || !view.entryToken || !view.battle || !view.battle.stage || !view.battle.player) {
+            handleGameStartFailure(new Error('전투 시작 데이터를 받지 못했습니다. 다시 시작해 주세요.'));
+            return;
+          }
           cacheInitialBattleView(view);
           updateLoadingModal({
             text: '새 전투 준비가 완료되었습니다.',
@@ -1428,9 +1528,7 @@
           transitionToBattlePage(startedAt, view && view.entryToken);
         })
         .withFailureHandler(function(error) {
-          resetMainNavigation();
-          hideLoadingModal();
-          setMainMessage(error && error.message ? error.message : '게임을 시작하지 못했습니다.', 'error');
+          handleGameStartFailure(error);
         })
         .startRun(currentState.player.playerId, getAuthToken(), selectedWorkbookId, currentQuestionSnapshotManifest);
     }
@@ -1567,6 +1665,7 @@
       if (!modal || !text || !modal.classList.contains('active')) {
         return;
       }
+      text.style.display = 'block';
       text.innerHTML = '자동 이동이 막혔습니다. <a href="' + escapeHtml(url) + '" target="_top" rel="noopener">여기를 눌러 이동</a>해 주세요.';
     }
 
