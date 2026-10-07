@@ -195,6 +195,14 @@ var DEFAULT_BASE_PLAYER_STATS = Object.freeze({
 });
 
 var ITEM_EFFECT_TYPES = Object.freeze({
+  PERFECT_ANSWER_EFFECT: 'perfectAnswerEffect',
+  IGNORE_WRONG_PER_STAGE: 'ignoreWrongPerStage',
+  CRITICAL_HEAL_PERCENT: 'criticalHealPercent',
+  QUESTION_MAX_EFFICIENCY_FLAT_PERCENT: 'questionMaxEfficiencyFlatPercent',
+  QUESTION_MIN_EFFICIENCY_PERCENT: 'questionMinEfficiencyPercent',
+  ACTION_POINT: 'actionPoint',
+  SHIELD_DAMAGE_PERCENT: 'shieldDamagePercent',
+  SHIELD_BREAK_SHIELD: 'shieldBreakShield',
   STAT: 'stat',
   DAMAGE_DEALT_PERCENT: 'damageDealtPercent',
   DAMAGE_TAKEN_PERCENT: 'damageTakenPercent',
@@ -447,6 +455,16 @@ var MASTER_REWARDS = Object.freeze([
 ]);
 
 var MASTER_ITEMS = Object.freeze([
+  { itemId: 'item_perfect_crown', name: '백점의 왕관', rarity: RARITIES.UNIQUE, effectJson: '[{"type":"questionMaxEfficiencyFlatPercent","value":25,"summary":"최대 문제풀이 효율 +25%p (합연산)"}]' },
+  { itemId: 'item_steady_bookmark', name: '든든한 책갈피', rarity: RARITIES.UNIQUE, effectJson: '[{"type":"questionMinEfficiencyPercent","value":15,"summary":"최소 문제풀이 효율 +15%p (합연산)"}]' },
+  { itemId: 'item_steel_ruler', name: '강철 자', rarity: RARITIES.EPIC, effectJson: '[{"type":"basicAttackDamagePercent","value":20,"summary":"기본 공격 피해 증폭 +20%"}]' },
+  { itemId: 'item_burning_timetable', name: '불타는 시간표', rarity: RARITIES.LEGENDARY, effectJson: '[{"type":"actionPoint","value":1,"summary":"행동력 +1"},{"type":"stat","statKey":"hp","effectType":"percent","value":-20,"summary":"최대 체력 -20%"}]' },
+  { itemId: 'item_heavy_textbook', name: '무거운 교과서', rarity: RARITIES.RARE, effectJson: '[{"type":"actionPoint","value":-1,"summary":"행동력 -1"},{"type":"damageDealtPercent","value":33,"summary":"모든 피해 증폭 +33%"}]' },
+  { itemId: 'item_crack_chalk', name: '균열의 분필', rarity: RARITIES.RARE, effectJson: '[{"type":"shieldDamagePercent","value":25,"summary":"적 방어막에 추가 피해 +25%"}]' },
+  { itemId: 'item_hearty_lunchbox', name: '튼튼한 도시락', rarity: RARITIES.UNCOMMON, effectJson: '[{"type":"stat","statKey":"hp","effectType":"percent","value":10,"summary":"최대 체력 +10%"}]' },
+  { itemId: 'item_shard_pouch', name: '파편 수집 주머니', rarity: RARITIES.UNCOMMON, effectJson: '[{"type":"shieldBreakShield","value":5,"summary":"적 방어막 파괴 시 방어막 5 획득"}]' },
+  { itemId: 'item_sharp_pencil', name: '뾰족한 연필', rarity: RARITIES.COMMON, effectJson: '[{"type":"stat","statKey":"defense","effectType":"flat","value":-1,"summary":"방어력 -1"},{"type":"stat","statKey":"attack","effectType":"flat","value":2,"summary":"공격력 +2"}]' },
+  { itemId: 'item_lucky_protractor', name: '행운의 각도기', rarity: RARITIES.EPIC, effectJson: '[{"type":"stat","statKey":"criticalRate","effectType":"flat","value":5,"summary":"치명타 확률 +5%"},{"type":"stat","statKey":"criticalDamage","effectType":"flat","value":15,"summary":"치명타 피해 +15%"}]' },
   { itemId: 'item_knuckle', name: '너클', type: 'passive', target: 'self', effectJson: '[{"type":"skillExtraDamage","skillName":"타격","skillId":"skill_strike","skillTag":"strike","value":3,"summary":"타격 스킬 사용 시 3의 추가 피해"}]', triggerTiming: 'onSkillUse', description: '', rarity: RARITIES.LEGENDARY },
   { itemId: 'item_yut', name: '윷', type: 'passive', target: 'self', effectJson: '[{"type":"battleStartEffect","effectId":"debuff_foolish","stacks":3,"summary":"매 전투 시작 시 멍청해짐 3중첩"},{"type":"damageDealtPercent","value":20,"summary":"피해 증폭 +20%"}]', triggerTiming: 'battleStart', description: '', rarity: RARITIES.EPIC },
   { itemId: 'item_combat_boots', name: '전투화', type: 'passive', target: 'self', effectJson: '[{"type":"stat","statKey":"evasion","effectType":"flat","value":-5,"summary":"회피율 -5%"},{"type":"stat","statKey":"defense","effectType":"flat","value":2,"summary":"방어력 +2"}]', triggerTiming: 'passive', description: '', rarity: RARITIES.COMMON },
@@ -462,6 +480,10 @@ var MASTER_ITEMS = Object.freeze([
   { itemId: 'item_fountain_pen', name: '만년필', type: 'passive', target: 'self', effectJson: '[{"type":"stat","statKey":"attack","effectType":"flat","value":3,"summary":"공격력 +3"},{"type":"stat","statKey":"evasion","effectType":"flat","value":-10,"summary":"회피율 -10%"}]', triggerTiming: 'passive', description: '다른 용도로 사용할 수 있을 것 같다.', rarity: RARITIES.RARE },
   { itemId: 'item_fake_gun', name: '총?', type: 'passive', target: 'self', effectJson: '[{"type":"stat","statKey":"attack","effectType":"percent","value":20,"summary":"공격력 +20%"},{"type":"stat","statKey":"criticalDamage","effectType":"flat","value":50,"summary":"치명타 피해 +50%"},{"type":"stat","statKey":"defense","effectType":"flat","value":-5,"summary":"방어력 -5"}]', triggerTiming: 'passive', description: '진짜 총은 아닌 듯 하다.', rarity: RARITIES.UNIQUE },
   { itemId: 'item_suspicious_bag', name: '수상한 가방', type: 'passive', target: 'self', effectJson: '[{"type":"skillDamagePercent","value":20,"summary":"스킬 피해 +20%"},{"type":"basicAttackDamagePercent","value":-30,"summary":"일반 공격 피해 -30%"}]', triggerTiming: 'passive', description: '', rarity: RARITIES.EPIC },
+  { itemId: 'item_honor_fist', name: '우등생의 주먹', type: 'passive', target: 'self', effectJson: '[{"type":"perfectAnswerEffect","effectId":"buff_power","value":0,"summary":"문제풀이 효율 100% 이상으로 문제를 풀면 힘 1중첩 획득"}]', triggerTiming: 'passive', description: '', rarity: RARITIES.EPIC },
+  { itemId: 'item_miracle_eraser', name: '기적의 지우개', type: 'passive', target: 'self', effectJson: '[{"type":"ignoreWrongPerStage","effectId":"","value":1,"summary":"매 스테이지 첫 오답 1회의 문제풀이 효율 감소 무시"}]', triggerTiming: 'passive', description: '', rarity: RARITIES.LEGENDARY },
+  { itemId: 'item_honor_badge', name: '철벽 모범생 배지', type: 'passive', target: 'self', effectJson: '[{"type":"perfectAnswerEffect","effectId":"buff_hard","value":0,"summary":"문제풀이 효율 100% 이상으로 문제를 풀면 단단함 1중첩 획득"}]', triggerTiming: 'passive', description: '', rarity: RARITIES.EPIC },
+  { itemId: 'item_vampire_pen', name: '흡혈 만년필', type: 'passive', target: 'self', effectJson: '[{"type":"criticalHealPercent","effectId":"","value":10,"summary":"공격이 치명타로 적중하면 피해의 10%만큼 체력 회복"}]', triggerTiming: 'passive', description: '', rarity: RARITIES.LEGENDARY },
   { itemId: 'item_sneakers', name: '운동화', type: 'passive', target: 'self', effectJson: '[{"type":"stat","statKey":"evasion","effectType":"flat","value":15,"summary":"회피율 +15%"},{"type":"stat","statKey":"criticalRate","effectType":"flat","value":-10,"summary":"치명타 확률 -10%"}]', triggerTiming: 'passive', description: '', rarity: RARITIES.COMMON },
   { itemId: 'item_sword_stick', name: '검 모양 막대기', type: 'passive', target: 'self', effectJson: '[{"type":"stat","statKey":"attack","effectType":"flat","value":5,"summary":"공격력 +5"},{"type":"stat","statKey":"defense","effectType":"flat","value":-3,"summary":"방어력 -3"}]', triggerTiming: 'passive', description: '', rarity: RARITIES.UNCOMMON },
 ]);

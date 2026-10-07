@@ -2434,7 +2434,7 @@
   .floating-damage {
     position: absolute;
     font-weight: 900;
-    font-size: 34px;
+    font-size: 28px;
     text-shadow: 0 2px 0 #000, 0 0 10px rgba(255,255,255,0.58), 0 0 16px rgba(0,0,0,0.9);
     transform: translate(-50%, 0);
     animation: floatDamage 1800ms ease-out forwards;
@@ -2450,7 +2450,7 @@
 
   .damage-critical {
     color: #ffd84a;
-    font-size: 38px;
+    font-size: 32px;
     text-shadow: 0 2px 0 #000, 0 0 12px rgba(255,216,74,0.8), 0 0 22px rgba(0,0,0,0.95);
   }
 
@@ -3862,4 +3862,148 @@
   @keyframes ap-spend-preview { 50% { opacity: .25; box-shadow: 0 0 12px #ffd970; } }
   @media (prefers-reduced-motion: reduce) { .ap-will-spend { animation: none; outline: 2px solid #fff; outline-offset: 2px; } }
   @media (max-width: 760px) { .compact-actions:not(.floor-intermission-actions) { grid-template-columns: repeat(4,minmax(0,1fr)); } .ap-pip { width: 17px; } .action-panel-ap-gauge { gap: 6px; } }
+
+  /* Bottom HUD: action points | actions / narration | stage, with full-width HP. */
+  .battle-hud,
+  .battle-hud.cinematic-mode,
+  .battle-hud.enemy-turn-mode {
+    left: 0; bottom: 0; width: 100%; transform: none;
+    grid-template-columns: minmax(140px, 1fr) minmax(280px, 3fr) minmax(140px, 1fr);
+    grid-template-rows: auto auto 36px;
+    column-gap: 16px; row-gap: 8px; align-items: end;
+    padding: 0; transition: none;
+  }
+  .battle-hud > .action-panel-ap-gauge {
+    grid-column: 1; grid-row: 1 / 3; align-self: end;
+    display: flex; flex-direction: column; gap: 9px;
+    margin: 0 0 8px 16px; padding: 14px 8px;
+    min-height: 112px; border: 1px solid #b49c54;
+    background: linear-gradient(180deg,#20271deb,#0d130ff0);
+    box-shadow: inset 0 0 0 3px #0005,0 0 18px #0008;
+  }
+  .battle-hud > .action-panel-ap-gauge .ap-label { font-size: 14px; }
+  .battle-hud > .action-panel-ap-gauge > strong { font-size: 27px; color: #fff0ad; }
+  .battle-hud > .action-panel-ap-gauge .ap-pip { width: 25px; height: 22px; }
+  .battle-hud > .action-panel-ap-gauge .ap-cost-preview { min-height: 12px; text-align: center; }
+  .battle-hud > .compact-actions {
+    grid-column: 2; grid-row: 1; justify-self: center; width: min(100%,420px);
+    padding: 6px; max-height: none; overflow: visible;
+    grid-template-columns: repeat(4,minmax(0,1fr));
+  }
+  .battle-hud > .floor-intermission-actions { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .battle-hud > .compact-actions.skill-select-mode { width: min(100%,600px); }
+  .battle-hud > .battle-log-compact,
+  .battle-hud.narration-mode > .battle-log-compact {
+    grid-column: 2; grid-row: 2; min-height: 72px; max-height: 140px;
+    padding: 12px 16px; align-items: center; transform: none;
+    background: #080b09e6; border: 1px solid #8a8b72;
+  }
+  .battle-hud > .battle-stage-hud {
+    grid-column: 3; grid-row: 1 / 3; margin: 0 16px 8px 0; padding: 14px 8px;
+    text-align: center; background: #10150fdd; border: 1px solid #787a5f;
+  }
+  .battle-stage-hud span { display: block; font-size: 12px; color: #bfc2ad; margin-bottom: 9px; }
+  .battle-stage-hud strong { display: block; color: #f2dfa3; font-size: 18px; }
+  .battle-hud > .player-compact-panel {
+    grid-column: 1 / -1; grid-row: 3; position: relative;
+    padding: 0; min-height: 0; max-height: none; border: 0; overflow: visible; background: transparent;
+  }
+  .battle-hud .player-hp-row { display: block; font-size: 16px; }
+  .battle-hud .player-hp-track,
+  .battle-hud.enemy-turn-mode .player-hp-track { height: 36px; border: 1px solid #d9ab8e; }
+  .battle-hud .player-hp-fill { background: linear-gradient(180deg,#e1493c,#9f1b19); }
+  .player-hp-caption { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 9px; z-index: 3; color: #fff; font-size: 16px; text-shadow: 0 2px 2px #000,1px 0 #000; pointer-events: none; }
+  .battle-hud.enemy-turn-mode #playerHpText { font-size: 16px; }
+  .battle-hud.cinematic-mode > .action-panel-ap-gauge,
+  .battle-hud.cinematic-mode > .battle-stage-hud { visibility: hidden; }
+  .battle-hud.enemy-turn-mode > .compact-actions,
+  .battle-hud.cinematic-mode > .compact-actions { visibility: hidden; opacity: 0; transform: none; }
+  @media (max-width: 640px) {
+    .battle-hud,.battle-hud.cinematic-mode,.battle-hud.enemy-turn-mode { grid-template-columns: 86px minmax(0,1fr) 86px; column-gap: 6px; row-gap: 6px; }
+    .battle-hud > .action-panel-ap-gauge { margin-left: 5px; padding: 10px 3px; gap: 7px; }
+    .battle-hud > .action-panel-ap-gauge .ap-pip { width: 16px; height: 19px; }
+    .battle-hud > .action-panel-ap-gauge .ap-icons { gap: 3px; justify-content: center; }
+    .battle-hud > .action-panel-ap-gauge > strong { font-size: 23px; }
+    .battle-hud > .battle-stage-hud { margin-right: 5px; padding: 12px 4px; }
+    .battle-stage-hud strong { font-size: 13px; line-height: 1.6; }
+    .battle-stage-hud span { font-size: 10px; }
+    .battle-hud > .battle-log-compact,.battle-hud.narration-mode > .battle-log-compact { padding: 8px; min-height: 72px; }
+    .battle-hud .battle-log { font-size: 12px; }
+    .battle-hud > .compact-actions { gap: 3px; padding: 4px; }
+    .battle-hud .compact-actions > .combat-icon-button { padding: 6px 2px; min-height: 42px; }
+    .battle-hud .combat-action-icon { width: 24px; height: 24px; }
+    .battle-hud .skill-detail-card { max-width: min(290px,calc(100vw - 20px)); }
+  }
+  .battle-hud .player-status-row { top: 50%; bottom: auto; left: 8px; right: auto; transform: translateY(-50%); flex-direction: row; max-width: 28vw; }
+
+  .monster-hp-bar { height: 11px; }
+  .monster-hp-bar > .hp-lag,.player-hp-lag { visibility: hidden; }
+  .monster-hp-bar > .hp-current,.player-hp-fill { transition: width 180ms ease-out; }
+  .hp-damage-fragment { position: fixed; z-index: 90; pointer-events: none; background: #fff; box-shadow: 0 0 8px #fff9; animation: hp-fragment-rise 1050ms ease-out forwards; }
+  @keyframes hp-fragment-rise { 0% { transform: scaleX(0); opacity: 1; } 18%,30% { transform: scaleX(1); opacity: 1; } 100% { transform: translate(var(--hp-flight-x,0px),var(--hp-flight-y,-35px)) rotate(var(--hp-flight-spin,-5deg)); opacity: 0; } }
+  .hp-damage-fragment { transform-origin: right center; animation-duration: 1000ms; }
+  .shield-effect.monster-guard-effect { width: 90px; height: 108px; z-index: 8; font-size: 25px; color: #fff; background: linear-gradient(135deg,#f5fcff,#5496e1 50%,#183f8c); animation: monster-guard-bounce 1500ms ease-out forwards; }
+  .monster-guard-effect strong { font-size: 15px; align-self: start; }
+  @keyframes monster-guard-bounce {
+    0% { opacity: 0; transform: translate(-50%,-30%) scale(.2) rotate(-30deg); }
+    18% { opacity: 1; transform: translate(-50%,-65%) scale(1.35) rotate(12deg); filter: brightness(1.7); }
+    34% { transform: translate(-50%,-50%) scale(.9) rotate(-9deg); filter: brightness(1); }
+    48% { transform: translate(-50%,-55%) scale(1.12) rotate(5deg); }
+    65% { opacity: 1; transform: translate(-50%,-50%) scale(1) rotate(0); }
+    100% { opacity: 0; transform: translate(-50%,-100%) scale(1.15); }
+  }
+  @media (prefers-reduced-motion: reduce) { .hp-damage-fragment { animation: none; opacity: .65; } .shield-effect.monster-guard-effect { animation: none; } }
+
+  .monster-hp-bar > .monster-shield-fill,.player-shield-fill { background: #a9def5; transition: width 180ms ease-out,left 180ms ease-out; }
+  .shield-value { color: #a9def5; }
+  .battle-hud > .action-panel-ap-gauge { margin-bottom: 0; position: relative; }
+  .battle-hud > .battle-stage-hud { margin-bottom: 0; }
+  .hp-hit-shake { animation: hp-hit-shake 300ms ease-out; }
+  .hp-hit-flash::after { content: ''; position: absolute; inset: 0; z-index: 6; pointer-events: none; background: #fff; animation: hp-hit-flash 260ms ease-out forwards; }
+  @keyframes hp-hit-flash { 0% { opacity: .85; } 100% { opacity: 0; } }
+  @keyframes hp-hit-shake { 20%,60% { margin-left: calc(-1 * var(--hp-shake-distance,3px)); } 40%,80% { margin-left: var(--hp-shake-distance,3px); } 0%,100% { margin-left: 0; } }
+  .ap-spent-pop { position: absolute; right: 15%; top: 42%; font-size: 28px; color: #ffe390; text-shadow: 0 2px 3px #000; pointer-events: none; animation: ap-spent-rise 850ms ease-out forwards; }
+  @keyframes ap-spent-rise { from { opacity: 1; transform: translateY(0); } to { opacity: 0; transform: translateY(-30px); } }
+
+  .shield-damage-fragment { animation-name: shield-fragment-rise; }
+  @keyframes shield-fragment-rise { 0% { transform: scaleX(0); opacity: 1; } 18%,30% { transform: scaleX(1); opacity: 1; } 100% { transform: translate(var(--hp-flight-x,0px),var(--hp-flight-y,-35px)) rotate(var(--hp-flight-spin,5deg)); opacity: 0; } }
+  .shield-break-burst { position: fixed; z-index: 91; pointer-events: none; transform: translate(-50%,-50%); color: #a9def5; text-shadow: 0 0 12px #8ddcff; }
+  .shield-break-burst::before { content: ''; position: absolute; left: 50%; top: 50%; width: var(--break-size,140px); height: var(--break-size,140px); border: 3px solid #d9f4ff; border-radius: 50%; box-shadow: 0 0 24px #8ddcff,inset 0 0 20px #8ddcff; animation: shield-break-ring 700ms ease-out forwards; }
+  @keyframes shield-break-ring { from { opacity: 1; transform: translate(-50%,-50%) scale(.35); } to { opacity: 0; transform: translate(-50%,-50%) scale(1.35); } }
+  .shield-break-burst span { display: inline-block; font-size: 52px; animation: shield-break-left 900ms ease-out forwards; }
+  .shield-break-burst span:nth-child(2) { animation-name: shield-break-right; }
+  .shield-break-burst strong { display: block; font-size: 16px; text-align: center; white-space: nowrap; animation: shield-break-label 900ms ease-out forwards; }
+  @keyframes shield-break-left { to { transform: translate(-28px,-28px) rotate(-45deg); opacity: 0; } }
+  @keyframes shield-break-right { to { transform: translate(28px,-28px) rotate(45deg); opacity: 0; } }
+  @keyframes shield-break-label { to { transform: translateY(-14px); opacity: 0; } }
+
+  .monster-hp-bar.shielded-hp-track,.battle-hud .player-hp-track.shielded-hp-track { border-color: #a9def5; }
+  .monster-shielded.shield-impact-pulse { animation: shield-outline-pulse 360ms ease-out; }
+  .shielded-hp-track.shield-impact-pulse { animation: shield-border-pulse 360ms ease-out; }
+  @keyframes shield-outline-pulse { 0%,100% { transform: scale(1); filter: url(#monsterShieldOutline); } 30% { transform: scale(1.045); filter: url(#monsterShieldOutline) brightness(1.7); } }
+  @keyframes shield-border-pulse { 0%,100% { border-color: #a9def5; } 30% { border-color: #fff; } }
+  .hp-recovery-fragment { position: fixed; z-index: 90; pointer-events: none; background: #a4ffae; box-shadow: 0 0 8px #7cff98; animation: hp-recovery-arrive 700ms ease-in forwards; }
+  @keyframes hp-recovery-arrive { 0% { transform: translateY(-35px); opacity: 0; } 20% { transform: translateY(-30px); opacity: 1; } 80% { transform: translateY(0); opacity: 1; } 100% { transform: translateY(0); opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) { .hp-recovery-fragment { animation: none; opacity: .5; } .hp-hit-shake { animation: none; } }
+
+  /* Apply to the transparent sprite wrapper so hit/attack image filters remain intact. */
+  .monster-image-sprite.monster-shielded {
+    filter: url(#monsterShieldOutline);
+  }
+
+  .monster-shield-shard {
+    position: fixed; z-index: 90; pointer-events: none;
+    background: linear-gradient(125deg,#f0fbff 0%,#a9def5 35%,#77bedfbb 75%,#a9def5 100%);
+    clip-path: polygon(10% 0,100% 28%,62% 100%,0 62%);
+    filter: drop-shadow(0 0 2px #a9def5);
+    animation: monster-shield-shatter 850ms cubic-bezier(.1,.6,.3,1) forwards;
+  }
+  @keyframes monster-shield-shatter {
+    0% { opacity: 1; transform: translate(-50%,-50%) scale(.7) rotate(0); }
+    15% { opacity: 1; }
+    100% { opacity: 0; transform: translate(calc(-50% + var(--shard-x)),calc(-50% + var(--shard-y))) scale(.3) rotate(var(--shard-spin)); }
+  }
+  @media (prefers-reduced-motion: reduce) { .monster-shield-shard { animation: none; opacity: .65; } }
+  @media (prefers-reduced-motion: reduce) { .monster-shielded.shield-impact-pulse,.shielded-hp-track.shield-impact-pulse { animation: none; } .monster-hp-bar > .hp-current,.player-hp-fill { transition: none; } }
+  @media (prefers-reduced-motion: reduce) { .hp-hit-flash::after { animation: none; opacity: .25; } }
 </style>

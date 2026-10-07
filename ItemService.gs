@@ -252,7 +252,7 @@ function parseItemEffectCompactCell_(text) {
     effect.value = parseSignedNumber_(parts[2]);
     effect.skillTag = parts[3] || '';
     effect.skillName = parts[4] || '';
-  } else if (type === ITEM_EFFECT_TYPES.BATTLE_START_EFFECT) {
+  } else if ((type === ITEM_EFFECT_TYPES.BATTLE_START_EFFECT || type === ITEM_EFFECT_TYPES.PERFECT_ANSWER_EFFECT)) {
     effect.effectId = parts[1] || '';
     effect.stacks = Math.max(1, Number(parts[2] || 1));
     effect.value = 0;
@@ -300,7 +300,7 @@ function normalizeStructuredItemEffect_(effect, originalText) {
     if (!normalized.skillId && !normalized.skillName && !normalized.skillTag) {
       return null;
     }
-  } else if (type === ITEM_EFFECT_TYPES.BATTLE_START_EFFECT) {
+  } else if (type === ITEM_EFFECT_TYPES.BATTLE_START_EFFECT || type === ITEM_EFFECT_TYPES.PERFECT_ANSWER_EFFECT) {
     normalized.effectId = String(effect.effectId || effect.statusId || effect.buffId || effect.debuffId || effect.id || '').trim();
     normalized.stacks = Math.max(1, Number(effect.stacks || effect.stack || effect.count || 1));
     normalized.value = 0;
@@ -336,6 +336,11 @@ function normalizeItemEffectTypeAlias_(type) {
   }
   var lower = value.toLowerCase().replace(/[\s_-]+/g, '');
   var aliases = {
+    questionmaxefficiencyflatpercent: ITEM_EFFECT_TYPES.QUESTION_MAX_EFFICIENCY_FLAT_PERCENT,
+    questionminefficiencypercent: ITEM_EFFECT_TYPES.QUESTION_MIN_EFFICIENCY_PERCENT,
+    actionpoint: ITEM_EFFECT_TYPES.ACTION_POINT,
+    shielddamagepercent: ITEM_EFFECT_TYPES.SHIELD_DAMAGE_PERCENT,
+    shieldbreakshield: ITEM_EFFECT_TYPES.SHIELD_BREAK_SHIELD,
     stat: ITEM_EFFECT_TYPES.STAT,
     stats: ITEM_EFFECT_TYPES.STAT,
     ability: ITEM_EFFECT_TYPES.STAT,
@@ -410,6 +415,9 @@ function normalizeItemEffectTypeAlias_(type) {
     주관식정답효율: ITEM_EFFECT_TYPES.SHORT_ANSWER_CORRECT_EFFICIENCY_PERCENT,
     주관식문제정답효율: ITEM_EFFECT_TYPES.SHORT_ANSWER_CORRECT_EFFICIENCY_PERCENT,
   };
+  aliases.perfectanswereffect = ITEM_EFFECT_TYPES.PERFECT_ANSWER_EFFECT;
+  aliases.ignorewrongperstage = ITEM_EFFECT_TYPES.IGNORE_WRONG_PER_STAGE;
+  aliases.criticalhealpercent = ITEM_EFFECT_TYPES.CRITICAL_HEAL_PERCENT;
   return aliases[value] || aliases[lower] || '';
 }
 
@@ -678,6 +686,11 @@ function formatItemEffectForSheet_(effect) {
 function describeItemEffect_(effect) {
   var value = Number(effect.value || 0);
   var sign = value > 0 ? '+' : '';
+  if (effect.type === ITEM_EFFECT_TYPES.QUESTION_MAX_EFFICIENCY_FLAT_PERCENT) return '최대 문제풀이 효율 ' + sign + value + '%p (합연산)';
+  if (effect.type === ITEM_EFFECT_TYPES.QUESTION_MIN_EFFICIENCY_PERCENT) return '최소 문제풀이 효율 ' + sign + value + '%p (합연산)';
+  if (effect.type === ITEM_EFFECT_TYPES.ACTION_POINT) return '행동력 ' + sign + value;
+  if (effect.type === ITEM_EFFECT_TYPES.SHIELD_DAMAGE_PERCENT) return '적 방어막에 추가 피해 ' + sign + value + '%';
+  if (effect.type === ITEM_EFFECT_TYPES.SHIELD_BREAK_SHIELD) return '적 방어막 파괴 시 방어막 ' + value + ' 획득';
   if (effect.type === ITEM_EFFECT_TYPES.STAT) {
     return getItemStatLabel_(effect.statKey) + ' ' + sign + value + (effect.effectType === EFFECT_TYPES.PERCENT ? '%' : '');
   }
@@ -745,6 +758,14 @@ function getQuestionTypeItemLabel_(questionType) {
 
 function buildItemModifiers_(ownedItems) {
   var modifiers = {
+    perfectAnswerEffects: [],
+    ignoreWrongPerStage: 0,
+    criticalHealPercent: 0,
+    questionMaxEfficiencyFlatPercent: 0,
+    questionMinEfficiencyPercent: 0,
+    actionPoint: 0,
+    shieldDamagePercent: 0,
+    shieldBreakShield: 0,
     statFlat: {},
     statPercent: {},
     damageDealtPercent: 0,
@@ -771,6 +792,10 @@ function buildItemModifiers_(ownedItems) {
     getItemEffects_(item).forEach(function(effect) {
       var type = effect.type || ITEM_EFFECT_TYPES.STAT;
       var value = Number(effect.value || 0) * count;
+      if (['questionMaxEfficiencyFlatPercent', 'questionMinEfficiencyPercent', 'actionPoint', 'shieldDamagePercent', 'shieldBreakShield'].indexOf(type) !== -1) {
+        modifiers[type] += value;
+        return;
+      }
       if (type === ITEM_EFFECT_TYPES.STAT) {
         var statKey = effect.statKey;
         if (!statKey) {
@@ -793,6 +818,13 @@ function buildItemModifiers_(ownedItems) {
           itemId: item.itemId,
           stacks: Math.max(1, Number(effect.stacks || 1)) * count,
         }));
+      } else if (type === ITEM_EFFECT_TYPES.PERFECT_ANSWER_EFFECT) {
+        var definition = MASTER_EFFECTS.filter(function(entry) { return entry.effectId === effect.effectId; })[0];
+        if (definition) modifiers.perfectAnswerEffects.push(Object.assign({}, definition, { stacks: 1, itemId: item.itemId }));
+      } else if (type === ITEM_EFFECT_TYPES.IGNORE_WRONG_PER_STAGE) {
+        modifiers.ignoreWrongPerStage = 1;
+      } else if (type === ITEM_EFFECT_TYPES.CRITICAL_HEAL_PERCENT) {
+        modifiers.criticalHealPercent += value;
       } else if (type === ITEM_EFFECT_TYPES.QUESTION_DIFFICULTY) {
         modifiers.questionDifficulty += value;
       } else if (type === ITEM_EFFECT_TYPES.QUESTION_MAX_EFFICIENCY_PERCENT) {
@@ -984,6 +1016,8 @@ function getItemQuestionModifiers_(battleState, question) {
   return {
     questionDifficulty: Number(modifiers.questionDifficulty || 0),
     questionMaxEfficiencyPercent: Number(modifiers.questionMaxEfficiencyPercent || 0),
+    questionMaxEfficiencyFlatPercent: Number(modifiers.questionMaxEfficiencyFlatPercent || 0),
+    questionMinEfficiencyPercent: Number(modifiers.questionMinEfficiencyPercent || 0),
     questionTimeSeconds: timeSeconds,
     questionChanceByType: Object.assign({}, modifiers.questionChanceByType || {}),
     answerCorrectEfficiencyPercent: Number(modifiers.answerCorrectEfficiencyPercent || 0),

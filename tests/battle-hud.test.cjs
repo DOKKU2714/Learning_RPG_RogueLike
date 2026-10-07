@@ -6,3 +6,49 @@ test('zero cost and insufficient AP have accurate previews',()=>{let x=context(0
 test('removed controls and active animations clear AP preview',()=>{for(const state of ['removed','animation']){const x=context(1,3);if(state==='removed')x.c.actionPointPreviewTarget.isConnected=false;else x.c.isAnimatingTurn=true;x.c.refreshActionPointPreview();assert.equal(x.label.textContent,'');assert.ok(x.pips.every(p=>!p.classList['ap-will-spend']));}});
 test('action explanations reveal immediately and continue without a manual advance',()=>{let revealed=false;const c={revealBattleLog:()=>{revealed=true;},skippableAutoDelay:ms=>{assert.equal(ms,350);return Promise.resolve();}};vm.createContext(c);vm.runInContext(fn('finishActionDescription'),c);c.finishActionDescription();assert.ok(revealed);const block=html.slice(html.indexOf('    async function playTurnSequence'),html.indexOf('      var monsterEvents',html.indexOf('    async function playTurnSequence')));assert.ok(!block.includes('waitForBattleLogAdvance'));});
 for(const match of html.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)){new vm.Script(match[1].replace(/<\?[\s\S]*?\?>/g,''));}
+
+test('HP fragments match actual lost segment and disappear independently of HUD rerenders',()=>{
+  const fragments=[],timers=[];const body={appendChild(e){e.parentNode=this;fragments.push(e);},removeChild(e){fragments.splice(fragments.indexOf(e),1);}};
+  const c={document:{createElement:()=>({style:{},setAttribute(){}}),body},window:{setTimeout:(f,ms)=>timers.push({f,ms})}};
+  vm.createContext(c);vm.runInContext(fn('spawnHpDamageFragment'),c);vm.runInContext(fn('flashHpBar'),c);
+  const track={style:{},classList:{add(){},remove(){}},getBoundingClientRect:()=>({left:10,top:20,width:200,height:36})};
+  c.spawnHpDamageFragment(track,75,25,100);assert.equal(fragments[0].style.left,'110px');assert.equal(fragments[0].style.width,'50px');assert.equal(fragments[0].style.height,'36px');assert.equal(track.style['--hp-shake-distance'],'3.75px');
+  assert.ok(Math.abs(parseFloat(fragments[0].style['--hp-flight-x']))<=16);assert.ok(parseFloat(fragments[0].style['--hp-flight-y'])<=-24);assert.ok(parseFloat(fragments[0].style['--hp-flight-y'])>=-42);
+  c.spawnHpDamageFragment(track,75,0,100);assert.equal(fragments.length,1);const cleanup=timers.find(timer=>timer.ms===1100);assert.ok(cleanup);cleanup.f();assert.equal(fragments.length,0);
+});
+
+test('shield loss flies from shield segment and only full depletion triggers break burst',()=>{
+ const calls=[],bursts=[];const c={spawnHpDamageFragment:(...args)=>calls.push(args),document:{createElement:()=>({style:{},setAttribute(){}}),body:{appendChild:e=>bursts.push(e)}},window:{setTimeout(){}}};vm.createContext(c);vm.runInContext(fn('spawnShieldDamageFeedback'),c);
+ const track={getBoundingClientRect:()=>({left:0,top:50,width:200})};c.spawnShieldDamageFeedback(track,60,20,10,100);assert.equal(calls[0][1],80);assert.equal(calls[0][2],10);assert.equal(calls[0][4],true);assert.equal(bursts.length,0);c.spawnShieldDamageFeedback(track,60,10,0,100);assert.equal(bursts.length,1);
+ const sprite={getBoundingClientRect:()=>({left:100,top:200,width:180,height:220})};c.spawnShieldDamageFeedback(track,60,10,0,100,sprite);assert.equal(bursts[1].style.left,'190px');assert.equal(bursts[1].style.top,'310px');
+});
+
+test('damage numbers anchor to remaining HP and repeated shield impacts keep their newest pulse',()=>{
+ const calls=[],timers=[];const fill={style:{width:'25%'}},track={querySelector:()=>fill},slot={querySelector:()=>track};
+ const c={document:{querySelector:()=>track},spawnFloatingText:(...args)=>calls.push(args),window:{setTimeout:f=>timers.push(f)}};vm.createContext(c);vm.runInContext(fn('spawnFloatingDamage'),c);vm.runInContext(fn('pulseShieldOutline'),c);
+ c.spawnFloatingDamage({closest:()=>slot},20,'damage-white',false);assert.equal(calls[0][4],.25);
+ const element={dataset:{},classList:{add(k){this[k]=true;},remove(k){this[k]=false;}}};
+ c.pulseShieldOutline(element,null);c.pulseShieldOutline(element,null);timers[0]();assert.equal(element.classList['shield-impact-pulse'],true);timers[1]();assert.equal(element.classList['shield-impact-pulse'],false);
+});
+
+test('recovery fragment covers only the healed portion and cleans up after landing',()=>{
+ const fragments=[],timers=[];const c={document:{createElement:()=>({style:{},setAttribute(){}}),body:{appendChild(e){e.parentNode=this;fragments.push(e);},removeChild(e){fragments.splice(fragments.indexOf(e),1);}}},window:{setTimeout:(f,ms)=>timers.push({f,ms})}};
+ vm.createContext(c);vm.runInContext(fn('spawnHpRecoveryFragment'),c);c.spawnHpRecoveryFragment({getBoundingClientRect:()=>({left:10,top:20,width:200,height:36})},50,20,100);assert.equal(fragments[0].style.left,'110px');assert.equal(fragments[0].style.width,'40px');assert.equal(timers[0].ms,750);timers[0].f();assert.equal(fragments.length,0);
+});
+
+test('first score confirmation cancels counting and displays every final value; second proceeds',()=>{
+ const classes=()=>({add(){},remove(){}}),row={classList:classes(),getAttribute:()=>120,value:{},querySelector(){return this.value;}};
+ const elements={scoreDeltaText:{closest:()=>({classList:classes()})},scoreTotalText:{closest:()=>({classList:classes()})}};
+ const response={scoreSummary:{scoreDelta:120,totalScore:620}};let clears=0,closed=0,next=0;
+ const c={scoreAnimationDone:false,pendingScoreModalResponse:response,currentScoreModalSummary:response.scoreSummary,scoreModalAwaitingFinalResponse:false,
+ document:{querySelectorAll:()=>[row],getElementById:id=>elements[id]},clearScoreAnimation:()=>clears++,formatScore:n=>n+'점',updateScoreModalConfirmButton(){},closeScoreModal:()=>closed++,handleRewardSelectionResponse:r=>{assert.equal(r,response);next++;}};
+ vm.createContext(c);vm.runInContext(fn('finishScoreAnimationNow'),c);vm.runInContext(fn('confirmScoreModal'),c);
+ c.confirmScoreModal();assert.equal(row.value.textContent,'+120점');assert.equal(elements.scoreDeltaText.textContent,'+120점');assert.equal(elements.scoreTotalText.textContent,'620점');assert.equal(c.pendingScoreModalResponse,response);assert.equal(closed,0);assert.equal(next,0);assert.equal(clears,1);
+ c.confirmScoreModal();assert.equal(closed,1);assert.equal(next,1);
+});
+
+test('repeated HP hits restart white flash without an earlier cleanup cancelling the latest flash',()=>{
+ const timers=[],track={classList:{add(k){this[k]=true;},remove(k){this[k]=false;}}};
+ const c={window:{setTimeout:f=>timers.push(f)}};vm.createContext(c);vm.runInContext(fn('flashHpBar'),c);
+ c.flashHpBar(track);c.flashHpBar(track);timers[0]();assert.equal(track.classList['hp-hit-flash'],true);timers[1]();assert.equal(track.classList['hp-hit-flash'],false);
+});

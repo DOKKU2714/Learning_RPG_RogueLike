@@ -62,6 +62,21 @@ test('reward selection and next battle creation complete without any server oper
   assert.equal(g.journal.length,1);assert.ok(response.availableSkills.length);
 });
 
+test('AP tradeoff items apply to the next battle and refill consistently with server rules',()=>{
+  for(const [itemId,ap] of [['item_burning_timetable',4],['item_heavy_textbook',2]]){
+    const g=localGame(),{payload,reward}=g.prepare();
+    reward.choices=[{rewardId:'tradeoff-item',type:'item',targetId:itemId,value:1,rarity:'rare'}];
+    g.x.c.signLocalRewardView_(reward);payload.stageState.reward=copy(reward);
+    const result=g.choose('item');
+    assert.equal(result.battle.player.maxActionPoint,ap);assert.equal(result.battle.player.currentActionPoint,ap);
+    const server=g.x.c.advanceRunStage({...copy(payload),runSessionToken:g.token},reward.choices[0].rewardId,'auth',reward);
+    assert.equal(server.battle.player.maxActionPoint,ap);
+    assert.equal(result.battle.player.maxHp,server.battle.player.maxHp);
+    const battle=copy(server.battle);battle.player.currentActionPoint=0;
+    g.x.c.normalizePlayerActionPoints_(battle,true);assert.equal(battle.player.currentActionPoint,ap);
+  }
+});
+
 test('local selection matches the previous server flow for stats, currency and score',()=>{
   const g=localGame(),{payload,reward}=g.prepare(),choice=reward.choices[0];
   const result=g.choose();
@@ -94,22 +109,29 @@ test('HP, new skills, skill upgrades and item effects use exactly the previous r
 });
 
 test('all 29 selections, rest healing, floor changes and victory settle only at the end',()=>{
-  const g=localGame();let count=0,rests=0;
+  const g=localGame();let count=0,rests=0,bossDrops=0;
   while(!g.view.cleared){
     g.x.writes.length=0;
     if(g.view.rewardView){rests++;g.view.battle.player.hp=Math.max(1,g.run.currentHp-10);}
-    g.prepare();
+    const prepared=g.prepare();
+    const boss=!!prepared.payload.battle.stage.bossMonsterId;
     assert.equal(g.x.writes.filter(s=>progressSheets.includes(s)).length,0);
-    g.choose(g.view.rewardView?'rest':['stat','skill','item','skillUpgrade'][count%4]);
+    const response=g.choose(g.view.rewardView?'rest':['stat','skill','item','skillUpgrade'][count%4]);
+    if(boss){
+      bossDrops++;
+      assert.ok(response.bonusItemReward);
+      assert.ok(JSON.parse(g.run.itemsJson).some(item=>item.itemId===response.bonusItemReward.targetId));
+    }else assert.equal(response.bonusItemReward,null);
     count++;assert.ok(count<=29);
   }
-  assert.equal(count,29);assert.equal(rests,4);
+  assert.equal(count,29);assert.equal(rests,4);assert.equal(bossDrops,5);
   assert.equal(g.x.c.findRowByKeyUncached_('Runs','runId',g.run.runId).status,'active');
   const saved=g.x.c.finishLocalRun(g.run.runId,g.token,copy(g.journal),'auth');
   assert.equal(saved.cleared,true);
   const row=g.x.c.findRowByKeyUncached_('Runs','runId',g.run.runId);
   assert.equal(row.status,'cleared');assert.equal(row.sessionSettled,true);
   assert.equal(row.score,g.run.score);assert.equal(row.currency,g.run.currency);
+  assert.equal(row.itemsJson,g.run.itemsJson);
   assert.equal(g.x.c.getWorkbookPlayerData_('w','p').bestScore,row.score);
   const writes=g.x.writes.length;
   const retry=g.x.c.finishLocalRun(g.run.runId,g.token,copy(g.journal),'auth');
@@ -117,6 +139,45 @@ test('all 29 selections, rest healing, floor changes and victory settle only at 
   g.x.cache.clear();
   const coldRetry=g.x.c.finishLocalRun(g.run.runId,g.token,copy(g.journal),'auth');
   assert.equal(coldRetry.score,row.score);assert.equal(g.x.writes.length,writes);
+});
+
+test('boss drop excludes owned and selected items, is signed and applies without server access',()=>{
+  const g=localGame();
+  for(let i=0;i<4;i++){g.prepare();g.choose('stat');}
+  const {reward}=g.prepare();
+  assert.ok(reward.bossItemRewards);
+  const owned=JSON.parse(g.run.itemsJson).map(item=>item.itemId);
+  for(const choice of reward.choices){
+    const drop=reward.bossItemRewards[choice.rewardId];
+    assert.ok(drop);
+    assert.ok(!owned.includes(drop.targetId));
+    if(choice.type==='item')assert.notEqual(drop.targetId,choice.targetId);
+  }
+  const signed=g.x.c.verifyLocalRewardView_(reward.localTransitionToken);
+  assert.deepEqual(copy(signed.bossItemRewards),copy(reward.bossItemRewards));
+  const choice=reward.choices.find(c=>c.type==='item')||reward.choices[0];
+  g.x.reads.length=0;g.x.writes.length=0;
+  const response=g.choose(choice.type);
+  assert.deepEqual(copy(response.bonusItemReward),copy(reward.bossItemRewards[choice.rewardId]));
+  assert.equal(g.x.reads.length,0);assert.equal(g.x.writes.length,0);
+  g.x.cache.clear();
+  g.prepare();g.choose('rest');g.prepare();
+  assert.ok(JSON.parse(g.run.itemsJson).some(item=>item.itemId===response.bonusItemReward.targetId));
+});
+
+test('boss detection excludes ordinary wins, defeats and floor rest; exhausted pools return no drop',()=>{
+  const x=context();start(x);const c=x.c;
+  const stages=c.buildStageSeedData_();
+  const boss=stages.find(stage=>stage.bossMonsterId);
+  const regular=stages.find(stage=>!stage.bossMonsterId&&!c.isFloorRestStage_(stage));
+  const rest=stages.find(stage=>c.isFloorRestStage_(stage));
+  assert.equal(c.isBossVictoryReward_(boss.stageId,{status:'victory',monsters:[]}),true);
+  assert.equal(c.isBossVictoryReward_(boss.stageId,{status:'defeat',monsters:[]}),false);
+  assert.equal(c.isBossVictoryReward_(regular.stageId,{status:'victory',monsters:[]}),false);
+  assert.equal(c.isBossVictoryReward_(rest.stageId,{status:'victory',monsters:[{type:'boss',currentHp:0}]}),false);
+  assert.equal(c.isBossVictoryReward_(regular.stageId,{status:'victory',monsters:[{type:'finalBoss',currentHp:0}]}),true);
+  const items=c.getItemRows_().map(item=>({itemId:item.itemId,count:1}));
+  assert.equal(c.pickAutoItemReward_(items),null);
 });
 
 test('defeat replays unacknowledged transitions and saves accumulated rewards once',()=>{

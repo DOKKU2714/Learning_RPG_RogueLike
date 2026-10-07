@@ -11,7 +11,7 @@ function getAvailableSkills(runState, battleState) {
 
     var hydrated = hydrateSkill_(skill, ownedSkill.level);
     var reason = getSkillUnavailableReason(hydrated, runState, battleState);
-    var actionPointCost = Number(hydrated.actionPointCost !== undefined && hydrated.actionPointCost !== '' ? hydrated.actionPointCost : 1);
+    var actionPointCost = getActionPointCostForAction_(ACTION_TYPES.SKILL, hydrated, battleState);
     var unavailableReasonType = getSkillUnavailableReasonType_(hydrated, runState, battleState, reason, actionPointCost);
     return {
       skillId: hydrated.skillId,
@@ -31,6 +31,7 @@ function getAvailableSkills(runState, battleState) {
       tags: hydrated.tags,
       description: hydrated.description,
       effectJson: hydrated.effectJson || '',
+      upgradeJson: hydrated.upgradeJson || '{}',
       effectDetails: buildSkillEffectDetails_(hydrated),
       clientEffects: buildClientSkillEffects_(hydrated),
       previewText: buildSkillPreviewText_(hydrated, battleState),
@@ -212,7 +213,7 @@ function getSkillUnavailableReason(skill, runState, battleState) {
     return ruleReason;
   }
 
-  var actionPointCost = getActionPointCostForAction_(ACTION_TYPES.SKILL, skill);
+  var actionPointCost = getActionPointCostForAction_(ACTION_TYPES.SKILL, skill, battleState);
   if (!hasEnoughActionPoint_(battleState, actionPointCost)) {
     return '행동력이 부족합니다.';
   }
@@ -262,7 +263,7 @@ function useSkill(runId, skillId, targetId, answerPayload) {
       targetId || payload.targetId || '',
       player.playerId
     );
-    pendingAction.actionPointCost = getActionPointCostForAction_(ACTION_TYPES.SKILL, skill);
+    pendingAction.actionPointCost = getActionPointCostForAction_(ACTION_TYPES.SKILL, skill, battleState);
     battleState.pendingAction = pendingAction;
     markQuestionUsedForRun_(stageState, battleState, pendingAction.questionId);
     markCachedQuestionShown_(stageState, pendingAction);
@@ -282,7 +283,7 @@ function useSkill(runId, skillId, targetId, answerPayload) {
       actionType: ACTION_TYPES.SKILL,
       skillId: skill.skillId,
       targetId: targetId || '',
-      actionPointCost: getActionPointCostForAction_(ACTION_TYPES.SKILL, skill),
+      actionPointCost: getActionPointCostForAction_(ACTION_TYPES.SKILL, skill, battleState),
       questionId: questionResult.question.questionId,
       question: sanitizeQuestionForBattleCache_(questionResult.question, player.playerId),
       issuedAt: new Date().getTime(),
@@ -328,7 +329,7 @@ function useSkill(runId, skillId, targetId, answerPayload) {
   var remainingMs = Math.max(0, maxMs - elapsedMs);
   var gaveUp = !!payload.giveUp;
   var isCorrect = gaveUp ? false : isCorrectAnswer_(question, payload.selectedAnswer, payload.selectedChoiceIndex, payload.selectedAnswerText);
-  var efficiency = gaveUp ? 0 : calculateEfficiency(isCorrect, remainingMs, maxMs, Number(payload.wrongCountAfterTimeout || 0), getItemQuestionModifiers_(battleState, question), question);
+  var efficiency = gaveUp ? 0 : calculateEfficiency(isCorrect, remainingMs, maxMs, Math.max(0, Number(payload.wrongCountAfterTimeout || 0) - getSharedRuleEngine_().consumeWrongProtection(battleState, payload.wrongCountAfterTimeout)), getItemQuestionModifiers_(battleState, question), question);
 
   battleState.lastTurnEvents = [];
   consumeActionPoint_(battleState, Number(pendingAction.actionPointCost !== undefined && pendingAction.actionPointCost !== '' ? pendingAction.actionPointCost : getActionPointCostForAction_(ACTION_TYPES.SKILL, skill)));
@@ -346,6 +347,7 @@ function useSkill(runId, skillId, targetId, answerPayload) {
   }
   var skillWasUsed = !gaveUp && battleState.player.hp > 0 && battleState.status === STATUS.BATTLE_ACTIVE;
   if (skillWasUsed) {
+    getSharedRuleEngine_().applyPerfectAnswerItems(battleState, efficiency, false);
     setActiveMonsterScoreContext_(battleState, pendingAction.questionId, efficiency);
     processSkillTriggers_(battleState, isCorrect ? 'onCorrect' : 'onWrong', { isCorrect: isCorrect, efficiency: efficiency });
     var blockedByPenalty = processSkillFailPenaltyAfterAnswer_(battleState, skill, isCorrect);
@@ -354,7 +356,7 @@ function useSkill(runId, skillId, targetId, answerPayload) {
     }
     clearActiveMonsterScoreContext_(battleState);
   }
-  if (areAllMonstersDefeated_(battleState)) {
+  if (battleState.player.hp > 0 && areAllMonstersDefeated_(battleState)) {
     battleState.status = STATUS.BATTLE_VICTORY;
     battleState.lastMessage = '몬스터를 처치했습니다.';
     logBattleEvent_(run, STATUS.BATTLE_VICTORY, { battleId: battleState.battleId });
@@ -438,6 +440,7 @@ function applySkillEffect(battleState, skill, efficiency, isCorrect) {
         var damage = applyFrozenBonusIfNeeded_(damageTarget, critical.damage);
         damage = applyOutgoingItemDamageModifiers_(battleState, damage, { actionType: ACTION_TYPES.SKILL, skill: skill });
         var damageResult = dealDamageToMonster_(battleState, damageTarget, damage);
+        getSharedRuleEngine_().applyCriticalItemHealing(battleState, critical.isCritical, damageResult.damage);
         events.push({
           actor: 'player',
           type: ACTION_TYPES.SKILL,
@@ -494,6 +497,7 @@ function applySkillEffect(battleState, skill, efficiency, isCorrect) {
       var damage = applyFrozenBonusIfNeeded_(target, critical.damage);
       damage = applyOutgoingItemDamageModifiers_(battleState, damage, { actionType: ACTION_TYPES.SKILL, skill: skill });
       var damageResult = dealDamageToMonster_(battleState, target, damage);
+      getSharedRuleEngine_().applyCriticalItemHealing(battleState, critical.isCritical, damageResult.damage);
       events.push({
         actor: 'player',
         type: ACTION_TYPES.SKILL,
@@ -628,10 +632,12 @@ function executeSkillByRule_(battleState, skill, rule, efficiency, isCorrect) {
   var targets = selectSkillTargets_(rule, battleState, skill, skill.targetId || '');
   var hitCount = Math.max(1, Math.round(evaluateSkillFormulaValue_(rule.hitCount, context, Math.max(1, Number(skill.hitCount || 1)), battleState, skill)));
   var normalizedTargetMode = normalizeSkillTargetMode_(rule.targetMode || (skill.target === 'self' ? 'self' : 'singleEnemy'));
-  if (normalizedTargetMode === 'randomEnemies') {
+  var randomPerHit = normalizedTargetMode === 'randomEnemies' || (normalizedTargetMode === 'randomEnemy' && hitCount > 1);
+  if (randomPerHit) {
     targets = [];
+    var usedRandomTargetIds = {};
     for (var randomHit = 0; randomHit < hitCount; randomHit += 1) {
-      var randomTarget = selectRandomAliveEnemy_(battleState);
+      var randomTarget = selectRandomAliveEnemyAvoiding_(battleState, usedRandomTargetIds);
       if (randomTarget) {
         targets.push(randomTarget);
       }
@@ -653,10 +659,10 @@ function executeSkillByRule_(battleState, skill, rule, efficiency, isCorrect) {
     if (!target || target.currentHp === undefined) {
       return;
     }
-    for (var i = 0; i < (normalizedTargetMode === 'randomEnemies' ? 1 : hitCount); i += 1) {
+    for (var i = 0; i < (randomPerHit ? 1 : hitCount); i += 1) {
       var damageTarget = target;
       if (Number(damageTarget.currentHp || 0) <= 0 && normalizedTargetMode !== 'allEnemies') {
-        damageTarget = normalizedTargetMode === 'randomEnemies' ? selectRandomAliveEnemy_(battleState) : getSkillTarget_(battleState, skill, skill.targetId || '');
+        damageTarget = randomPerHit ? selectRandomAliveEnemy_(battleState) : getSkillTarget_(battleState, skill, skill.targetId || '');
       }
       if (!damageTarget || damageTarget.currentHp === undefined || Number(damageTarget.currentHp || 0) <= 0) {
         continue;
@@ -692,6 +698,7 @@ function executeSkillByRule_(battleState, skill, rule, efficiency, isCorrect) {
       damage = applyFrozenBonusIfNeeded_(damageTarget, critical.damage);
       damage = applyOutgoingItemDamageModifiers_(battleState, damage, { actionType: ACTION_TYPES.SKILL, skill: skill });
       var damageResult = dealDamageToMonster_(battleState, damageTarget, damage);
+      getSharedRuleEngine_().applyCriticalItemHealing(battleState, critical.isCritical, damageResult.damage);
       damageEvents += 1;
       totalDamageDealt += Number(damageResult.damage || 0);
       battleState.lastTurnEvents.push({
@@ -888,7 +895,7 @@ function applySkillRuleCopyActions_(battleState, skill, rule, targets) {
       }
       var copiedEffect = applyEffect(
         battleState.player,
-        Object.assign({}, sourceEffect),
+        Object.assign({}, sourceEffect, sourceEffect.durationType === 'turn' ? {durationTurns:sourceEffect.remainingTurns} : {}),
         { source: 'skillCopy', skillId: skillId, turn: battleState.turn }
       );
       if (copiedEffect) {
@@ -955,6 +962,7 @@ function applySkillRuleSelfDamage_(battleState, skill, rule, context) {
   var damage = Math.max(0, Math.round(evaluateSkillFormulaValue_(selfDamage, context, selfDamage, battleState, skill)));
   battleState.player.hp = Math.max(0, Number(battleState.player.hp || 0) - damage);
   battleState.lastTurnEvents.push({ actor: 'player', type: 'selfDamage', skillId: skill.skillId, damage: damage, hpDamage: damage, message: skill.name + '의 반동으로 ' + damage + ' 피해를 받았습니다.' });
+  if (damage > 0) processSkillTriggers_(battleState, 'onDamaged', {hpDamage:damage, damage:damage, actor:'player', selfTurn:true});
 }
 
 function selectSkillTargets_(rule, battleState, skill, explicitTargetId) {
@@ -1319,22 +1327,24 @@ function applySkillActionPointModify_(battleState, skill, apRule, context) {
     return;
   }
   var supportedKeys = ['currentActionPointAdd', 'currentActionPointSub', 'maxActionPointAdd', 'maxActionPointSub', 'nextTurnActionPointAdd', 'nextTurnActionPointSub'];
+  var allowedKeys = supportedKeys.concat(supportedKeys.map(function(key) { return key + 'Formula'; }), ['durationType']);
   Object.keys(apRule).forEach(function(key) {
-    if (supportedKeys.indexOf(key) === -1) {
+    if (allowedKeys.indexOf(key) === -1) {
       warnSkillRule_(battleState, skill, 'Unsupported actionPointModify key: ' + key, { key: key });
     }
   });
   var config = {};
   supportedKeys.forEach(function(key) {
-    if (apRule[key] !== undefined) {
-      config[key] = evaluateSkillFormulaValue_(apRule[key], context, Number(apRule[key] || 0), battleState, skill);
+    var formula = apRule[key + 'Formula'];
+    if (formula !== undefined || apRule[key] !== undefined) {
+      config[key] = evaluateSkillFormulaValue_(formula !== undefined ? formula : apRule[key], context, Number(apRule[key] || 0), battleState, skill);
     }
   });
   applyActionPointEffectConfig_(battleState.player, config);
 }
 
 function registerSkillTriggers_(battleState, skill, rule) {
-  var triggerKeys = ['onDamaged', 'onBlock', 'onCorrect', 'onWrong', 'onTurnStart', 'onTurnEnd'];
+  var triggerKeys = ['onDamaged', 'onBlock', 'onTurnStart', 'onTurnEnd'];
   triggerKeys.forEach(function(key) {
     if (!rule[key]) {
       return;
@@ -1346,6 +1356,7 @@ function registerSkillTriggers_(battleState, skill, rule) {
       rule: rule[key],
       sourceSkillId: skill.skillId,
       sourceSkillName: skill.name,
+      sourceSkill: Object.assign({}, skill),
       durationType: rule[key].durationType || 'battle',
       remainingTurns: Number(rule[key].durationTurns || 0),
       createdAtTurn: Number(battleState.turn || 1),
@@ -1358,8 +1369,8 @@ function registerSkillTriggers_(battleState, skill, rule) {
       rule: rule.failPenalty,
       sourceSkillId: skill.skillId,
       sourceSkillName: skill.name,
-      durationType: 'battle',
-      remainingTurns: 0,
+      durationType: rule.failPenalty.durationType || (skill.skillId === 'skill_emergency_escape' ? 'turn' : 'battle'),
+      remainingTurns: Number(rule.failPenalty.durationTurns || (skill.skillId === 'skill_emergency_escape' ? 1 : 0)),
       createdAtTurn: Number(battleState.turn || 1),
     });
   }
@@ -1370,7 +1381,7 @@ function validateSkillTriggerRule_(battleState, skill, key, triggerRule) {
     warnSkillRule_(battleState, skill, key + ' must be an object.', { value: triggerRule });
     return;
   }
-  var supported = ['durationType', 'durationTurns', 'reflectBlockedDamage', 'damageFormula', 'applyEffects', 'actionPointModify', 'tagBonus'];
+  var supported = ['durationType', 'durationTurns', 'selfTurnOnly', 'reflectBlockedDamage', 'damageFormula', 'applyEffects', 'actionPointModify', 'tagBonus'];
   Object.keys(triggerRule).forEach(function(ruleKey) {
     if (supported.indexOf(ruleKey) === -1) {
       warnSkillRule_(battleState, skill, 'Unsupported ' + key + ' key: ' + ruleKey, { key: ruleKey });
@@ -1431,7 +1442,7 @@ function validateSkillFailPenaltyRule_(battleState, skill, failPenalty) {
   if (!failPenalty || typeof failPenalty !== 'object') {
     return;
   }
-  var supported = ['loseBattleOnWrongAnswer', 'loseBattleOnDamageTaken', 'selfDamageOnUse', 'increaseQuestionDifficulty', 'reduceActionPoint'];
+  var supported = ['loseBattleOnWrongAnswer', 'loseBattleOnDamageTaken', 'selfDamageOnUse', 'increaseQuestionDifficulty', 'reduceActionPoint', 'durationType', 'durationTurns'];
   Object.keys(failPenalty).forEach(function(key) {
     if (supported.indexOf(key) === -1) {
       warnSkillRule_(battleState, skill, 'Unsupported failPenalty key: ' + key, { key: key });
@@ -1462,19 +1473,23 @@ function processSkillTriggers_(battleState, timing, payload) {
 
 function processSingleSkillTrigger_(battleState, trigger, timing, payload) {
   var rule = trigger.rule || {};
-  var sourceSkill = { skillId: trigger.sourceSkillId || '', name: trigger.sourceSkillName || trigger.sourceSkillId || 'trigger' };
-  var context = buildSkillFormulaContext_(battleState, sourceSkill, payload.target || null, payload.efficiency || 1);
+  var sourceSkill = trigger.sourceSkill || { skillId: trigger.sourceSkillId || '', name: trigger.sourceSkillName || trigger.sourceSkillId || 'trigger' };
+  if (rule.selfTurnOnly && !payload.selfTurn) return;
+  var context = buildSkillFormulaContext_(battleState, sourceSkill, payload.target || null, payload.efficiency !== undefined ? payload.efficiency : 1);
   context.blockedDamage = Number(payload.shieldDamage || 0);
   context.damageTaken = Number(payload.hpDamage || 0);
 
   if (trigger.timing === 'failPenalty') {
+    if (timing === 'onWrong' && rule.loseBattleOnWrongAnswer) {
+      markBattleDefeatBySkillRule_(battleState, sourceSkill, '오답 패널티로 패배했습니다.');
+    }
     if (timing === 'onDamaged' && rule.loseBattleOnDamageTaken && Number(payload.hpDamage || 0) > 0) {
       markBattleDefeatBySkillRule_(battleState, sourceSkill, '피격 패널티로 패배했습니다.');
     }
     return;
   }
   if (rule.reflectBlockedDamage && Number(payload.shieldDamage || 0) > 0) {
-    var target = getFirstAliveMonster_(battleState);
+    var target = payload.target || getFirstAliveMonster_(battleState);
     if (target) {
       var result = dealDamageToMonster_(battleState, target, Number(payload.shieldDamage || 0));
       battleState.lastTurnEvents = battleState.lastTurnEvents || [];
@@ -1483,7 +1498,7 @@ function processSingleSkillTrigger_(battleState, trigger, timing, payload) {
   }
   if (rule.damageFormula) {
     var damage = Math.max(0, Math.round(evaluateSkillFormula_(rule.damageFormula, context, battleState, sourceSkill)));
-    var damageTarget = getFirstAliveMonster_(battleState);
+    var damageTarget = payload.target || getFirstAliveMonster_(battleState);
     if (damageTarget && damage > 0) {
       dealDamageToMonster_(battleState, damageTarget, damage);
     }
@@ -1756,13 +1771,13 @@ function tickEffectsOnPlayerAction(battleState) {
 function tickEffectsAtTurnEnd(battleState) {
   normalizeBattleStateEffects_(battleState);
   processSkillTriggers_(battleState, 'onTurnEnd', {});
-  cleanupSkillTriggersForTurn_(battleState);
   applyTimedEffectDamage_(battleState.player, TRIGGER_TIMINGS.TURN_END, battleState, 'player');
   getAliveMonsters_(battleState).forEach(function(monster) {
     applyTimedEffectDamage_(monster, TRIGGER_TIMINGS.TURN_END, battleState, 'monster');
     decrementTurnEffects_(monster, battleState);
   });
   decrementTurnEffects_(battleState.player, battleState);
+  cleanupSkillTriggersForTurn_(battleState);
   return battleState;
 }
 
@@ -1963,6 +1978,17 @@ function getOwnedSkillForRun_(runState, skillId) {
 }
 
 function hydrateSkill_(skill, level) {
+  // Compatibility for the malformed legacy row observed in the Skills sheet.
+  // Valid edited definitions always take precedence over these defaults.
+  if (skill.skillId === 'skill_multi_attack') {
+    skill = Object.assign({}, skill);
+    if (!safeJsonParse_(skill.effectJson, null)) {
+      skill.effectJson = '{"targetMode":"singleEnemy","hitCount":3,"damageFormula":"attack*0.4"}';
+    }
+    if (!safeJsonParse_(skill.conditionJson, null)) {
+      skill.conditionJson = '{"afterTurn":1,"perStageLimit":3}';
+    }
+  }
   var rarity = normalizeRarity_(skill.rarity || RARITIES.COMMON);
   return Object.assign({}, skill, {
     level: Math.max(1, Number(level || skill.level || 1)),
@@ -2224,7 +2250,13 @@ function buildEffectInstance_(effect, source) {
 }
 
 function applyTimedEffectDamage_(target, timing, battleState, actor) {
-  return getSharedRuleEngine_().applyTimedEffectDamage(target, timing, battleState, actor, battleState && battleState.turn);
+  var hpBefore = Number(target && (target.currentHp !== undefined ? target.currentHp : target.hp) || 0);
+  var result = getSharedRuleEngine_().applyTimedEffectDamage(target, timing, battleState, actor, battleState && battleState.turn);
+  var hpDamage = hpBefore - Number(target && (target.currentHp !== undefined ? target.currentHp : target.hp) || 0);
+  if (actor === 'player' && hpDamage > 0) {
+    processSkillTriggers_(battleState, 'onDamaged', {hpDamage:hpDamage, damage:hpDamage, actor:'player', selfTurn:timing !== TRIGGER_TIMINGS.TURN_END});
+  }
+  return result;
   target.effects = target.effects || [];
   target.effects.forEach(function(effect) {
     if (effect.triggerTiming !== timing || effect.statKey !== STAT_KEYS.HP || effect.effectType !== EFFECT_TYPES.FLAT || Number(effect.value || 0) >= 0) {

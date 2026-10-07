@@ -120,7 +120,7 @@ var RULE_ENGINE_SHARED = (function() {
       }
     }
     if (existing && effect.stackable) {
-      existing.stacks = Math.min(Number(effect.maxStacks || 99), Math.max(1, Number(existing.stacks || 1)) + 1);
+      existing.stacks = Math.min(Number(effect.maxStacks || 99), Math.max(1, Number(existing.stacks || 1)) + Math.max(1, Number(effect.stacks || 1)));
       if (effect.remainingTurns !== '') {
         existing.remainingTurns = Math.max(Number(existing.remainingTurns || 0), Number(effect.remainingTurns || 0));
       }
@@ -298,6 +298,8 @@ var RULE_ENGINE_SHARED = (function() {
       for (var i = 0; i < count; i += 1) total += randomInt(1, sides, options && options.random);
       return String(total);
     });
+    // Sheet formulas also use mathematical implicit multiplication (e.g. 2n).
+    source = source.replace(/(\d)(?=[A-Za-z_(])/g, '$1*');
     var parser = createFormulaParser(source, context || {}, options);
     var result = parser.parseExpression();
     if (parser.hasRemaining()) warn(options, 'Formula parse stopped before end.', { formula: formula, at: parser.index });
@@ -536,14 +538,20 @@ var RULE_ENGINE_SHARED = (function() {
     player.currentActionPoint = Math.max(0, Math.min(player.maxActionPoint, Number(player.currentActionPoint || 0)));
   }
 
-  function dealDamageToMonster(monster, amount) {
+  function dealDamageToMonster(monster, amount, battle) {
     var incoming = Math.max(0, Math.round(Number(amount || 0)));
-    var shieldDamage = Math.min(Number(monster.shield || 0), incoming);
-    var hpDamage = Math.max(0, incoming - shieldDamage);
+    var shieldBefore = Math.max(0, Number(monster.shield || 0));
+    var modifiers = battle && battle.player && battle.player.itemModifiers || {};
+    // Extra damage is consumed by shields only; it never spills into HP.
+    var shieldDamage = Math.min(shieldBefore, Math.max(0, Math.round(incoming * (1 + Number(modifiers.shieldDamagePercent || 0) / 100))));
+    var hpDamage = Math.min(Math.max(0, Number(monster.currentHp || 0)), Math.max(0, incoming - shieldBefore));
     monster.shield = Math.max(0, Number(monster.shield || 0) - shieldDamage);
     monster.currentHp = Math.max(0, Number(monster.currentHp || 0) - hpDamage);
     monster.hp = monster.currentHp;
-    return { damage: incoming, shieldDamage: shieldDamage, hpDamage: hpDamage };
+    if (shieldBefore > 0 && monster.shield === 0 && battle && battle.player) {
+      battle.player.shield = Number(battle.player.shield || 0) + Math.max(0, Number(modifiers.shieldBreakShield || 0));
+    }
+    return { damage: shieldDamage + hpDamage, shieldDamage: shieldDamage, hpDamage: hpDamage };
   }
 
   function applyTagBonus(value, battle, tagBonus) {
@@ -723,7 +731,7 @@ var RULE_ENGINE_SHARED = (function() {
           damage = args.damageModifier(damage, { actionType: 'skill', skill: skill, target: target });
         }
         if (damage <= 0) continue;
-        var result = dealDamageToMonster(target, damage);
+        var result = dealDamageToMonster(target, damage, battle);
         totalDamageDealt += Number(result.damage || 0);
         battle.lastTurnEvents.push({
           actor: 'player',
@@ -802,7 +810,32 @@ var RULE_ENGINE_SHARED = (function() {
     }
   }
 
+  function consumeWrongProtection(battle, wrongCount) {
+    if (!battle || Number(wrongCount || 0) <= 0 || !Number(battle.player && battle.player.itemModifiers && battle.player.itemModifiers.ignoreWrongPerStage || 0)) return 0;
+    battle.itemTriggerState = battle.itemTriggerState || {};
+    if (battle.itemTriggerState.wrongProtectionUsed) return 0;
+    battle.itemTriggerState.wrongProtectionUsed = true;
+    return 1;
+  }
+  function applyPerfectAnswerItems(battle, efficiency, gaveUp) {
+    if (!battle || gaveUp || Number(efficiency) < 1) return;
+    var effects = battle.player && battle.player.itemModifiers && battle.player.itemModifiers.perfectAnswerEffects || [];
+    effects.forEach(function(effect) { applyEffect(battle.player, effect, { source: 'item' }, Number(battle.turn || 1)); });
+  }
+  function applyCriticalItemHealing(battle, critical, damage) {
+    if (!battle || !critical || Number(damage || 0) <= 0) return 0;
+    var player = battle.player || {};
+    var percent = Number(player.itemModifiers && player.itemModifiers.criticalHealPercent || 0);
+    var restored = Math.min(Math.max(0, Number(player.maxHp || player.stats && player.stats.hp || 1) - Number(player.hp || 0)), Math.max(0, Math.round(Number(damage) * percent / 100)));
+    player.hp = Number(player.hp || 0) + restored;
+    return restored;
+  }
+
   return {
+    dealDamageToMonster: dealDamageToMonster,
+    consumeWrongProtection: consumeWrongProtection,
+    applyPerfectAnswerItems: applyPerfectAnswerItems,
+    applyCriticalItemHealing: applyCriticalItemHealing,
     TIMING: TIMING,
     safeJsonParse: safeJsonParse,
     isTruthy: isTruthy,

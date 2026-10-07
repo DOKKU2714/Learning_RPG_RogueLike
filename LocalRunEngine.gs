@@ -22,7 +22,10 @@ function getLocalRunEngineSource_() {
       if (typeof candidate === 'function' && candidate.name === identifier && !/\[native code\]/.test(String(candidate))) collect(candidate);
     });
   }
-  [commitStageResultUnlocked_, selectRewardUnlocked_, startBattle, buildBattleStateView_].forEach(collect);
+  [commitStageResultUnlocked_, selectRewardUnlocked_, startBattle, buildBattleStateView_,
+    applySkillEffect, processSkillTriggers_, processSkillFailPenaltyAfterAnswer_,
+    tickEffectsAtTurnStart, tickEffectsAtTurnEnd, tickEffectsOnPlayerAction,
+    getAvailableSkills, normalizePlayerActionPoints_].forEach(collect);
   var constants = { DB_SHEETS: DB_SHEETS, DB_COLUMNS: DB_COLUMNS, STATUS: STATUS, AVATAR_TYPES: AVATAR_TYPES,
     QUESTION_TYPES: QUESTION_TYPES, ACTION_TYPES: ACTION_TYPES, SKILL_TYPES: SKILL_TYPES, REWARD_TYPES: REWARD_TYPES,
     RARITIES: RARITIES, RARITY_LABELS: RARITY_LABELS, EFFECT_CATEGORIES: EFFECT_CATEGORIES, EFFECT_TYPES: EFFECT_TYPES,
@@ -32,9 +35,9 @@ function getLocalRunEngineSource_() {
     SKILL_UPGRADE_REWARD_CONFIG: SKILL_UPGRADE_REWARD_CONFIG, REWARD_CONFIG: REWARD_CONFIG,
     GAME_RULES: GAME_RULES, PLAYER_GHOST_FLOOR_CONFIGS: PLAYER_GHOST_FLOOR_CONFIGS,
     ALLOWED_REWARD_STAT_KEYS_: ALLOWED_REWARD_STAT_KEYS_, MASTER_ITEMS: MASTER_ITEMS,
-    MASTER_MONSTERS: MASTER_MONSTERS, MASTER_SETTINGS: MASTER_SETTINGS };
+    MASTER_EFFECTS: MASTER_EFFECTS, MASTER_MONSTERS: MASTER_MONSTERS, MASTER_SETTINGS: MASTER_SETTINGS };
   var declarations = Object.keys(constants).map(function(name) { return 'var ' + name + '=' + JSON.stringify(constants[name]) + ';'; }).join('\n');
-  var source = '(function(nativeDate,nativeMath){\n' + declarations + '\n' + adapters + '\n' + getSharedRuleEngineSource_() + '\n' + sources.join('\n') + '\nreturn {advance: advanceLocalRun};\n})(Date,Math)';
+  var source = '(function(nativeDate,nativeMath){\n' + declarations + '\n' + adapters + '\n' + getSharedRuleEngineSource_() + '\n' + sources.join('\n') + '\nreturn {advance: advanceLocalRun, skill: applyLocalBattleSkill, trigger: processLocalBattleTrigger, tick: tickLocalBattleEffects, skills: getLocalBattleSkills};\n})(Date,Math)';
   if (/\b(?:SpreadsheetApp|PropertiesService|CacheService|LockService|UrlFetchApp|ScriptApp)\b/.test(source)) throw new Error('클라이언트 전투 규칙에 서버 의존성이 남아 있습니다.');
   return source;
 }
@@ -48,6 +51,42 @@ function getLocalRunEngineAdapters_() {
   var Date = nativeDate, Math = Object.create(nativeMath);
   var localRun, localSnapshot, localPermit, localPlayWindow, localIdCounter, localSeed;
   function cloneLocal(value) { return JSON.parse(JSON.stringify(value)); }
+  // The browser uses the same skill implementation as Apps Script. Reads are
+  // resolved from the downloaded snapshot; scoring remains owned by the HUD.
+  function withLocalBattleRules(snapshot, battle, callback) {
+    localSnapshot = snapshot;
+    Math.random = nativeMath.random;
+    var previous = battle.suppressMonsterScoreBookkeeping;
+    battle.suppressMonsterScoreBookkeeping = true;
+    try { return callback(); }
+    finally {
+      if (previous === undefined) delete battle.suppressMonsterScoreBookkeeping;
+      else battle.suppressMonsterScoreBookkeeping = previous;
+    }
+  }
+  function applyLocalBattleSkill(snapshot, battle, skill, targetId, efficiency, isCorrect) {
+    return withLocalBattleRules(snapshot, battle, function() {
+      var master = findCachedRowByKey_(DB_SHEETS.SKILLS, 'skillId', skill.skillId);
+      var hydrated = hydrateSkill_(master || skill, skill.level);
+      if (!processSkillFailPenaltyAfterAnswer_(battle, hydrated, isCorrect)) {
+        applySkillEffect(battle, Object.assign({}, hydrated, {targetId:targetId || ''}), efficiency, isCorrect);
+      }
+      return battle;
+    });
+  }
+  function processLocalBattleTrigger(snapshot, battle, timing, payload) {
+    return withLocalBattleRules(snapshot, battle, function() { processSkillTriggers_(battle, timing, payload || {}); });
+  }
+  function tickLocalBattleEffects(snapshot, battle, timing) {
+    return withLocalBattleRules(snapshot, battle, function() {
+      if (timing === 'turnStart') { normalizePlayerActionPoints_(battle, true); return tickEffectsAtTurnStart(battle); }
+      if (timing === 'turnEnd') return tickEffectsAtTurnEnd(battle);
+      return tickEffectsOnPlayerAction(battle);
+    });
+  }
+  function getLocalBattleSkills(snapshot, battle, skills) {
+    return withLocalBattleRules(snapshot, battle, function() { return getAvailableSkills({skills:skills || []}, battle); });
+  }
   function advanceLocalRun(run, snapshot, payload, rewardId, rewardView, options) {
     options = options || {};
     localRun = cloneLocal(run); localSnapshot = snapshot; localPermit = cloneLocal(rewardView.localTransition);
@@ -161,6 +200,17 @@ function prepareLocalRewardTransitions_(view, stagePayload, authToken) {
   var nextStage = moved.status === STATUS.RUN_CLEARED ? null : loadStage(buildStageId_(moved.currentFloor, moved.currentStage));
   var permit = buildLocalTransitionPermit_(run, view.stageId, battle.battleId);
   view.localTransition = permit;
+  // Draw the extra drop with the normal item rules before signing the choices.
+  // Each branch excludes the item selected as the ordinary reward.
+  if (isBossVictoryReward_(view.stageId, battle)) {
+    view.bossItemRewards = {};
+    view.choices.forEach(function(choice) {
+      var items = safeJsonParse_(run.itemsJson, []);
+      var selected = choice.claimReward || choice;
+      if (selected.type === REWARD_TYPES.ITEM) items = addItemToOwnedItems_(items, selected.targetId);
+      view.bossItemRewards[choice.rewardId] = pickAutoItemReward_(items);
+    });
+  }
   if (nextStage && !isFloorRestStage_(nextStage)) {
     permit.ghostSelection = selectPlayerGhostForBattle_(moved, nextStage, getStageState_(moved), 'battle_local_' + permit.seed + '_1');
   }

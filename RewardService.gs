@@ -359,6 +359,16 @@ function selectReward(runId, rewardId, authToken, rewardView) {
   finally { lock.releaseLock(); }
 }
 
+function isBossVictoryReward_(stageId, battle) {
+  if (!battle || battle.status !== STATUS.BATTLE_VICTORY) return false;
+  var stage = loadStage(stageId);
+  if (isFloorRestStage_(stage)) return false;
+  return !!stage.bossMonsterId || (battle.monsters || []).some(function(monster) {
+    var type = String(monster.type || '').toLowerCase();
+    return Number(monster.currentHp || 0) <= 0 && (type === 'boss' || type === 'finalboss');
+  });
+}
+
 function selectRewardUnlocked_(runId, rewardId, authToken, rewardView) {
   var timingStartedAt = new Date().getTime();
   var timingMarks = {};
@@ -491,6 +501,13 @@ function selectRewardUnlocked_(runId, rewardId, authToken, rewardView) {
   } else if (appliedReward.type === REWARD_TYPES.REST) {
     applyRestReward_(runState, appliedReward);
   }
+  var bonusItemReward = null;
+  if (!rewardState.floorRestChoice && isBossVictoryReward_(rewardState.stageId, stageState.battle)) {
+    var preparedDrops = rewardView && rewardView.bossItemRewards;
+    bonusItemReward = preparedDrops && Object.prototype.hasOwnProperty.call(preparedDrops, reward.rewardId)
+      ? preparedDrops[reward.rewardId] : pickAutoItemReward_(runState.items);
+    if (bonusItemReward) applyItemReward_(runState, bonusItemReward);
+  }
   markTiming('rewardApplied');
 
   rewardState.selectedRewardId = reward.rewardId;
@@ -548,6 +565,7 @@ function selectRewardUnlocked_(runId, rewardId, authToken, rewardView) {
       cleared: true,
       run: toClientObject_(movedRun),
       selectedReward: appliedReward,
+      bonusItemReward: bonusItemReward,
       currencyAmount: isRestReward ? 0 : rewardState.currencyAmount,
       scoreSummary: scoreSummary,
       debugTimings: debugTimings,
@@ -558,6 +576,8 @@ function selectRewardUnlocked_(runId, rewardId, authToken, rewardView) {
   var movedStage = loadStage(movedStageState.stageId || buildStageId_(movedRun.currentFloor, movedRun.currentStage));
   if (isFloorRestStage_(movedStage)) {
     return Object.assign(buildFloorRestRewardViewForRun_(movedRun, movedStageState), {
+      selectedReward: appliedReward,
+      bonusItemReward: bonusItemReward,
       scoreSummary: scoreSummary,
       debugTimings: debugTimings,
     });
@@ -572,6 +592,7 @@ function selectRewardUnlocked_(runId, rewardId, authToken, rewardView) {
     run: toClientObject_(movedRun),
     rewardSelected: true,
     selectedReward: appliedReward,
+    bonusItemReward: bonusItemReward,
     currencyAmount: isRestReward ? 0 : rewardState.currencyAmount,
     scoreSummary: scoreSummary,
     debugTimings: debugTimings,
@@ -1083,6 +1104,9 @@ function applySkillUpgradeReward_(runState, reward) {
   if (!skillId) {
     throw new Error('스킬 강화 보상 targetId가 비어 있습니다.');
   }
+  if (!isSkillUpgradable_(findCachedRowByKey_(DB_SHEETS.SKILLS, 'skillId', skillId, 600))) {
+    throw new Error('강화할 수 없는 스킬입니다.');
+  }
 
   var found = false;
   runState.skills = normalizeOwnedSkills_(runState.skills).map(function(skill) {
@@ -1432,9 +1456,19 @@ function getAvailableSkillRewardPool_(rarity, ownedSkills, config) {
     if (config && config.onlyOwnedSkills && !ownedMap[skillId]) {
       return false;
     }
+    if (ownedMap[skillId] && !isSkillUpgradable_(skill)) return false;
     return true;
   });
   return pool;
+}
+
+function isSkillUpgradable_(skill) {
+  if (!skill) return true;
+  var condition = safeJsonParse_(skill.conditionJson, {});
+  var upgrade = safeJsonParse_(skill.upgradeJson, {});
+  var rule = getSkillExecutionRule_(skill);
+  return !isTruthy_(condition.notUpgradable) && !isTruthy_(upgrade.notUpgradable)
+    && !isTruthy_(rule.requireCondition && rule.requireCondition.notUpgradable);
 }
 
 function isSkillExcludedFromAutoRewards_(skill) {

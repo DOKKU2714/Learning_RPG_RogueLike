@@ -1,0 +1,7 @@
+const fs=require('fs'),vm=require('vm'),test=require('node:test'),assert=require('node:assert/strict');
+function extract(file,name){const s=fs.readFileSync(file,'utf8'),a=s.indexOf('function '+name+'('),b=s.indexOf('\n}',a);if(file.endsWith('.html'))return s.slice(a,s.indexOf('\n    function ',a));return s.slice(a,b+2);}
+function delta(effects){const c={EFFECT_TYPES:{FLAT:'flat'},STAT_KEYS:{QUESTION_DIFFICULTY:'questionDifficulty'},currentView:{battle:{player:{effects}}}};vm.createContext(c);vm.runInContext(extract('BattleService.gs','getEffectFlatBonus_')+extract('Battle.html','getClientQuestionDifficultyEffectDelta'),c);return [c.getEffectFlatBonus_(effects,'questionDifficulty'),c.getClientQuestionDifficultyEffectDelta()];}
+const foolish=n=>({effectId:'debuff_foolish',statKey:'questionDifficulty',effectType:'flat',value:1,stacks:n});
+test('foolish increases difficulty by exactly one at 1, 3, and 99 stacks on server and client',()=>{for(const n of [1,3,99])assert.deepEqual(delta([foolish(n)]),[1,1]);});
+test('duplicate foolish entries still apply only one difficulty increase',()=>assert.deepEqual(delta([foolish(3),foolish(2)]),[1,1]));
+test('other stacked effects keep their existing values, and removing foolish removes its bonus',()=>{const other={effectId:'other',statKey:'questionDifficulty',effectType:'flat',value:2,stacks:3};assert.deepEqual(delta([other,foolish(99)]),[7,7]);assert.deepEqual(delta([other]),[6,6]);assert.deepEqual(delta([]),[0,0]);});

@@ -183,6 +183,7 @@ test('deadline defeat next opens final score, confirm returns to home button', (
     currentOutcomeContext: { scoreSummary: { scoreDelta: 230, totalScore: 1485, showDetailedBreakdown: true } },
     document: { getElementById: element },
     normalizeClientScoreSummary: x => x, clearScoreAnimation() {},
+    finishScoreAnimationNow() { c.scoreAnimationDone = true; },
     buildScoreBreakdownRows: () => [], buildScoreMetaRows: () => [],
     queueScoreAnimation() {},
     preloadNextBattleAfterReward() { throw Error('final outcome must not preload another battle'); },
@@ -200,6 +201,9 @@ test('deadline defeat next opens final score, confirm returns to home button', (
   c.showOutcomeScoreDetails();
   assert.equal(element('scoreModal').classList.contains('active'), true);
   assert.equal(element('defeatOverlay').classList.contains('active'), false);
+  c.confirmScoreModal();
+  assert.equal(element('scoreModal').classList.contains('active'), true);
+  assert.equal(c.scoreAnimationDone, true);
   c.confirmScoreModal();
   assert.equal(element('scoreModal').classList.contains('active'), false);
   assert.equal(element('defeatOverlay').classList.contains('active'), true);
