@@ -88,3 +88,45 @@ test('new skill restrictions, costs, rarity and formula rows are valid',()=>{
     assert.doesNotThrow(()=>JSON.parse(row.effectJson));
   }
 });
+
+test('recovery events update the HUD before the enemy hit without healing the model twice',async()=>{
+  for(const [id,hp,level,expectedHeal] of [
+    ['skill_emergency_rations',30,1,7],
+    ['skill_emergency_rations',30,3,10],
+    ['skill_emergency_treatment',99,3,1],
+  ]) {
+    const g=setup(),before=copy(g.battle),next=copy(g.battle);
+    before.player.hp=hp;next.player.hp=hp;
+    before.player.shield=next.player.shield=4;
+    g.use('browser',next,id,level);
+    const healedHp=next.player.hp;
+    next.player.hp-=5;
+    next.lastTurnEvents.push({actor:'monster',type:'attack',monsterId:'a',damage:5,hpDamage:5});
+    const displayed=[],floating=[],text={hpDisplayState:{hp,shield:4,max:100}};
+    const c={currentView:{battle:before},pendingActionPointVisualCost:null,pendingServerTurnView:null,
+      pendingTurnResolutionActive:false,pendingQuestionTurnIsOptimistic:false,battleQuestionCache:null,
+      passTurnLogPending:false,workbookDeadlineExpired:false,
+      MONSTER_TURN_START_DELAY_MS:0,MONSTER_TURN_END_DELAY_MS:0,BATTLE_STEP_DELAY_MS:0,
+      cancelTargetSelection(){},setBattleInputLocked(){},setPlayerTurn(){},pushLog(){},
+      finishActionDescription:()=>Promise.resolve(),showTurnBanner(){},holdBattleMessage:()=>Promise.resolve(),skippableAutoDelay:()=>Promise.resolve(),
+      collectMonsterMultiHitEvents:(events,index)=>[events[index]],
+      playMonsterAttackImpact:async event=>{
+        assert.equal(text.hpDisplayState.hp,healedHp,'enemy hit starts after healing');
+        text.hpDisplayState.hp-=event.hpDamage;displayed.push(text.hpDisplayState.hp);
+      },
+      normalizeBattleView:v=>v,resetBattleQuestionCacheFromView(){},renderBattle:v=>{displayed.push(v.battle.player.hp);},
+      document:{getElementById:()=>text},
+      renderPlayerHud:p=>{text.hpDisplayState={hp:p.hp,shield:p.shield,max:p.maxHp};displayed.push(p.hp);},
+      animatePlayerStatusEffect(){},spawnFloatingText:(anchor,value)=>floating.push(value)};
+    vm.createContext(c);
+    vm.runInContext(extract('getHpTextMatch')+'\n'+extract('animatePlayerHeal')+'\n'+
+      html.match(/    async function playTurnSequence\([^]*?\n    \}/)[0],c);
+    await c.playTurnSequence({battle:next});
+    assert.equal(displayed[0],hp+expectedHeal);
+    assert.deepEqual(floating,['+'+expectedHeal]);
+    assert.equal(text.hpDisplayState.shield,4);
+    assert.equal(before.player.hp,hp,'animation leaves the previous model unchanged');
+    assert.equal(next.player.hp,hp+expectedHeal-5,'the computed result is not healed again');
+    assert.deepEqual(displayed,[healedHp,healedHp-5,healedHp-5]);
+  }
+});

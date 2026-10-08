@@ -6,6 +6,14 @@ const path = require('node:path');
 const html = fs.readFileSync(path.join(__dirname, '..', 'Battle.html'), 'utf8');
 const extract = name => html.match(new RegExp('    function ' + name + '\\([^]*?\\n    \\}'))[0];
 
+function loadRunQuestionStats(c) {
+  c.runQuestionStats = {};
+  c.runQuestionStatsRunId = '';
+  const saved = new Map();
+  c.sessionStorage = { getItem: k => saved.get(k) || null, setItem: (k, v) => saved.set(k, v) };
+  vm.runInContext(['getRunQuestionStats','getQuestionSelectionStats','saveRunQuestionStats','recordRunQuestionAttempt','recordQuestionExposure'].map(extract).join('\n'), c);
+}
+
 function setup() {
   let selected = '', prevented = 0;
   const labels = ['3', '1', '4', '2'].map(value => {
@@ -59,18 +67,20 @@ test('accuracy weighting favors low rates and combines with existing item type w
   const c = vm.createContext({ currentView: { battle: { player: { itemModifiers: {} } } } });
   vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'SharedRuleEngine.gs'), 'utf8'), c);
   c.RULE_ENGINE_SHARED = c.getSharedRuleEngine_();
+  loadRunQuestionStats(c);
+  c.runQuestionStats = { low: {correctCount:0,totalCount:100}, high: {correctCount:100,totalCount:100} };
   vm.runInContext(extract('pickWeightedLocalQuestion'), c);
   const low = { questionId: 'low', type: 'multipleChoice', correctCount: 0, totalCount: 100 };
   const high = { questionId: 'high', type: 'shortAnswer', correctCount: 100, totalCount: 100 };
-  assert.equal(c.RULE_ENGINE_SHARED.getQuestionAccuracyWeight({}), 2);
+  assert.equal(c.RULE_ENGINE_SHARED.getQuestionAccuracyWeight({}), 1.25);
   assert.ok(c.RULE_ENGINE_SHARED.getQuestionAccuracyWeight(low) > c.RULE_ENGINE_SHARED.getQuestionAccuracyWeight(high));
-  vm.runInContext('Math.random = () => 0.6', c);
+  vm.runInContext('Math.random = () => 0.55', c);
   assert.equal(c.pickWeightedLocalQuestion([low, high]).questionId, 'low');
   c.currentView.battle.player.itemModifiers.shortAnswerChancePercent = 300;
   assert.equal(c.pickWeightedLocalQuestion([low, high]).questionId, 'high');
 });
 
-test('local selection avoids immediate repeats until solved and still enforces difficulty and author', () => {
+test('local selection uses weights even for immediate repeats and still enforces difficulty and author', () => {
   const low = { questionId:'low', creatorId:'other', difficulty:1, type:'multipleChoice', correctCount:0, totalCount:100 };
   const high = { questionId:'high', creatorId:'other', difficulty:1, type:'multipleChoice', correctCount:100, totalCount:100 };
   const c = vm.createContext({ localWorkbookQuestions:[low,high,{questionId:'wrong-difficulty',difficulty:2}],
@@ -79,13 +89,14 @@ test('local selection avoids immediate repeats until solved and still enforces d
     getClientLocalQuestionModifiers:()=>({}),calculateClientLocalQuestionTimeMs:()=>10000,MAX_ANSWER_EFFICIENCY:1.25 });
   vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'SharedRuleEngine.gs'), 'utf8'), c);
   c.RULE_ENGINE_SHARED = c.getSharedRuleEngine_();
+  loadRunQuestionStats(c);
   vm.runInContext(extract('calculateClientMaxAnswerEfficiency') + '\n' + extract('pickWeightedLocalQuestion') + '\n' + extract('takeLocalQuestionView'), c);
-  vm.runInContext('Math.random = () => 0.6', c);
+  vm.runInContext('Math.random = () => 0.4', c);
   assert.equal(c.takeLocalQuestionView('attack','','',1).question.questionId,'low');
-  assert.equal(c.takeLocalQuestionView('attack','','',1).question.questionId,'high');
+  assert.equal(c.takeLocalQuestionView('attack','','',1).question.questionId,'low');
   assert.equal(c.takeLocalQuestionView('attack','','',1).question.questionId,'low');
   c.currentView.stageState.usedQuestionIds=['low'];
-  assert.equal(c.takeLocalQuestionView('attack','','',1).question.questionId,'high');
+  assert.equal(c.takeLocalQuestionView('attack','','',1).question.questionId,'low');
   c.currentView.battle.forcedQuestionCreatorId='ghost';
   assert.equal(c.takeLocalQuestionView('attack','','',1),null);
 });
@@ -93,7 +104,7 @@ test('local selection avoids immediate repeats until solved and still enforces d
 test('the only eligible question can repeat rather than blocking the next action', () => {
   const question={questionId:'only',creatorId:'p',difficulty:1};
   const c=vm.createContext({localWorkbookQuestions:[question],currentView:{playerId:'p',battle:{},stageState:{lastQuestionId:'only'}},
-    getClientUsedQuestionIds:()=>[],pickWeightedLocalQuestion:p=>p[0],getClientLocalQuestionModifiers:()=>({}),
+    getClientUsedQuestionIds:()=>[],RULE_ENGINE_SHARED:{getQuestionSelectionPool:p=>p},pickWeightedLocalQuestion:p=>p[0],getClientLocalQuestionModifiers:()=>({}),
     calculateClientLocalQuestionTimeMs:()=>10000,MAX_ANSWER_EFFICIENCY:1.25});
   vm.runInContext(extract('calculateClientMaxAnswerEfficiency') + '\n' + extract('takeLocalQuestionView'),c);
   assert.equal(c.takeLocalQuestionView('attack','','',1).question.questionId,'only');
@@ -110,13 +121,14 @@ test('boss item row keeps a text name, rarity color class, escaped hover details
   assert.doesNotMatch(c.renderBossItemRewardRow(reward,false),/onclick=/);
 });
 
-test('multiple-choice wrong submissions are buffered immediately with the actual chosen answers',()=>{
+test('wrong submissions of either type are buffered immediately with the actual answers',()=>{
   const q={questionId:'q',type:'multipleChoice'};
   const c=vm.createContext({currentQuestionView:{question:q,actionType:'attack'},
-    currentView:{runId:'r',playerId:'p',battle:{stage:{}}},pendingStageAnswerLogs:[],buildSignedQuestionResultSnapshot:q=>q});
-  for(const name of ['recordMultipleChoiceWrongAttempt','buildPendingStageAnswerLog','buildStageResultAnswerLogPayload'])
+    currentView:{runId:'r',playerId:'p',battle:{stage:{}}},questionStartedAt:Date.now(),pendingStageAnswerLogs:[],buildSignedQuestionResultSnapshot:q=>q});
+  loadRunQuestionStats(c);
+  for(const name of ['recordWrongQuestionAttempt','buildPendingStageAnswerLog','buildStageResultAnswerLogPayload'])
     vm.runInContext(extract(name),c);
-  for(const choice of ['2','3','4'])c.recordMultipleChoiceWrongAttempt({selectedAnswer:choice,selectedChoiceIndex:choice});
+  for(const choice of ['2','3','4'])c.recordWrongQuestionAttempt({selectedAnswer:choice,selectedChoiceIndex:choice});
   assert.equal(c.pendingStageAnswerLogs.length,3);
   assert.equal(c.currentQuestionView.attemptsRecorded,true);
   c.pendingStageAnswerLogs.forEach(log=>{
@@ -126,8 +138,96 @@ test('multiple-choice wrong submissions are buffered immediately with the actual
     assert.equal(payload.attemptsRecorded,true);
   });
   c.currentQuestionView.question.type='shortAnswer';
-  c.recordMultipleChoiceWrongAttempt({selectedAnswer:'wrong'});
-  assert.equal(c.pendingStageAnswerLogs.length,3);
+  c.recordWrongQuestionAttempt({selectedAnswerText:'틀린 답'});
+  assert.equal(c.pendingStageAnswerLogs.length,4);
+  assert.equal(c.pendingStageAnswerLogs[3].selectedAnswerText,'틀린 답');
+  assert.equal(c.getRunQuestionStats('q').totalCount,4);
+  c.recordRunQuestionAttempt(q,{giveUp:true,attemptsRecorded:true});
+  assert.equal(c.getRunQuestionStats('q').totalCount,4,'giving up must not duplicate a recorded wrong attempt');
+});
+
+test('cached fallback applies live weights with no unseen guarantee',()=>{
+ const rows=['weak','second','new'].map((questionId,i)=>({questionId,difficulty:1,type:'multipleChoice',understandingRating:i?5:1}));
+ const c=vm.createContext({localWorkbookQuestions:[],reusableQuestionCache:rows.map(question=>({question,finalDifficulty:1})),battleQuestionCache:[],
+   currentView:{battle:{},stageState:{usedQuestionIds:['weak','second'],lastQuestionId:'second'}},
+   getClientRequiredQuestionDifficulty:()=>1,getClientUsedQuestionIds:v=>v.stageState.usedQuestionIds,
+   getClientLocalQuestionModifiers:()=>({}),MAX_ANSWER_EFFICIENCY:1.25});
+ vm.runInContext(fs.readFileSync(path.join(__dirname,'..','SharedRuleEngine.gs'),'utf8'),c);
+ c.RULE_ENGINE_SHARED=c.getSharedRuleEngine_();loadRunQuestionStats(c);
+ vm.runInContext(['getQuestionViewId','filterQuestionCacheByDifficulty','calculateClientMaxAnswerEfficiency',
+   'pickWeightedLocalQuestion','takeCachedQuestionView'].map(extract).join('\n'),c);
+ vm.runInContext('Math.random=()=>0',c);
+ assert.equal(c.takeCachedQuestionView('attack','','').question.questionId,'weak');
+});
+
+test('review can be selected before any unseen questions and stage changes do not prioritize unseen questions',()=>{
+ const questions=['weak','second','new'].map((questionId,i)=>({questionId,creatorId:'other',difficulty:1,
+   type:'multipleChoice',understandingRating:i===0?1:5,totalCount:100,correctCount:i===0?0:100}));
+ const c=vm.createContext({localWorkbookQuestions:questions,currentView:{playerId:'p',battle:{},stageState:{usedQuestionIds:[],otherStudentQuestionShown:true}},
+   getClientUsedQuestionIds:v=>v.stageState.usedQuestionIds,getClientLocalQuestionModifiers:()=>({}),
+   calculateClientLocalQuestionTimeMs:()=>10000,MAX_ANSWER_EFFICIENCY:1.25});
+ vm.runInContext(fs.readFileSync(path.join(__dirname,'..','SharedRuleEngine.gs'),'utf8'),c);
+ c.RULE_ENGINE_SHARED=c.getSharedRuleEngine_();loadRunQuestionStats(c);
+ vm.runInContext(['calculateClientMaxAnswerEfficiency','pickWeightedLocalQuestion','takeLocalQuestionView'].map(extract).join('\n'),c);
+ vm.runInContext('Math.random=()=>0',c);
+ const draw=()=>c.takeLocalQuestionView('attack','','',1);
+ assert.equal(draw().question.questionId,'weak');c.currentView.stageState.usedQuestionIds.push('weak');
+ assert.equal(draw().question.questionId,'weak');c.currentView.stageState.usedQuestionIds.push('second');
+ const review=draw();assert.equal(review.question.questionId,'weak');assert.equal(review.fallbackReason,'weightedReview');
+ assert.equal(c.currentView.stageState.usedQuestionIds.includes('new'),false);
+ assert.equal(draw().question.questionId,'weak','the last question remains eligible for weighted selection');
+ // Difficulty restrictions remain in force.
+ c.localWorkbookQuestions.push({questionId:'hard-new',creatorId:'other',difficulty:2});
+ assert.equal(c.takeLocalQuestionView('attack','','',2).question.questionId,'hard-new');
+ c.currentView.stageState.usedQuestionIds=[];c.currentView.stageState.lastQuestionId='';
+ assert.equal(draw().question.questionId,'weak','a new stage does not prioritize unseen questions');
+});
+
+test('run weighting updates immediately, survives stages and reloads, and resets for a new run', () => {
+  const c = vm.createContext({currentView:{runId:'run-1',battle:{player:{itemModifiers:{}}}},
+    isClientCorrectAnswer:(q,p)=>p.selectedAnswer === 'correct'});
+  loadRunQuestionStats(c);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'SharedRuleEngine.gs'), 'utf8'), c);
+  c.RULE_ENGINE_SHARED = c.getSharedRuleEngine_();
+  vm.runInContext(extract('pickWeightedLocalQuestion'), c);
+  const q = {questionId:'q',type:'multipleChoice',correctCount:1000,totalCount:1000,snapshotSignature:'signed'};
+  const other = {questionId:'other',type:'multipleChoice',correctCount:0,totalCount:1000};
+  vm.runInContext('Math.random = () => 0.5', c);
+  // Historical statistics also influence a fresh run.
+  assert.equal(c.pickWeightedLocalQuestion([q,other]).questionId,'other');
+  assert.equal(c.getQuestionSelectionStats(q).totalCount,1000);
+  for (let i=0;i<3;i++) c.recordRunQuestionAttempt(q,{attemptOnly:true});
+  assert.equal(c.getRunQuestionStats('q').totalCount,3);
+  assert.ok(c.RULE_ENGINE_SHARED.getQuestionAccuracyWeight(c.getRunQuestionStats('q')) > 1.25);
+  c.recordRunQuestionAttempt(q,{selectedAnswer:'correct',attemptsRecorded:true});
+  assert.equal(c.getRunQuestionStats('q').totalCount,4);
+  assert.equal(c.getRunQuestionStats('q').correctCount,1);
+  assert.equal(c.getQuestionSelectionStats(q).totalCount,1004);
+  assert.equal(c.getQuestionSelectionStats(q).correctCount,1001);
+  const refreshed = {...q,totalCount:1004,correctCount:1001};
+  assert.equal(c.getQuestionSelectionStats(refreshed).totalCount,1004);
+  assert.equal(c.getQuestionSelectionStats(refreshed).correctCount,1001);
+  c.recordRunQuestionAttempt(q,{giveUp:true,attemptsRecorded:true});
+  assert.equal(c.getRunQuestionStats('q').totalCount,4);
+  for(let i=0;i<15;i++) c.recordRunQuestionAttempt(q,{selectedAnswer:'correct'});
+  assert.equal(c.pickWeightedLocalQuestion([q,other]).questionId,'other');
+  assert.equal(q.correctCount,1000);
+  assert.equal(q.totalCount,1000);
+  assert.equal(q.snapshotSignature,'signed');
+  c.currentView = {runId:'run-1',stageState:{stage:2}};
+  assert.equal(c.getRunQuestionStats('q').totalCount,19);
+  assert.equal(c.getQuestionSelectionStats(refreshed).totalCount,1019);
+  c.runQuestionStats = {};
+  c.runQuestionStatsRunId = '';
+  assert.equal(c.getRunQuestionStats('q').totalCount,19);
+  c.currentView.runId='run-2';
+  assert.equal(c.getRunQuestionStats('q').totalCount,0);
+  assert.equal(c.getRunQuestionStats('q').correctCount,0);
+  assert.equal(c.getQuestionSelectionStats(refreshed).totalCount,1004);
+  assert.equal(c.getQuestionSelectionStats(refreshed).correctCount,1001);
+  c.recordRunQuestionAttempt({questionId:'short',type:'shortAnswer'},{giveUp:true});
+  assert.equal(c.getRunQuestionStats('short').totalCount,1);
+  assert.equal(c.getRunQuestionStats('short').correctCount,0);
 });
 
 function actionSetup() {
@@ -140,6 +240,24 @@ function actionSetup() {
   vm.runInContext(extract('clearKeyboardActionSelection')+'\n'+extract('handleBattleActionKeyboard'),c);
   return {c,buttons,clicks,event:key=>({key,target:{},preventDefault(){}})};
 }
+
+test('short-answer hints reveal one random new character per wrong answer and stop when complete',()=>{
+  const hint={textContent:'',classList:{remove(){}}};
+  const c=vm.createContext({currentQuestionView:{question:{type:'shortAnswer',answer:'제안하다'}},
+    document:{getElementById:()=>hint},hasClientAnswer:()=>true,getQuestionAnswerDisplayText:q=>q.answer});
+  vm.runInContext(extract('revealShortAnswerHint'),c);
+  vm.runInContext('Math.random=()=>0.3',c);
+  c.revealShortAnswerHint();assert.equal(hint.textContent,'힌트: *안**');
+  c.revealShortAnswerHint();assert.equal(hint.textContent,'힌트: 제안**');
+  c.revealShortAnswerHint();assert.equal(hint.textContent,'힌트: 제안하*');
+  c.revealShortAnswerHint();assert.equal(hint.textContent,'힌트: 제안하다');
+  c.revealShortAnswerHint();assert.equal(c.currentQuestionView.shortAnswerHintIndices.length,4);
+  c.currentQuestionView={question:{type:'shortAnswer',answer:'가 나😀'}};
+  vm.runInContext('Math.random=()=>0',c);
+  c.revealShortAnswerHint();assert.equal(hint.textContent,'힌트: 가 **');
+  c.revealShortAnswerHint();assert.equal(hint.textContent,'힌트: 가 나*');
+  c.revealShortAnswerHint();assert.equal(hint.textContent,'힌트: 가 나😀');
+});
 
 test('action shortcuts select attack, guard, skills and end-turn, executing only on Enter', () => {
   const x=actionSetup();

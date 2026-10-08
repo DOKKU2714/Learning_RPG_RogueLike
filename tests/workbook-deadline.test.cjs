@@ -166,48 +166,56 @@ test('countdown monitor is started on battle entry and deployment excludes local
   assert.match(read('.claspignore'), /tests\/\*\*/);
 });
 
-test('deadline defeat next opens final score, confirm returns to home button', () => {
-  const elements = new Map();
-  function element(id) {
-    if (!elements.has(id)) {
-      const classes = new Set();
-      elements.set(id, {
-        classList: { add: x => classes.add(x), remove: x => classes.delete(x), contains: x => classes.has(x) },
-        setAttribute() {}, closest() { return this; }, focus() {}, insertAdjacentHTML() {},
-      });
+test('final outcomes show score details and return home with one button', () => {
+  const html = read('Battle.html');
+  assert.doesNotMatch(html, /defeatNextButton|showOutcomeScoreDetails|completeOutcomeScoreDetails/);
+  assert.match(html, /id="defeatHomeButton"[^>]*onclick="goHome\(\)"/);
+  for (const kind of ['defeat', 'escape']) {
+    const elements = new Map();
+    function element(id) {
+      if (!elements.has(id)) {
+        const classes = new Set();
+        elements.set(id, {
+          classList: { add: x => classes.add(x), remove: x => classes.delete(x), contains: x => classes.has(x) },
+          setAttribute() {},
+        });
+      }
+      return elements.get(id);
     }
-    return elements.get(id);
+    const timers = [];
+    let navigated;
+    const c = vm.createContext({
+      defeatSequenceStarted: false, workbookDeadlineExpired: kind === 'defeat', workbookDeadlineSaved: true,
+      WEB_APP_URL: 'https://game.example', currentView: { score: 1485, stageState: {} },
+      document: { getElementById: element }, window: { setTimeout: fn => timers.push(fn) },
+      playBattleSound() {}, setBattleInputLocked() {}, setPlayerTurn() {}, cancelTargetSelection() {},
+      hideActiveHoverTooltips() {}, closeQuestionModal() {},
+      buildOutcomeContext: () => ({ kind, battle: { stage: { floor: 2, stage: 3 }, monsters: [] },
+        scoreSummary: { monsterScore: 230, scoreDelta: 230, totalScore: 1485 } }),
+      normalizeClientScoreSummary: x => x,
+      buildScoreBreakdownRows: summary => [{ label: '몬스터 처치', value: summary.monsterScore }],
+      buildScoreMetaRows: () => [{ label: '층 클리어 시간', value: '1분 0초' }],
+      formatScore: x => x + '점', escapeHtml: x => String(x),
+      navigateTop: url => { navigated = url; },
+      saveWorkbookDeadlineResult() { throw Error('already saved'); },
+    });
+    for (const name of ['showDefeatSequence', 'showEscapeSuccessSequence', 'buildOutcomeResultHtml',
+      'getOutcomeTotalDefeatedMonsterCount', 'formatCompactStage', 'goHome']) {
+      const fn = html.match(new RegExp('    function ' + name + '\\([^]*?\\n    \\}'))[0];
+      vm.runInContext(fn, c);
+    }
+    if (kind === 'defeat') c.showDefeatSequence({ skipCommit: true });
+    else c.showEscapeSuccessSequence({});
+    timers.forEach(fn => fn());
+    assert.equal(element('defeatOverlay').classList.contains('active'), true);
+    assert.equal(element('defeatResult').classList.contains('active'), true);
+    assert.equal(element('defeatHomeButton').classList.contains('hidden'), false);
+    assert.match(element('defeatResult').innerHTML, /몬스터 처치<\/span><strong>\+230점/);
+    assert.match(element('defeatResult').innerHTML, /총 점수<\/span><strong>1485점/);
+    assert.match(element('defeatResult').innerHTML, /층 클리어 시간/);
+    c.goHome();
+    assert.equal(navigated, 'https://game.example?skipIntro=1&refreshQuestions=1');
   }
-  const c = vm.createContext({
-    workbookDeadlineExpired: true,
-    currentOutcomeContext: { scoreSummary: { scoreDelta: 230, totalScore: 1485, showDetailedBreakdown: true } },
-    document: { getElementById: element },
-    normalizeClientScoreSummary: x => x, clearScoreAnimation() {},
-    finishScoreAnimationNow() { c.scoreAnimationDone = true; },
-    buildScoreBreakdownRows: () => [], buildScoreMetaRows: () => [],
-    queueScoreAnimation() {},
-    preloadNextBattleAfterReward() { throw Error('final outcome must not preload another battle'); },
-    closeScoreModal() { element('scoreModal').classList.remove('active'); },
-    buildOutcomeContext: () => ({}),
-  });
-  for (const name of ['showScoreModal', 'confirmScoreModal', 'showOutcomeScoreDetails', 'completeOutcomeScoreDetails']) {
-    const fn = read('Battle.html').match(new RegExp('    function ' + name + '\\([^]*?\\n    \\}'))[0];
-    vm.runInContext(fn, c);
-  }
-  element('defeatOverlay').classList.add('active');
-  element('defeatHomeButton').classList.add('hidden');
-  assert.equal(c.showScoreModal({}, { nextBattlePending: true }), false);
-  assert.equal(element('defeatOverlay').classList.contains('active'), true);
-  c.showOutcomeScoreDetails();
-  assert.equal(element('scoreModal').classList.contains('active'), true);
-  assert.equal(element('defeatOverlay').classList.contains('active'), false);
-  c.confirmScoreModal();
-  assert.equal(element('scoreModal').classList.contains('active'), true);
-  assert.equal(c.scoreAnimationDone, true);
-  c.confirmScoreModal();
-  assert.equal(element('scoreModal').classList.contains('active'), false);
-  assert.equal(element('defeatOverlay').classList.contains('active'), true);
-  assert.equal(element('defeatHomeButton').classList.contains('hidden'), false);
 });
 
 test('direct time edit only updates deadline, validates owner and allows clearing', () => {

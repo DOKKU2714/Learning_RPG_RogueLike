@@ -33,6 +33,23 @@ function setup() {
 }
 
 for(const mode of ['server','browser']) {
+  test(mode+': mindless strike keeps all three hits after strike master without subtracting defense',()=>{
+    const g=setup();
+    for(const [efficiency,defense,unbuffedDamage,buffedDamage] of [[1,0,8,10],[1,5,8,10],[1,10,8,10],[.5,5,4,5]]) {
+      for(const buffed of [false,true]) {
+        const b=copy(g.battle);
+        b.monsters.forEach(m=>{m.defense=defense;});
+        if(buffed) g.perform(mode,b,'skill_strike_master');
+        g.perform(mode,b,'skill_mindless_strike',efficiency);
+        const hits=b.lastTurnEvents.filter(e=>e.skillId==='skill_mindless_strike' && e.type==='skill');
+        const expected=buffed?buffedDamage:unbuffedDamage;
+        assert.equal(hits.length,3);
+        assert.ok(hits.every(e=>e.damage===expected && !e.missed));
+        assert.equal(b.monsters.reduce((sum,m)=>sum+200-m.currentHp,0),3*expected);
+        assert.equal(new Set(hits.map(e=>e.targetMonsterId)).size,2);
+      }
+    }
+  });
   test(mode+': absorption heals from actual three-hit damage once, including low efficiency and overkill',()=>{
     const g=setup();
     for(const [efficiency,hp,expectedDamage,expectedHeal] of [[1,200,24,8],[.5,200,12,4],[1,5,5,2]]) {
@@ -105,6 +122,28 @@ for(const mode of ['server','browser']) {
     const before=strike.monsters[0].currentHp;g.perform(mode,strike,'skill_body_blow');assert.equal(before-strike.monsters[0].currentHp,18);
   });
 }
+
+test('defense increases guard shields but never reduces incoming damage on server or browser',()=>{
+  const g=setup();
+  const client=vm.createContext({hasLocalBattleSkillEngine:()=>false});
+  vm.runInContext(clientFunction('applyOptimisticPlayerDamage'),client);
+  for(const defense of [0,10,100]) {
+    const b=copy(g.battle);b.player.stats.defense=defense;
+    g.x.c.applyGuard(b,.5);
+    assert.equal(b.player.shield,Math.round((5+defense)*.5));
+    for(const shield of [0,3,20]) {
+      const server=copy(b);server.player.shield=shield;
+      const browser=copy(server);
+      const actual=g.x.c.dealDamageToPlayer_(server,10,server.monsters[0]);
+      assert.equal(actual.damage,10);
+      assert.equal(actual.shieldDamage,Math.min(shield,10));
+      assert.equal(actual.hpDamage,10-Math.min(shield,10));
+      assert.deepEqual(copy(client.applyOptimisticPlayerDamage(browser,10)),copy(actual));
+      assert.equal(browser.player.hp,server.player.hp);
+      assert.equal(browser.player.shield,server.player.shield);
+    }
+  }
+});
 
 test('all-in consumes all remaining AP, including modified maxima, and requires at least one AP',()=>{
   const g=setup(),s=g.skill('skill_all_in');

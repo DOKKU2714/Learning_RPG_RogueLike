@@ -14,9 +14,14 @@
 <script>
 (function(){
   var SOUND_ENABLED_KEY = 'learningRpgSoundEnabled';
+  var SOUND_VOLUME_KEY = 'learningRpgSoundVolume';
+  var trackedSfx = new Set();
+  var volumeButton = null;
+  var volumePanel = null;
   var STORAGE_INTENT_KEY = 'learningRpgAudioIntent';
   var DEFAULT_FADE_MS = 900;
   var DEFAULT_VOLUME = 0.52;
+  var BACKGROUND_VOLUME_MULTIPLIER = 0.75;
   var SFX_VOLUME_MULTIPLIER = 0.7;
   var AUDIO_EXTENSIONS = ['wav', 'mp3', 'ogg'];
   var RAIN_AMBIENCE_VOLUME = 0.3;
@@ -39,8 +44,76 @@
     return base ? base + '/' + cleanPath : cleanPath;
   }
 
+  function getMasterVolume(){
+    try {
+      var saved = window.localStorage.getItem(SOUND_VOLUME_KEY);
+      if (saved !== null && isFinite(Number(saved))) return Math.max(0, Math.min(1, Number(saved)));
+      return window.localStorage.getItem(SOUND_ENABLED_KEY) === '1' ? 1 : 0;
+    } catch (error) { return 0; }
+  }
+
+  function syncVolumeControls(){
+    var percent = Math.round(getMasterVolume() * 100);
+    Array.prototype.forEach.call(document.querySelectorAll('.sound-toggle-button'), function(button){
+      button.classList.toggle('sound-muted', percent === 0);
+      button.removeAttribute('aria-pressed');
+      button.setAttribute('aria-expanded', volumePanel && !volumePanel.hidden && button === volumeButton ? 'true' : 'false');
+      button.setAttribute('aria-controls', 'soundVolumePanel');
+      button.setAttribute('aria-label', '볼륨 조절 · ' + percent + '%');
+      button.title = '볼륨 조절';
+      var tooltip = button.querySelector('.corner-tooltip');
+      if (tooltip) tooltip.textContent = '볼륨 조절';
+    });
+    if (volumePanel) {
+      volumePanel.querySelector('input').value = percent;
+      volumePanel.querySelector('output').textContent = percent + '%';
+    }
+  }
+
+  function closeVolumePanel(){
+    if (volumePanel) volumePanel.hidden = true;
+    syncVolumeControls();
+  }
+
+  function setMasterVolume(value){
+    var volume = Math.max(0, Math.min(1, Number(value) || 0));
+    try {
+      window.localStorage.setItem(SOUND_VOLUME_KEY, String(volume));
+      window.localStorage.setItem(SOUND_ENABLED_KEY, volume > 0 ? '1' : '0');
+    } catch (error) {}
+    applySoundPreference();
+    trackedSfx.forEach(applySfxVolume);
+    if (rewardOneShotAudio) rewardOneShotAudio.volume = REWARD_ONE_SHOT_VOLUME * BACKGROUND_VOLUME_MULTIPLIER * volume;
+    syncVolumeControls();
+  }
+
+  function toggleVolumePanel(event){
+    if (event) event.stopPropagation();
+    var button = event && event.currentTarget || document.getElementById('battleSoundToggleButton') || document.getElementById('menuSoundToggleButton');
+    if (!button) return;
+    if (volumePanel && !volumePanel.hidden && volumeButton === button) { closeVolumePanel(); return; }
+    volumeButton = button;
+    if (!volumePanel) {
+      volumePanel = document.createElement('div');
+      volumePanel.id = 'soundVolumePanel';
+      volumePanel.className = 'sound-volume-panel';
+      volumePanel.setAttribute('role', 'group');
+      volumePanel.setAttribute('aria-label', '볼륨 조절');
+      volumePanel.innerHTML = '<span>볼륨</span><span aria-hidden="true">+</span><input type="range" min="0" max="100" step="1" aria-label="볼륨" orient="vertical"><span aria-hidden="true">−</span><output></output>';
+      volumePanel.addEventListener('click', function(e){ e.stopPropagation(); });
+      volumePanel.querySelector('input').addEventListener('input', function(e){ setMasterVolume(Number(e.target.value) / 100); });
+      document.body.appendChild(volumePanel);
+    }
+    var rect = button.getBoundingClientRect();
+    volumePanel.style.left = Math.max(8, Math.min(window.innerWidth - 80, rect.left)) + 'px';
+    volumePanel.style.top = Math.max(8, Math.min(window.innerHeight - 270, rect.bottom + 10)) + 'px';
+    volumePanel.hidden = false;
+    syncVolumeControls();
+    volumePanel.querySelector('input').focus();
+  }
+
   function isSoundEnabled(){
-    try { return window.localStorage.getItem(SOUND_ENABLED_KEY) === '1'; } catch (error) { return false; }
+    return getMasterVolume() > 0;
   }
 
   function normalizePathList(paths){
@@ -95,7 +168,7 @@
       audio.__learningRpgFadeTimer = null;
     }
     var startVolume = Number(audio.volume || 0);
-    var target = Math.max(0, Math.min(1, Number(targetVolume || 0)));
+    var target = Math.max(0, Math.min(1, Number(targetVolume || 0))) * BACKGROUND_VOLUME_MULTIPLIER * getMasterVolume();
     var duration = Math.max(0, Number(durationMs || 0));
     if (!duration) {
       audio.volume = target;
@@ -368,7 +441,7 @@
       var audio = new Audio(assetUrl(paths[pathIndex]));
       audio.loop = false;
       audio.preload = 'auto';
-      audio.volume = REWARD_ONE_SHOT_VOLUME;
+      audio.volume = REWARD_ONE_SHOT_VOLUME * BACKGROUND_VOLUME_MULTIPLIER * getMasterVolume();
       audio.muted = !isSoundEnabled();
       audio.__learningRpgSkipSfxVolume = true;
       rewardOneShotAudio = audio;
@@ -419,6 +492,11 @@
     if (!isAudioElement(audio) || audio.__learningRpgSkipSfxVolume) return;
     var src = String(audio.currentSrc || audio.src || '');
     if (!isLearningRpgSfxSource(src)) return;
+    if (!trackedSfx.has(audio)) {
+      trackedSfx.add(audio);
+      audio.addEventListener('ended', function(){ trackedSfx.delete(audio); }, { once: true });
+      audio.addEventListener('error', function(){ trackedSfx.delete(audio); }, { once: true });
+    }
     if (!isSoundEnabled()) {
       audio.muted = true;
       audio.volume = 0;
@@ -427,7 +505,7 @@
     if (audio.__learningRpgSfxBaseVolume === undefined) {
       audio.__learningRpgSfxBaseVolume = Number(audio.volume || 1);
     }
-    audio.volume = Math.max(0, Math.min(1, Number(audio.__learningRpgSfxBaseVolume || 1) * SFX_VOLUME_MULTIPLIER));
+    audio.volume = Math.max(0, Math.min(1, Number(audio.__learningRpgSfxBaseVolume || 1) * SFX_VOLUME_MULTIPLIER * getMasterVolume()));
     audio.muted = false;
   }
 
@@ -581,6 +659,9 @@
     if (window.__learningRpgAudioManagerInstalled) return;
     window.__learningRpgAudioManagerInstalled = true;
     window.LEARNING_RPG_AUDIO = {
+      getVolume: getMasterVolume,
+      setVolume: setMasterVolume,
+      syncVolumeControls: syncVolumeControls,
       playMain: requestMainBgm,
       playBattle: requestBattleBgm,
       playReward: playRewardOneShot,
@@ -591,7 +672,20 @@
       getCurrent: function(){ return currentTrack ? { key: currentTrack.key, kind: currentTrack.kind, path: currentTrack.path } : null; }
     };
     patchMediaPlayVolume();
-    window.addEventListener('storage', function(event){ if (event.key === SOUND_ENABLED_KEY) applySoundPreference(); });
+    window.toggleSoundVolume = toggleVolumePanel;
+    syncVolumeControls();
+    document.addEventListener('pointerdown', function(event){
+      if (volumePanel && !volumePanel.hidden && !volumePanel.contains(event.target) && (!volumeButton || !volumeButton.contains(event.target))) closeVolumePanel();
+    });
+    document.addEventListener('keydown', function(event){
+      if (volumePanel && !volumePanel.hidden && event.key === 'Escape') { event.stopPropagation(); closeVolumePanel(); if (volumeButton) volumeButton.focus(); }
+    });
+    window.addEventListener('resize', closeVolumePanel);
+    window.addEventListener('storage', function(event){
+      if (event.key === SOUND_ENABLED_KEY || event.key === SOUND_VOLUME_KEY) {
+        applySoundPreference(); trackedSfx.forEach(applySfxVolume); syncVolumeControls();
+      }
+    });
     window.addEventListener('learningRpgSoundPreferenceChanged', applySoundPreference);
     installUnlockListeners();
     installMenuPatches();

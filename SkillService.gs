@@ -938,7 +938,7 @@ function applySkillRuleDamageHeal_(battleState, skill, rule, context, totalDamag
     damageDealt: Number(totalDamageDealt || 0),
     totalDamageDealt: Number(totalDamageDealt || 0),
   });
-  // damageDealt already includes efficiency, critical hits, defense, and item modifiers.
+  // damageDealt already includes efficiency, critical hits, shields, and item modifiers.
   var heal = hasDamageHealPercentFormula
     ? Number(totalDamageDealt || 0) * evaluateSkillFormula_(rule.healFromDamagePercentFormula, damageHealContext, battleState, skill) / 100
     : evaluateSkillFormula_(rule.healFromDamageFormula, damageHealContext, battleState, skill);

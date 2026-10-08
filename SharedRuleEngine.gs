@@ -850,14 +850,25 @@ var RULE_ENGINE_SHARED = (function() {
     return restored;
   }
 
+  function getQuestionSelectionPool(questions, usedQuestionIds, lastQuestionId) {
+    return questions || [];
+  }
+
   function getQuestionAccuracyWeight(question) {
     var total = Math.max(0, Number(question && question.totalCount || 0));
     var correct = Math.max(0, Math.min(total, Number(question && question.correctCount || 0)));
     var rate = (correct + 5) / (total + 10);
-    return 1 + 2 * (1 - rate);
+    // Shared accuracy is a small correction; personal understanding dominates.
+    var accuracyWeight = 1 + 0.5 * (1 - rate);
+    var rating = Number(question && question.understandingRating || 0);
+    var understandingWeights = [1, 3, 2.4, 1.6, 0.8, 0.4];
+    var exposureCount = Math.max(0, Number(question && question.selectionExposureCount || 0));
+    var exposureWeight = Math.max(0.1, Math.pow(0.5, exposureCount));
+    return accuracyWeight * (Number.isInteger(rating) && rating >= 1 && rating <= 5 ? understandingWeights[rating] : 1) * exposureWeight;
   }
 
   return {
+    getQuestionSelectionPool: getQuestionSelectionPool,
     getQuestionMaxEfficiencyMultiplier: getQuestionMaxEfficiencyMultiplier,
     consumeQuestionEffects: consumeQuestionEffects,
     getQuestionAccuracyWeight: getQuestionAccuracyWeight,

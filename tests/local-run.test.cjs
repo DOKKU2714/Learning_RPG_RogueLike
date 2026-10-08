@@ -126,7 +126,11 @@ test('all 29 selections, rest healing, floor changes and victory settle only at 
   }
   assert.equal(count,29);assert.equal(rests,4);assert.equal(bossDrops,5);
   assert.equal(g.x.c.findRowByKeyUncached_('Runs','runId',g.run.runId).status,'active');
-  const saved=g.x.c.finishLocalRun(g.run.runId,g.token,copy(g.journal),'auth');
+  g.x.c.readWorkbookQuestionTable_=()=>[{questionId:'review-q',status:'approved'}];
+  const ratings=[{questionId:'review-q',rating:3,updatedAtMs:10,revision:'final-review'}];
+  const saved=g.x.c.finishLocalRun(g.run.runId,g.token,copy(g.journal),'auth',ratings);
+  assert.equal(saved.acknowledgedQuestionUnderstanding.entries[0].revision,'final-review');
+  assert.equal(g.x.c.getPlayerQuestionUnderstanding_('p','w')['review-q'],3);
   assert.equal(saved.cleared,true);
   const row=g.x.c.findRowByKeyUncached_('Runs','runId',g.run.runId);
   assert.equal(row.status,'cleared');assert.equal(row.sessionSettled,true);
@@ -134,7 +138,7 @@ test('all 29 selections, rest healing, floor changes and victory settle only at 
   assert.equal(row.itemsJson,g.run.itemsJson);
   assert.equal(g.x.c.getWorkbookPlayerData_('w','p').bestScore,row.score);
   const writes=g.x.writes.length;
-  const retry=g.x.c.finishLocalRun(g.run.runId,g.token,copy(g.journal),'auth');
+  const retry=g.x.c.finishLocalRun(g.run.runId,g.token,copy(g.journal),'auth',ratings);
   assert.equal(retry.score,row.score);assert.equal(g.x.writes.length,writes);
   g.x.cache.clear();
   const coldRetry=g.x.c.finishLocalRun(g.run.runId,g.token,copy(g.journal),'auth');
@@ -366,4 +370,34 @@ test('the browser chooses locally, keeps terminal saves and sends its journal on
   assert.doesNotMatch(extract('selectRewardChoiceLocally'),/google\.script|advanceRunStage/);
   assert.match(extract('saveLocalRunVictory'),/\.finishLocalRun\(/);
   assert.match(extract('buildStageResultPayload'),/localTransitions: localRunTransitions\.slice/);
+});
+
+
+test('stage 6 rest preview preserves payload HP and heals exactly once on transition',()=>{
+  const g=localGame();
+  for(let i=0;i<5;i++){
+    const prepared=g.prepare();
+    if(i===4)prepared.payload.battle.player.hp=1;
+    g.choose('stat');
+  }
+  assert.equal(g.view.battle.stage.stage,6);
+  const rest=g.view.rewardView.choices.find(c=>c.type==='rest');
+  const before=g.view.battle.player.hp;
+  let displayed;
+  const html=fs.readFileSync('Battle.html','utf8');
+  const start=html.indexOf('    function playFloorRestEffect('),end=html.indexOf('\n    function ',start+1);
+  const c={currentView:g.view,renderPlayerHud:p=>{displayed=p.hp;},playBattleSound(){},animatePlayerStatusEffect(){},spawnFloatingText(){},pushLog(){},document:{getElementById(){return {};}}};
+  vm.createContext(c);vm.runInContext(html.slice(start,end),c);c.playFloorRestEffect(rest);
+  assert.equal(g.view.battle.player.hp,before);
+  assert.equal(displayed,rest.currentHpAfterRest);
+  assert.ok(displayed>before);
+  const {payload,reward}=g.prepare();
+  assert.equal(payload.battle.player.hp,before);
+  const result=g.choose('rest');
+  assert.equal(result.localRunState.currentHp,rest.currentHpAfterRest);
+  const server=g.x.c.withRunSession_(g.run.runId,g.token,'auth',()=>{
+    g.x.c.replayLocalRunTransitions_(copy(g.journal),'auth');
+    return {hp:g.x.c.requireRun_(g.run.runId).currentHp};
+  });
+  assert.equal(server.hp,rest.currentHpAfterRest);
 });

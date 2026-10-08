@@ -25,7 +25,7 @@ function getLocalRunEngineSource_() {
   [commitStageResultUnlocked_, selectRewardUnlocked_, startBattle, buildBattleStateView_,
     applySkillEffect, processSkillTriggers_, processSkillFailPenaltyAfterAnswer_,
     tickEffectsAtTurnStart, tickEffectsAtTurnEnd, tickEffectsOnPlayerAction,
-    getAvailableSkills, normalizePlayerActionPoints_].forEach(collect);
+     getAvailableSkills, normalizePlayerActionPoints_, refreshPreparedRewardView_].forEach(collect);
   var constants = { DB_SHEETS: DB_SHEETS, DB_COLUMNS: DB_COLUMNS, STATUS: STATUS, AVATAR_TYPES: AVATAR_TYPES,
     QUESTION_TYPES: QUESTION_TYPES, ACTION_TYPES: ACTION_TYPES, SKILL_TYPES: SKILL_TYPES, REWARD_TYPES: REWARD_TYPES,
     RARITIES: RARITIES, RARITY_LABELS: RARITY_LABELS, EFFECT_CATEGORIES: EFFECT_CATEGORIES, EFFECT_TYPES: EFFECT_TYPES,
@@ -37,7 +37,7 @@ function getLocalRunEngineSource_() {
     ALLOWED_REWARD_STAT_KEYS_: ALLOWED_REWARD_STAT_KEYS_, MASTER_ITEMS: MASTER_ITEMS,
     MASTER_EFFECTS: MASTER_EFFECTS, MASTER_MONSTERS: MASTER_MONSTERS, MASTER_SETTINGS: MASTER_SETTINGS };
   var declarations = Object.keys(constants).map(function(name) { return 'var ' + name + '=' + JSON.stringify(constants[name]) + ';'; }).join('\n');
-  var source = '(function(nativeDate,nativeMath){\n' + declarations + '\n' + adapters + '\n' + getSharedRuleEngineSource_() + '\n' + sources.join('\n') + '\nreturn {advance: advanceLocalRun, skill: applyLocalBattleSkill, trigger: processLocalBattleTrigger, tick: tickLocalBattleEffects, skills: getLocalBattleSkills};\n})(Date,Math)';
+   var source = '(function(nativeDate,nativeMath){\n' + declarations + '\n' + adapters + '\n' + getSharedRuleEngineSource_() + '\n' + sources.join('\n') + '\nreturn {advance: advanceLocalRun, reward: refreshLocalReward, skill: applyLocalBattleSkill, trigger: processLocalBattleTrigger, tick: tickLocalBattleEffects, skills: getLocalBattleSkills};\n})(Date,Math)';
   if (/\b(?:SpreadsheetApp|PropertiesService|CacheService|LockService|UrlFetchApp|ScriptApp)\b/.test(source)) throw new Error('클라이언트 전투 규칙에 서버 의존성이 남아 있습니다.');
   return source;
 }
@@ -87,6 +87,10 @@ function getLocalRunEngineAdapters_() {
   function getLocalBattleSkills(snapshot, battle, skills) {
     return withLocalBattleRules(snapshot, battle, function() { return getAvailableSkills({skills:skills || []}, battle); });
   }
+  function refreshLocalReward(run, snapshot, payload, view) {
+    localRun = cloneLocal(run); localSnapshot = snapshot; Date = nativeDate;
+    return refreshPreparedRewardView_(localRun, payload, cloneLocal(view));
+  }
   function advanceLocalRun(run, snapshot, payload, rewardId, rewardView, options) {
     options = options || {};
     localRun = cloneLocal(run); localSnapshot = snapshot; localPermit = cloneLocal(rewardView.localTransition);
@@ -108,7 +112,7 @@ function getLocalRunEngineAdapters_() {
       }
       // Rest options remain server-issued; selectReward uses these instead of drawing locally.
       if (response.showReward && response.rewardView && localPermit.restViews) {
-        var restView = localPermit.restViews[rewardId];
+        var restView = refreshPreparedRewardView_(localRun, {stageState:getStageState_(localRun),battle:response.battle}, cloneLocal(localPermit.restViews[rewardId]));
         if (!restView) throw new Error('층 정비 선택지가 없습니다.');
         var state = getStageState_(localRun); state.reward = cloneLocal(restView);
         localRun.stageStateJson = safeJsonStringify_(state);
@@ -191,7 +195,7 @@ function buildLocalTransitionPermit_(run, stageId, battleId, ghostSelection) {
     seed: parseInt(Utilities.getUuid().replace(/-/g, '').slice(-8), 16) >>> 0,
     issuedAtMs: new Date().getTime(), ghostSelection: ghostSelection || { monster: null, context: null, questionCreatorId: '' } };
 }
-function prepareLocalRewardTransitions_(view, stagePayload, authToken) {
+function prepareLocalRewardTransitions_(view, stagePayload, authToken, deferGhost) {
   var run = requireRun_(stagePayload.runId);
   var snapshot = ACTIVE_GAME_DATA_SNAPSHOT_;
   var battle = stagePayload.battle || {};
@@ -211,7 +215,7 @@ function prepareLocalRewardTransitions_(view, stagePayload, authToken) {
       view.bossItemRewards[choice.rewardId] = pickAutoItemReward_(items);
     });
   }
-  if (nextStage && !isFloorRestStage_(nextStage)) {
+  if (!deferGhost && nextStage && !isFloorRestStage_(nextStage)) {
     permit.ghostSelection = selectPlayerGhostForBattle_(moved, nextStage, getStageState_(moved), 'battle_local_' + permit.seed + '_1');
   }
   if (nextStage && isFloorRestStage_(nextStage)) {
@@ -220,7 +224,7 @@ function prepareLocalRewardTransitions_(view, stagePayload, authToken) {
     var nextCombatRun = buildNextStageMoveForRun_(moved, getStageState_(moved)).run;
     var nextCombatStage = loadStage(buildStageId_(nextCombatRun.currentFloor, nextCombatRun.currentStage));
     var childSeed = buildLocalTransitionPermit_(moved, nextStage.stageId, '');
-    var ghost = selectPlayerGhostForBattle_(nextCombatRun, nextCombatStage, getStageState_(nextCombatRun), 'battle_local_' + childSeed.seed + '_1');
+    var ghost = deferGhost ? null : selectPlayerGhostForBattle_(nextCombatRun, nextCombatStage, getStageState_(nextCombatRun), 'battle_local_' + childSeed.seed + '_1');
     view.choices.forEach(function(choice) {
       var previousSession = ACTIVE_RUN_SESSION_;
       ACTIVE_RUN_SESSION_ = cloneGameDataRows_(previousSession);
@@ -247,6 +251,7 @@ function replayLocalRunTransitions_(transitions, authToken) {
   transitions.forEach(function(event) {
     if (expired) return;
     var rewardView = verifyLocalRewardView_(event.rewardToken);
+    if (rewardView.preparedDuringBattle) throw new Error('전투 종료 확인 전에는 보상을 적용할 수 없습니다.');
     var permit = rewardView.localTransition;
     var id = String(event.rewardToken).split('.')[1];
     if (completed.indexOf(id) !== -1) return;
@@ -287,15 +292,16 @@ function replayLocalRunTransitions_(transitions, authToken) {
   });
   return expired;
 }
-function finishLocalRun(runId, runSessionToken, transitions, authToken) {
+function finishLocalRun(runId, runSessionToken, transitions, authToken, questionUnderstanding) {
   var lock = LockService.getScriptLock(); lock.waitLock(10000);
   try {
-    return withRunSession_(runId, runSessionToken, authToken, function() {
+    var response = withRunSession_(runId, runSessionToken, authToken, function() {
       replayLocalRunTransitions_(transitions, authToken);
       var run = requireRun_(runId);
       if (run.status === STATUS.RUN_FAILED) return buildStageResultCommitView_(run, getStageState_(run));
       if (run.status !== STATUS.RUN_CLEARED) throw new Error('최종 승리한 게임만 완료할 수 있습니다.');
       return { cleared: true, run: toClientObject_(run), score: Number(run.score || 0) };
     });
+    return syncQuestionUnderstandingForRun_(runId, questionUnderstanding, authToken, response);
   } finally { lock.releaseLock(); }
 }

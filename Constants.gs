@@ -27,7 +27,7 @@ var DB_COLUMNS = Object.freeze({
   SETTINGS: ['key', 'value', 'type', 'description', 'updatedAt', 'questionsSpreadsheetId', 'defaultWorkbookId'],
   ADMINS: ['email', 'name', 'role', 'active', 'createdAt'],
   PLAYERS: ['playerId', 'studentId', 'studentName', 'passwordHash', 'passwordSalt', 'email', 'displayName', 'avatarType', 'avatarKey', 'createdAt', 'lastLoginAt', 'isActive', 'role', 'approvalStatus', 'approvedBy', 'approvedAt', 'rejectedReason'],
-  PLAYER_DATA: ['playerId', 'maxFloor', 'maxStage', 'bestClearTimeMs', 'totalAnswerCount', 'correctAnswerCount', 'averageAnswerTimeMs', 'currency', 'baseStatsJson', 'ownedSkillsJson', 'ownedItemsJson', 'bestScore', 'bestScoreRunId', 'bestScoreUpdatedAt', 'updatedAt', 'currencySettledRunIdsJson'],
+  PLAYER_DATA: ['playerId', 'maxFloor', 'maxStage', 'bestClearTimeMs', 'totalAnswerCount', 'correctAnswerCount', 'averageAnswerTimeMs', 'currency', 'baseStatsJson', 'ownedSkillsJson', 'ownedItemsJson', 'bestScore', 'bestScoreRunId', 'bestScoreUpdatedAt', 'updatedAt', 'currencySettledRunIdsJson', 'questionUnderstandingJson'],
   WORKBOOKS: ['workbookId', 'workbookName', 'description', 'subject', 'questionSheetName', 'playEndsAt', 'playTimeLimitEnabled', 'createdBy', 'createdByName', 'status', 'sortOrder', 'createdAt', 'updatedAt'],
   WORKBOOK_PLAYER_DATA: ['workbookId', 'playerId', 'maxFloor', 'maxStage', 'bestClearTimeMs', 'totalAnswerCount', 'correctAnswerCount', 'averageAnswerTimeMs', 'currency', 'bestScore', 'bestScoreRunId', 'bestScoreUpdatedAt', 'updatedAt', 'currencySettledRunIdsJson'],
   RUN_SETTLEMENTS: ['runId', 'partIndex', 'partCount', 'checkpointChunk', 'createdAt'],

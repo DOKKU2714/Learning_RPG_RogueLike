@@ -207,7 +207,7 @@
 <body>
   <? var skipIntroOnLoad = requestParams && requestParams.skipIntro === '1'; ?>
   <section id="introScreen" class="intro-screen screen <?= skipIntroOnLoad ? '' : 'active' ?>" onclick="enterApp()">
-    <button id="introSoundToggleButton" class="sound-toggle-button menu-sound-toggle sound-muted" type="button" onclick="toggleSoundEnabled(event)" aria-pressed="false" aria-label="&#49548;&#47532; &#44732;&#51664;" title="&#49548;&#47532; &#44732;&#51664;">
+    <button id="introSoundToggleButton" class="sound-toggle-button menu-sound-toggle sound-muted" type="button" onclick="toggleSoundVolume(event)" aria-pressed="false" aria-label="&#49548;&#47532; &#44732;&#51664;" title="&#49548;&#47532; &#44732;&#51664;">
       <svg class="sound-icon-on" viewBox="0 0 24 24" aria-hidden="true">
         <path d="M11 5 6 9H3v6h3l5 4V5z"></path>
         <path d="M15 9a5 5 0 0 1 0 6"></path>
@@ -236,7 +236,7 @@
   </section>
 
   <main id="appScreen" class="menu-shell screen fade-in <?= skipIntroOnLoad ? 'active' : '' ?>">
-    <button id="menuSoundToggleButton" class="sound-toggle-button menu-sound-toggle sound-muted" type="button" onclick="toggleSoundEnabled()" aria-pressed="false" aria-label="&#49548;&#47532; &#44732;&#51664;" title="&#49548;&#47532; &#44732;&#51664;">
+    <button id="menuSoundToggleButton" class="sound-toggle-button menu-sound-toggle sound-muted" type="button" onclick="toggleSoundVolume(event)" aria-pressed="false" aria-label="&#49548;&#47532; &#44732;&#51664;" title="&#49548;&#47532; &#44732;&#51664;">
       <svg class="sound-icon-on" viewBox="0 0 24 24" aria-hidden="true">
         <path d="M11 5 6 9H3v6h3l5 4V5z"></path>
         <path d="M15 9a5 5 0 0 1 0 6"></path>
@@ -493,6 +493,7 @@
     }
 
     function syncSoundToggleButton() {
+      if (window.LEARNING_RPG_AUDIO && window.LEARNING_RPG_AUDIO.syncVolumeControls) { window.LEARNING_RPG_AUDIO.syncVolumeControls(); return; }
       var enabled = isSoundEnabled();
       Array.prototype.forEach.call(document.querySelectorAll('.sound-toggle-button'), function(button) {
         button.classList.toggle('sound-muted', !enabled);
@@ -1793,8 +1794,16 @@
 
     function setMainMessage(message, type) {
       var element = document.getElementById('mainMessage');
+      window.clearTimeout(element.mainMessageTimerId);
       element.textContent = message || '';
       element.className = 'message ' + (type || '');
+      if (message) {
+        element.mainMessageTimerId = window.setTimeout(function() {
+          element.textContent = '';
+          element.className = 'message';
+          element.mainMessageTimerId = null;
+        }, 3000);
+      }
     }
 
     function setRegisterMessage(message, type) {

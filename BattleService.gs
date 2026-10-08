@@ -779,6 +779,7 @@ function selectQuestionForAction(playerId, runId, actionType, difficultyBonus, a
   };
 
   battleState.pendingAction = pendingAction;
+  recordServerQuestionExposure_(stageState, questionResult.question);
   stageState.lastQuestionId = String(pendingAction.questionId || '');
   if (questionResult.isOtherPlayerQuestion) {
     stageState.otherStudentQuestionShown = true;
@@ -1708,9 +1709,9 @@ function applyMonsterSkillEffect_(target, skill, source, battleState) {
 }
 
 function dealDamageToPlayer_(battleState, damage, attacker) {
-  var effectiveStats = calculateEffectiveStats(battleState.player.stats || getConfiguredBasePlayerStats_(), battleState.player.effects || []);
   var modifiedDamage = applyIncomingItemDamageModifiers_(battleState, damage);
-  var totalDamage = Math.max(0, Math.round(Number(modifiedDamage || 0) - Number(effectiveStats.defense || 0)));
+  // Defense increases generated shields; only the current shield absorbs damage.
+  var totalDamage = Math.max(0, Math.round(Number(modifiedDamage || 0)));
   var shieldBefore = Number(battleState.player.shield || 0);
   var shieldDamage = Math.min(shieldBefore, totalDamage);
   var hpDamage = totalDamage - shieldDamage;
@@ -1726,14 +1727,7 @@ function dealDamageToPlayer_(battleState, damage, attacker) {
 }
 
 function dealDamageToMonster_(battleState, monster, damage) {
-  var monsterStats = calculateEffectiveStats({
-    attack: monster.attack,
-    defense: monster.defense,
-    hp: monster.maxHp,
-    evasion: monster.evasion,
-    accuracy: 100,
-  }, monster.effects || []);
-  var totalDamage = Math.max(0, Math.round(Number(damage || 0) - Number(monsterStats.defense || 0)));
+  var totalDamage = Math.max(0, Math.round(Number(damage || 0)));
   var shieldBefore = Number(monster.shield || 0);
   var hpBefore = Number(monster.currentHp || 0);
   var result = getSharedRuleEngine_().dealDamageToMonster(monster, totalDamage, battleState);
@@ -1883,10 +1877,11 @@ function commitStageResult(stagePayload, authToken) {
   var lock = LockService.getScriptLock();
   lock.waitLock(10000);
   try {
-    return withRunSession_(stagePayload.runId, stagePayload.runSessionToken, authToken, function() {
+    var response = withRunSession_(stagePayload.runId, stagePayload.runSessionToken, authToken, function() {
       replayLocalRunTransitions_(stagePayload.localTransitions, authToken);
       return commitStageResultUnlocked_(stagePayload, authToken);
     });
+    return syncQuestionUnderstandingForRun_(stagePayload.runId, stagePayload.questionUnderstanding, authToken, response);
   }
   finally { lock.releaseLock(); }
 }
@@ -1948,6 +1943,7 @@ function commitStageResultUnlocked_(stagePayload, authToken) {
   mergeQuestionReactionScoreStateForCommit_(battleState, serverBattleState, stageState.scoreState || {});
   normalizeUsedQuestionIds_(stageState, battleState);
   stageState.usedQuestionIds = mergeUsedQuestionIds_(stageState.usedQuestionIds, clientStageState.usedQuestionIds);
+  stageState.questionSelectionState = mergeQuestionSelectionState_(stageState.questionSelectionState, clientStageState.questionSelectionState);
   normalizeUsedQuestionIds_(stageState, battleState);
   stageState.otherStudentQuestionShown = !!(stageState.otherStudentQuestionShown || clientStageState.otherStudentQuestionShown);
   stageState.lastQuestionId = String(clientStageState.lastQuestionId || stageState.lastQuestionId || '');
@@ -2111,6 +2107,7 @@ function buildStageResultCommitView_(run, stageState) {
       usedQuestionIds: stageState.usedQuestionIds || [],
       usedQuestionStageId: stageState.usedQuestionStageId || '',
       lastQuestionId: stageState.lastQuestionId || '',
+      questionSelectionState: stageState.questionSelectionState || {},
       scoreState: stageState.scoreState || {},
       reward: stageState.reward || null,
       playerGhost: stageState.playerGhost || null,
@@ -2396,16 +2393,12 @@ function logAnswer(answerPayload) {
 
 function queueQuestionAttemptStats_(battleState, question, isCorrect, answerPayload, log) {
   var payload = answerPayload || {};
-  if (question.type !== QUESTION_TYPES.MULTIPLE_CHOICE) {
-    queueBattleAnswerLog_(battleState, log);
-    return;
-  }
   if (payload.attemptOnly) {
     if (isCorrect) throw new Error('오답 시도 기록에 정답이 포함되어 있습니다.');
     queueBattleAnswerLog_(battleState, Object.assign({}, log, { isCorrect: false }));
     return;
   }
-  var wrongCount = Math.max(0, Math.min(3, Math.floor(Number(payload.wrongCountAfterTimeout || 0))));
+  var wrongCount = Math.max(0, Math.min(question.type === QUESTION_TYPES.MULTIPLE_CHOICE ? 3 : 1000, Math.floor(Number(payload.wrongCountAfterTimeout || 0))));
   // Older clients send only the final result plus a count of earlier wrong choices.
   if (!payload.attemptsRecorded) {
     for (var i = 0; i < wrongCount; i += 1) {
@@ -2556,6 +2549,7 @@ function buildBattleView_(run, stageState, options) {
       usedQuestionIds: stageState.usedQuestionIds || [],
       usedQuestionStageId: stageState.usedQuestionStageId || '',
       lastQuestionId: stageState.lastQuestionId || '',
+      questionSelectionState: stageState.questionSelectionState || {},
       scoreState: stageState.scoreState || {},
       reward: stageState.reward || null,
       playerGhost: stageState.playerGhost || null,
@@ -2998,6 +2992,9 @@ function selectQuestionCacheRows_(run, playerId, stage, otherStudentQuestionShow
     : readRunQuestionsForBattle_(run).filter(function(question) {
         return question.status === STATUS.QUESTION_APPROVED;
       });
+  if (typeof applyQuestionUnderstandingForSelection_ === 'function') {
+    approvedQuestions = applyQuestionUnderstandingForSelection_(approvedQuestions, run, playerId);
+  }
   var allowedQuestions = approvedQuestions.filter(function(question) {
     return !forcedCreatorId || question.creatorId === forcedCreatorId;
   });
@@ -3006,7 +3003,7 @@ function selectQuestionCacheRows_(run, playerId, stage, otherStudentQuestionShow
   });
   var usedIdMap = buildQuestionIdMap_(usedQuestionIds);
   var unusedRangedQuestions = filterUnusedQuestions_(rangedQuestions, usedIdMap);
-  var primaryRangedQuestions = unusedRangedQuestions.length ? unusedRangedQuestions : rangedQuestions;
+  var primaryRangedQuestions = getSharedRuleEngine_().getQuestionSelectionPool(rangedQuestions, usedQuestionIds);
   var primaryOtherQuestions = primaryRangedQuestions.filter(function(question) {
     return question.creatorId !== playerId;
   });
@@ -3034,9 +3031,6 @@ function selectQuestionCacheRows_(run, playerId, stage, otherStudentQuestionShow
     }
   }
 
-  if (!otherStudentQuestionShown && primaryOtherQuestions.length > 0) {
-    pushQuestion(pickQuestionWithTypeBias_(primaryOtherQuestions, questionModifiers, usedQuestionIds, rangedQuestions));
-  }
   pushRandomFrom(primaryRangedQuestions);
   return selected;
 }
@@ -3066,9 +3060,6 @@ function createPendingActionFromCachedPayload_(run, stageState, battleState, pay
   validateQuestionAllowedForBattle_(question, playerId, battleState, targetDifficulty);
   normalizeUsedQuestionIds_(stageState, battleState);
   var reusedQuestion = isQuestionUsedInRun_(stageState, battleState, question.questionId);
-  if (reusedQuestion && hasUnusedQuestionForBattle_(run, playerId, stageState, battleState, targetDifficulty)) {
-    throw new Error('This question has already appeared in this battle.');
-  }
   var actionPointCost = getActionPointCostForAction_(actionType, skill, battleState);
   var questionModifiers = getItemQuestionModifiers_(battleState, question);
   var finalDifficulty = targetDifficulty;
@@ -3085,7 +3076,7 @@ function createPendingActionFromCachedPayload_(run, stageState, battleState, pay
     maxAnswerEfficiency: calculateMaxAnswerEfficiency_(questionModifiers),
     questionModifiers: questionModifiers,
     isOtherPlayerQuestion: question.creatorId !== playerId,
-    fallbackReason: reusedQuestion ? 'exhaustedUnusedQuestions' : payload.fallbackReason || '',
+    fallbackReason: reusedQuestion ? 'weightedReview' : payload.fallbackReason || '',
     fromCache: true,
   };
 }
@@ -3238,25 +3229,8 @@ function filterUnusedQuestions_(questions, usedIdMap) {
   });
 }
 
-function hasUnusedQuestionForBattle_(run, playerId, stageState, battleState, targetDifficulty) {
-  if (!battleState || !battleState.stage) {
-    return false;
-  }
-  var forcedCreatorId = getForcedQuestionCreatorId_(battleState);
-  var requiredDifficulty = targetDifficulty || calculateRequiredQuestionDifficulty_(battleState.stage, 0, getActiveEffectsForQuestion_(battleState), getItemQuestionModifiers_(battleState, null));
-  var usedIdMap = getUsedQuestionIdMap_(stageState, battleState);
-  return readRunQuestionsForBattle_(run).some(function(question) {
-    if (question.status !== STATUS.QUESTION_APPROVED) {
-      return false;
-    }
-    if (forcedCreatorId && question.creatorId !== forcedCreatorId) {
-      return false;
-    }
-    if (!isQuestionAtDifficulty_(question, requiredDifficulty)) {
-      return false;
-    }
-    return !usedIdMap[String(question.questionId || '')];
-  });
+function mustPrioritizeUnusedQuestionForBattle_(run, playerId, stageState, battleState, targetDifficulty) {
+  return false;
 }
 
 function pickQuestion_(run, playerId, stage, otherStudentQuestionShown, forcedCreatorId, questionModifiers, usedQuestionIds, targetDifficulty, lastQuestionId) {
@@ -3264,6 +3238,9 @@ function pickQuestion_(run, playerId, stage, otherStudentQuestionShown, forcedCr
   var approvedQuestions = readRunQuestionsForBattle_(run).filter(function(question) {
     return question.status === STATUS.QUESTION_APPROVED;
   });
+  if (typeof applyQuestionUnderstandingForSelection_ === 'function') {
+    approvedQuestions = applyQuestionUnderstandingForSelection_(approvedQuestions, run, playerId);
+  }
   var questionPool = approvedQuestions.filter(function(question) {
     return !forcedCreatorId || question.creatorId === forcedCreatorId;
   });
@@ -3271,29 +3248,10 @@ function pickQuestion_(run, playerId, stage, otherStudentQuestionShown, forcedCr
     return isQuestionAtDifficulty_(question, requiredDifficulty);
   });
   var usedIdMap = buildQuestionIdMap_(usedQuestionIds);
-  var unusedRangedQuestions = filterUnusedQuestions_(rangedQuestions, usedIdMap);
-  var activePool = unusedRangedQuestions.length ? unusedRangedQuestions : rangedQuestions;
-  var alternatives = activePool.filter(function(question) { return String(question.questionId || '') !== String(lastQuestionId || ''); });
-  if (alternatives.length) {
-    if (unusedRangedQuestions.length) unusedRangedQuestions = alternatives;
-    else rangedQuestions = alternatives;
-  }
-  var unusedOtherQuestions = unusedRangedQuestions.filter(function(question) {
-    return question.creatorId !== playerId;
-  });
-
-  if (!otherStudentQuestionShown && unusedOtherQuestions.length > 0) {
-    var requiredOtherQuestion = pickQuestionWithTypeBias_(unusedOtherQuestions, questionModifiers, usedQuestionIds, rangedQuestions);
-    return questionPickResult_(requiredOtherQuestion, true, '');
-  }
-
-  if (unusedRangedQuestions.length > 0) {
-    var unusedQuestion = pickQuestionWithTypeBias_(unusedRangedQuestions, questionModifiers, usedQuestionIds, rangedQuestions);
-    return questionPickResult_(unusedQuestion, unusedQuestion.creatorId !== playerId, '');
-  }
-  if (rangedQuestions.length > 0) {
-    var reusedQuestion = pickQuestionWithTypeBias_(rangedQuestions, questionModifiers, usedQuestionIds, rangedQuestions);
-    return questionPickResult_(reusedQuestion, reusedQuestion.creatorId !== playerId, 'exhaustedUnusedQuestions');
+  var activePool = getSharedRuleEngine_().getQuestionSelectionPool(rangedQuestions, usedQuestionIds, lastQuestionId);
+  if (activePool.length) {
+    var question = pickQuestionWithTypeBias_(activePool, questionModifiers, usedQuestionIds, rangedQuestions);
+    return questionPickResult_(question, question.creatorId !== playerId, usedIdMap[question.questionId] ? 'weightedReview' : '');
   }
 
   throw new Error('No approved question is available at difficulty ' + requiredDifficulty + '.');
@@ -3325,39 +3283,20 @@ function pickQuestionByAccuracy_(questions) {
 
 function pickQuestionWithTypeBias_(questions, questionModifiers, recentQuestionIds, recentQuestionSource) {
   var pool = questions || [];
-  if (!pool.length) {
-    return null;
-  }
-  var varietyPick = pickQuestionForTypeVariety_(pool, recentQuestionIds, recentQuestionSource);
-  if (varietyPick) {
-    return varietyPick;
-  }
-  var shortAnswerBonus = Number(questionModifiers && questionModifiers.shortAnswerChancePercent || 0);
+  if (!pool.length) return null;
   var chanceByType = questionModifiers && questionModifiers.questionChanceByType || {};
-  var multipleChoiceBonus = Number(chanceByType[QUESTION_TYPES.MULTIPLE_CHOICE] || 0);
-  shortAnswerBonus += Number(chanceByType[QUESTION_TYPES.SHORT_ANSWER] || 0);
-  if (!shortAnswerBonus && !multipleChoiceBonus) {
-    return pickQuestionByAccuracy_(pool);
-  }
-  var shortAnswers = pool.filter(function(question) {
-    return question.type === QUESTION_TYPES.SHORT_ANSWER;
+  var weights = pool.map(function(question) {
+    var type = String(question.type || '');
+    var bonus = Number(chanceByType.all || 0) + Number(chanceByType[type] || 0);
+    if (type === QUESTION_TYPES.SHORT_ANSWER) bonus += Number(questionModifiers && questionModifiers.shortAnswerChancePercent || 0);
+    return Math.max(0.05, 1 + bonus / 100) * getSharedRuleEngine_().getQuestionAccuracyWeight(question);
   });
-  var multipleChoices = pool.filter(function(question) {
-    return question.type === QUESTION_TYPES.MULTIPLE_CHOICE;
-  });
-  if (!shortAnswers.length || !multipleChoices.length) {
-    return pickQuestionByAccuracy_(pool);
+  var cursor = Math.random() * weights.reduce(function(total, weight) { return total + weight; }, 0);
+  for (var i = 0; i < pool.length; i += 1) {
+    cursor -= weights[i];
+    if (cursor <= 0) return pool[i];
   }
-  var shortWeight = Math.max(0, (shortAnswers.length / pool.length) * 100 + shortAnswerBonus);
-  var multipleChoiceWeight = Math.max(0, (multipleChoices.length / pool.length) * 100 + multipleChoiceBonus);
-  var totalWeight = shortWeight + multipleChoiceWeight;
-  if (totalWeight <= 0) {
-    return pickQuestionByAccuracy_(pool);
-  }
-  if (Math.random() * totalWeight < shortWeight) {
-    return pickQuestionByAccuracy_(shortAnswers);
-  }
-  return pickQuestionByAccuracy_(multipleChoices);
+  return pool[pool.length - 1];
 }
 
 function pickQuestionForTypeVariety_(pool, recentQuestionIds, recentQuestionSource) {

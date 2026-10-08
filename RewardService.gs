@@ -86,12 +86,100 @@ function generateRewardChoices(runId, stageId, authToken) {
   return buildRewardChoiceView_(runId, currentStageId, rewardGroupId, rewardState, ownedSkills, stageState.battle, buildScorePreviewSummaryForRewardView_(run, stageState, stageState.battle, rewardState));
 }
 
-function previewRewardChoicesForStageResult(stagePayload, authToken) {
+// Draw immutable rewards during combat. Never commit a victory or consume a ghost here.
+function prepareRewardChoicesDuringBattle(stagePayload, authToken) {
   var lock = LockService.getScriptLock(); lock.waitLock(10000);
   var previousLockHeld = RUN_SESSION_LOCK_HELD_;
   RUN_SESSION_LOCK_HELD_ = true;
   try {
-    return withRunSession_(stagePayload.runId, stagePayload.runSessionToken, authToken, function() {
+    var response = withRunSession_(stagePayload.runId, stagePayload.runSessionToken, authToken, function() {
+      if (replayLocalRunTransitions_(stagePayload.localTransitions, authToken)) {
+        var expired = requireRun_(stagePayload.runId);
+        return buildStageResultCommitView_(expired, getStageState_(expired));
+      }
+      var run = requireRun_(stagePayload.runId);
+      requireRunBeforeWorkbookDeadline_(run);
+      var battle = stagePayload.battle || {};
+      var current = getStageState_(run).battle || {};
+      if (!stagePayload.localAdvanceEnabled || run.status !== STATUS.RUN_ACTIVE
+        || battle.status !== STATUS.BATTLE_ACTIVE || battle.battleId !== current.battleId
+        || !battle.stage || battle.stage.stageId !== buildStageId_(run.currentFloor, run.currentStage)) {
+        throw new Error('현재 전투의 보상만 미리 준비할 수 있습니다.');
+      }
+      var key = 'reward-plan:' + run.runId + ':' + battle.battleId;
+      var cached = getChunkedRunCache_(key);
+      if (cached) return JSON.parse(cached);
+      var payload = cloneGameDataRows_(stagePayload);
+      payload.answerLogs = [];
+      payload.battle.status = STATUS.BATTLE_VICTORY;
+      var view = previewRewardChoicesForStageResult_(payload, authToken);
+      ACTIVE_RUN_SESSION_.localAdvanceEnabled = true;
+      view = prepareLocalRewardTransitions_(view, payload, authToken, true);
+      view.preparedDuringBattle = true;
+      // This is a plan, not permission to advance before the victory callback.
+      signLocalRewardView_(view);
+      view.rewardPreparationToken = view.localTransitionToken;
+      delete view.localTransitionToken;
+      putChunkedRunCache_(key, safeJsonStringify_(view));
+      return view;
+    });
+    return syncQuestionUnderstandingForRun_(stagePayload.runId, stagePayload.questionUnderstanding, authToken, response);
+  } finally { RUN_SESSION_LOCK_HELD_ = previousLockHeld; lock.releaseLock(); }
+}
+
+function finalizePreparedRewardTransitions_(view, run) {
+  var moved = buildNextStageMoveForRun_(run, getStageState_(run)).run;
+  if (moved.status === STATUS.RUN_CLEARED) return view;
+  var stage = loadStage(buildStageId_(moved.currentFloor, moved.currentStage));
+  var permit = view.localTransition;
+  if (isFloorRestStage_(stage)) {
+    var nextRun = buildNextStageMoveForRun_(moved, getStageState_(moved)).run;
+    var nextStage = loadStage(buildStageId_(nextRun.currentFloor, nextRun.currentStage));
+    var restViews = permit.restViews || {};
+    var first = restViews[Object.keys(restViews)[0]];
+    if (first) {
+      var child = first.localTransition;
+      var ghost = selectPlayerGhostForBattle_(nextRun, nextStage, getStageState_(nextRun), 'battle_local_' + child.seed + '_1');
+      Object.keys(restViews).forEach(function(id) {
+        restViews[id].localTransition.ghostSelection = ghost;
+        signLocalRewardView_(restViews[id]);
+      });
+    }
+  } else {
+    permit.ghostSelection = selectPlayerGhostForBattle_(moved, stage, getStageState_(moved), 'battle_local_' + permit.seed + '_1');
+  }
+  return view;
+}
+
+// Keep random choices and permits intact; only refresh values that depend on the result.
+function refreshPreparedRewardView_(run, payload, view) {
+  var battle = payload.battle || {};
+  var regen = view.floorRestChoice
+    ? {amount:0,nextHp:Number(run.currentHp || 0),maxHp:Number(battle.player && (battle.player.maxHp || battle.player.stats && battle.player.stats.hp) || 1)}
+    : previewStageClearRegen_(run, battle);
+  view.regenAmount = regen.amount;
+  view.currentHpAfterRegen = regen.nextHp;
+  view.maxHpAfterRegen = regen.maxHp;
+  view.scorePreviewSummary = buildScorePreviewSummaryForRewardView_(run, payload.stageState, battle, view);
+  view.choices = (view.choices || []).map(function(choice) {
+    if (choice.type === REWARD_TYPES.REST) return sanitizeRewardForClient_(buildFloorRestRewardChoice_(run, battle), battle);
+    if (choice.type === REWARD_TYPES.SKILL || choice.type === REWARD_TYPES.SKILL_UPGRADE) {
+      return Object.assign({}, choice, {skillDetail:buildRewardSkillDetail_(choice, battle)});
+    }
+    return choice;
+  });
+  return view;
+}
+
+function previewRewardChoicesForStageResult(stagePayload, authToken) {
+  // Keep a single, existing RPC entry point so older open pages and deployment
+  // function lists can safely request preparation without a newly exposed method.
+  if (stagePayload && stagePayload.prepareDuringBattle) return prepareRewardChoicesDuringBattle(stagePayload, authToken);
+  var lock = LockService.getScriptLock(); lock.waitLock(10000);
+  var previousLockHeld = RUN_SESSION_LOCK_HELD_;
+  RUN_SESSION_LOCK_HELD_ = true;
+  try {
+    var response = withRunSession_(stagePayload.runId, stagePayload.runSessionToken, authToken, function() {
       if (replayLocalRunTransitions_(stagePayload.localTransitions, authToken)) {
         var expiredRun = requireRun_(stagePayload.runId);
         return buildStageResultCommitView_(expiredRun, getStageState_(expiredRun));
@@ -103,20 +191,48 @@ function previewRewardChoicesForStageResult(stagePayload, authToken) {
         cachedView.localRunState = cloneGameDataRows_(requireRun_(stagePayload.runId));
         return cachedView;
       }
-      var view = previewRewardChoicesForStageResult_(stagePayload, authToken);
+      var completionReceipt = null;
       if (ACTIVE_RUN_SESSION_) {
-        var receipt = stagePayload.stageState && stagePayload.stageState.reward && stagePayload.stageState.reward.battleCompletionReceipt;
-        var run = requireRun_(stagePayload.runId);
-        var battleId = stagePayload.battle && stagePayload.battle.battleId;
-        view.battleCompletionReceipt = getVerifiedBattleCompletionMs_(receipt, run, battleId) ? receipt : createBattleCompletionReceipt_(run, battleId);
+        var completionRun = requireRun_(stagePayload.runId);
+        var completionBattleId = stagePayload.battle && stagePayload.battle.battleId;
+        var previousReceipt = stagePayload.stageState && stagePayload.stageState.reward && stagePayload.stageState.reward.battleCompletionReceipt;
+        completionReceipt = getVerifiedBattleCompletionMs_(previousReceipt, completionRun, completionBattleId)
+          ? previousReceipt : createBattleCompletionReceipt_(completionRun, completionBattleId);
+      }
+      var planJson = stagePayload.localAdvanceEnabled
+        ? getChunkedRunCache_('reward-plan:' + stagePayload.runId + ':' + (stagePayload.battle && stagePayload.battle.battleId || '')) : null;
+      if (!planJson && stagePayload.rewardPreparationToken) {
+        planJson = safeJsonStringify_(verifyLocalRewardView_(stagePayload.rewardPreparationToken));
+      }
+      var view;
+      if (planJson) {
+        var planRun = requireRun_(stagePayload.runId);
+        requireRunBeforeWorkbookDeadline_(planRun);
+        var planBattle = stagePayload.battle || {};
+        if (planRun.status !== STATUS.RUN_ACTIVE || planBattle.status !== STATUS.BATTLE_VICTORY
+          || planBattle.battleId !== (getStageState_(planRun).battle || {}).battleId) throw new Error('현재 전투의 승리 보상이 아닙니다.');
+        var plan = JSON.parse(planJson);
+        if (!plan.preparedDuringBattle || !plan.localTransition || plan.localTransition.runId !== planRun.runId
+          || plan.localTransition.battleId !== planBattle.battleId
+          || plan.stageId !== buildStageId_(planRun.currentFloor, planRun.currentStage)) throw new Error('보상 준비 정보가 현재 전투와 다릅니다.');
+        view = refreshPreparedRewardView_(planRun, stagePayload, plan);
+        finalizePreparedRewardTransitions_(view, planRun);
+      } else {
+        view = previewRewardChoicesForStageResult_(stagePayload, authToken);
+      }
+      if (ACTIVE_RUN_SESSION_) {
+        view.battleCompletionReceipt = completionReceipt;
         if (stagePayload.localAdvanceEnabled) {
+          delete view.preparedDuringBattle;
+          delete view.rewardPreparationToken;
           ACTIVE_RUN_SESSION_.localAdvanceEnabled = true;
-          view = prepareLocalRewardTransitions_(view, stagePayload, authToken);
+          view = planJson ? signLocalRewardView_(view) : prepareLocalRewardTransitions_(view, stagePayload, authToken);
           putChunkedRunCache_(cacheKey, safeJsonStringify_(view));
         }
       }
       return view;
     }, !stagePayload.localAdvanceEnabled);
+    return syncQuestionUnderstandingForRun_(stagePayload.runId, stagePayload.questionUnderstanding, authToken, response);
   } finally { RUN_SESSION_LOCK_HELD_ = previousLockHeld; lock.releaseLock(); }
 }
 
@@ -1211,6 +1327,7 @@ function buildNextStageMoveForRun_(run, stageState) {
       usedQuestionIds: [],
       usedQuestionStageId: buildStageId_(nextFloor, nextStage),
       lastQuestionId: stageState.lastQuestionId || '',
+      questionSelectionState: stageState.questionSelectionState || {},
       approvedQuestionCreatorIds: (stageState.approvedQuestionCreatorIds || []).slice(),
       scoreState: scoreState,
     }),

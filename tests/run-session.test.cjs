@@ -62,7 +62,7 @@ function context() {
       formatDate: value => new Date(value).toISOString(),
     },
   });
-  for (const name of ['Config.gs','Constants.gs','MonsterAiMaster.gs','Serialization.gs','Database.gs','UserService.gs','WorkbookService.gs','StatsService.gs','ItemService.gs','SkillService.gs','SharedRuleEngine.gs','QuestionService.gs','BattleService.gs','RewardService.gs','RunSessionService.gs','LocalRunEngine.gs']) vm.runInContext(read(name), c, {filename:name});
+  for (const name of ['Config.gs','Constants.gs','MonsterAiMaster.gs','Serialization.gs','Database.gs','UserService.gs','WorkbookService.gs','StatsService.gs','ItemService.gs','SkillService.gs','SharedRuleEngine.gs','QuestionReviewService.gs','QuestionService.gs','BattleService.gs','RewardService.gs','RunSessionService.gs','LocalRunEngine.gs']) vm.runInContext(read(name), c, {filename:name});
   for (const schema of c.DB_SCHEMA) sheet(schema.sheetName, schema.headers);
   const seed = (name, rows) => { const s=sheets.get(name); s.rows=[s.rows[0], ...rows.map(o=>s.rows[0].map(k=>o[k] ?? ''))]; };
   seed(c.DB_SHEETS.SETTINGS, c.MASTER_SETTINGS);
@@ -353,7 +353,7 @@ test('stage repeat exclusion records final correct answers but keeps failed and 
 test('server selection favors low accuracy and signed snapshots protect the loaded counts',()=>{
   const x=context();
   const low={questionId:'low',correctCount:0,totalCount:100}, high={questionId:'high',correctCount:100,totalCount:100};
-  vm.runInContext('Math.random = () => 0.6',x.c);
+  vm.runInContext('Math.random = () => 0.55',x.c);
   assert.equal(x.c.pickQuestionWithTypeBias_([low,high],{},[],[low,high]).questionId,'low');
   const q={...low,workbookId:'w'};
   const signature=x.c.signLocalQuestionSnapshot_(q);
@@ -382,11 +382,110 @@ test('individual choice logs survive stage saving without counting wrong choices
   }
 });
 
-test('short-answer first-attempt statistics remain unchanged',()=>{
+test('older short-answer clients preserve each wrong attempt and the final correct answer',()=>{
   const x=context(),battle={};
   x.c.queueQuestionAttemptStats_(battle,{type:'shortAnswer'},true,{wrongCountAfterTimeout:3},{isCorrect:false});
-  assert.equal(battle.pendingAnswerLogs.length,1);
+  assert.equal(battle.pendingAnswerLogs.length,4);
   assert.equal(battle.pendingAnswerLogs[0].isCorrect,false);
+  assert.equal(battle.pendingAnswerLogs[3].isCorrect,true);
+});
+
+test('short-answer retries preserve submitted text and count success or give-up exactly once',()=>{
+  for(const finish of ['correct','giveUp','unfinished']) {
+    const x=context(),first=start(x),prepared=prepareVictory(x,first);
+    const question={questionId:'short-q',creatorId:'teacher',workbookId:'w',type:'shortAnswer',answer:'제안하다',answerAliases:'[]',difficulty:1,status:'approved'};
+    x.c.findRunQuestionById_=()=>question;
+    const base={questionId:'short-q',questionSnapshot:question,questionSignature:x.c.signLocalQuestionSnapshot_(question),elapsedMs:100,maxMs:10000,finalDifficulty:1,
+      actionType:'attack',attemptsRecorded:true,selectedChoiceIndex:'',selectedAnswer:''};
+    prepared.payload.answerLogs=['제안','제안해','제한하다'].map(selectedAnswerText=>({...base,selectedAnswerText,attemptOnly:true}));
+    if(finish!=='unfinished')prepared.payload.answerLogs.push({...base,elapsedMs:1000,selectedAnswerText:finish==='correct'?'제안하다':'',wrongCountAfterTimeout:3,giveUp:finish==='giveUp'});
+    const view=x.c.advanceRunStage(prepared.payload,prepared.reward.choices[0].rewardId,'auth',prepared.reward);
+    const logs=x.c.decodeRunSession_(view.runSessionToken).answerBatches[0].logs;
+    assert.equal(logs.length,finish==='correct'?4:3);
+    assert.equal(logs.filter(log=>log.isCorrect).length,finish==='correct'?1:0);
+    assert.deepEqual(copy(logs.slice(0,3).map(log=>log.selectedAnswer)),['제안','제안해','제한하다']);
+  }
 });
 
 module.exports = {context,start,prepareVictory,advance,copy};
+
+test('server selection and replay validation allow weighted review without an unseen guarantee',()=>{
+  const x=context();
+  const questions=['weak','second','new'].map((questionId,i)=>({questionId,creatorId:'other',difficulty:1,
+    type:'multipleChoice',status:'approved',totalCount:100,correctCount:i?100:0}));
+  x.c.readRunQuestionsForBattle_=()=>questions;
+  x.c.getPlayerQuestionUnderstanding_=()=>({weak:1,second:5,new:5});
+  x.c.getRunWorkbookContext_=()=>({workbookId:'w'});
+  const stage={stageId:'test-stage',minDifficulty:1,maxDifficulty:1};
+  const run={workbookId:'w'},state={usedQuestionStageId:'test-stage',usedQuestionIds:['weak']},battle={stage,usedQuestionIds:['weak']};
+  vm.runInContext('Math.random=()=>0',x.c);
+  assert.equal(x.c.pickQuestion_(run,'p',stage,true,'',{},['weak'],1,'weak').question.questionId,'weak');
+  assert.equal(x.c.mustPrioritizeUnusedQuestionForBattle_(run,'p',state,battle,1),false);
+  state.usedQuestionIds.push('second');battle.usedQuestionIds.push('second');
+  const pick=x.c.pickQuestion_(run,'p',stage,true,'',{},state.usedQuestionIds,1,'second');
+  assert.equal(pick.question.questionId,'weak');
+  assert.equal(x.c.mustPrioritizeUnusedQuestionForBattle_(run,'p',state,battle,1),false);
+  assert.equal(x.c.selectQuestionCacheRows_(run,'p',stage,true,'',{},state.usedQuestionIds,1,1,questions)[0].questionId,'weak');
+});
+
+
+test('server and cache selection apply personal understanding without changing the source questions',()=>{
+  const x=context();
+  const questions=[
+    {questionId:'known',creatorId:'other',difficulty:1,status:'approved',totalCount:100,correctCount:0},
+    {questionId:'review',creatorId:'other',difficulty:1,status:'approved',totalCount:100,correctCount:100},
+  ];
+  x.c.readRunQuestionsForBattle_=()=>questions;
+  x.c.getPlayerQuestionUnderstanding_=(playerId,workbookId)=>{
+    assert.equal(playerId,'p');assert.equal(workbookId,'w');return {known:5,review:1};
+  };
+  x.c.getRunWorkbookContext_=()=>({workbookId:'w'});
+  const stage={minDifficulty:1,maxDifficulty:1};
+  vm.runInContext('Math.random = () => 0.4',x.c);
+  assert.equal(x.c.pickQuestion_({workbookId:'w'},'p',stage,true,'',{},[],1,'').question.questionId,'review');
+  assert.equal(x.c.selectQuestionCacheRows_({workbookId:'w'},'p',stage,true,'',{},[],1,1,questions)[0].questionId,'review');
+  assert.equal(questions[0].understandingRating,undefined);
+});
+
+
+test('ratings piggyback on stage progress and defeat saving, acknowledging only after persistence',()=>{
+  const x=context(),initial=start(x),prepared=prepareVictory(x,initial);
+  x.c.readWorkbookQuestionTable_=()=>[{questionId:'review-q',status:'approved'}];
+  const first={questionId:'review-q',rating:2,updatedAtMs:10,revision:'first-rating'};
+  prepared.payload.questionUnderstanding=[first];
+  const preview=x.c.previewRewardChoicesForStageResult(prepared.payload,'auth');
+  assert.equal(preview.acknowledgedQuestionUnderstanding.entries[0].revision,'first-rating');
+  const response=x.c.advanceRunStage(prepared.payload,prepared.reward.choices[0].rewardId,'auth',prepared.reward);
+  assert.equal(response.acknowledgedQuestionUnderstanding.entries[0].revision,'first-rating');
+  assert.equal(x.c.getPlayerQuestionUnderstanding_('p','w')['review-q'],2);
+  const terminal=copy(response.battle);terminal.status='defeat';terminal.player.hp=0;
+  const latest={...first,rating:4,updatedAtMs:20,revision:'latest-rating'};
+  const payload={runId:response.runId,runSessionToken:response.runSessionToken,battle:terminal,
+    stageState:copy(response.stageState),answerLogs:[],questionUnderstanding:[latest]};
+  const saved=x.c.commitStageResult(payload,'auth');
+  assert.equal(saved.acknowledgedQuestionUnderstanding.entries[0].revision,'latest-rating');
+  assert.equal(x.c.getPlayerQuestionUnderstanding_('p','w')['review-q'],4);
+  const data=x.c.getPlayerData_('p');
+  assert.ok(data.bestScore>0);assert.equal(data.questionUnderstandingJson.includes('latest-rating'),true);
+});
+
+test('exposure state survives stage transitions and a newer survey resets server weighting',()=>{
+  const x=context(),initial=start(x),prepared=prepareVictory(x,initial);
+  prepared.payload.stageState.questionSelectionState={q:{count:3,updatedAtMs:0}};
+  const view=x.c.advanceRunStage(prepared.payload,prepared.reward.choices[0].rewardId,'auth',prepared.reward);
+  assert.deepEqual(copy(view.stageState.questionSelectionState),{q:{count:3,updatedAtMs:0}});
+  const run={workbookId:'w',stageStateJson:JSON.stringify(view.stageState)};
+  x.c.getRunWorkbookContext_=()=>({workbookId:'w'});
+  x.c.getPlayerData_=()=>({questionUnderstandingJson:JSON.stringify({w:{q:{rating:1,updatedAtMs:0}}})});
+  const question={questionId:'q',totalCount:10,correctCount:5};
+  const old=x.c.applyQuestionUnderstandingForSelection_([question],run,'p')[0];
+  assert.equal(old.selectionExposureCount,3);
+  x.c.getPlayerData_=()=>({questionUnderstandingJson:JSON.stringify({w:{q:{rating:1,updatedAtMs:100}}})});
+  const renewed=x.c.applyQuestionUnderstandingForSelection_([question],run,'p')[0];
+  assert.equal(renewed.selectionExposureCount,0);
+  assert.equal(x.c.getSharedRuleEngine_().getQuestionAccuracyWeight(renewed),x.c.getSharedRuleEngine_().getQuestionAccuracyWeight(old)*8);
+  const state={questionSelectionState:{q:{count:3,updatedAtMs:0}}};
+  x.c.recordServerQuestionExposure_(state,renewed);
+  assert.deepEqual(copy(state.questionSelectionState.q),{count:1,updatedAtMs:100});
+  assert.deepEqual(copy(x.c.mergeQuestionSelectionState_(state.questionSelectionState,{q:{count:9,updatedAtMs:0}})),copy(state.questionSelectionState));
+});

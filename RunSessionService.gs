@@ -225,7 +225,7 @@ function advanceRunStage(stagePayload, rewardId, authToken, rewardView) {
   lock.waitLock(10000);
   RUN_SESSION_LOCK_HELD_ = true;
   try {
-    return withRunSession_(stagePayload.runId, stagePayload.runSessionToken, authToken, function() {
+    var response = withRunSession_(stagePayload.runId, stagePayload.runSessionToken, authToken, function() {
       var run = requireRun_(stagePayload.runId);
       if (run.status !== STATUS.RUN_ACTIVE) return { cleared: run.status === STATUS.RUN_CLEARED, run: cloneGameDataRows_(run), score: run.score };
       var currentBattle = getStageState_(run).battle;
@@ -239,6 +239,7 @@ function advanceRunStage(stagePayload, rewardId, authToken, rewardView) {
       var nextRun = requireRun_(stagePayload.runId);
       return Object.assign({}, response, buildBattleStateView_(nextRun, getStageState_(nextRun)), { nextBattlePending: false, run: toClientObject_(nextRun) });
     });
+    return syncQuestionUnderstandingForRun_(stagePayload.runId, stagePayload.questionUnderstanding, authToken, response);
   } finally { RUN_SESSION_LOCK_HELD_ = false; lock.releaseLock(); }
 }
 
