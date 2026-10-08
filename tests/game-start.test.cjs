@@ -120,6 +120,29 @@ test('a rejected local snapshot lookup also resumes game creation after preparat
   preparation.onReady();assert.equal(x.begins(),1);
 });
 
+test('question form return requests a fresh snapshot even when the iframe URL has no query',()=>{
+  const form=read('QuestionForm.html');
+  const c=vm.createContext({WEB_APP_URL:'https://example.test/app',navigateTop:url=>{c.destination=url;}});
+  functions(c,'QuestionForm.html',['goHome']);
+  c.goHome();assert.equal(c.destination,'https://example.test/app?skipIntro=1&refreshQuestions=1');
+  const declaration=read('Index.html').match(/var QUESTION_SNAPSHOT_REFRESH_REQUESTED =[^;]+;/)[0];
+  const rendered=declaration.replace(/<\?=([^]*?)\?>/g,(_,expression)=>vm.runInNewContext(expression,{requestParams:{refreshQuestions:'1'}}));
+  const main=vm.createContext({window:{location:{search:''}}});
+  vm.runInContext(rendered,main);
+  assert.equal(main.QUESTION_SNAPSHOT_REFRESH_REQUESTED,true);
+});
+
+test('a requested workbook refresh bypasses the stored snapshot before entering main',()=>{
+  const x=indexContext(),c=x.c;let preparation;
+  Object.assign(c,{QUESTION_SNAPSHOT_REFRESH_REQUESTED:true,questionSnapshotRefreshConsumed:false,
+    prepareWorkbookSnapshotAndEnterMain:(workbook,options)=>{preparation={workbook,options};},
+    LearningRpgQuestionStore:{get:()=>{throw new Error('stale snapshot must not be read');}}});
+  functions(c,'Index.html',['prepareStoredWorkbookBeforeMain']);
+  c.prepareStoredWorkbookBeforeMain({workbookId:'w'});
+  assert.equal(preparation.workbook.workbookId,'w');
+  assert.equal(preparation.options.forceReload,true);
+});
+
 test('a background main-screen snapshot lookup cannot replace a running game-start loader',async()=>{
   const x=indexContext(),c=x.c;let resolveLookup,changed=0;
   Object.assign(c,{QUESTION_SNAPSHOT_REFRESH_REQUESTED:false,questionSnapshotRefreshConsumed:false,

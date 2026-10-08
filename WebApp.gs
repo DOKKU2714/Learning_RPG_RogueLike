@@ -7,6 +7,8 @@ function doGet(e) {
   var output = template
     .evaluate()
     .setTitle(route.title)
+    // HtmlService ignores viewport tags in template HTML; register it on the output.
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1, viewport-fit=cover')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 
   if (route.file === 'Index') {

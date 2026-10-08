@@ -316,4 +316,77 @@ test('waiting to select a reward does not change the existing floor speed bonus'
   assert.throws(()=>x.c.getVerifiedBattleCompletionMs_(forged,x.c.decodeRunSession_(vx.runSessionToken).run,a.payload.battle.battleId),/검증/);
 });
 
+test('multiple-choice statistics count every wrong choice and the final correct choice',()=>{
+  for (const attempt of [
+    {wrongCountAfterTimeout:0,giveUp:false,correct:true},
+    {wrongCountAfterTimeout:1,giveUp:false,correct:true},
+    {wrongCountAfterTimeout:3,giveUp:false,correct:true},
+    {wrongCountAfterTimeout:0,giveUp:true,correct:false},
+  ]) {
+    const x=context(), first=start(x), prepared=prepareVictory(x,first);
+    const question={questionId:'q',workbookId:'w',creatorId:'p',type:'multipleChoice',prompt:'One?',choice1:'1',choice2:'2',choice3:'3',choice4:'4',answer:'1',difficulty:1,answerAliases:'[]'};
+    prepared.payload.answerLogs=[{questionId:'q',questionSnapshot:question,questionSignature:x.c.signLocalQuestionSnapshot_(question),selectedAnswer:'1',selectedChoiceIndex:'1',elapsedMs:1000,maxTimeMs:10000,actionType:'attack',finalDifficulty:1,...attempt}];
+    const view=x.c.advanceRunStage(prepared.payload,prepared.reward.choices[0].rewardId,'auth',prepared.reward);
+    const logs=x.c.decodeRunSession_(view.runSessionToken).answerBatches[0].logs;
+    assert.equal(logs.length,attempt.wrongCountAfterTimeout+1);
+    assert.equal(logs.filter(log=>log.isCorrect).length,attempt.correct?1:0);
+    if (!attempt.giveUp) assert.ok(logs.at(-1).efficiency>0);
+  }
+});
+
+test('stage repeat exclusion records final correct answers but keeps failed and given-up questions eligible',()=>{
+  for (const attempt of [
+    {selectedAnswer:'1',selectedChoiceIndex:'1',wrongCountAfterTimeout:0,giveUp:false,solved:true},
+    {selectedAnswer:'1',selectedChoiceIndex:'1',wrongCountAfterTimeout:1,giveUp:false,solved:true},
+    {selectedAnswer:'2',selectedChoiceIndex:'2',wrongCountAfterTimeout:1,giveUp:false,solved:false},
+    {selectedAnswer:'1',selectedChoiceIndex:'1',wrongCountAfterTimeout:0,giveUp:true,solved:false},
+  ]) {
+    const x=context(), first=start(x), prepared=prepareVictory(x,first);
+    const question={questionId:'q',workbookId:'w',creatorId:'p',type:'multipleChoice',prompt:'One?',choice1:'1',choice2:'2',choice3:'3',choice4:'4',answer:'1',difficulty:1,answerAliases:'[]',correctCount:2,totalCount:10};
+    prepared.payload.answerLogs=[{questionId:'q',questionSnapshot:question,questionSignature:x.c.signLocalQuestionSnapshot_(question),elapsedMs:1000,maxTimeMs:10000,actionType:'attack',finalDifficulty:1,...attempt}];
+    const view=x.c.commitStageResult(prepared.payload,'auth');
+    const state=JSON.parse(x.c.decodeRunSession_(view.runSessionToken).run.stageStateJson);
+    assert.equal(state.usedQuestionIds.includes('q'),attempt.solved);
+  }
+});
+
+test('server selection favors low accuracy and signed snapshots protect the loaded counts',()=>{
+  const x=context();
+  const low={questionId:'low',correctCount:0,totalCount:100}, high={questionId:'high',correctCount:100,totalCount:100};
+  vm.runInContext('Math.random = () => 0.6',x.c);
+  assert.equal(x.c.pickQuestionWithTypeBias_([low,high],{},[],[low,high]).questionId,'low');
+  const q={...low,workbookId:'w'};
+  const signature=x.c.signLocalQuestionSnapshot_(q);
+  assert.ok(x.c.verifyLocalQuestionSnapshot_(q,signature,'w'));
+  assert.throws(()=>x.c.verifyLocalQuestionSnapshot_({...q,correctCount:100},signature,'w'),/검증/);
+});
+
+test('individual choice logs survive stage saving without counting wrong choices or giving up twice',()=>{
+  for(const finish of ['correct','giveUp','unfinished']) {
+    const x=context(),first=start(x),prepared=prepareVictory(x,first);
+    const question={questionId:'q',workbookId:'w',creatorId:'p',type:'multipleChoice',prompt:'One?',choice1:'1',choice2:'2',choice3:'3',choice4:'4',answer:'1',difficulty:1,answerAliases:'[]'};
+    const base={questionId:'q',questionSnapshot:question,questionSignature:x.c.signLocalQuestionSnapshot_(question),elapsedMs:0,maxTimeMs:10000,actionType:'attack',finalDifficulty:1,attemptsRecorded:true};
+    prepared.payload.answerLogs=['2','3','4'].map(choice=>({...base,selectedAnswer:choice,selectedChoiceIndex:choice,attemptOnly:true}));
+    if(finish!=='unfinished')prepared.payload.answerLogs.push({...base,elapsedMs:1000,selectedAnswer:'1',selectedChoiceIndex:'1',wrongCountAfterTimeout:3,giveUp:finish==='giveUp'});
+    const view=x.c.advanceRunStage(prepared.payload,prepared.reward.choices[0].rewardId,'auth',prepared.reward);
+    const logs=x.c.decodeRunSession_(view.runSessionToken).answerBatches[0].logs;
+    assert.equal(logs.length,finish==='correct'?4:3);
+    assert.equal(logs.filter(log=>log.isCorrect).length,finish==='correct'?1:0);
+    assert.deepEqual(copy(logs.slice(0,3).map(log=>log.selectedAnswer)),['2','3','4']);
+    x.c.requireRun_=()=>({runId:first.runId,playerId:'p',workbookId:'w'});
+    x.c.findWorkbookQuestionById_=()=>question;
+    const batch=x.c.prepareBattleStatsBatch_(logs.map(log=>({log})));
+    assert.equal(batch.errorRows.length,0);
+    assert.equal(batch.questionSummaryByWorkbook.w.q.total,finish==='correct'?4:3);
+    assert.equal(batch.questionSummaryByWorkbook.w.q.correct,finish==='correct'?1:0);
+  }
+});
+
+test('short-answer first-attempt statistics remain unchanged',()=>{
+  const x=context(),battle={};
+  x.c.queueQuestionAttemptStats_(battle,{type:'shortAnswer'},true,{wrongCountAfterTimeout:3},{isCorrect:false});
+  assert.equal(battle.pendingAnswerLogs.length,1);
+  assert.equal(battle.pendingAnswerLogs[0].isCorrect,false);
+});
+
 module.exports = {context,start,prepareVictory,advance,copy};

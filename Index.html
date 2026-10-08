@@ -5,6 +5,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <?!= include_('UiStyles'); ?>
+  <?!= include_('UiTouchInteractions'); ?>
   <style>
     #playerBadge {
       margin: 6px auto 18px;
@@ -409,8 +410,9 @@
     var activeWorkbooks = [];
     var selectedWorkbookId = '';
     var selectedWorkbookName = '';
-    var QUESTION_SNAPSHOT_SCHEMA_VERSION = 2;
-    var QUESTION_SNAPSHOT_REFRESH_REQUESTED = window.location.search.indexOf('refreshQuestions=1') !== -1;
+    var QUESTION_SNAPSHOT_SCHEMA_VERSION = 3;
+    var QUESTION_SNAPSHOT_REFRESH_REQUESTED = <?= requestParams && requestParams.refreshQuestions === '1' ? 'true' : 'false' ?>
+      || window.location.search.indexOf('refreshQuestions=1') !== -1;
     var questionSnapshotRefreshConsumed = false;
     var questionSnapshotRequestId = 0;
     var questionSnapshotLoadingWorkbookId = '';
@@ -950,6 +952,10 @@
         return;
       }
       var forceReload = QUESTION_SNAPSHOT_REFRESH_REQUESTED && !questionSnapshotRefreshConsumed;
+      if (forceReload) {
+        prepareWorkbookSnapshotAndEnterMain(workbook, { forceReload: true });
+        return;
+      }
       if (!window.LearningRpgQuestionStore) {
         prepareWorkbookSnapshotAndEnterMain(workbook, { forceReload: true });
         return;

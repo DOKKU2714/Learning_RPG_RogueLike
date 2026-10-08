@@ -47,7 +47,7 @@ var RULE_ENGINE_SHARED = (function() {
     payload.value = Number(payload.value || 0);
     payload.stackable = isTruthy(payload.stackable);
     payload.maxStacks = Math.max(1, Number(payload.maxStacks || 1));
-    payload.stacks = Math.max(1, Number(payload.stacks || 1));
+    payload.stacks = Math.min(payload.maxStacks, Math.max(1, Math.floor(Number(payload.stacks || 1))));
     payload.remainingTurns = payload.durationType === 'turn'
       ? Number(payload.durationTurns || payload.remainingTurns || 1)
       : '';
@@ -138,13 +138,29 @@ var RULE_ENGINE_SHARED = (function() {
     return effect;
   }
 
+  function getQuestionMaxEfficiencyMultiplier(effects) {
+    return (effects || []).reduce(function(multiplier, effect) {
+      if (effect.statKey !== 'questionMaxEfficiency' || effect.effectType !== 'percent') return multiplier;
+      return multiplier * Math.max(0, 1 + Number(effect.value || 0) * Math.max(1, Number(effect.stacks || 1)) / 100);
+    }, 1);
+  }
+
+  function consumeQuestionEffects(player) {
+    if (!player) return;
+    syncStatusBuckets(player);
+    player.effects = player.effects.filter(function(effect) { return effect.durationType !== 'question'; });
+    player.buffs = [];
+    player.debuffs = [];
+    syncStatusBuckets(player);
+  }
+
   function getEffectiveStat(target, statKey) {
     var baseValue = Number(target && target[statKey] !== undefined
       ? target[statKey]
       : target && target.stats && target.stats[statKey] !== undefined ? target.stats[statKey] : 0);
     return (target && target.effects || []).reduce(function(value, effect) {
       if (effect.statKey !== statKey) return value;
-      if (effect.statKey === 'questionTime' || effect.statKey === 'questionDifficulty' || effect.statKey === 'action') return value;
+      if (effect.statKey === 'questionTime' || effect.statKey === 'questionDifficulty' || effect.statKey === 'questionMaxEfficiency' || effect.statKey === 'action') return value;
       var effectValue = Number(effect.value || 0) * Math.max(1, Number(effect.stacks || 1));
       if (effect.effectType === 'percent') return value * (1 + (effectValue / 100));
       if (effect.effectType === 'flat') return value + effectValue;
@@ -155,7 +171,7 @@ var RULE_ENGINE_SHARED = (function() {
   function calculateEffectiveStats(baseStats, activeEffects) {
     var stats = Object.assign({}, baseStats || {});
     (activeEffects || []).forEach(function(effect) {
-      if (!effect.statKey || effect.statKey === 'questionTime' || effect.statKey === 'questionDifficulty' || effect.statKey === 'action') return;
+      if (!effect.statKey || effect.statKey === 'questionTime' || effect.statKey === 'questionDifficulty' || effect.statKey === 'questionMaxEfficiency' || effect.statKey === 'action') return;
       stats[effect.statKey] = getEffectiveStat({ stats: stats, effects: [effect] }, effect.statKey);
     });
     return stats;
@@ -485,6 +501,7 @@ var RULE_ENGINE_SHARED = (function() {
             actor: 'player',
             type: 'buff',
             skillId: skillId,
+            statusSnapshot: { effects: JSON.parse(JSON.stringify(battle.player.effects || [])) },
             message: skillName + '으로 ' + (copiedEffect.name || copiedEffect.effectId) + ' 버프를 흉내냈습니다.'
           });
         }
@@ -617,6 +634,7 @@ var RULE_ENGINE_SHARED = (function() {
       if (effectRule.durationTurns !== undefined) effect.durationTurns = Number(effectRule.durationTurns || 0);
       if (effectRule.stackable !== undefined) effect.stackable = effectRule.stackable;
       if (effectRule.maxStacks !== undefined) effect.maxStacks = Number(effectRule.maxStacks || 1);
+      if (effectRule.stacks !== undefined) effect.stacks = Number(effectRule.stacks || 1);
       var effectTargets = effectRule.target === 'self' ? [battle.player] : (effectRule.target === 'allEnemies' ? getAliveMonsters(battle) : targets);
       effectTargets.filter(Boolean).forEach(function(target) {
         var applied = applyEffect(target, effect, { source: effectRule.target || 'rule', skillId: skill && skill.skillId || '' }, battle.turn);
@@ -625,6 +643,7 @@ var RULE_ENGINE_SHARED = (function() {
           actor: 'player',
           type: type,
           skillId: skill && skill.skillId || '',
+          statusSnapshot: { effects: JSON.parse(JSON.stringify(target.effects || [])) },
           targetMonsterId: target && target.currentHp !== undefined ? (target.instanceId || target.monsterId || '') : '',
           message: (skill && skill.name || '스킬') + ' 효과가 발동했습니다.'
         });
@@ -831,7 +850,17 @@ var RULE_ENGINE_SHARED = (function() {
     return restored;
   }
 
+  function getQuestionAccuracyWeight(question) {
+    var total = Math.max(0, Number(question && question.totalCount || 0));
+    var correct = Math.max(0, Math.min(total, Number(question && question.correctCount || 0)));
+    var rate = (correct + 5) / (total + 10);
+    return 1 + 2 * (1 - rate);
+  }
+
   return {
+    getQuestionMaxEfficiencyMultiplier: getQuestionMaxEfficiencyMultiplier,
+    consumeQuestionEffects: consumeQuestionEffects,
+    getQuestionAccuracyWeight: getQuestionAccuracyWeight,
     dealDamageToMonster: dealDamageToMonster,
     consumeWrongProtection: consumeWrongProtection,
     applyPerfectAnswerItems: applyPerfectAnswerItems,

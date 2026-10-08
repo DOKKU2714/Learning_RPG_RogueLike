@@ -530,12 +530,12 @@ function applySkillEffect(battleState, skill, efficiency, isCorrect) {
     battleState.lastMessage = skill.name + '으로 회복했습니다.';
   } else if (skill.type === SKILL_TYPES.BUFF) {
     applySkillLinkedEffect_(battleState.player, skill, 'self', battleState);
-    events.push({ actor: 'player', type: 'buff', message: skill.name + ' 효과를 얻었습니다.' });
+    events.push({ actor: 'player', type: 'buff', statusSnapshot: { effects: JSON.parse(JSON.stringify(battleState.player.effects || [])) }, message: skill.name + ' 효과를 얻었습니다.' });
     battleState.lastMessage = skill.name + ' 효과를 얻었습니다.';
   } else if (skill.type === SKILL_TYPES.DEBUFF) {
     if (target) {
       var appliedDebuff = applySkillLinkedEffect_(target, skill, 'enemy', battleState);
-      events.push({ actor: 'player', type: 'debuff', targetMonsterId: target.instanceId || target.monsterId, message: target.name + '에게 ' + skill.name + ' 효과!' });
+      events.push({ actor: 'player', type: 'debuff', statusSnapshot: { effects: JSON.parse(JSON.stringify(target.effects || [])) }, targetMonsterId: target.instanceId || target.monsterId, message: target.name + '에게 ' + skill.name + ' 효과!' });
     }
     battleState.lastMessage = skill.name + '을 사용했습니다.';
   }
@@ -1251,7 +1251,7 @@ function applySkillEffectRule_(battleState, skill, effectRule, targets, context)
     warnSkillRule_(battleState, skill, 'applyEffects entry missing effectId.', { effectRule: effectRule });
     return;
   }
-  var supportedEffectKeys = ['target', 'effectId', 'value', 'valueFormula', 'durationType', 'durationTurns', 'stackable', 'maxStacks', 'chance', 'requireEfficiencyAtLeast', 'requireCondition'];
+  var supportedEffectKeys = ['target', 'effectId', 'value', 'valueFormula', 'durationType', 'durationTurns', 'stackable', 'maxStacks', 'stacks', 'chance', 'requireEfficiencyAtLeast', 'requireCondition'];
   Object.keys(effectRule).forEach(function(key) {
     if (supportedEffectKeys.indexOf(key) === -1) {
       warnSkillRule_(battleState, skill, 'Unsupported applyEffects key: ' + key, { key: key });
@@ -1281,6 +1281,7 @@ function applySkillEffectRule_(battleState, skill, effectRule, targets, context)
   if (effectRule.durationTurns !== undefined) applied.durationTurns = Number(effectRule.durationTurns || 0);
   if (effectRule.stackable !== undefined) applied.stackable = effectRule.stackable;
   if (effectRule.maxStacks !== undefined) applied.maxStacks = Number(effectRule.maxStacks || 1);
+  if (effectRule.stacks !== undefined) applied.stacks = Number(effectRule.stacks || 1);
 
   getTargetsForEffectRule_(battleState, effectRule, targets).forEach(function(target) {
     var appliedEffect = applyEffect(target, applied, { source: effectRule.target || 'rule', skillId: skill.skillId, turn: battleState && battleState.turn });

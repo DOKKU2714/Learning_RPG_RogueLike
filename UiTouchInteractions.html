@@ -1,0 +1,148 @@
+<style>
+  .touch-preview-panel {
+    position: fixed; z-index: 250; width: min(360px,calc(100vw - 24px));
+    box-sizing: border-box; padding: 14px; border: 1px solid #dcc57e;
+    background: #0b100ff5; color: #f6f1df; box-shadow: 0 8px 28px #000b;
+    font-size: 14px; line-height: 1.5; overflow: auto; overscroll-behavior: contain;
+  }
+  .touch-preview-panel[hidden] { display: none; }
+  .touch-preview-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .touch-preview-hint { margin-top: 10px; padding-top: 8px; border-top: 1px solid #ffffff29; color: #ffe477; font-size: 12px; }
+  .touch-preview-panel .touch-detail-copy {
+    position: static !important; display: grid !important; width: 100% !important;
+    min-width: 0 !important; max-width: none !important; max-height: none !important;
+    margin: 0 !important; padding: 0 !important; border: 0 !important; box-shadow: none !important;
+    opacity: 1 !important; visibility: visible !important; transform: none !important;
+    background: transparent !important; pointer-events: none !important;
+  }
+  html.touch-preview-mode .skill-detail-card:not(.touch-detail-copy),
+  html.touch-preview-mode .reward-detail-card:not(.touch-detail-copy),
+  html.touch-preview-mode .reward-upgrade-compare-card:not(.touch-detail-copy),
+  html.touch-preview-mode .lobby-tooltip:not(.touch-detail-copy),
+  html.touch-preview-mode .corner-tooltip:not(.touch-detail-copy),
+  html.touch-preview-mode .hover-tooltip,
+  html.touch-preview-mode .action-button-label:not(.touch-detail-copy) { visibility: hidden !important; opacity: 0 !important; }
+  html.touch-preview-mode .touch-preview-selected { outline: 2px solid #ffe477; outline-offset: 3px; }
+</style>
+<script>
+  (function() {
+    var selected = null, selectedActionable = false, panel = null, lastPointerType = '';
+    var selector = '[data-tooltip], [title], .skill-button, .action-detail-button, .reward-choice-card, .item-card, .lobby-icon-button, .combat-icon-button, .menu-sound-toggle, .menu-logout-button';
+
+    function clearPreview() {
+      if (selected) selected.classList.remove('touch-preview-selected');
+      selected = null;
+      selectedActionable = false;
+      if (panel) panel.hidden = true;
+      if (window.dispatchEvent) window.dispatchEvent(new CustomEvent('touch-preview-change', { detail: { target: null } }));
+    }
+
+    function previewContent(target) {
+      var detail = target.querySelector('.reward-upgrade-compare-card') || target.querySelector('.reward-detail-card')
+        || target.querySelector('.skill-detail-card') || target.querySelector('.lobby-tooltip, .corner-tooltip, .action-button-label');
+      var text = target.getAttribute('data-tooltip') || target.getAttribute('title') || '';
+      // Empty tooltip attributes on normal monster slots must not require two taps.
+      if (!detail && !text) return null;
+      return { detail: detail, text: text, statText: target.getAttribute('data-stat-tooltip') || '' };
+    }
+
+    function showPreview(target, content, actionable) {
+      clearPreview();
+      if (!panel) {
+        panel = document.createElement('div');
+        panel.className = 'touch-preview-panel';
+        panel.setAttribute('role', 'status');
+        panel.setAttribute('aria-live', 'polite');
+        document.body.appendChild(panel);
+      }
+      selected = target;
+      selectedActionable = actionable;
+      target.classList.add('touch-preview-selected');
+      panel.replaceChildren();
+      if (content.detail) {
+        var copy = content.detail.cloneNode(true);
+        copy.classList.add('touch-detail-copy');
+        copy.removeAttribute('id');
+        copy.removeAttribute('aria-hidden');
+        copy.querySelectorAll('[id]').forEach(function(element) { element.removeAttribute('id'); });
+        panel.appendChild(copy);
+      } else {
+        var text = document.createElement('div');
+        text.className = 'touch-preview-text';
+        text.textContent = content.text + (content.statText ? '\n\n' + content.statText : '');
+        panel.appendChild(text);
+      }
+      var hint = document.createElement('div');
+      hint.className = 'touch-preview-hint';
+      hint.textContent = actionable ? '같은 버튼을 한 번 더 눌러 실행하세요.' : '다시 누르거나 바깥을 눌러 닫으세요.';
+      panel.appendChild(hint);
+      panel.hidden = false;
+      panel.style.maxHeight = Math.max(100, window.innerHeight - 24) + 'px';
+      var rect = target.getBoundingClientRect();
+      var width = panel.offsetWidth, height = panel.offsetHeight;
+      panel.style.left = Math.max(12, Math.min(window.innerWidth - width - 12, rect.left + rect.width / 2 - width / 2)) + 'px';
+      var top = rect.top - height - 12;
+      if (top < 12 && rect.bottom + height + 12 <= window.innerHeight - 12) top = rect.bottom + 12;
+      panel.style.top = Math.max(12, Math.min(window.innerHeight - height - 12, top)) + 'px';
+      window.dispatchEvent(new CustomEvent('touch-preview-change', { detail: { target: target } }));
+    }
+
+    document.addEventListener('pointerdown', function(event) {
+      lastPointerType = event.pointerType;
+      if (lastPointerType === 'touch') document.documentElement.classList.add('touch-preview-mode');
+      if (lastPointerType === 'mouse') {
+        clearPreview();
+        document.documentElement.classList.remove('touch-preview-mode');
+      }
+    }, true);
+    document.addEventListener('pointerup', function(event) {
+      if (event.pointerType !== 'touch') return;
+      var target = event.target.closest && event.target.closest(selector);
+      if (!target || !target.disabled) return;
+      var content = previewContent(target);
+      if (!content) return;
+      if (selected === target) clearPreview();
+      else showPreview(target, content, false);
+    }, true);
+    document.addEventListener('click', function(event) {
+      // Keyboard activation and programmatic clicks retain their existing behavior.
+      if (event.detail === 0) { clearPreview(); return; }
+      var touch = event.pointerType === 'touch' || lastPointerType === 'touch'
+        || event.sourceCapabilities && event.sourceCapabilities.firesTouchEvents
+        || lastPointerType !== 'mouse' && window.matchMedia('(hover: none) and (pointer: coarse)').matches;
+      if (!touch) return;
+      document.documentElement.classList.add('touch-preview-mode');
+      if (panel && panel.contains(event.target)) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        return;
+      }
+      var target = event.target.closest && event.target.closest(selector);
+      var content = target && previewContent(target);
+      if (!content || target.disabled || target.getAttribute('aria-disabled') === 'true') { clearPreview(); return; }
+      var actionable = target.matches('button, a[href], [role="button"], [onclick], .monster-slot.target-selectable');
+      if (selected === target) {
+        clearPreview();
+        if (actionable) return; // Let the original handler run exactly once.
+      } else {
+        showPreview(target, content, actionable);
+      }
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }, true);
+    document.addEventListener('keydown', function() {
+      clearPreview();
+      document.documentElement.classList.remove('touch-preview-mode');
+    }, true);
+    window.addEventListener('resize', clearPreview);
+    window.addEventListener('scroll', function(event) {
+      if (!panel || !panel.contains(event.target)) clearPreview();
+    }, true);
+    document.addEventListener('DOMContentLoaded', function() {
+      new MutationObserver(function() {
+        if (selected && (!selected.isConnected || !selected.getClientRects().length || selected.disabled && selectedActionable
+            || selected.closest('[aria-hidden="true"], .hidden'))) clearPreview();
+      }).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'disabled', 'aria-hidden'] });
+    });
+  })();
+</script>

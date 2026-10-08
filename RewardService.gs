@@ -1210,6 +1210,7 @@ function buildNextStageMoveForRun_(run, stageState) {
       fallbackEvents: [],
       usedQuestionIds: [],
       usedQuestionStageId: buildStageId_(nextFloor, nextStage),
+      lastQuestionId: stageState.lastQuestionId || '',
       approvedQuestionCreatorIds: (stageState.approvedQuestionCreatorIds || []).slice(),
       scoreState: scoreState,
     }),
@@ -1730,10 +1731,22 @@ function buildRewardChoiceView_(runId, stageId, rewardGroupId, rewardState, owne
     }
     return sanitizeRewardForClient_(adapted, battleState);
   });
+  var bossItemRewards = null;
+  if (isBossVictoryReward_(stageId, battleState)) {
+    bossItemRewards = {};
+    var ownedItems = safeJsonParse_(requireRun_(runId).itemsJson, []);
+    choices.forEach(function(choice) {
+      var items = ownedItems;
+      var selected = choice.claimReward || choice;
+      if (selected.type === REWARD_TYPES.ITEM) items = addItemToOwnedItems_(items, selected.targetId);
+      bossItemRewards[choice.rewardId] = pickAutoItemReward_(items);
+    });
+  }
   return {
     runId: runId,
     stageId: stageId,
     rewardGroupId: rewardGroupId,
+    bossItemRewards: bossItemRewards,
     currencyAmount: Number(rewardState.currencyAmount || 0),
     regenAmount: Number(rewardState.regenAmount || 0),
     currentHpAfterRegen: Number(rewardState.currentHpAfterRegen || 0),

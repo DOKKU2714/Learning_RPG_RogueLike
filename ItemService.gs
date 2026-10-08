@@ -1015,6 +1015,7 @@ function getItemQuestionModifiers_(battleState, question) {
   }
   return {
     questionDifficulty: Number(modifiers.questionDifficulty || 0),
+    questionMaxEfficiencyMultiplier: getSharedRuleEngine_().getQuestionMaxEfficiencyMultiplier(battleState && battleState.player && battleState.player.effects),
     questionMaxEfficiencyPercent: Number(modifiers.questionMaxEfficiencyPercent || 0),
     questionMaxEfficiencyFlatPercent: Number(modifiers.questionMaxEfficiencyFlatPercent || 0),
     questionMinEfficiencyPercent: Number(modifiers.questionMinEfficiencyPercent || 0),

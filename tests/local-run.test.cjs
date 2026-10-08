@@ -165,6 +165,22 @@ test('boss drop excludes owned and selected items, is signed and applies without
   assert.ok(JSON.parse(g.run.itemsJson).some(item=>item.itemId===response.bonusItemReward.targetId));
 });
 
+test('boss reward previews draw a variety of items instead of always goalkeeper gloves',t=>{
+  const dropped=new Set();
+  for(let seed=1;seed<=6;seed++) {
+    const g=localGame();
+    vm.runInContext('var bossTestSeed='+seed+'; Math.random=()=>{bossTestSeed=(Math.imul(1664525,bossTestSeed)+1013904223)>>>0;return bossTestSeed/4294967296;};',g.x.c);
+    for(let i=0;i<4;i++){g.prepare();g.choose('stat');}
+    const {reward}=g.prepare();
+    const signed=g.x.c.verifyLocalRewardView_(reward.localTransitionToken);
+    assert.deepEqual(copy(signed.bossItemRewards),copy(reward.bossItemRewards));
+    Object.values(reward.bossItemRewards).forEach(drop=>{if(drop)dropped.add(drop.targetId);});
+  }
+  assert.ok(dropped.size>3,[...dropped].join(', '));
+  assert.ok([...dropped].some(id=>id!=='item_goalkeeper_gloves'));
+  t.diagnostic('Boss preview item variety: '+dropped.size+' distinct items across six runs.');
+});
+
 test('boss detection excludes ordinary wins, defeats and floor rest; exhausted pools return no drop',()=>{
   const x=context();start(x);const c=x.c;
   const stages=c.buildStageSeedData_();
@@ -292,10 +308,43 @@ test('normal selection runs through the browser handler without a server call',(
     shouldShowScoreModal:()=>false,handleRewardSelectionResponse:r=>{handled=r;},
     google:{get script(){throw Error('unexpected server request');}},updateWorkbookCountdown(){}});
   const html=fs.readFileSync(path.join(__dirname,'..','Battle.html'),'utf8');
-  for(const name of ['selectRewardChoice','selectRewardChoiceLocally'])vm.runInContext(html.match(new RegExp('    function '+name+'\\([^]*?\\n    \\}'))[0],c);
+  for(const name of ['getBossItemChoiceKey','offerBossItemBeforeReward','selectRewardChoice','selectRewardChoiceLocally'])vm.runInContext(html.match(new RegExp('    function '+name+'\\([^]*?\\n    \\}'))[0],c);
   c.selectRewardChoice(reward.choices[0].rewardId);
   assert.equal(handled.battle.stage.stage,2);assert.equal(c.localRunTransitions.length,1);
   assert.equal(c.pendingStageAnswerLogs.length,0);assert.equal(c.rewardSelectionApplying,false);
+});
+
+test('boss item is only applied after the acquisition click and duplicate clicks cannot apply it twice',()=>{
+  const g=localGame();
+  for(let i=0;i<4;i++){g.prepare();g.choose('stat');}
+  const {payload,reward}=g.prepare();
+  const choice=reward.choices.find(r=>r.type!=='item')||reward.choices[0];
+  const item=reward.bossItemRewards[choice.rewardId];
+  let shown,handled;
+  const before=JSON.parse(g.run.itemsJson);
+  const document={getElementById:()=>({disabled:false,classList:{remove(){}},textContent:''})};
+  const c=vm.createContext({pendingBossItemChoice:null,approvedBossItemChoiceKey:'',localRunState:g.run,localRunTransitions:[],localVictoryPendingResponse:null,
+    localGameDataSnapshot:g.initial.gameDataSnapshot,currentRewardView:reward,pendingStageAnswerLogs:[],
+    workbookDeadlineExpired:false,workbookDeadlineMs:0,rewardSelectionApplying:false,
+    workbookClockServerMs:g.x.c.Date.now(),workbookClockPerformanceMs:0,performance:{now:()=>0},
+    window:{LearningRpgLocalRunEngine:g.engine},document,buildStageResultPayload:()=>copy(payload),
+    shouldShowScoreModal:()=>false,handleRewardSelectionResponse:r=>{handled=r;},
+    showScoreModal:(summary,response)=>{shown=response;},updateScoreModalConfirmButton(){},closeScoreModal(){},
+    google:{get script(){throw Error('unexpected server request');}}});
+  const html=fs.readFileSync(path.join(__dirname,'..','Battle.html'),'utf8');
+  for(const name of ['getBossItemChoiceKey','offerBossItemBeforeReward','claimBossItemReward','selectRewardChoice','selectRewardChoiceLocally'])
+    vm.runInContext(html.match(new RegExp('    function '+name+'\\([^]*?\\n    \\}'))[0],c);
+  c.selectRewardChoice(choice.rewardId);
+  assert.equal(shown.bossItemClaimPending,true);
+  assert.equal(shown.bonusItemReward.targetId,item.targetId);
+  assert.deepEqual(JSON.parse(c.localRunState.itemsJson),before);
+  assert.equal(c.localRunTransitions.length,0);
+  c.claimBossItemReward();
+  assert.ok(handled);
+  assert.equal(JSON.parse(c.localRunState.itemsJson).filter(i=>i.itemId===item.targetId).length,1);
+  assert.equal(c.localRunTransitions.length,1);
+  c.claimBossItemReward();
+  assert.equal(c.localRunTransitions.length,1);
 });
 
 test('late server acknowledgements cannot overwrite a more recent local selection',()=>{

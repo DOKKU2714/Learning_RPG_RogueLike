@@ -202,7 +202,7 @@ function prepareLocalRewardTransitions_(view, stagePayload, authToken) {
   view.localTransition = permit;
   // Draw the extra drop with the normal item rules before signing the choices.
   // Each branch excludes the item selected as the ordinary reward.
-  if (isBossVictoryReward_(view.stageId, battle)) {
+  if (isBossVictoryReward_(view.stageId, battle) && !view.bossItemRewards) {
     view.bossItemRewards = {};
     view.choices.forEach(function(choice) {
       var items = safeJsonParse_(run.itemsJson, []);
