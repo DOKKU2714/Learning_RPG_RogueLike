@@ -151,10 +151,29 @@ test('big damage sound requires at least 100 percent question efficiency',()=>{
  for(const value of [1,1.2,2])c.playEfficientAttackSound(value);
  assert.deepEqual(sounds,['bigDamage','bigDamage','bigDamage']);
  const sequence=html.slice(html.indexOf('    async function playTurnSequence'),html.indexOf('    function collectSimultaneousEvents'));
- assert.match(sequence,/animateMonsterHit\(event.targetMonsterId, event.damage, event.hpDamage, event.shieldDamage, event.isCritical, currentDamageEfficiency\)/);
+ assert.match(sequence,/animateMonsterHit\(event.targetMonsterId, event.damage, event.hpDamage, event.shieldDamage, event.isCritical, currentDamageEfficiency, event.displayDamage\)/);
  const effect=sequence.slice(sequence.indexOf("if (event.actor === 'effect')"),sequence.indexOf("if (event.actor === 'player')"));
  assert.doesNotMatch(effect,/animateMonsterHit\([^\n]*currentDamageEfficiency/);
  assert.doesNotMatch(fn('animatePlayerHit'),/playEfficientAttackSound/);
+});
+
+test('monster and player floating numbers show attack damage while HUD applies only HP and shield deltas',async()=>{
+ const floats=[],deltas=[];
+ const classes={add(){},remove(){},contains:()=>true};
+ const target={classList:classes,dataset:{},closest:()=>({querySelector:()=>target})};
+ const c={document:{querySelector:()=>target,getElementById:()=>target},cssEscape:String,
+  applyMonsterDamageDelta:(...args)=>deltas.push(args),applyPlayerDamageDelta:(...args)=>deltas.push(args),
+  spawnFloatingDamage:(anchor,damage)=>floats.push(damage),playEfficientAttackSound(){},playBattleSound(){},playBattleHitSound(){},
+  spawnShieldBlockIcon(){},setMonsterSpriteState(){},isMonsterDefeatedInDom:()=>false,resetMonsterSpriteState(){},
+  restartScreenFlash(){},spawnPlayerScreenImpact(){},animatePlayerShieldBlock(){},
+  skippableAutoDelay:()=>Promise.resolve(),window:{setTimeout:f=>f()},HIT_STATE_HOLD_MS:0,ATTACK_EFFECT_DELAY_MS:0};
+ vm.createContext(c);vm.runInContext(fn('animateMonsterHit'),c);vm.runInContext(fn('animatePlayerHit'),c);
+ await c.animateMonsterHit('m',15,5,10,false,1,100);
+ await c.animateMonsterHit('m',10,0,10,false,1,100);
+ c.animatePlayerHit(100,80,20,false);
+ c.animatePlayerHit(100,0,100,false);
+ assert.deepEqual(floats,[100,100,100,100]);
+ assert.deepEqual(deltas,[['m',5,10],['m',0,10],[80,20],[0,100]]);
 });
 
 test('efficient attack sound also accompanies shield hits, but skips zero damage',async()=>{

@@ -15,6 +15,7 @@ test('personal understanding outweighs accuracy, with monotonic weights and safe
   const baseline = { totalCount: 100, correctCount: 50 };
   const values = [1,2,3,4,5].map(understandingRating => weight({...baseline, understandingRating}));
   assert.ok(values.every((v,i) => i === 0 || values[i-1] > v));
+  assert.equal(values[4],weight(baseline)*0.2);
   assert.ok(weight({totalCount:100,correctCount:100,understandingRating:1}) > weight({totalCount:100,correctCount:0,understandingRating:5}) * 4);
   assert.ok(weight({totalCount:10000,correctCount:0}) / weight({totalCount:10000,correctCount:10000}) < 1.5);
   for (const understandingRating of [0,6,-1,1.5,'bad']) assert.equal(weight({...baseline,understandingRating}),weight(baseline));
@@ -146,7 +147,7 @@ test('live answers and rating changes affect the very next local weighted draw w
   assert.equal(c.getPendingQuestionUnderstanding()[0].rating,5);
 });
 
-test('each display halves weight across stages and reloads, and another identical low rating restores it',()=>{
+test('each display reduces weight by ten percent across stages and reloads, and a new rating restores it',()=>{
   const {c}=browserContext();
   c.currentView.runId='exposure-run';
   const saved=new Map();
@@ -157,13 +158,13 @@ test('each display halves weight across stages and reloads, and another identica
   const weight=()=>c.RULE_ENGINE_SHARED.getQuestionAccuracyWeight(c.getQuestionSelectionStats(question));
   c.chooseQuestionUnderstanding(1);
   const full=weight();
-  c.recordQuestionExposure(question);assert.equal(weight(),full*.5);
-  c.recordQuestionExposure(question);assert.equal(weight(),full*.25);
+  c.recordQuestionExposure(question);assert.equal(weight(),full*.9);
+  c.recordQuestionExposure(question);assert.equal(weight(),full*.81);
   c.currentView.stageState={stageId:'next-stage'};
-  assert.equal(weight(),full*.25);
+  assert.equal(weight(),full*.81);
   c.runQuestionStats={};c.runQuestionStatsRunId='';
-  assert.equal(weight(),full*.25);
+  assert.equal(weight(),full*.81);
   c.chooseQuestionUnderstanding(1);assert.equal(weight(),full);
-  for(let i=0;i<10;i++)c.recordQuestionExposure(question);
+  for(let i=0;i<24;i++)c.recordQuestionExposure(question);
   assert.equal(weight(),full*.1);
 });

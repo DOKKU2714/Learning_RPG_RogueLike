@@ -568,7 +568,7 @@ var RULE_ENGINE_SHARED = (function() {
     if (shieldBefore > 0 && monster.shield === 0 && battle && battle.player) {
       battle.player.shield = Number(battle.player.shield || 0) + Math.max(0, Number(modifiers.shieldBreakShield || 0));
     }
-    return { damage: shieldDamage + hpDamage, shieldDamage: shieldDamage, hpDamage: hpDamage };
+    return { damage: shieldDamage + hpDamage, displayDamage: incoming, shieldDamage: shieldDamage, hpDamage: hpDamage };
   }
 
   function applyTagBonus(value, battle, tagBonus) {
@@ -758,12 +758,13 @@ var RULE_ENGINE_SHARED = (function() {
           skillId: skill.skillId || '',
           targetMonsterId: target.instanceId || target.monsterId || '',
           damage: result.damage,
+          displayDamage: result.displayDamage,
           shieldDamage: result.shieldDamage,
           hpDamage: result.hpDamage,
           hitIndex: i + 1,
           hitCount: hitCount,
           simultaneousGroupId: simultaneousGroupId,
-          message: (skill.name || '스킬') + '으로 ' + result.damage + ' 피해를 주었습니다.'
+          message: (skill.name || '스킬') + '으로 ' + result.displayDamage + ' 피해를 주었습니다.'
         });
       }
     });
@@ -861,9 +862,9 @@ var RULE_ENGINE_SHARED = (function() {
     // Shared accuracy is a small correction; personal understanding dominates.
     var accuracyWeight = 1 + 0.5 * (1 - rate);
     var rating = Number(question && question.understandingRating || 0);
-    var understandingWeights = [1, 3, 2.4, 1.6, 0.8, 0.4];
+    var understandingWeights = [1, 3, 2.4, 1.6, 0.8, 0.2];
     var exposureCount = Math.max(0, Number(question && question.selectionExposureCount || 0));
-    var exposureWeight = Math.max(0.1, Math.pow(0.5, exposureCount));
+    var exposureWeight = Math.max(0.1, Math.pow(0.9, exposureCount));
     return accuracyWeight * (Number.isInteger(rating) && rating >= 1 && rating <= 5 ? understandingWeights[rating] : 1) * exposureWeight;
   }
 

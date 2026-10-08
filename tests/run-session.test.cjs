@@ -483,7 +483,7 @@ test('exposure state survives stage transitions and a newer survey resets server
   x.c.getPlayerData_=()=>({questionUnderstandingJson:JSON.stringify({w:{q:{rating:1,updatedAtMs:100}}})});
   const renewed=x.c.applyQuestionUnderstandingForSelection_([question],run,'p')[0];
   assert.equal(renewed.selectionExposureCount,0);
-  assert.equal(x.c.getSharedRuleEngine_().getQuestionAccuracyWeight(renewed),x.c.getSharedRuleEngine_().getQuestionAccuracyWeight(old)*8);
+  assert.ok(Math.abs(x.c.getSharedRuleEngine_().getQuestionAccuracyWeight(old)/x.c.getSharedRuleEngine_().getQuestionAccuracyWeight(renewed)-0.729)<1e-10);
   const state={questionSelectionState:{q:{count:3,updatedAtMs:0}}};
   x.c.recordServerQuestionExposure_(state,renewed);
   assert.deepEqual(copy(state.questionSelectionState.q),{count:1,updatedAtMs:100});

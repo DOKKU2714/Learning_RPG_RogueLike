@@ -37,6 +37,7 @@
   var pendingIntent = null;
   var rewardOneShotAudio = null;
   var lastRewardOneShotAt = 0;
+  var battleMusicPausedForReward = false;
 
   function assetUrl(path){
     var base = String(window.ASSET_BASE_URL || '').replace(/\/+$/, '');
@@ -198,6 +199,7 @@
 
   function playIntent(intent, fadeMs){
     intent = intent || makeIntent('main');
+    if (intent.kind === 'battle' && (battleMusicPausedForReward || isFloorRestAudioStage())) return;
     intent.paths = normalizePathList(intent.paths || []);
     if (!intent.paths.length) return;
     pendingIntent = intent;
@@ -215,6 +217,7 @@
   }
 
   function startIntentAtPath(intent, pathIndex, fadeMs){
+    if (intent.kind === 'battle' && (battleMusicPausedForReward || isFloorRestAudioStage())) return;
     var paths = intent.paths || [];
     if (!isSoundEnabled()) { pendingIntent = intent; return; }
     if (pathIndex >= paths.length) { pendingIntent = intent; return; }
@@ -225,7 +228,8 @@
     audio.muted = !isSoundEnabled();
     audio.__learningRpgSkipSfxVolume = true;
     audio.addEventListener('error', function(){
-      if (currentTrack && currentTrack.audio === audio) currentTrack = null;
+      if (!currentTrack || currentTrack.audio !== audio) return;
+      currentTrack = null;
       try { audio.pause(); } catch (error) {}
       startIntentAtPath(intent, pathIndex + 1, fadeMs);
     }, { once: true });
@@ -237,10 +241,11 @@
     }
     if (playPromise && playPromise.then) {
       playPromise.then(function(){
+        if (!currentTrack || currentTrack.audio !== audio) return;
         pendingIntent = null;
         if (!isSoundEnabled()) { stopCurrentTrack(0); return; }
         fadeAudio(audio, intent.volume || DEFAULT_VOLUME, fadeMs);
-      }).catch(function(){ pendingIntent = intent; });
+      }).catch(function(){ if (currentTrack && currentTrack.audio === audio) pendingIntent = intent; });
     } else {
       pendingIntent = null;
       if (!isSoundEnabled()) { stopCurrentTrack(0); return; }
@@ -256,6 +261,11 @@
 
   function isBattlePage(){
     return !!document.getElementById('battleShell');
+  }
+
+  function isFloorRestAudioStage(){
+    var battle = window.currentView && window.currentView.battle || {};
+    return isBattlePage() && Number(battle.stage && battle.stage.stage || 0) === 6;
   }
 
   function shouldPlayRainAmbience(){
@@ -427,11 +437,14 @@
   }
 
   function playRewardOneShot(){
+    battleMusicPausedForReward = true;
+    pendingIntent = null;
+    stopCurrentTrack(0);
+    if (isFloorRestAudioStage()) { stopRewardOneShot(); return; }
     if (!isSoundEnabled()) return;
     if (Date.now() - lastRewardOneShotAt < 1200) return;
     lastRewardOneShotAt = Date.now();
     stopRewardOneShot();
-    stopCurrentTrack(180);
     startRewardOneShotAtPath(normalizePathList(['Resources/Sounds/BGM/Battle/Reward']), 0);
   }
 
@@ -563,6 +576,11 @@
     patchFunction('renderBattle', function(original){
       return function(){
         var result = original.apply(this, arguments);
+        if (isFloorRestAudioStage()) {
+          pendingIntent = null;
+          stopCurrentTrack(0);
+          stopRewardOneShot();
+        }
         syncRainAmbience(420);
         syncWhiteNoise(420);
         return result;
@@ -570,6 +588,7 @@
     });
     patchFunction('startBattleEntrance', function(original){
       return function(){
+        battleMusicPausedForReward = false;
         stopRewardOneShot();
         stopCurrentTrack(DEFAULT_FADE_MS);
         return original.apply(this, arguments);
@@ -591,7 +610,10 @@
     });
     patchFunction('startFloorIntermissionEntrance', function(original){
       return function(){
-        stopCurrentTrack(DEFAULT_FADE_MS);
+        battleMusicPausedForReward = false;
+        pendingIntent = null;
+        stopCurrentTrack(0);
+        stopRewardOneShot();
         syncRainAmbience(DEFAULT_FADE_MS);
         syncWhiteNoise(DEFAULT_FADE_MS);
         return original.apply(this, arguments);

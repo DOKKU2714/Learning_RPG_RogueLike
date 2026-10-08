@@ -46,7 +46,7 @@ const html = '<!doctype html><html><head><meta charset="UTF-8"><meta name="viewp
       assert.equal(await page.locator('.battle-quick-notification:not(.hidden)').count(),2);
       if(!mobile){await page.locator('#battleStatsButton').hover();assert.equal(await page.locator('#battleStatsTooltip').isVisible(),true);}
       await page.screenshot({path:path.join(output,mobile?'mobile-badges.png':'desktop-badges.png')});
-      await page.evaluate(()=>{currentView.battle.player.baseStats={attack:5,defense:4,hp:25,accuracy:100,hpRegen:3,evasion:0,criticalRate:7,criticalDamage:150};Object.assign(currentView.battle.player.stats,{hp:30,accuracy:99,hpRegen:5,evasion:0,criticalRate:7,criticalDamage:150});});
+      await page.evaluate(()=>{currentView.battle.player.baseStats={attack:8,defense:4,hp:27,accuracy:100,hpRegen:4,evasion:0,criticalRate:7,criticalDamage:150};Object.assign(currentView.battle.player.stats,{hp:30,accuracy:99,hpRegen:5,evasion:0,criticalRate:7,criticalDamage:150});});
       await activate('#battleStatsButton');
       assert.equal(await page.locator('#battleStatsPanel').isVisible(),true);
       assert.equal(await page.locator('#battleStatsButton').getAttribute('aria-expanded'),'true');
@@ -63,7 +63,8 @@ const html = '<!doctype html><html><head><meta charset="UTF-8"><meta name="viewp
       assert.equal(await statRow('체력 회복').locator('b').evaluate(e=>getComputedStyle(e).color),'rgb(255, 224, 138)');
       assert.equal(await statRow('체력 회복').locator('b').evaluate(e=>getComputedStyle(e).fontWeight),'900');
       assert.equal(await statRow('치명타 확률').locator('.battle-stat-value-changed').count(),1);
-      assert.equal(await statRow('치명타 확률').locator('.battle-stat-item-delta').count(),0);
+      assert.equal(await statRow('치명타 확률').locator('.battle-stat-item-delta').innerText(),'(+2)');
+      assert.match(await statRow('공격력').getAttribute('data-tooltip'),/스텟 보상·아이템 효과의 합계/);
       assert.equal(await statRow('회피율').locator('.battle-stat-value-changed').count(),0);
       assert.match(await statRow('체력 회복').getAttribute('data-tooltip'),/스테이지를 클리어할 때 회복/);
       assert.equal(await page.locator('.battle-stat-row[data-tooltip]').count(),12);
@@ -75,7 +76,7 @@ const html = '<!doctype html><html><head><meta charset="UTF-8"><meta name="viewp
       }
       assert.equal(await statRow('공격력').locator('.stat-item-increase').evaluate(e=>getComputedStyle(e).color),'rgb(120, 201, 255)');
       assert.equal(await statRow('방어력').locator('.stat-item-decrease').evaluate(e=>getComputedStyle(e).color),'rgb(255, 129, 124)');
-      assert.equal(await page.evaluate(()=>formatEffectiveStat({attack:5},{attack:12},'attack','',{attack:10})), '12 <span class="battle-stat-item-delta stat-item-increase" title="아이템 효과">(+5)</span>');
+      assert.equal(await page.evaluate(()=>formatEffectiveStat({attack:5},{attack:12},'attack','',{attack:10})), '12 <span class="battle-stat-item-delta stat-item-increase" title="스텟 보상·아이템 효과 합계">(+5)</span>');
       await page.evaluate(()=>{currentView.battle.player.stats.attack=12;updateBattleQuickAccess(currentView);});
       assert.equal(await page.locator('#battleStatsNotification').isVisible(),false);
       await page.screenshot({path:path.join(output,mobile?'mobile-stats.png':'desktop-stats.png')});

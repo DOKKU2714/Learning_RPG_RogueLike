@@ -50,9 +50,19 @@ test('shield bonus affects only shields and breaking a shield grants five exactl
   const b={player:{shield:0,itemModifiers:c.buildItemModifiers_(['item_crack_chalk','item_shard_pouch'])}};
   const m={shield:10,currentHp:100};
   const hit=e.dealDamageToMonster(m,8,b);
+  assert.equal(hit.displayDamage,8);
   assert.equal(hit.shieldDamage,10);assert.equal(hit.hpDamage,0);assert.equal(b.player.shield,5);
   e.dealDamageToMonster(m,8,b);assert.equal(m.currentHp,92);assert.equal(b.player.shield,5);
   m.shield=10;const spill=e.dealDamageToMonster(m,12,b);
   assert.equal(spill.shieldDamage,10);assert.equal(spill.hpDamage,2);assert.equal(b.player.shield,10);
   m.shield=10;e.dealDamageToMonster(m,0,b);assert.equal(b.player.shield,10);assert.equal(m.shield,10);
+});
+
+test('display damage remains the calculated hit while real damage is capped by shield and remaining HP',()=>{
+  const c=ctx(),e=c.RULE_ENGINE_SHARED;
+  const result=e.dealDamageToMonster({shield:10,currentHp:5},100,{player:{itemModifiers:{}}});
+  assert.equal(result.displayDamage,100);
+  assert.equal(result.damage,15);
+  assert.equal(result.shieldDamage,10);
+  assert.equal(result.hpDamage,5);
 });

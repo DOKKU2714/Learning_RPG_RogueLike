@@ -1623,7 +1623,7 @@
       var delta = Math.round((itemValue - base) * 10) / 10;
       var value = escapeHtml(rounded + (suffix || ''));
       if (!delta) return value;
-      return value + ' <span class="battle-stat-item-delta ' + (delta > 0 ? 'stat-item-increase' : 'stat-item-decrease') + '" title="아이템 효과">(' + (delta > 0 ? '+' : '') + delta + ')</span>';
+      return value + ' <span class="battle-stat-item-delta ' + (delta > 0 ? 'stat-item-increase' : 'stat-item-decrease') + '" title="스텟 보상·아이템 효과 합계">(' + (delta > 0 ? '+' : '') + delta + ')</span>';
     }
 
     function toggleSkillPanel() {
@@ -2815,16 +2815,16 @@
         '점수': ['', '이번 게임에서 획득한 점수입니다.']
       };
       var rows = [
-        ['체력', escapeHtml((player.hp || 0) + ' / ') + formatEffectiveStat(baseStats, { hp: player.maxHp || stats.hp || 0 }, 'hp', '', stats), true],
+        ['체력', escapeHtml((player.hp || 0) + ' / ') + formatEffectiveStat(startingStats, { hp: player.maxHp || stats.hp || 0 }, 'hp', '', stats), true],
         ['방어막', player.shield || 0],
         ['행동력', escapeHtml((player.currentActionPoint || 0) + ' / ') + formatEffectiveStat({ ap: baseAp - itemApDelta }, { ap: player.maxActionPoint || baseAp }, 'ap', '', { ap: baseAp }), true],
-        ['공격력', formatEffectiveStat(baseStats, effectiveStats, 'attack', '', stats), true],
-        ['방어력', formatEffectiveStat(baseStats, effectiveStats, 'defense', '', stats), true],
-        ['체력 회복', formatEffectiveStat(baseStats, stats, 'hpRegen', '', stats), true],
-        ['명중률', formatEffectiveStat(baseStats, effectiveStats, 'accuracy', '%', stats), true],
-        ['회피율', formatEffectiveStat(baseStats, effectiveStats, 'evasion', '%', stats), true],
-        ['치명타 확률', formatEffectiveStat(baseStats, effectiveStats, 'criticalRate', '%', stats), true],
-        ['치명타 피해', formatEffectiveStat(baseStats, effectiveStats, 'criticalDamage', '%', stats), true],
+        ['공격력', formatEffectiveStat(startingStats, effectiveStats, 'attack', '', stats), true],
+        ['방어력', formatEffectiveStat(startingStats, effectiveStats, 'defense', '', stats), true],
+        ['체력 회복', formatEffectiveStat(startingStats, stats, 'hpRegen', '', stats), true],
+        ['명중률', formatEffectiveStat(startingStats, effectiveStats, 'accuracy', '%', stats), true],
+        ['회피율', formatEffectiveStat(startingStats, effectiveStats, 'evasion', '%', stats), true],
+        ['치명타 확률', formatEffectiveStat(startingStats, effectiveStats, 'criticalRate', '%', stats), true],
+        ['치명타 피해', formatEffectiveStat(startingStats, effectiveStats, 'criticalDamage', '%', stats), true],
         ['화폐', currentView ? Number(currentView.currency || 0) : 0],
         ['점수', formatScore(currentView ? Number(currentView.score || 0) : 0)],
       ];
@@ -2835,7 +2835,7 @@
           ? itemApDelta !== 0 || Number(player.maxActionPoint || baseAp) !== baseAp
           : key && (Number((key === 'hpRegen' ? stats : effectiveStats)[key] || 0) !== Number(startingStats[key] || 0)
             || Number(stats[key] || 0) !== Number(baseStats[key] || 0));
-        var description = definition[1] + (changed ? '\n노란색 수치는 추가 스텟·아이템·전투 효과가 반영된 값입니다.' : '');
+        var description = definition[1] + (changed ? '\n노란색 수치는 추가 스텟·아이템·전투 효과가 반영된 값입니다.\n괄호의 증감은 시작 스텟 대비 스텟 보상·아이템 효과의 합계입니다.' : '');
         return '<div class="battle-stat-row" tabindex="0" data-tooltip="' + escapeHtml(description) + '"><span>' + escapeHtml(row[0]) + '</span><b' + (changed ? ' class="battle-stat-value-changed"' : '') + '>' + (row[2] ? row[1] : escapeHtml(row[1])) + '</b></div>';
       }).join('');
       panel.classList.remove('hidden');
@@ -4443,7 +4443,7 @@
       letters.forEach(function(letter, index) {
         if (!/\s/.test(letter) && revealed.indexOf(index) === -1) hiddenIndices.push(index);
       });
-      if (hiddenIndices.length) revealed.push(hiddenIndices[Math.floor(Math.random() * hiddenIndices.length)]);
+      if (hiddenIndices.length) revealed.push(hiddenIndices[0]);
       view.shortAnswerHintIndices = revealed;
       hint.textContent = '힌트: ' + letters.map(function(letter, index) {
         return /\s/.test(letter) || revealed.indexOf(index) !== -1 ? letter : '*';
@@ -4927,7 +4927,7 @@
             await animatePlayerAttack(event.targetMonsterId);
             await skippableAutoDelay(ATTACK_EFFECT_DELAY_MS);
             pushLog(effectEventMessage);
-            await animateMonsterHit(event.targetMonsterId, event.damage, event.hpDamage, event.shieldDamage, event.isCritical);
+            await animateMonsterHit(event.targetMonsterId, event.damage, event.hpDamage, event.shieldDamage, event.isCritical, undefined, event.displayDamage);
             await finishActionDescription();
           } else if (event.target === 'player') {
             pushLog(effectEventMessage);
@@ -4955,7 +4955,7 @@
             if (event.missed) {
               await animateMonsterMiss(event.targetMonsterId);
             } else {
-              await animateMonsterHit(event.targetMonsterId, event.damage, event.hpDamage, event.shieldDamage, event.isCritical, currentDamageEfficiency);
+              await animateMonsterHit(event.targetMonsterId, event.damage, event.hpDamage, event.shieldDamage, event.isCritical, currentDamageEfficiency, event.displayDamage);
             }
           } else if (event.type === 'guard') {
             pushLog(playerEventMessage);
@@ -5101,7 +5101,7 @@
         pushLog(event.message || '공격!', { instant: hitIndex > 0 });
         hitAnimationPromises.push(event.missed
           ? animateMonsterMiss(event.targetMonsterId)
-          : animateMonsterHit(event.targetMonsterId, event.damage, event.hpDamage, event.shieldDamage, event.isCritical, currentDamageEfficiency));
+          : animateMonsterHit(event.targetMonsterId, event.damage, event.hpDamage, event.shieldDamage, event.isCritical, currentDamageEfficiency, event.displayDamage));
         if (hitIndex < events.length - 1) {
           await skippableAutoDelay(MULTI_HIT_EFFECT_INTERVAL_MS);
         }
@@ -6576,6 +6576,7 @@
       var damageResult = RULE_ENGINE_SHARED.dealDamageToMonster(target, totalDamage, battle);
       var shieldDamage = damageResult.shieldDamage;
       var hpDamage = damageResult.hpDamage;
+      var displayDamage = damageResult.displayDamage;
       totalDamage = damageResult.damage;
       RULE_ENGINE_SHARED.applyCriticalItemHealing(battle, critical.isCritical, totalDamage);
       battle.lastTurnEvents.push({
@@ -6585,14 +6586,15 @@
         targetMonsterId: target.instanceId || target.monsterId,
         targetName: target.name,
         damage: totalDamage,
+        displayDamage: displayDamage,
         shieldDamage: shieldDamage,
         hpDamage: hpDamage,
         isCritical: critical.isCritical,
         criticalMultiplier: critical.multiplier,
         simultaneousGroupId: simultaneousGroupId || '',
         message: critical.isCritical
-          ? (skill && skill.name ? skill.name + ' 치명타! ' + totalDamage + ' 피해!' : target.name + '에게 치명타! ' + totalDamage + ' 피해를 주었습니다.')
-          : (skill && skill.name ? skill.name + '! ' + target.name + '에게 ' + totalDamage + ' 피해!' : target.name + '에게 ' + totalDamage + ' 피해를 주었습니다.'),
+          ? (skill && skill.name ? skill.name + ' 치명타! ' + displayDamage + ' 피해!' : target.name + '에게 치명타! ' + displayDamage + ' 피해를 주었습니다.')
+          : (skill && skill.name ? skill.name + '! ' + target.name + '에게 ' + displayDamage + ' 피해!' : target.name + '에게 ' + displayDamage + ' 피해를 주었습니다.'),
       });
     }
 
@@ -7776,8 +7778,20 @@
       if (choice.key !== getBossItemChoiceKey(choice.rewardId)) return;
       approvedBossItemChoiceKey = choice.key;
       pendingBossItemChoice = null;
-      closeScoreModal();
+      finishScoreAnimationNow();
+      var claimButton = document.getElementById('bossItemClaimButton');
+      if (claimButton) {
+        claimButton.disabled = true;
+        claimButton.textContent = '획득 중...';
+      }
       selectRewardChoice(choice.rewardId);
+    }
+
+    function hasConfirmedBossItemScorePreview() {
+      var items = currentRewardView && currentRewardView.bossItemRewards || {};
+      return Object.keys(items).some(function(rewardId) {
+        return approvedBossItemChoiceKey === getBossItemChoiceKey(rewardId);
+      });
     }
 
     function selectRewardChoice(rewardId) {
@@ -8191,6 +8205,7 @@
     function showScoreModal(scoreSummary, response, options) {
       options = options || {};
       response = response || {};
+      var keepFinalScore = !response.bossItemClaimPending && !response.outcomeFinal && hasConfirmedBossItemScorePreview();
       if (!response.bossItemClaimPending) pendingBossItemChoice = null;
       if (workbookDeadlineExpired && !response.outcomeFinal) return false;
       var summary = normalizeClientScoreSummary(scoreSummary, response);
@@ -8241,9 +8256,13 @@
       modal.classList.add('active');
       modal.setAttribute('aria-hidden', 'false');
       if (!response.outcomeFinal && !response.bossItemClaimPending) preloadNextBattleAfterReward(response);
-      queueScoreAnimation(function() {
-        animateScoreSequence(summary);
-      }, 260);
+      if (keepFinalScore) {
+        finishScoreAnimationNow();
+      } else {
+        queueScoreAnimation(function() {
+          animateScoreSequence(summary);
+        }, 260);
+      }
       return true;
     }
 
@@ -8965,11 +8984,12 @@
       }
     }
 
-    function animateMonsterHit(monsterId, damage, hpDamage, shieldDamage, isCritical, attackEfficiency) {
+    function animateMonsterHit(monsterId, damage, hpDamage, shieldDamage, isCritical, attackEfficiency, displayDamage) {
       var target = document.querySelector('[data-monster-id="' + cssEscape(monsterId) + '"] .compact-monster');
       if (!target) return Promise.resolve();
       var visibleHpDamage = hpDamage === undefined || hpDamage === null ? Number(damage || 0) : Number(hpDamage || 0);
       var visibleShieldDamage = Number(shieldDamage || 0);
+      var attackDamage = displayDamage === undefined || displayDamage === null ? Number(damage || 0) : Number(displayDamage || 0);
       applyMonsterDamageDelta(monsterId, visibleHpDamage, shieldDamage || 0);
       if (visibleHpDamage <= 0 && visibleShieldDamage <= 0) return Promise.resolve();
       playEfficientAttackSound(attackEfficiency);
@@ -8977,7 +8997,7 @@
       if (visibleShieldDamage > 0 && visibleHpDamage <= 0) {
         playBattleSound('blockSuccess');
         if (target.classList.contains('monster-shielded')) spawnShieldBlockIcon(target);
-        spawnFloatingDamage(hpAnchor && hpAnchor.querySelector('.monster-hp-text') || target, visibleShieldDamage, 'damage-white', isCritical);
+        spawnFloatingDamage(hpAnchor && hpAnchor.querySelector('.monster-hp-text') || target, attackDamage, 'damage-white', isCritical);
         return skippableAutoDelay(ATTACK_EFFECT_DELAY_MS);
       }
       if (visibleHpDamage > 0) {
@@ -8988,7 +9008,7 @@
       void target.offsetWidth;
       target.classList.add('monster-hit');
       target.classList.add('monster-hit-red');
-      spawnFloatingDamage(hpAnchor && hpAnchor.querySelector('.monster-hp-text') || target, visibleHpDamage, isCritical ? 'damage-critical' : 'damage-white', isCritical);
+      spawnFloatingDamage(hpAnchor && hpAnchor.querySelector('.monster-hp-text') || target, attackDamage, isCritical ? 'damage-critical' : 'damage-white', isCritical);
       var hitAnimationToken = String(Number(target.dataset.hitAnimationToken || 0) + 1);
       target.dataset.hitAnimationToken = hitAnimationToken;
       var hitDuration = Math.max(HIT_STATE_HOLD_MS, ATTACK_EFFECT_DELAY_MS);
@@ -9144,6 +9164,7 @@
         if (Number(shieldDamage || 0) > 0) {
           animatePlayerShieldBlock();
           spawnShieldBlockIcon();
+          spawnFloatingDamage(document.getElementById('playerHpText') || document.getElementById('playerDamageAnchor'), Number(damage || 0), 'damage-red', isCritical);
         }
         return;
       }
@@ -9154,7 +9175,7 @@
       shell.classList.add('player-hit');
       restartScreenFlash('damage-flash-red');
       spawnPlayerScreenImpact(isCritical, false);
-      spawnFloatingDamage(document.getElementById('playerHpText') || document.getElementById('playerDamageAnchor'), visibleHpDamage, 'damage-red', isCritical);
+      spawnFloatingDamage(document.getElementById('playerHpText') || document.getElementById('playerDamageAnchor'), Number(damage || 0), 'damage-red', isCritical);
     }
 
     function animatePlayerHeal(heal) {

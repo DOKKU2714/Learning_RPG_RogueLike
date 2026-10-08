@@ -333,7 +333,7 @@ test('boss item is only applied after the acquisition click and duplicate clicks
     workbookClockServerMs:g.x.c.Date.now(),workbookClockPerformanceMs:0,performance:{now:()=>0},
     window:{LearningRpgLocalRunEngine:g.engine},document,buildStageResultPayload:()=>copy(payload),
     shouldShowScoreModal:()=>false,handleRewardSelectionResponse:r=>{handled=r;},
-    showScoreModal:(summary,response)=>{shown=response;},updateScoreModalConfirmButton(){},closeScoreModal(){},
+    showScoreModal:(summary,response)=>{shown=response;},updateScoreModalConfirmButton(){},closeScoreModal(){},finishScoreAnimationNow(){},
     google:{get script(){throw Error('unexpected server request');}}});
   const html=fs.readFileSync(path.join(__dirname,'..','Battle.html'),'utf8');
   for(const name of ['getBossItemChoiceKey','offerBossItemBeforeReward','claimBossItemReward','selectRewardChoice','selectRewardChoiceLocally'])

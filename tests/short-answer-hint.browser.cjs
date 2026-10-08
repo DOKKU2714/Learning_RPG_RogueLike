@@ -43,7 +43,7 @@ document.getElementById('questionSubmitButton').disabled=false;renderAnswerArea(
     await page.locator('#shortAnswerInput').fill(wrong);
     await page.locator('#shortAnswerInput').press('Enter');
     assert.equal(await page.evaluate(()=>getRunQuestionStats('q').totalCount),i+1);
-    assert.equal((await page.locator('#shortAnswerHint').innerText()).replace('힌트: ','').replaceAll('*','').length,i+1);
+    assert.equal(await page.locator('#shortAnswerHint').innerText(),['힌트: 제***','힌트: 제안**','힌트: 제안하*'][i]);
    }
    await page.screenshot({path:path.join(output,width+'.png')});
    await page.locator('#shortAnswerInput').fill('제안하다');await page.locator('#questionSubmitButton').click();

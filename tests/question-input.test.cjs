@@ -241,13 +241,13 @@ function actionSetup() {
   return {c,buttons,clicks,event:key=>({key,target:{},preventDefault(){}})};
 }
 
-test('short-answer hints reveal one random new character per wrong answer and stop when complete',()=>{
+test('short-answer hints reveal one new character from left to right and stop when complete',()=>{
   const hint={textContent:'',classList:{remove(){}}};
   const c=vm.createContext({currentQuestionView:{question:{type:'shortAnswer',answer:'제안하다'}},
     document:{getElementById:()=>hint},hasClientAnswer:()=>true,getQuestionAnswerDisplayText:q=>q.answer});
   vm.runInContext(extract('revealShortAnswerHint'),c);
   vm.runInContext('Math.random=()=>0.3',c);
-  c.revealShortAnswerHint();assert.equal(hint.textContent,'힌트: *안**');
+  c.revealShortAnswerHint();assert.equal(hint.textContent,'힌트: 제***');
   c.revealShortAnswerHint();assert.equal(hint.textContent,'힌트: 제안**');
   c.revealShortAnswerHint();assert.equal(hint.textContent,'힌트: 제안하*');
   c.revealShortAnswerHint();assert.equal(hint.textContent,'힌트: 제안하다');

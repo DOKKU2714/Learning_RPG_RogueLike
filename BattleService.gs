@@ -1041,8 +1041,8 @@ function applyAttack(battleState, efficiency, targetId) {
   battleState.lastMessage = target.name + '에게 ' + damage + ' 피해를 주었습니다.';
   battleState.lastPlayerAction = { type: ACTION_TYPES.ATTACK, value: damage, efficiency: efficiency, targetMonsterId: target.instanceId || target.monsterId };
   battleState.lastMessage = critical.isCritical
-    ? target.name + '에게 치명타! ' + damageResult.damage + ' 피해를 주었습니다.'
-    : target.name + '에게 ' + damageResult.damage + ' 피해를 주었습니다.';
+    ? target.name + '에게 치명타! ' + damageResult.displayDamage + ' 피해를 주었습니다.'
+    : target.name + '에게 ' + damageResult.displayDamage + ' 피해를 주었습니다.';
   battleState.lastPlayerAction = { type: ACTION_TYPES.ATTACK, value: damageResult.damage, efficiency: efficiency, targetMonsterId: target.instanceId || target.monsterId, isCritical: critical.isCritical, criticalMultiplier: critical.multiplier };
   battleState.lastTurnEvents = battleState.lastTurnEvents || [];
   battleState.lastTurnEvents.push({
@@ -1051,6 +1051,7 @@ function applyAttack(battleState, efficiency, targetId) {
     targetMonsterId: target.instanceId || target.monsterId,
     targetName: target.name,
     damage: damageResult.damage,
+    displayDamage: damageResult.displayDamage,
     shieldDamage: damageResult.shieldDamage,
     hpDamage: damageResult.hpDamage,
     isCritical: critical.isCritical,
