@@ -33,6 +33,23 @@ function setup() {
 }
 
 for(const mode of ['server','browser']) {
+  test(mode+': body blow adds fifty percent only to critical hits',()=>{
+    const g=setup();
+    const definition=g.snapshot.skills.find(row=>row.skillId==='skill_body_blow');
+    definition.effectJson=JSON.stringify({targetMode:'singleEnemy',damageFormula:'attack*1.4 + 0.1*n',criticalBonus:{damageMultiplier:1.5}});
+    g.x.seed(g.x.c.DB_SHEETS.SKILLS,g.snapshot.skills);
+    for(const [criticalRate,expected,multiplier] of [[0,14,1],[100,42,3]]) {
+      const b=copy(g.battle);
+      b.player.stats.criticalRate=criticalRate;b.player.stats.criticalDamage=200;
+      const s=g.x.c.hydrateSkill_(definition,1);
+      if(mode==='browser')g.engine.skill(g.snapshot,b,s,'a',1,true);
+      else g.x.c.applySkillEffect(b,{...s,targetId:'a'},1,true);
+      const hit=b.lastTurnEvents.find(e=>e.skillId==='skill_body_blow' && e.type==='skill');
+      assert.equal(hit.damage,expected);
+      assert.equal(hit.isCritical,criticalRate===100);
+      assert.equal(hit.criticalMultiplier,multiplier);
+    }
+  });
   test(mode+': mindless strike keeps all three hits after strike master without subtracting defense',()=>{
     const g=setup();
     for(const [efficiency,defense,unbuffedDamage,buffedDamage] of [[1,0,8,10],[1,5,8,10],[1,10,8,10],[.5,5,4,5]]) {

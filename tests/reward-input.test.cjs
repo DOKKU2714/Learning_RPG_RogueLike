@@ -4,20 +4,22 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const html = fs.readFileSync('Battle.html', 'utf8');
 function setup() {
-  const choices = ['a', 'b', 'c', 'rest'].map(id => ({ disabled: false, getAttribute: () => id }));
+  const focused = [];
+  const choices = ['a', 'b', 'c', 'rest'].map(id => ({ disabled: false, getAttribute: () => id, focus: () => focused.push(id) }));
   const selected = [], confirmed = [];
   let active = true, prevented = 0;
   const c = vm.createContext({ workbookDeadlineExpired: false, rewardSelectionApplying: false,
     document: { getElementById: () => ({ classList: { contains: () => active }, querySelectorAll: () => choices }) },
     selectRewardCandidate: id => selected.push(id), confirmRewardChoice: () => confirmed.push(true) });
   vm.runInContext(html.match(/    function handleRewardKeyboard\([^]*?\n    \}/)[0], c);
-  return { c, choices, selected, confirmed, hide: () => { active = false; },
+  return { c, choices, selected, confirmed, focused, hide: () => { active = false; },
     get prevented() { return prevented; }, event: (key, extra = {}) => ({ key, target: {}, preventDefault: () => prevented++, ...extra }) };
 }
 test('reward numbers select displayed cards; only Enter confirms through the existing flow', () => {
   const x = setup();
   for (const key of ['1', '2', '3', '4']) assert.equal(x.c.handleRewardKeyboard(x.event(key)), true);
   assert.deepEqual(x.selected, ['a', 'b', 'c', 'rest']);
+  assert.deepEqual(x.focused, ['a', 'b', 'c', 'rest']);
   assert.equal(x.confirmed.length, 0);
   x.c.handleRewardKeyboard(x.event('Enter'));
   assert.equal(x.confirmed.length, 1);

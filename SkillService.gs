@@ -166,6 +166,7 @@ function getSkillUnavailableReason(skill, runState, battleState) {
   if (hasControlEffect_(player, 'debuff_freeze')) {
     return '빙결 상태입니다.';
   }
+  if (hasControlEffect_(player, 'debuff_sleep')) return '수면 상태입니다.';
   if (conditions.afterTurn && Number(battleState.turn || 1) < Number(conditions.afterTurn)) {
     return Number(conditions.afterTurn) + '턴 이후 사용할 수 있습니다.';
   }
@@ -436,7 +437,7 @@ function applySkillEffect(battleState, skill, efficiency, isCorrect) {
           });
           return;
         }
-        var critical = rollCriticalDamage_(areaBaseDamage, effectiveStats);
+        var critical = rollCriticalDamage_(areaBaseDamage, effectiveStats, skillRule.criticalBonus);
         var damage = applyFrozenBonusIfNeeded_(damageTarget, critical.damage);
         damage = applyOutgoingItemDamageModifiers_(battleState, damage, { actionType: ACTION_TYPES.SKILL, skill: skill });
         var damageResult = dealDamageToMonster_(battleState, damageTarget, damage);
@@ -493,7 +494,7 @@ function applySkillEffect(battleState, skill, efficiency, isCorrect) {
         });
         continue;
       }
-      var critical = rollCriticalDamage_(baseDamage, effectiveStats);
+      var critical = rollCriticalDamage_(baseDamage, effectiveStats, skillRule.criticalBonus);
       var damage = applyFrozenBonusIfNeeded_(target, critical.damage);
       damage = applyOutgoingItemDamageModifiers_(battleState, damage, { actionType: ACTION_TYPES.SKILL, skill: skill });
       var damageResult = dealDamageToMonster_(battleState, target, damage);
@@ -619,6 +620,7 @@ function executeSkillByRule_(battleState, skill, rule, efficiency, isCorrect) {
   normalizeBattleMonsters_(battleState);
   normalizePlayerActionPoints_(battleState, false);
   battleState.lastTurnEvents = battleState.lastTurnEvents || [];
+  if (rule.consumeEffect && getSkillEffectTotal_(battleState.player, rule.consumeEffect.effectId) < Number(rule.consumeEffect.minValue || 1)) return battleState;
   if (rule.requireCondition && rule.requireCondition.requireEfficiencyAtLeast && Number(efficiency || 0) < Number(rule.requireCondition.requireEfficiencyAtLeast)) {
     battleState.lastTurnEvents.push({ actor: 'player', type: ACTION_TYPES.SKILL, skillId: skill.skillId, message: skill.name + ' 사용 조건을 만족하지 못했습니다.' });
     battleState.lastMessage = skill.name + ' 사용 조건을 만족하지 못했습니다.';
@@ -630,6 +632,25 @@ function executeSkillByRule_(battleState, skill, rule, efficiency, isCorrect) {
   registerSkillTriggers_(battleState, skill, rule);
 
   var targets = selectSkillTargets_(rule, battleState, skill, skill.targetId || '');
+  if (rule.requireCondition && Array.isArray(rule.requireCondition.targetEffects)) {
+    targets = targets.filter(function(target) { return rule.requireCondition.targetEffects.some(function(id) { return hasEffect_(target, id); }); });
+    if (!targets.length) return battleState;
+  }
+  if (rule.removeDebuffs) {
+    battleState.player.effects = (battleState.player.effects || []).filter(function(effect) { return normalizeEffectCategory_(effect) !== 'debuff'; });
+    battleState.player.buffs = []; battleState.player.debuffs = [];
+    normalizeBattleStateEffects_(battleState);
+    battleState.lastTurnEvents.push({actor:'player',type:'cleanse',skillId:skill.skillId,message:skill.name + '으로 모든 디버프를 해제했습니다.'});
+  }
+  if (rule.consumeEffect) {
+    var consumed = getSkillEffectTotal_(battleState.player, rule.consumeEffect.effectId);
+    var restored = Math.min(Math.max(0, Number(battleState.player.maxHp || battleState.player.stats.hp || 1) - Number(battleState.player.hp || 0)), Math.max(0, consumed * Number(rule.consumeEffect.healPerValue || 0)));
+    battleState.player.hp += restored;
+    battleState.player.effects = (battleState.player.effects || []).filter(function(effect) { return effect.effectId !== rule.consumeEffect.effectId; });
+    battleState.player.buffs = []; battleState.player.debuffs = [];
+    normalizeBattleStateEffects_(battleState);
+    battleState.lastTurnEvents.push({actor:'player',type:'heal',skillId:skill.skillId,heal:restored,consumedEffectValue:consumed,message:skill.name + '으로 체력을 ' + restored + ' 회복했습니다.'});
+  }
   var hitCount = Math.max(1, Math.round(evaluateSkillFormulaValue_(rule.hitCount, context, Math.max(1, Number(skill.hitCount || 1)), battleState, skill)));
   var normalizedTargetMode = normalizeSkillTargetMode_(rule.targetMode || (skill.target === 'self' ? 'self' : 'singleEnemy'));
   var randomPerHit = normalizedTargetMode === 'randomEnemies' || (normalizedTargetMode === 'randomEnemy' && hitCount > 1);
@@ -694,13 +715,18 @@ function executeSkillByRule_(battleState, skill, rule, efficiency, isCorrect) {
         });
         continue;
       }
-      var critical = rollCriticalDamage_(damage, criticalStats);
+      var criticalRule = rule.criticalBonus;
+      if (criticalRule && Array.isArray(criticalRule.targetEffects) && !criticalRule.targetEffects.some(function(id) { return hasEffect_(damageTarget, id); })) criticalRule = null;
+      var critical = rollCriticalDamage_(damage, criticalStats, criticalRule);
       damage = applyFrozenBonusIfNeeded_(damageTarget, critical.damage);
       damage = applyOutgoingItemDamageModifiers_(battleState, damage, { actionType: ACTION_TYPES.SKILL, skill: skill });
       var damageResult = dealDamageToMonster_(battleState, damageTarget, damage);
       getSharedRuleEngine_().applyCriticalItemHealing(battleState, critical.isCritical, damageResult.damage);
       damageEvents += 1;
       totalDamageDealt += Number(damageResult.damage || 0);
+      if (critical.isCritical && criticalRule && Array.isArray(criticalRule.applyEffects)) {
+        applySkillRuleEffects_(battleState, skill, {applyEffects:criticalRule.applyEffects}, [damageTarget], targetContext);
+      }
       battleState.lastTurnEvents.push({
         actor: 'player',
         type: ACTION_TYPES.SKILL,
@@ -825,6 +851,9 @@ function calculateSkillRuleDamage_(battleState, skill, rule, context, efficiency
   }
   if (rule.tagBonus) {
     damage = applySkillTagBonusToValue_(battleState, skill, rule.tagBonus, damage);
+  }
+  if (rule.conditionalDamage && Number(context.enemyMaxHp || 0) > 0 && Number(context.enemyHp || 0) / Number(context.enemyMaxHp) * 100 < Number(rule.conditionalDamage.targetHpBelowPercent || 0)) {
+    damage *= Math.max(0, evaluateSkillFormula_(rule.conditionalDamage.damageMultiplierFormula, context, battleState, skill));
   }
   if (rule.scaleByEfficiency !== false) {
     damage *= Number(efficiency || 0);
@@ -1039,6 +1068,11 @@ function checkSkillConditions_(rule, skill, battleState, target) {
   }
   normalizeSkillRuntimeState_(battleState);
   var condition = rule.requireCondition || {};
+  if (Array.isArray(condition.targetEffects)) {
+    var candidates = skill.targetId ? [target].filter(Boolean) : getAliveMonsters_(battleState);
+    if (!candidates.some(function(candidate) { return condition.targetEffects.some(function(id) { return hasEffect_(candidate, id); }); })) return '기절 또는 수면 상태의 대상이 필요합니다.';
+  }
+  if (rule.consumeEffect && getSkillEffectTotal_(battleState.player, rule.consumeEffect.effectId) < Number(rule.consumeEffect.minValue || 1)) return '필요한 버프 수치가 부족합니다.';
   validateSkillRequireCondition_(battleState, skill, condition);
   if (condition.oncePerBattle) {
     condition.perBattleLimit = 1;
@@ -1083,7 +1117,7 @@ function validateSkillRequireCondition_(battleState, skill, condition) {
   if (!condition || typeof condition !== 'object') {
     return;
   }
-  var supported = ['afterTurn', 'perStageLimit', 'perBattleLimit', 'requireShield', 'requireEnemyShield', 'requireTag', 'requireEfficiencyAtLeast', 'requireHpBelowPercent', 'requireHpAbovePercent', 'oncePerBattle', 'notUpgradable'];
+  var supported = ['afterTurn', 'perStageLimit', 'perBattleLimit', 'requireShield', 'requireEnemyShield', 'requireTag', 'requireEfficiencyAtLeast', 'requireHpBelowPercent', 'requireHpAbovePercent', 'oncePerBattle', 'notUpgradable', 'targetEffects'];
   Object.keys(condition).forEach(function(key) {
     if (supported.indexOf(key) === -1) {
       warnSkillRule_(battleState, skill, 'Unsupported requireCondition key: ' + key, { key: key });
@@ -1119,6 +1153,7 @@ function buildSkillFormulaContext_(battleState, skill, target, efficiency) {
     defaultShield: Number(skill.baseValue || 0) + Number(effectiveStats.defense || 0),
     skillShield: Number(skill.baseValue || 0) + Number(effectiveStats.defense || 0),
     enemyHp: Number(target && target.currentHp || 0),
+    enemyMaxHp: Number(target && target.maxHp || 0),
     enemyShield: Number(target && target.shield || 0),
     efficiency: Number(efficiency || 0),
     usedStrikeSkillCountThisBattle: Number(tagCounts.strike || tagCounts['타격'] || 0),
@@ -1251,7 +1286,7 @@ function applySkillEffectRule_(battleState, skill, effectRule, targets, context)
     warnSkillRule_(battleState, skill, 'applyEffects entry missing effectId.', { effectRule: effectRule });
     return;
   }
-  var supportedEffectKeys = ['target', 'effectId', 'value', 'valueFormula', 'durationType', 'durationTurns', 'stackable', 'maxStacks', 'stacks', 'chance', 'requireEfficiencyAtLeast', 'requireCondition'];
+  var supportedEffectKeys = ['target', 'effectId', 'value', 'valueFormula', 'durationType', 'durationTurns', 'stackable', 'maxStacks', 'stacks', 'stacksFormula', 'chance', 'requireEfficiencyAtLeast', 'requireCondition'];
   Object.keys(effectRule).forEach(function(key) {
     if (supportedEffectKeys.indexOf(key) === -1) {
       warnSkillRule_(battleState, skill, 'Unsupported applyEffects key: ' + key, { key: key });
@@ -1282,6 +1317,7 @@ function applySkillEffectRule_(battleState, skill, effectRule, targets, context)
   if (effectRule.stackable !== undefined) applied.stackable = effectRule.stackable;
   if (effectRule.maxStacks !== undefined) applied.maxStacks = Number(effectRule.maxStacks || 1);
   if (effectRule.stacks !== undefined) applied.stacks = Number(effectRule.stacks || 1);
+  if (effectRule.stacksFormula !== undefined) applied.stacks = Math.max(1, Math.round(evaluateSkillFormula_(effectRule.stacksFormula, context, battleState, skill)));
 
   getTargetsForEffectRule_(battleState, effectRule, targets).forEach(function(target) {
     var appliedEffect = applyEffect(target, applied, { source: effectRule.target || 'rule', skillId: skill.skillId, turn: battleState && battleState.turn });
@@ -1798,6 +1834,9 @@ function calculateEffectiveStats(baseStats, activeEffects) {
 function calculateFinalQuestionTimeLimit(baseDifficulty, activeEffects, questionModifiers) {
   var finalDifficulty = clampDifficulty_(Number(baseDifficulty || GAME_RULES.MIN_DIFFICULTY));
   var extraSeconds = getEffectFlatBonus_(activeEffects, STAT_KEYS.QUESTION_TIME);
+  extraSeconds += (activeEffects || []).reduce(function(total, effect) {
+    return total + (effect.statKey === 'caffeine' ? Number(effect.value || 0) * Math.max(1, Number(effect.stacks || 1)) * 0.1 : 0);
+  }, 0);
   extraSeconds += Number(questionModifiers && questionModifiers.questionTimeSeconds || 0);
   var timeSettings = getQuestionTimeSettings_();
   var seconds = timeSettings.baseQuestionTimeSec + ((finalDifficulty - 1) * timeSettings.questionTimePerDifficultySec) + extraSeconds;
@@ -2321,6 +2360,13 @@ function hasEffect_(target, effectId) {
   return (target.effects || []).some(function(effect) {
     return effect.effectId === effectId;
   });
+}
+
+function getSkillEffectTotal_(target, effectId) {
+  normalizeTargetStatusBuckets_(target);
+  return (target.effects || []).reduce(function(total, effect) {
+    return total + (effect.effectId === effectId ? Number(effect.value || 0) * Math.max(1, Number(effect.stacks || 1)) : 0);
+  }, 0);
 }
 
 function getHpPercent_(target) {

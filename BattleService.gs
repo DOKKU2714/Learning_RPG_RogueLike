@@ -738,7 +738,7 @@ function selectQuestionForAction(playerId, runId, actionType, difficultyBonus, a
   normalizeBattleStateEffects_(battleState);
   normalizeBattleMonsters_(battleState);
   normalizePlayerActionPoints_(battleState, false);
-  if (hasEffect_(battleState.player, 'debuff_stun') || hasEffect_(battleState.player, 'debuff_freeze')) {
+  if (hasEffect_(battleState.player, 'debuff_stun') || hasEffect_(battleState.player, 'debuff_freeze') || hasEffect_(battleState.player, 'debuff_sleep')) {
     throw new Error('행동할 수 없는 상태입니다.');
   }
   var skill = normalizedAction === ACTION_TYPES.SKILL && skillId ? findCachedRowByKey_(DB_SHEETS.SKILLS, 'skillId', skillId, 600) : null;
@@ -1061,12 +1061,16 @@ function applyAttack(battleState, efficiency, targetId) {
   return battleState;
 }
 
-function rollCriticalDamage_(damage, stats) {
+function rollCriticalDamage_(damage, stats, criticalBonus) {
   var baseDamage = Math.max(0, Math.round(Number(damage || 0)));
   var criticalRate = clampPercent_(Number(stats && stats.criticalRate || 0));
   var criticalDamage = Math.max(0, Number(stats && stats.criticalDamage || 100));
-  var isCritical = baseDamage > 0 && criticalRate > 0 && Math.random() * 100 < criticalRate;
+  var isCritical = baseDamage > 0 && (criticalBonus && criticalBonus.force === true || criticalRate > 0 && Math.random() * 100 < criticalRate);
   var multiplier = isCritical ? criticalDamage / 100 : 1;
+  if (isCritical && criticalBonus && criticalBonus.damageMultiplier !== undefined) {
+    var bonusMultiplier = Number(criticalBonus.damageMultiplier);
+    if (Number.isFinite(bonusMultiplier) && bonusMultiplier >= 1) multiplier *= bonusMultiplier;
+  }
   return {
     damage: isCritical ? Math.max(0, Math.round(baseDamage * multiplier)) : baseDamage,
     isCritical: isCritical,
@@ -1115,7 +1119,7 @@ function applyMonsterTurn(battleState) {
     if (battleState.player.hp <= 0) {
       return;
     }
-    if (hasEffect_(monster, 'debuff_stun') || hasEffect_(monster, 'debuff_freeze')) {
+    if (hasEffect_(monster, 'debuff_stun') || hasEffect_(monster, 'debuff_freeze') || hasEffect_(monster, 'debuff_sleep')) {
       events.push({
         actor: 'monster',
         type: 'skip',

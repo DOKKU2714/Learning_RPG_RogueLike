@@ -1,0 +1,2 @@
+effectId	name	category	statKey	effectType	value	durationType	durationTurns	stackable	maxStacks	triggerTiming	description
+buff_caffeine	카페인 섭취	buff	caffeine	flat	1	stage	0	true	99	passive	수치 1당 기본 최대 문제풀이 효율이 2% 증가하고 문제풀이 시간이 0.1초 늘어난다. 카페인 중독으로 모두 소모할 수 있다.

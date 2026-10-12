@@ -3069,6 +3069,16 @@
     function startSkillQuestion(skillId, targetId) {
       updateWorkbookCountdown();
       if (workbookDeadlineExpired) return;
+      var targetSkill = findAvailableSkill(skillId);
+      var targetRule = safeJsonParseClient(targetSkill && targetSkill.effectJson, {});
+      var requiredTargetEffects = targetRule.requireCondition && targetRule.requireCondition.targetEffects;
+      if (Array.isArray(requiredTargetEffects)) {
+        var chosenTarget = getAliveClientMonsters().filter(function(monster) { return getMonsterRuntimeId(monster) === targetId; })[0];
+        if (!chosenTarget || !requiredTargetEffects.some(function(id) { return hasClientEffect(chosenTarget, id); })) {
+          pushLog('기절 또는 수면 상태의 대상을 선택하세요.');
+          return;
+        }
+      }
       cancelTargetSelection(false);
       if (isDummyMode || !currentView || currentView.runId === 'dummy-run') {
         openDummyQuestionModal('skill', skillId, targetId);
@@ -3446,8 +3456,8 @@
       var baseSeconds = Number(config.baseQuestionTimeSec || 10);
       var perDifficultySeconds = Number(config.questionTimePerDifficultySec || 2);
       var effectSeconds = (currentView && currentView.battle && currentView.battle.player && currentView.battle.player.effects || []).reduce(function(total, effect) {
-        if (!effect || effect.statKey !== 'questionTime' || effect.effectType !== 'flat') return total;
-        return total + (Number(effect.value || 0) * Math.max(1, Number(effect.stacks || 1)));
+        if (!effect || (effect.statKey !== 'caffeine' && (effect.statKey !== 'questionTime' || effect.effectType !== 'flat'))) return total;
+        return total + (Number(effect.value || 0) * Math.max(1, Number(effect.stacks || 1)) * (effect.statKey === 'caffeine' ? 0.1 : 1));
       }, 0);
       var seconds = baseSeconds
         + ((Math.max(1, Number(difficulty || 1)) - 1) * perDifficultySeconds)
@@ -3932,7 +3942,7 @@
         button.setAttribute('aria-pressed', String(selected));
       });
       document.getElementById('questionUnderstandingStatus').textContent = durable
-        ? '평가를 반영했습니다.' : '평가를 반영했습니다. 브라우저 저장을 사용할 수 없어 새로고침하면 사라질 수 있습니다.';
+        ? '' : '브라우저 저장을 사용할 수 없어 새로고침하면 사라질 수 있습니다.';
       if (view.resultHolding) document.getElementById('questionSubmitButton').textContent = '확인';
     }
 
@@ -5220,7 +5230,7 @@
 
       (battle.monsters || []).forEach(function(monster) {
         if (Number(monster.currentHp || 0) <= 0 || Number(battle.player.hp || 0) <= 0) return;
-        if (hasClientEffect(monster, 'debuff_stun') || hasClientEffect(monster, 'debuff_freeze')) {
+        if (hasClientEffect(monster, 'debuff_stun') || hasClientEffect(monster, 'debuff_freeze') || hasClientEffect(monster, 'debuff_sleep')) {
           battle.lastTurnEvents.push({
             actor: 'monster',
             type: 'skip',
@@ -7521,6 +7531,7 @@
       });
       var title = afterSkill.name || fallbackName || '스킬';
       return '<span class="reward-detail-card reward-upgrade-compare-card rarity-' + escapeHtml(rarity) + '" aria-hidden="true">' +
+        buildSkillUpgradeChangeSummary(beforeSkill, afterSkill) +
         '<span class="reward-upgrade-panel">' +
           renderSkillUpgradeComparePanel(beforeSkill, reward, rarity, title, '현재') +
         '</span>' +
@@ -7529,6 +7540,46 @@
           renderSkillUpgradeComparePanel(afterSkill, reward, rarity, title, '강화 후') +
         '</span>' +
       '</span>';
+    }
+
+    function buildSkillUpgradeChangeSummary(beforeSkill, afterSkill) {
+      var before = getSkillDisplayMetrics(beforeSkill);
+      var after = getSkillDisplayMetrics(afterSkill);
+      var changes = [];
+      function addChange(label, previous, next, suffix) {
+        previous = Number(previous);
+        next = Number(next);
+        if (!Number.isFinite(previous) || !Number.isFinite(next) || previous === next) return;
+        var difference = Math.round((next - previous) * 100) / 100;
+        changes.push(escapeHtml(label + ' ' + previous + (suffix || '') + ' → ' + next + (suffix || '') +
+          ' (' + (difference > 0 ? '+' : '') + difference + (suffix || '') + ')'));
+      }
+      if (before.minDamage !== before.maxDamage || after.minDamage !== after.maxDamage) {
+        addChange('최소 피해', before.minDamage, after.minDamage);
+        addChange('최대 피해', before.maxDamage, after.maxDamage);
+      } else {
+        addChange('피해', before.damage, after.damage);
+      }
+      addChange('방어막', before.shield, after.shield);
+      addChange('회복량', before.heal, after.heal);
+      addChange('흡혈률', before.healPercent, after.healPercent, '%');
+      addChange('타수', before.hitCount, after.hitCount, '회');
+      addChange(after.effectName || '효과 수치', before.effectValue, after.effectValue);
+      addChange('효과 확률', before.effectChance, after.effectChance, '%');
+      // Fixed descriptions and server-provided effect details may omit level-dependent values.
+      [
+        { key: 'damage', label: '피해 강화', displayed: before.damage !== after.damage || before.heal !== after.heal },
+        { key: 'effect', label: '효과 강화', displayed: before.effectValue !== after.effectValue || before.heal !== after.heal },
+        { key: 'buffValue', label: '버프 수치 강화', displayed: before.effectValue !== after.effectValue },
+        { key: 'debuffChance', label: '디버프 확률 강화', displayed: before.effectChance !== after.effectChance, suffix: '%' },
+      ].forEach(function(change) {
+        if (!change.displayed) addChange(change.label,
+          getClientSkillUpgradeValue(beforeSkill, change.key),
+          getClientSkillUpgradeValue(afterSkill, change.key), change.suffix);
+      });
+      if (!changes.length) return '';
+      return '<span class="reward-upgrade-changes"><strong>강화 효과</strong>' +
+        changes.map(function(change) { return '<span>' + change + '</span>'; }).join('') + '</span>';
     }
 
     function renderSkillUpgradeComparePanel(skill, reward, rarity, title, label) {
@@ -7717,7 +7768,10 @@
       } else {
         var cards = modal.querySelectorAll('.reward-choice-card');
         var card = cards[Number(event.key) - 1];
-        if (card && !card.disabled) selectRewardCandidate(card.getAttribute('data-reward-id'));
+        if (card && !card.disabled) {
+          selectRewardCandidate(card.getAttribute('data-reward-id'));
+          card.focus({ preventScroll: true });
+        }
       }
       return true;
     }

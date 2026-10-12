@@ -139,7 +139,10 @@ var RULE_ENGINE_SHARED = (function() {
   }
 
   function getQuestionMaxEfficiencyMultiplier(effects) {
-    return (effects || []).reduce(function(multiplier, effect) {
+    var caffeine = (effects || []).reduce(function(total, effect) {
+      return total + (effect.statKey === 'caffeine' ? Number(effect.value || 0) * Math.max(1, Number(effect.stacks || 1)) : 0);
+    }, 0);
+    return (1 + caffeine * 0.02) * (effects || []).reduce(function(multiplier, effect) {
       if (effect.statKey !== 'questionMaxEfficiency' || effect.effectType !== 'percent') return multiplier;
       return multiplier * Math.max(0, 1 + Number(effect.value || 0) * Math.max(1, Number(effect.stacks || 1)) / 100);
     }, 1);
@@ -221,6 +224,7 @@ var RULE_ENGINE_SHARED = (function() {
     target.effects = (target.effects || []).map(function(effect) {
       if (effect.durationType === 'turn') {
         if (effect.effectId !== 'debuff_foolish'
+          && !(target.currentHp !== undefined && effect.statKey === 'action' && effect.effectType === 'control')
           && currentTurn !== undefined
           && effect.appliedAtTurn !== undefined
           && Number(effect.appliedAtTurn || 0) === Number(currentTurn || 0)) {
@@ -269,6 +273,7 @@ var RULE_ENGINE_SHARED = (function() {
       defaultShield: Number(skill && skill.baseValue || 0) + getEffectiveStat(player, 'defense'),
       skillShield: Number(skill && skill.baseValue || 0) + getEffectiveStat(player, 'defense'),
       enemyHp: Number(target && target.currentHp || 0),
+      enemyMaxHp: Number(target && target.maxHp || 0),
       enemyShield: Number(target && target.shield || 0),
       efficiency: Number(efficiency || 0),
       usedStrikeSkillCountThisBattle: Number(tagCounts.strike || tagCounts['타격'] || 0),
@@ -391,12 +396,13 @@ var RULE_ENGINE_SHARED = (function() {
       'onBlock', 'onCorrect', 'onWrong', 'onTurnStart', 'onTurnEnd', 'cooldownModify',
       'actionPointModify', 'failPenalty', 'tagBonus', 'scaleByEfficiency', 'randomMin',
       'randomMax', 'extraDamageFormula', 'healFormula', 'healFromDamageFormula',
-      'healFromDamagePercentFormula', 'copyTargetShield', 'copyTargetBuffs'
+      'healFromDamagePercentFormula', 'copyTargetShield', 'copyTargetBuffs',
+      'conditionalDamage', 'removeDebuffs', 'consumeEffect'
     ];
   }
 
   function getSupportedSkillRuleKeys() {
-    return getSkillRuleEngineKeys().concat(['effectId', 'chance']);
+    return getSkillRuleEngineKeys().concat(['effectId', 'chance', 'criticalBonus']);
   }
 
   function shouldUseSkillRuleEngine(rule) {
@@ -417,10 +423,13 @@ var RULE_ENGINE_SHARED = (function() {
 
   function validateSkillRule(rule, options) {
     validateKeys(rule, getSupportedSkillRuleKeys(), 'effectJson', options);
+    validateKeys(rule && rule.criticalBonus, ['damageMultiplier', 'force', 'targetEffects', 'applyEffects'], 'criticalBonus', options);
+    validateKeys(rule && rule.conditionalDamage, ['targetHpBelowPercent', 'damageMultiplierFormula'], 'conditionalDamage', options);
+    validateKeys(rule && rule.consumeEffect, ['effectId', 'minValue', 'healPerValue'], 'consumeEffect', options);
     validateKeys(rule && rule.efficiencyBonus, ['threshold', 'damageMultiplier', 'damageAdd', 'shieldMultiplier', 'shieldAdd', 'healMultiplier', 'healAdd', 'applyEffects'], 'efficiencyBonus', options);
     validateKeys(rule && rule.actionPointModify, ['currentActionPointAdd', 'currentActionPointSub', 'maxActionPointAdd', 'maxActionPointSub', 'nextTurnActionPointAdd', 'nextTurnActionPointSub'], 'actionPointModify', options);
     validateKeys(rule && rule.failPenalty, ['loseBattleOnWrongAnswer', 'loseBattleOnDamageTaken', 'selfDamageOnUse', 'increaseQuestionDifficulty', 'reduceActionPoint'], 'failPenalty', options);
-    validateKeys(rule && rule.requireCondition, ['afterTurn', 'perStageLimit', 'perBattleLimit', 'requireShield', 'requireEnemyShield', 'requireTag', 'requireEfficiencyAtLeast', 'requireHpBelowPercent', 'requireHpAbovePercent', 'oncePerBattle', 'notUpgradable'], 'requireCondition', options);
+    validateKeys(rule && rule.requireCondition, ['afterTurn', 'perStageLimit', 'perBattleLimit', 'requireShield', 'requireEnemyShield', 'requireTag', 'requireEfficiencyAtLeast', 'requireHpBelowPercent', 'requireHpAbovePercent', 'oncePerBattle', 'notUpgradable', 'targetEffects'], 'requireCondition', options);
   }
 
   function getAliveMonsters(battle) {
@@ -592,6 +601,9 @@ var RULE_ENGINE_SHARED = (function() {
     }
     if (rule.extraDamageFormula) damage += evaluateFormula(rule.extraDamageFormula, context, options);
     damage = applyTagBonus(damage, battle, rule.tagBonus);
+    if (rule.conditionalDamage && Number(context.enemyMaxHp || 0) > 0 && Number(context.enemyHp || 0) / Number(context.enemyMaxHp) * 100 < Number(rule.conditionalDamage.targetHpBelowPercent || 0)) {
+      damage *= Math.max(0, evaluateFormula(rule.conditionalDamage.damageMultiplierFormula, context, options));
+    }
     if (rule.scaleByEfficiency !== false) damage *= Number(efficiency || 0);
     if (rule.efficiencyBonus && Number(efficiency || 0) >= Number(rule.efficiencyBonus.threshold || 0)) {
       damage *= Number(rule.efficiencyBonus.damageMultiplier || 1);
@@ -605,7 +617,7 @@ var RULE_ENGINE_SHARED = (function() {
       warn(options, 'applyEffects entry missing effectId.', { effectRule: effectRule });
       return null;
     }
-    validateKeys(effectRule, ['target', 'effectId', 'value', 'valueFormula', 'durationType', 'durationTurns', 'stackable', 'maxStacks', 'chance', 'requireEfficiencyAtLeast', 'requireCondition'], 'applyEffects', options);
+    validateKeys(effectRule, ['target', 'effectId', 'value', 'valueFormula', 'durationType', 'durationTurns', 'stackable', 'maxStacks', 'stacks', 'stacksFormula', 'chance', 'requireEfficiencyAtLeast', 'requireCondition'], 'applyEffects', options);
     var effect = options && typeof options.effectResolver === 'function'
       ? options.effectResolver(effectRule.effectId, effectRule)
       : null;
@@ -635,6 +647,7 @@ var RULE_ENGINE_SHARED = (function() {
       if (effectRule.stackable !== undefined) effect.stackable = effectRule.stackable;
       if (effectRule.maxStacks !== undefined) effect.maxStacks = Number(effectRule.maxStacks || 1);
       if (effectRule.stacks !== undefined) effect.stacks = Number(effectRule.stacks || 1);
+      if (effectRule.stacksFormula !== undefined) effect.stacks = Math.max(1, Math.round(evaluateFormula(effectRule.stacksFormula, context, options)));
       var effectTargets = effectRule.target === 'self' ? [battle.player] : (effectRule.target === 'allEnemies' ? getAliveMonsters(battle) : targets);
       effectTargets.filter(Boolean).forEach(function(target) {
         var applied = applyEffect(target, effect, { source: effectRule.target || 'rule', skillId: skill && skill.skillId || '' }, battle.turn);
@@ -812,8 +825,8 @@ var RULE_ENGINE_SHARED = (function() {
         : total;
     }, 0);
     var timeDeltaSeconds = (effects || []).reduce(function(total, effect) {
-      return effect.statKey === 'questionTime' && effect.effectType === 'flat'
-        ? total + Number(effect.value || 0) * Math.max(1, Number(effect.stacks || 1))
+      return (effect.statKey === 'questionTime' && effect.effectType === 'flat') || effect.statKey === 'caffeine'
+        ? total + Number(effect.value || 0) * Math.max(1, Number(effect.stacks || 1)) * (effect.statKey === 'caffeine' ? 0.1 : 1)
         : total;
     }, 0);
     if (difficultyDelta) questionView.finalDifficulty = Math.max(1, Math.min(10, Math.round(Number(questionView.finalDifficulty || 1) + difficultyDelta)));
