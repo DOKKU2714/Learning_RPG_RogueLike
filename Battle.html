@@ -5007,20 +5007,57 @@
             continue;
           }
           if (monsterEvent.type === 'guard') {
-            pushLog(monsterEventMessage);
-            await holdBattleMessage();
-            applyMonsterShieldDelta(monsterEvent.monsterId, monsterEvent.shield || 0);
-            animateMonsterShield(monsterEvent.monsterId);
+            var playMonsterGuard = function() {
+              pushLog(monsterEventMessage);
+              applyMonsterShieldDelta(monsterEvent.monsterId, monsterEvent.shield || 0);
+              animateMonsterShield(monsterEvent.monsterId);
+            };
+            if (monsterEvent.skillId && resolveMonsterSkillAttackEffect(monsterEvent)) {
+              await animateMonsterAttack(monsterEvent.monsterId, playMonsterGuard, resolveMonsterSkillAttackEffect(monsterEvent));
+            } else {
+              playMonsterGuard();
+              await holdBattleMessage();
+            }
           } else if (monsterEvent.type === 'buff') {
-            pushLog(monsterEventMessage);
-            animateMonsterStatusEffect(monsterEvent.monsterId, 'buff');
-            refreshEventStatuses(monsterEvent, nextView);
-            await holdBattleMessage();
+            var playMonsterBuff = function() {
+              pushLog(monsterEventMessage);
+              animateMonsterStatusEffect(monsterEvent.monsterId, 'buff');
+              refreshEventStatuses(monsterEvent, nextView);
+            };
+            if (monsterEvent.skillId && resolveMonsterSkillAttackEffect(monsterEvent)) {
+              await animateMonsterAttack(monsterEvent.monsterId, playMonsterBuff, resolveMonsterSkillAttackEffect(monsterEvent));
+            } else {
+              playMonsterBuff();
+              await holdBattleMessage();
+            }
           } else if (monsterEvent.type === 'debuff') {
-            pushLog(monsterEventMessage);
-            animatePlayerStatusEffect('debuff');
-            refreshEventStatuses(monsterEvent, nextView);
-            await holdBattleMessage();
+            var playMonsterDebuff = function() {
+              pushLog(monsterEventMessage);
+              animatePlayerStatusEffect('debuff');
+              refreshEventStatuses(monsterEvent, nextView);
+            };
+            if (monsterEvent.skillId && resolveMonsterSkillAttackEffect(monsterEvent)) {
+              await animateMonsterAttack(monsterEvent.monsterId, playMonsterDebuff, resolveMonsterSkillAttackEffect(monsterEvent));
+            } else {
+              playMonsterDebuff();
+              await holdBattleMessage();
+            }
+          } else if (monsterEvent.type === 'heal') {
+            var playMonsterHeal = function() {
+              pushLog(monsterEventMessage);
+              animateMonsterStatusEffect(monsterEvent.monsterId, 'buff');
+              var slot = document.querySelector('[data-monster-id="' + cssEscape(monsterEvent.monsterId) + '"]');
+              var hpText = slot && slot.querySelector('.monster-hp-text');
+              if (hpText && Number(monsterEvent.heal || 0) > 0) {
+                spawnFloatingText(hpText, '+' + Number(monsterEvent.heal || 0), 'heal-green');
+              }
+            };
+            if (monsterEvent.skillId && resolveMonsterSkillAttackEffect(monsterEvent)) {
+              await animateMonsterAttack(monsterEvent.monsterId, playMonsterHeal, resolveMonsterSkillAttackEffect(monsterEvent));
+            } else {
+              playMonsterHeal();
+              await holdBattleMessage();
+            }
           } else if (monsterEvent.missed || Number(monsterEvent.damage || monsterEvent.shieldDamage || monsterEvent.hpDamage || 0) > 0) {
             await playMonsterAttackImpact(monsterEvent, true);
           } else {
@@ -5146,7 +5183,19 @@
         } else {
           animatePlayerHit(event.damage || 0, event.hpDamage || 0, event.shieldDamage || 0, event.isCritical);
         }
-      }, event.attackEffect);
+      }, resolveMonsterSkillAttackEffect(event));
+    }
+
+    function resolveMonsterSkillAttackEffect(event) {
+      event = event || {};
+      var directEffect = String(event.attackEffect || '').trim();
+      if (directEffect) return directEffect;
+      if (!event.skillId) return '';
+      var rules = currentView && currentView.monsterAiRules || [];
+      var rule = rules.filter(function(candidate) {
+        return String(candidate && candidate.skillId || '') === String(event.skillId);
+      })[0];
+      return String(rule && rule.skillAttackEffect || '').trim();
     }
 
     async function playMonsterMultiHitSequence(events) {
@@ -9023,10 +9072,8 @@
     }
 
     function normalizePlayerAttackEffect(value) {
-      var allowed = ['slash', 'blunt', 'punch', 'thrust', 'fire'];
       var effect = String(value || '').trim().toLowerCase();
-      if (allowed.indexOf(effect) !== -1) return effect;
-      return allowed[Math.floor(Math.random() * allowed.length)];
+      return ['slash', 'blunt', 'punch', 'thrust', 'fire'].indexOf(effect) !== -1 ? effect : 'slash';
     }
 
     async function animateMonsterAttack(monsterId, onImpact, attackEffect) {

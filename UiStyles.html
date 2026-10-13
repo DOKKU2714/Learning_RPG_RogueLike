@@ -2681,61 +2681,72 @@
   }
 
   .incoming-blunt::before {
-    width: 78%;
+    width: 76%;
     aspect-ratio: 1;
-    border: 7px solid #ffc45e;
-    box-shadow: 0 0 18px #ff9d35, inset 0 0 12px #ffd66e;
-    animation: attackImpactRing 460ms cubic-bezier(.12,.8,.25,1) both;
+    background: radial-gradient(circle, #fffbe0 0 8%, #ffe078 14%, #ff9b35 34%, #ed3d1b 54%, transparent 73%);
+    clip-path: polygon(50% 0%, 59% 27%, 78% 9%, 73% 34%, 100% 31%, 79% 50%, 100% 69%, 72% 66%, 78% 92%, 58% 74%, 50% 100%, 42% 74%, 22% 92%, 28% 66%, 0% 69%, 21% 50%, 0% 31%, 28% 34%, 22% 9%, 41% 27%);
+    filter: drop-shadow(0 0 12px #ff742b);
+    animation: playerAttackStarBurst 460ms cubic-bezier(.12,.8,.25,1) both;
   }
 
   .incoming-blunt::after {
-    width: 110%;
-    height: 8px;
-    border-radius: 50%;
-    background: linear-gradient(90deg, transparent, #fff7d0, #ffb53d, transparent);
-    transform: translate(-50%, -50%) rotate(-28deg) scaleX(.1);
-    animation: attackShockWave 390ms ease-out 70ms both;
+    width: 96%;
+    aspect-ratio: 1;
+    background: radial-gradient(circle, transparent 35%, #fff0b5 38% 41%, #ff7d2c 45% 49%, transparent 54%);
+    clip-path: polygon(50% 0%, 58% 31%, 82% 13%, 69% 39%, 100% 50%, 69% 59%, 84% 88%, 58% 69%, 50% 100%, 41% 69%, 15% 88%, 30% 59%, 0% 50%, 30% 40%, 16% 13%, 42% 31%);
+    animation: playerAttackStarBurst 390ms ease-out 70ms both;
   }
 
   .incoming-punch::before {
-    width: 60%;
+    width: 58%;
     aspect-ratio: 1;
-    background: radial-gradient(circle, #fff 0 6%, #fff1ba 14%, #ff852e 34%, #f23515aa 52%, transparent 72%);
+    background: radial-gradient(circle, #fff 0 7%, #fff1ba 15%, #ff852e 38%, #f23515 57%, transparent 73%);
+    clip-path: polygon(50% 0%, 62% 31%, 92% 9%, 72% 40%, 100% 50%, 70% 61%, 91% 92%, 60% 70%, 50% 100%, 39% 70%, 8% 91%, 30% 60%, 0% 50%, 30% 39%, 9% 8%, 40% 30%);
     filter: drop-shadow(0 0 16px #ff4d1d);
-    animation: fistFlash 320ms cubic-bezier(.12,.8,.2,1) both;
+    animation: playerAttackStarBurst 320ms cubic-bezier(.12,.8,.2,1) both;
   }
 
   .incoming-punch::after {
-    width: 92%;
-    height: 6px;
-    border-radius: 50%;
-    background: linear-gradient(90deg, transparent, #fff, #ffb04c, transparent);
-    transform: translate(-50%, -50%) rotate(-18deg) scaleX(.05);
-    animation: punchTrail 300ms ease-out both;
+    width: 82%;
+    aspect-ratio: 1;
+    background: conic-gradient(from 10deg, transparent 0 8%, #fff5d2 10% 13%, transparent 15% 24%, #ffab43 26% 30%, transparent 32% 42%, #ff5a27 44% 48%, transparent 50% 60%, #ffd277 62% 66%, transparent 68% 78%, #ff6a26 80% 84%, transparent 86%);
+    clip-path: polygon(50% 0%, 60% 30%, 89% 11%, 70% 40%, 100% 50%, 69% 60%, 90% 90%, 60% 69%, 50% 100%, 40% 69%, 10% 90%, 30% 60%, 0% 50%, 30% 40%, 10% 10%, 40% 30%);
+    animation: playerAttackStarBurst 300ms ease-out 55ms both;
   }
 
   .incoming-thrust::before {
     left: 50%;
     top: 50%;
-    width: 92%;
-    height: 12px;
-    border-radius: 999px;
-    background: linear-gradient(90deg, transparent 0%, #1799ee 12%, #8cecff 34%, #fff 48%, #8cecff 62%, #1799ee 86%, transparent 100%);
-    box-shadow: 0 0 14px #74ddff, 0 0 34px #259bdc, 0 0 54px #259bdc88;
-    clip-path: polygon(0 50%, 76% 8%, 100% 50%, 76% 92%);
-    transform: translate(-50%, -50%) rotate(-24deg) scaleX(.02);
-    transform-origin: 15% 50%;
-    animation: playerAttackThrust 360ms cubic-bezier(.12,.75,.2,1) both;
+    width: 20%;
+    aspect-ratio: 1;
+    border-radius: 50%;
+    background: radial-gradient(circle, #32100e 0 19%, #a51f16 27%, #ff6330 43%, #ffbd69 54%, transparent 73%);
+    box-shadow: 0 0 12px #ff5b28, 0 0 22px #e83a1b99;
+    transform: translate(-50%, -50%) scale(.2);
+    animation: playerAttackPuncture 360ms cubic-bezier(.12,.75,.2,1) both;
   }
 
   .incoming-thrust::after {
-    left: 72%;
-    top: 39%;
-    width: 34%;
-    height: 34%;
-    border: 3px solid #e9fcff;
-    box-shadow: 0 0 14px #54cfff, inset 0 0 10px #54cfff;
-    animation: attackImpactRing 300ms ease-out 150ms both;
+    left: 50%;
+    top: 50%;
+    width: 29%;
+    aspect-ratio: 1;
+    height: auto;
+    border: 3px solid #ffe5d3;
+    box-shadow: 0 0 14px #ff7a2f, inset 0 0 10px #ff9b3d;
+    animation: attackImpactRing 300ms ease-out 100ms both;
+  }
+
+  @keyframes playerAttackStarBurst {
+    0% { opacity: 0; transform: translate(-50%, -50%) scale(.12) rotate(-18deg); }
+    24% { opacity: 1; }
+    100% { opacity: 0; transform: translate(-50%, -50%) scale(1.22) rotate(14deg); }
+  }
+
+  @keyframes playerAttackPuncture {
+    0% { opacity: 0; transform: translate(-50%, -50%) scale(.2); }
+    28% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+    100% { opacity: .9; transform: translate(-50%, -50%) scale(.78); }
   }
 
   .incoming-fire::before {
