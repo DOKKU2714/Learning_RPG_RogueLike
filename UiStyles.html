@@ -2651,8 +2651,208 @@
     animation-name: slashTrail;
   }
 
+  .incoming-blunt,
+  .incoming-punch,
+  .incoming-thrust {
+    position: relative;
+    overflow: visible;
+  }
+
+  .incoming-blunt::before,
+  .incoming-punch::before,
+  .incoming-thrust::before,
+  .incoming-blunt::after,
+  .incoming-punch::after,
+  .incoming-thrust::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 48%;
+    z-index: 8;
+    pointer-events: none;
+    border-radius: 50%;
+    transform: translate(-50%, -50%) scale(.2);
+    opacity: 0;
+    animation: playerAttackBurst 380ms ease-out both;
+  }
+
+  .incoming-blunt::before {
+    width: 78%;
+    aspect-ratio: 1;
+    border: 7px solid #ffc45e;
+    box-shadow: 0 0 18px #ff9d35, inset 0 0 12px #ffd66e;
+  }
+
+  .incoming-blunt::after {
+    width: 96%;
+    aspect-ratio: 1;
+    border: 2px solid #fff0ba;
+    animation-delay: 70ms;
+  }
+
+  .incoming-punch::before {
+    width: 56%;
+    aspect-ratio: 1;
+    background: radial-gradient(circle, #fff4ca 0 12%, #ff9b42aa 38%, transparent 72%);
+  }
+
+  .incoming-punch::after {
+    width: 78%;
+    height: 12px;
+    border-radius: 50%;
+    background: linear-gradient(90deg, transparent, #fff8e8, #ffb04c, transparent);
+    animation-delay: 45ms;
+  }
+
+  .incoming-thrust::before {
+    left: 50%;
+    top: 50%;
+    width: 92%;
+    height: 12px;
+    border-radius: 999px;
+    background: linear-gradient(90deg, transparent 0%, #c9f2ff 22%, #fff 48%, #76d9ff 78%, transparent 100%);
+    box-shadow: 0 0 10px #74ddff, 0 0 24px #259bdc;
+    transform: translate(-50%, -50%) rotate(-24deg) scaleX(.08);
+    transform-origin: 15% 50%;
+    animation: playerAttackThrust 360ms cubic-bezier(.12,.75,.2,1) both;
+  }
+
+  .incoming-thrust::after {
+    left: 72%;
+    top: 39%;
+    width: 28%;
+    height: 28%;
+    border: 2px solid #c9f2ff;
+    box-shadow: 0 0 14px #54cfff;
+    animation-delay: 100ms;
+  }
+
+  @keyframes playerAttackBurst {
+    0% { opacity: 0; transform: translate(-50%, -50%) scale(.2); }
+    25% { opacity: .95; }
+    100% { opacity: 0; transform: translate(-50%, -50%) scale(1.35); }
+  }
+
+  @keyframes playerAttackThrust {
+    0% { opacity: 0; transform: translate(-70%, -50%) rotate(-24deg) scaleX(.08); }
+    18% { opacity: 1; }
+    58% { opacity: 1; transform: translate(-50%, -50%) rotate(-24deg) scaleX(1); }
+    100% { opacity: 0; transform: translate(-28%, -50%) rotate(-24deg) scaleX(.72); }
+  }
+
   .monster-lunge {
     animation: monsterLunge 680ms ease-out;
+  }
+
+  .monster-attack-slash::before,
+  .monster-attack-blunt::before,
+  .monster-attack-thrust::before,
+  .monster-attack-fire::before,
+  .monster-attack-slash::after,
+  .monster-attack-blunt::after,
+  .monster-attack-thrust::after,
+  .monster-attack-fire::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    z-index: 12;
+    pointer-events: none;
+  }
+
+  .monster-attack-slash::before,
+  .monster-attack-slash::after {
+    width: 150%;
+    height: 12px;
+    border-radius: 999px;
+    background: linear-gradient(90deg, transparent, #fff, #ffb1a1, transparent);
+    box-shadow: 0 0 10px #ff6b55;
+    transform: translate(-50%, -50%) rotate(-32deg) scaleX(.08);
+    animation: monsterAttackSlash 330ms ease-out both;
+  }
+
+  .monster-attack-slash::after { height: 5px; animation-delay: 50ms; }
+
+  .monster-attack-blunt::before,
+  .monster-attack-blunt::after,
+  .monster-attack-fire::before,
+  .monster-attack-fire::after {
+    width: 95%;
+    aspect-ratio: 1;
+    border-radius: 50%;
+    transform: translate(-50%, -50%) scale(.2);
+    animation: monsterAttackBurst 420ms ease-out both;
+  }
+
+  .monster-attack-blunt::before {
+    border: 7px solid #ffc45e;
+    box-shadow: 0 0 20px #ff8a2d, inset 0 0 15px #ffd66e;
+  }
+
+  .monster-attack-blunt::after {
+    width: 120%;
+    border: 2px solid #fff0ba;
+    animation-delay: 70ms;
+  }
+
+  .monster-attack-thrust::before {
+    width: 145%;
+    height: 11px;
+    border-radius: 999px;
+    background: linear-gradient(90deg, transparent, #d4f8ff, #fff, #6dd7ff, transparent);
+    box-shadow: 0 0 12px #4bcaff, 0 0 24px #1487ca;
+    transform: translate(-30%, -50%) rotate(-24deg) scaleX(.08);
+    transform-origin: 15% 50%;
+    animation: monsterAttackThrust 340ms cubic-bezier(.12,.75,.2,1) both;
+  }
+
+  .monster-attack-thrust::after {
+    width: 25%;
+    aspect-ratio: 1;
+    border: 2px solid #c9f2ff;
+    border-radius: 50%;
+    box-shadow: 0 0 14px #54cfff;
+    transform: translate(90%, -95%) scale(.2);
+    animation: monsterAttackBurst 300ms ease-out 100ms both;
+  }
+
+  .monster-attack-fire::before {
+    background: radial-gradient(ellipse at 50% 65%, #fff7b0 0 8%, #ffcf42 18%, #ff6b1b99 48%, transparent 72%);
+    filter: drop-shadow(0 0 12px #ff7a1a);
+    animation: monsterAttackFlame 520ms ease-in-out both;
+  }
+
+  .monster-attack-fire::after {
+    width: 125%;
+    border: 3px solid #ff8b2b;
+    box-shadow: 0 0 22px #ff4d12, inset 0 0 14px #ffb52e;
+    animation-delay: 100ms;
+  }
+
+  @keyframes monsterAttackSlash {
+    0% { opacity: 0; transform: translate(-75%, -75%) rotate(-32deg) scaleX(.08); }
+    25% { opacity: 1; }
+    100% { opacity: 0; transform: translate(-25%, -25%) rotate(-32deg) scaleX(1); }
+  }
+
+  @keyframes monsterAttackThrust {
+    0% { opacity: 0; transform: translate(-45%, -50%) rotate(-24deg) scaleX(.08); }
+    20% { opacity: 1; }
+    65% { opacity: 1; transform: translate(0, -50%) rotate(-24deg) scaleX(1); }
+    100% { opacity: 0; transform: translate(35%, -50%) rotate(-24deg) scaleX(.7); }
+  }
+
+  @keyframes monsterAttackBurst {
+    0% { opacity: 0; transform: translate(-50%, -50%) scale(.2); }
+    28% { opacity: 1; }
+    100% { opacity: 0; transform: translate(-50%, -50%) scale(1.35); }
+  }
+
+  @keyframes monsterAttackFlame {
+    0% { opacity: 0; transform: translate(-50%, -35%) scale(.25) rotate(-10deg); }
+    25% { opacity: 1; transform: translate(-50%, -55%) scale(1.12) rotate(6deg); }
+    65% { opacity: .95; transform: translate(-50%, -58%) scale(.95) rotate(-5deg); }
+    100% { opacity: 0; transform: translate(-50%, -85%) scale(1.35) rotate(8deg); }
   }
 
   .monster-effect {

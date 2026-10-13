@@ -1023,6 +1023,7 @@ function applyAttack(battleState, efficiency, targetId) {
     battleState.lastTurnEvents.push({
       actor: 'player',
       type: ACTION_TYPES.ATTACK,
+      attackEffect: '',
       targetMonsterId: target.instanceId || target.monsterId,
       targetName: target.name,
       damage: 0,
@@ -1048,6 +1049,7 @@ function applyAttack(battleState, efficiency, targetId) {
   battleState.lastTurnEvents.push({
     actor: 'player',
     type: ACTION_TYPES.ATTACK,
+    attackEffect: '',
     targetMonsterId: target.instanceId || target.monsterId,
     targetName: target.name,
     damage: damageResult.damage,
@@ -1157,6 +1159,7 @@ function applyMonsterTurn(battleState) {
     events.push({
       actor: 'monster',
       type: ACTION_TYPES.ATTACK,
+      attackEffect: monster.intent && monster.intent.attackEffect || '',
       monsterId: monster.instanceId || monster.monsterId,
       monsterName: monster.name,
       damage: damage,
@@ -1214,6 +1217,9 @@ function selectMonsterAction(monster, aiRows, battleState) {
     skillId: row.skillId || '',
     skillType: skill ? skill.type || '' : '',
     skillName: skill ? skill.name || '' : '',
+    attackEffect: normalizedActionType === ACTION_TYPES.SKILL
+      ? (skill && skill.monsterAttackEffect || '')
+      : (row.attackEffect || ''),
     hitCount: skill ? calculateMonsterSkillHitCount_(battleState, monster, skill) : 1,
     intentIcon: row.intentIcon || 'sword',
     intentTextTemplate: row.intentTextTemplate || '',
@@ -1497,6 +1503,7 @@ function refreshMonsterSkillIntent_(battleState, monster) {
   }
   intent.skillType = skill.type || '';
   intent.skillName = skill.name || '';
+  intent.attackEffect = skill.monsterAttackEffect || '';
   intent.hitCount = calculateMonsterSkillHitCount_(battleState, monster, skill);
   intent.value = calculateMonsterIntentValue_(intent, monster, battleState, skill);
   intent.intentText = buildIntentText(intent, monster, battleState, skill);
@@ -1545,6 +1552,7 @@ function applyMonsterAttackIntent_(battleState, monster, intent) {
     battleState.lastTurnEvents.push({
       actor: 'monster',
       type: ACTION_TYPES.ATTACK,
+      attackEffect: intent.attackEffect || '',
       monsterId: monster.instanceId || monster.monsterId,
       monsterName: monster.name,
       damage: 0,
@@ -1570,6 +1578,7 @@ function applyMonsterAttackIntent_(battleState, monster, intent) {
   battleState.lastTurnEvents.push({
     actor: 'monster',
     type: ACTION_TYPES.ATTACK,
+    attackEffect: intent.attackEffect || '',
     monsterId: monster.instanceId || monster.monsterId,
     monsterName: monster.name,
     damage: result.damage,
@@ -1623,6 +1632,7 @@ function applyMonsterSkillIntent_(battleState, monster, intent) {
           actor: 'monster',
           type: ACTION_TYPES.SKILL,
           skillId: skill.skillId,
+          attackEffect: skill.monsterAttackEffect || '',
           monsterId: monster.instanceId || monster.monsterId,
           monsterName: monster.name,
           damage: 0,
@@ -1641,6 +1651,7 @@ function applyMonsterSkillIntent_(battleState, monster, intent) {
         actor: 'monster',
         type: ACTION_TYPES.SKILL,
         skillId: skill.skillId,
+        attackEffect: skill.monsterAttackEffect || '',
         monsterId: monster.instanceId || monster.monsterId,
         monsterName: monster.name,
         damage: result.damage,
@@ -2656,6 +2667,8 @@ function buildClientMonsterAiRules_(battleState) {
       skillId: row.skillId || '',
       skillType: skill ? skill.type || '' : '',
       skillName: skill ? skill.name || '' : '',
+      attackEffect: row.attackEffect || '',
+      skillAttackEffect: skill ? skill.monsterAttackEffect || '' : '',
       skillBaseValue: skill ? Number(skill.baseValue || 0) : 0,
       skillHitCount: skill ? Math.max(1, Math.round(Number(skill.hitCount || 1))) : 1,
       skillRule: effectConfig,

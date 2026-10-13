@@ -66,6 +66,27 @@ function ensureSheet_(sheetName, headers) {
     sheet.insertColumnsAfter(sheet.getMaxColumns(), headers.length - sheet.getMaxColumns());
   }
 
+  if (sheet.getLastRow() > 1) {
+    var hasExistingHeader = sheet.getMaxColumns() > 0
+      && sheet.getRange(1, 1).getValue() !== '';
+    if (!hasExistingHeader) {
+      sheet.insertRowsBefore(1, 1);
+    }
+    var existingHeaders = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    var seenHeaders = {};
+    existingHeaders.forEach(function(header) { if (header) seenHeaders[header] = true; });
+    var missingHeaders = headers.filter(function(header) { return !seenHeaders[header]; });
+    var lastColumn = sheet.getLastColumn();
+    if (sheet.getMaxColumns() < lastColumn + missingHeaders.length) {
+      sheet.insertColumnsAfter(Math.max(1, sheet.getMaxColumns()), lastColumn + missingHeaders.length - sheet.getMaxColumns());
+    }
+    if (missingHeaders.length) {
+      sheet.getRange(1, lastColumn + 1, 1, missingHeaders.length).setValues([missingHeaders]);
+    }
+    sheet.setFrozenRows(1);
+    return sheet;
+  }
+
   sheet.getRange(1, 1, 1, sheet.getMaxColumns()).clearContent();
   sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
   sheet.setFrozenRows(1);
@@ -75,7 +96,7 @@ function ensureSheet_(sheetName, headers) {
 function ensureTableColumns_(sheetName, headers) {
   if (getPinnedGameDataTable_(sheetName) !== null || isDeferredRunTable_(sheetName)) return headers;
   var sheet = getSheet_(sheetName);
-  var currentHeaders = getHeaderRow_(sheet);
+  var currentHeaders = sheet.getLastColumn() ? sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0] : [];
   var existing = {};
   currentHeaders.forEach(function(header) {
     existing[header] = true;
@@ -87,10 +108,11 @@ function ensureTableColumns_(sheetName, headers) {
     return currentHeaders;
   }
 
-  if (sheet.getMaxColumns() < currentHeaders.length + missing.length) {
-    sheet.insertColumnsAfter(sheet.getMaxColumns(), currentHeaders.length + missing.length - sheet.getMaxColumns());
+  var currentColumnCount = sheet.getLastColumn();
+  if (sheet.getMaxColumns() < currentColumnCount + missing.length) {
+    sheet.insertColumnsAfter(Math.max(1, sheet.getMaxColumns()), currentColumnCount + missing.length - sheet.getMaxColumns());
   }
-  sheet.getRange(1, currentHeaders.length + 1, 1, missing.length).setValues([missing]);
+  sheet.getRange(1, currentColumnCount + 1, 1, missing.length).setValues([missing]);
   clearTableCache_(sheetName);
   return currentHeaders.concat(missing);
 }

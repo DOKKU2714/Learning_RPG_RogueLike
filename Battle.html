@@ -4934,7 +4934,7 @@
           var effectEventMessage = event.message || '';
           if (event.target === 'monster') {
             event.targetMonsterId = event.targetMonsterId || getFirstAliveMonsterId(currentView && currentView.battle);
-            await animatePlayerAttack(event.targetMonsterId);
+            await animatePlayerAttack(event.targetMonsterId, event.attackEffect);
             await skippableAutoDelay(ATTACK_EFFECT_DELAY_MS);
             pushLog(effectEventMessage);
             await animateMonsterHit(event.targetMonsterId, event.damage, event.hpDamage, event.shieldDamage, event.isCritical, undefined, event.displayDamage);
@@ -5098,7 +5098,7 @@
         event.targetMonsterId = event.targetMonsterId || getFirstAliveMonsterId(currentView && currentView.battle);
       });
       for (var i = 0; i < events.length; i += 1) {
-        attackEffectPromises.push(animatePlayerAttack(events[i].targetMonsterId));
+        attackEffectPromises.push(animatePlayerAttack(events[i].targetMonsterId, events[i].attackEffect));
         if (i < events.length - 1) {
           await skippableAutoDelay(MULTI_HIT_EFFECT_INTERVAL_MS);
         }
@@ -5144,7 +5144,7 @@
         } else {
           animatePlayerHit(event.damage || 0, event.hpDamage || 0, event.shieldDamage || 0, event.isCritical);
         }
-      });
+      }, event.attackEffect);
     }
 
     async function playMonsterMultiHitSequence(events) {
@@ -5467,6 +5467,7 @@
         skillRule: rule.skillRule || {},
         skillEffectChance: rule.skillEffectChance,
         skillEffect: rule.skillEffect || null,
+        attackEffect: actionType === 'skill' ? (rule.skillAttackEffect || '') : (rule.attackEffect || ''),
         intentIcon: rule.intentIcon || 'sword',
         intentTextTemplate: rule.intentTextTemplate || '',
         value: value,
@@ -9005,17 +9006,27 @@
       return Number(score || 0).toLocaleString('ko-KR') + '점';
     }
 
-    async function animatePlayerAttack(monsterId) {
+    async function animatePlayerAttack(monsterId, attackEffect) {
       var target = document.querySelector('[data-monster-id="' + cssEscape(monsterId) + '"] .compact-monster');
       if (!target) return;
+      var effectType = normalizePlayerAttackEffect(attackEffect);
+      target.dataset.attackEffect = effectType;
       playBattleSound('swing');
       target.classList.remove('incoming-slash');
+      target.classList.remove('incoming-blunt', 'incoming-punch', 'incoming-thrust');
       void target.offsetWidth;
-      target.classList.add('incoming-slash');
+      target.classList.add('incoming-' + effectType);
       await skippableAutoDelay(ATTACK_EFFECT_DELAY_MS);
     }
 
-    async function animateMonsterAttack(monsterId, onImpact) {
+    function normalizePlayerAttackEffect(value) {
+      var allowed = ['slash', 'blunt', 'punch', 'thrust'];
+      var effect = String(value || '').trim().toLowerCase();
+      if (allowed.indexOf(effect) !== -1) return effect;
+      return allowed[Math.floor(Math.random() * allowed.length)];
+    }
+
+    async function animateMonsterAttack(monsterId, onImpact, attackEffect) {
       var target = document.querySelector('[data-monster-id="' + cssEscape(monsterId) + '"] .compact-monster');
       if (!target) {
         if (onImpact && !workbookDeadlineExpired) onImpact();
@@ -9023,19 +9034,25 @@
       }
       var animationToken = String(Number(target.dataset.attackAnimationToken || 0) + 1);
       target.dataset.attackAnimationToken = animationToken;
-      target.classList.remove('monster-lunge');
+      target.classList.remove('monster-lunge', 'monster-attack-slash', 'monster-attack-blunt', 'monster-attack-thrust', 'monster-attack-fire');
       setMonsterSpriteState(target, 'attack');
       void target.offsetWidth;
       await skippableAutoDelay(MONSTER_ATTACK_WINDUP_MS);
       playBattleSound('swing');
       target.classList.add('monster-lunge');
+      target.classList.add('monster-attack-' + normalizeMonsterAttackEffect(attackEffect));
       await skippableAutoDelay(MONSTER_ATTACK_IMPACT_DELAY_MS);
       if (onImpact && !workbookDeadlineExpired) onImpact();
       await skippableAutoDelay(Math.max(0, MONSTER_ATTACK_LUNGE_MS - MONSTER_ATTACK_IMPACT_DELAY_MS));
       if (target.dataset.attackAnimationToken === animationToken) {
-        target.classList.remove('monster-lunge');
+        target.classList.remove('monster-lunge', 'monster-attack-slash', 'monster-attack-blunt', 'monster-attack-thrust', 'monster-attack-fire');
         resetMonsterSpriteState(target);
       }
+    }
+
+    function normalizeMonsterAttackEffect(value) {
+      var effect = String(value || '').trim().toLowerCase();
+      return ['slash', 'blunt', 'thrust', 'fire'].indexOf(effect) !== -1 ? effect : 'slash';
     }
 
     function animateMonsterHit(monsterId, damage, hpDamage, shieldDamage, isCritical, attackEfficiency, displayDamage) {
@@ -9058,6 +9075,7 @@
         playBattleHitSound(isCritical);
       }
       target.classList.remove('monster-hit', 'monster-hit-red', 'monster-hit-white');
+      target.classList.remove('incoming-slash', 'incoming-blunt', 'incoming-punch', 'incoming-thrust');
       setMonsterSpriteState(target, 'hit');
       void target.offsetWidth;
       target.classList.add('monster-hit');
