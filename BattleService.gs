@@ -682,6 +682,9 @@ function passPlayerTurn(runId, authToken) {
       battleState.lastMessage = '몬스터를 처치했습니다.';
       logBattleEvent_(run, STATUS.BATTLE_VICTORY, { battleId: battleState.battleId });
     } else {
+      getAliveMonsters_(battleState).forEach(function(monster) {
+        applyMonsterBurnDamage_(monster, battleState);
+      });
       clearMonsterTurnShields_(battleState);
       applyMonsterTurn(battleState);
       clearPlayerTurnShield_(battleState);
@@ -1131,6 +1134,7 @@ function applyMonsterTurn(battleState) {
       });
       return;
     }
+    applyStackedDamageEffect_(monster, 'debuff_bleed', battleState, 'monster');
     applyTimedEffectDamage_(monster, TRIGGER_TIMINGS.ON_ACTION, battleState, 'monster');
     if (Number(monster.currentHp || 0) <= 0) {
       return;

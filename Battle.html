@@ -2264,10 +2264,10 @@
       if (customDescription) {
         return renderStatusDescriptionTemplate(status, customDescription);
       }
-      if (id === 'debuff_bleed') return '행동할 때마다 ' + amount + ' 피해를 받습니다.';
-      if (id === 'debuff_poison') return '턴 종료 시 ' + amount + ' 피해를 받습니다.';
+      if (id === 'debuff_bleed') return '행동 시 최대 체력의 0.7% × ' + Math.max(1, Number(status.stacks || 1)) + '스택 피해를 받고, 스택 1을 소모합니다. 보호막을 무시합니다.';
+      if (id === 'debuff_poison') return '턴 종료 시 스택당 1 피해를 받고, 스택 1을 소모합니다. 보호막을 무시합니다.';
       if (id === 'debuff_freeze') return '행동할 수 없습니다. 공격받으면 추가 피해와 함께 해제됩니다.';
-      if (id === 'debuff_burn') return '턴 시작 시 ' + amount + ' 피해를 받습니다.';
+      if (id === 'debuff_burn') return '턴 시작 시 최대 체력의 1% × ' + Math.max(1, Number(status.stacks || 1)) + '스택 피해를 받고, 스택 1을 소모합니다. 보호막이 먼저 피해를 흡수합니다.';
       if (id === 'debuff_stun') return '1턴 동안 행동할 수 없습니다.';
 
       var statLabel = getStatLabel(status.statKey);
@@ -4934,8 +4934,10 @@
           var effectEventMessage = event.message || '';
           if (event.target === 'monster') {
             event.targetMonsterId = event.targetMonsterId || getFirstAliveMonsterId(currentView && currentView.battle);
-            await animatePlayerAttack(event.targetMonsterId, event.attackEffect);
-            await skippableAutoDelay(ATTACK_EFFECT_DELAY_MS);
+            if (event.attackEffect) {
+              await animatePlayerAttack(event.targetMonsterId, event.attackEffect);
+              await skippableAutoDelay(ATTACK_EFFECT_DELAY_MS);
+            }
             pushLog(effectEventMessage);
             await animateMonsterHit(event.targetMonsterId, event.damage, event.hpDamage, event.shieldDamage, event.isCritical, undefined, event.displayDamage);
             await finishActionDescription();
@@ -4960,7 +4962,7 @@
           var playerEventMessage = event.message || 'Player action!';
           if (event.type === 'attack' || event.type === 'skill') {
             event.targetMonsterId = event.targetMonsterId || getFirstAliveMonsterId(currentView && currentView.battle);
-            await animatePlayerAttack(event.targetMonsterId);
+            await animatePlayerAttack(event.targetMonsterId, event.attackEffect);
             pushLog(playerEventMessage);
             if (event.missed) {
               await animateMonsterMiss(event.targetMonsterId);
@@ -9013,14 +9015,15 @@
       target.dataset.attackEffect = effectType;
       playBattleSound('swing');
       target.classList.remove('incoming-slash');
-      target.classList.remove('incoming-blunt', 'incoming-punch', 'incoming-thrust');
+      target.classList.remove('incoming-blunt', 'incoming-punch', 'incoming-thrust', 'incoming-fire');
+      target.classList.remove('monster-attack-slash', 'monster-attack-blunt', 'monster-attack-thrust', 'monster-attack-fire');
       void target.offsetWidth;
-      target.classList.add('incoming-' + effectType);
+      target.classList.add(effectType === 'fire' ? 'monster-attack-fire' : 'incoming-' + effectType);
       await skippableAutoDelay(ATTACK_EFFECT_DELAY_MS);
     }
 
     function normalizePlayerAttackEffect(value) {
-      var allowed = ['slash', 'blunt', 'punch', 'thrust'];
+      var allowed = ['slash', 'blunt', 'punch', 'thrust', 'fire'];
       var effect = String(value || '').trim().toLowerCase();
       if (allowed.indexOf(effect) !== -1) return effect;
       return allowed[Math.floor(Math.random() * allowed.length)];
@@ -9075,7 +9078,7 @@
         playBattleHitSound(isCritical);
       }
       target.classList.remove('monster-hit', 'monster-hit-red', 'monster-hit-white');
-      target.classList.remove('incoming-slash', 'incoming-blunt', 'incoming-punch', 'incoming-thrust');
+      target.classList.remove('incoming-slash', 'incoming-blunt', 'incoming-punch', 'incoming-thrust', 'incoming-fire');
       setMonsterSpriteState(target, 'hit');
       void target.offsetWidth;
       target.classList.add('monster-hit');

@@ -710,6 +710,7 @@ function executeSkillByRule_(battleState, skill, rule, efficiency, isCorrect) {
           actor: 'player',
           type: ACTION_TYPES.SKILL,
           skillId: skill.skillId,
+          attackEffect: skill.attackEffect || '',
           targetMonsterId: damageTarget.instanceId || damageTarget.monsterId,
           damage: 0,
           missed: true,
@@ -735,6 +736,7 @@ function executeSkillByRule_(battleState, skill, rule, efficiency, isCorrect) {
         actor: 'player',
         type: ACTION_TYPES.SKILL,
         skillId: skill.skillId,
+        attackEffect: skill.attackEffect || '',
         targetMonsterId: damageTarget.instanceId || damageTarget.monsterId,
         damage: damageResult.damage,
         shieldDamage: damageResult.shieldDamage,
@@ -1450,7 +1452,7 @@ function processImmediateSkillRuleActions_(battleState, skill, actionRule, targe
       if (damage > 0) {
         var result = dealDamageToMonster_(battleState, target, damage);
         battleState.lastTurnEvents = battleState.lastTurnEvents || [];
-        battleState.lastTurnEvents.push({ actor: 'effect', type: 'ruleDamage', target: 'monster', targetMonsterId: target.instanceId || target.monsterId, damage: result.damage, shieldDamage: result.shieldDamage, hpDamage: result.hpDamage, message: skill.name + ' 효과로 ' + result.damage + ' 피해를 주었습니다.' });
+        battleState.lastTurnEvents.push({ actor: 'effect', type: 'ruleDamage', target: 'monster', attackEffect: skill.attackEffect || (skill.skillId === 'skill_ignite' ? 'fire' : ''), targetMonsterId: target.instanceId || target.monsterId, damage: result.damage, shieldDamage: result.shieldDamage, hpDamage: result.hpDamage, message: skill.name + ' 효과로 ' + result.damage + ' 피해를 주었습니다.' });
       }
     }
   }
@@ -1805,6 +1807,7 @@ function tickEffectsAtTurnStart(battleState) {
 
 function tickEffectsOnPlayerAction(battleState) {
   normalizeBattleStateEffects_(battleState);
+  applyStackedDamageEffect_(battleState.player, 'debuff_bleed', battleState, 'player');
   applyTimedEffectDamage_(battleState.player, TRIGGER_TIMINGS.ON_ACTION, battleState, 'player');
   return battleState;
 }
@@ -1814,9 +1817,11 @@ function tickEffectsAtTurnEnd(battleState) {
   processSkillTriggers_(battleState, 'onTurnEnd', {});
   applyTimedEffectDamage_(battleState.player, TRIGGER_TIMINGS.TURN_END, battleState, 'player');
   getAliveMonsters_(battleState).forEach(function(monster) {
+    applyStackedDamageEffect_(monster, 'debuff_poison', battleState, 'monster');
     applyTimedEffectDamage_(monster, TRIGGER_TIMINGS.TURN_END, battleState, 'monster');
     decrementTurnEffects_(monster, battleState);
   });
+  applyStackedDamageEffect_(battleState.player, 'debuff_poison', battleState, 'player');
   decrementTurnEffects_(battleState.player, battleState);
   cleanupSkillTriggersForTurn_(battleState);
   return battleState;
@@ -2154,6 +2159,30 @@ function normalizeEffectCategory_(effect, fallbackCategory) {
 }
 
 function hydrateEffectDisplayFields_(effect) {
+  if (effect && effect.effectId === 'debuff_burn') {
+    effect.value = -1;
+    effect.durationType = DURATION_TYPES.TURN;
+    effect.stackable = true;
+    effect.maxStacks = Math.max(1, Number(effect.maxStacks || 99));
+    effect.triggerTiming = TRIGGER_TIMINGS.TURN_START;
+    effect.description = '턴 시작 시 스택당 최대 체력의 1% 피해를 받고 스택 1을 소모한다. 보호막이 먼저 피해를 흡수한다.';
+  }
+  if (effect && effect.effectId === 'debuff_bleed') {
+    effect.value = -0.7;
+    effect.durationType = DURATION_TYPES.TURN;
+    effect.stackable = true;
+    effect.maxStacks = Math.max(1, Number(effect.maxStacks || 99));
+    effect.triggerTiming = TRIGGER_TIMINGS.ON_ACTION;
+    effect.description = '대상이 행동할 때 스택당 최대 체력의 0.7% 피해를 받고 스택 1을 소모한다. 보호막을 무시한다.';
+  }
+  if (effect && effect.effectId === 'debuff_poison') {
+    effect.value = -1;
+    effect.durationType = DURATION_TYPES.TURN;
+    effect.stackable = true;
+    effect.maxStacks = Math.max(1, Number(effect.maxStacks || 99));
+    effect.triggerTiming = TRIGGER_TIMINGS.TURN_END;
+    effect.description = '턴 종료 시 스택당 1 피해를 받고 스택 1을 소모한다. 보호막을 무시한다.';
+  }
   if (effect && effect.effectId === 'debuff_foolish') {
     effect.name = effect.name || '멍청해짐';
     effect.category = EFFECT_CATEGORIES.DEBUFF;
@@ -2322,6 +2351,56 @@ function applyTimedEffectDamage_(target, timing, battleState, actor) {
       message: effect.name + '으로 ' + damage + ' 피해!',
     });
   });
+}
+
+function applyMonsterBurnDamage_(monster, battleState) {
+  return applyStackedDamageEffect_(monster, 'debuff_burn', battleState, 'monster');
+}
+
+function applyStackedDamageEffect_(target, effectId, battleState, actor) {
+  if (!target) return 0;
+  var isMonster = actor === 'monster';
+  var currentHp = Number(isMonster ? target.currentHp || 0 : target.hp || 0);
+  if (currentHp <= 0) return 0;
+  normalizeTargetStatusBuckets_(target);
+  var effect = (target.effects || []).filter(function(candidate) { return candidate.effectId === effectId; })[0];
+  if (!effect) return 0;
+
+  var stacks = Math.max(1, Math.floor(Number(effect.stacks || 1)));
+  var maxHp = Math.max(1, Number(isMonster ? target.maxHp || 1 : target.maxHp || target.stats && target.stats.hp || 1));
+  var rawDamage = effectId === 'debuff_poison'
+    ? stacks
+    : Math.max(1, Math.round(maxHp * stacks * (effectId === 'debuff_burn' ? 0.01 : 0.007)));
+  var bypassesShield = effectId === 'debuff_poison' || effectId === 'debuff_bleed';
+  var shieldDamage = bypassesShield ? 0 : Math.min(Math.max(0, Number(target.shield || 0)), rawDamage);
+  var hpDamage = Math.min(currentHp, rawDamage - shieldDamage);
+  if (!bypassesShield) target.shield = Math.max(0, Number(target.shield || 0) - shieldDamage);
+  if (isMonster) target.currentHp = Math.max(0, currentHp - hpDamage);
+  else target.hp = Math.max(0, currentHp - hpDamage);
+
+  effect.stacks = stacks - 1;
+  effect.remainingTurns = effect.stacks;
+  if (effect.stacks <= 0) {
+    target.effects = (target.effects || []).filter(function(candidate) { return candidate.effectId !== effectId; });
+  }
+  normalizeTargetStatusBuckets_(target);
+  if (battleState) {
+    normalizeBattleStateEffects_(battleState);
+    syncPrimaryMonster_(battleState);
+    battleState.lastTurnEvents = battleState.lastTurnEvents || [];
+    battleState.lastTurnEvents.push({
+      actor: 'effect',
+      type: 'effectDamage',
+      target: isMonster ? 'monster' : 'player',
+      targetMonsterId: isMonster ? (target.instanceId || target.monsterId) : '',
+      attackEffect: effectId === 'debuff_burn' ? 'fire' : '',
+      damage: shieldDamage + hpDamage,
+      hpDamage: hpDamage,
+      shieldDamage: shieldDamage,
+      message: (effect.name || effectId) + ' 피해! (' + stacks + '스택)',
+    });
+  }
+  return shieldDamage + hpDamage;
 }
 
 function decrementTurnEffects_(target, battleState) {

@@ -2653,17 +2653,21 @@
 
   .incoming-blunt,
   .incoming-punch,
-  .incoming-thrust {
+  .incoming-thrust,
+  .incoming-fire {
     position: relative;
     overflow: visible;
+    animation: attackTargetSnap 420ms cubic-bezier(.15,.85,.25,1);
   }
 
   .incoming-blunt::before,
   .incoming-punch::before,
   .incoming-thrust::before,
+  .incoming-fire::before,
   .incoming-blunt::after,
   .incoming-punch::after,
-  .incoming-thrust::after {
+  .incoming-thrust::after,
+  .incoming-fire::after {
     content: '';
     position: absolute;
     left: 50%;
@@ -2681,27 +2685,33 @@
     aspect-ratio: 1;
     border: 7px solid #ffc45e;
     box-shadow: 0 0 18px #ff9d35, inset 0 0 12px #ffd66e;
+    animation: attackImpactRing 460ms cubic-bezier(.12,.8,.25,1) both;
   }
 
   .incoming-blunt::after {
-    width: 96%;
-    aspect-ratio: 1;
-    border: 2px solid #fff0ba;
-    animation-delay: 70ms;
+    width: 110%;
+    height: 8px;
+    border-radius: 50%;
+    background: linear-gradient(90deg, transparent, #fff7d0, #ffb53d, transparent);
+    transform: translate(-50%, -50%) rotate(-28deg) scaleX(.1);
+    animation: attackShockWave 390ms ease-out 70ms both;
   }
 
   .incoming-punch::before {
-    width: 56%;
+    width: 60%;
     aspect-ratio: 1;
-    background: radial-gradient(circle, #fff4ca 0 12%, #ff9b42aa 38%, transparent 72%);
+    background: radial-gradient(circle, #fff 0 6%, #fff1ba 14%, #ff852e 34%, #f23515aa 52%, transparent 72%);
+    filter: drop-shadow(0 0 16px #ff4d1d);
+    animation: fistFlash 320ms cubic-bezier(.12,.8,.2,1) both;
   }
 
   .incoming-punch::after {
-    width: 78%;
-    height: 12px;
+    width: 92%;
+    height: 6px;
     border-radius: 50%;
-    background: linear-gradient(90deg, transparent, #fff8e8, #ffb04c, transparent);
-    animation-delay: 45ms;
+    background: linear-gradient(90deg, transparent, #fff, #ffb04c, transparent);
+    transform: translate(-50%, -50%) rotate(-18deg) scaleX(.05);
+    animation: punchTrail 300ms ease-out both;
   }
 
   .incoming-thrust::before {
@@ -2710,9 +2720,10 @@
     width: 92%;
     height: 12px;
     border-radius: 999px;
-    background: linear-gradient(90deg, transparent 0%, #c9f2ff 22%, #fff 48%, #76d9ff 78%, transparent 100%);
-    box-shadow: 0 0 10px #74ddff, 0 0 24px #259bdc;
-    transform: translate(-50%, -50%) rotate(-24deg) scaleX(.08);
+    background: linear-gradient(90deg, transparent 0%, #1799ee 12%, #8cecff 34%, #fff 48%, #8cecff 62%, #1799ee 86%, transparent 100%);
+    box-shadow: 0 0 14px #74ddff, 0 0 34px #259bdc, 0 0 54px #259bdc88;
+    clip-path: polygon(0 50%, 76% 8%, 100% 50%, 76% 92%);
+    transform: translate(-50%, -50%) rotate(-24deg) scaleX(.02);
     transform-origin: 15% 50%;
     animation: playerAttackThrust 360ms cubic-bezier(.12,.75,.2,1) both;
   }
@@ -2720,17 +2731,72 @@
   .incoming-thrust::after {
     left: 72%;
     top: 39%;
-    width: 28%;
-    height: 28%;
-    border: 2px solid #c9f2ff;
-    box-shadow: 0 0 14px #54cfff;
-    animation-delay: 100ms;
+    width: 34%;
+    height: 34%;
+    border: 3px solid #e9fcff;
+    box-shadow: 0 0 14px #54cfff, inset 0 0 10px #54cfff;
+    animation: attackImpactRing 300ms ease-out 150ms both;
+  }
+
+  .incoming-fire::before {
+    width: 88%;
+    height: 108%;
+    background:
+      radial-gradient(ellipse at 50% 70%, #fff 0 5%, #fff9be 12%, #ffd447 24%, #ff721c 42%, #df210a99 58%, transparent 74%);
+    filter: drop-shadow(0 0 15px #ff891f) drop-shadow(0 0 34px #ff3b0c);
+    animation: playerFireBurst 560ms cubic-bezier(.18,.72,.2,1) both;
+  }
+
+  .incoming-fire::after {
+    width: 118%;
+    height: 72%;
+    border: 3px solid #ff8c27;
+    box-shadow: 0 0 18px #ff4d12, inset 0 0 14px #ffbd35;
+    animation: attackImpactRing 420ms ease-out 90ms both;
   }
 
   @keyframes playerAttackBurst {
     0% { opacity: 0; transform: translate(-50%, -50%) scale(.2); }
     25% { opacity: .95; }
     100% { opacity: 0; transform: translate(-50%, -50%) scale(1.35); }
+  }
+
+  @keyframes attackTargetSnap {
+    0%, 100% { filter: brightness(1); }
+    38% { filter: brightness(1.55) saturate(1.3); transform: translateX(-5px) scale(1.04); }
+    58% { transform: translateX(3px) scale(.98); }
+  }
+
+  @keyframes attackImpactRing {
+    0% { opacity: 0; transform: translate(-50%, -50%) scale(.18) rotate(-25deg); }
+    24% { opacity: 1; }
+    100% { opacity: 0; transform: translate(-50%, -50%) scale(1.65) rotate(18deg); }
+  }
+
+  @keyframes attackShockWave {
+    0% { opacity: 0; transform: translate(-50%, -50%) rotate(-28deg) scaleX(.08); }
+    32% { opacity: 1; }
+    100% { opacity: 0; transform: translate(-50%, -50%) rotate(-28deg) scaleX(1.1); }
+  }
+
+  @keyframes fistFlash {
+    0% { opacity: 0; transform: translate(-50%, -50%) scale(.15) rotate(-30deg); }
+    35% { opacity: 1; transform: translate(-50%, -50%) scale(1.15) rotate(12deg); }
+    100% { opacity: 0; transform: translate(-50%, -50%) scale(1.45) rotate(25deg); }
+  }
+
+  @keyframes punchTrail {
+    0% { opacity: 0; transform: translate(-70%, -50%) rotate(-18deg) scaleX(.05); }
+    35% { opacity: .95; }
+    100% { opacity: 0; transform: translate(-20%, -50%) rotate(-18deg) scaleX(1); }
+  }
+
+  @keyframes playerFireBurst {
+    0% { opacity: 0; transform: translate(-60%, -28%) scale(.18,.3) rotate(-12deg); }
+    18% { opacity: 1; transform: translate(-55%, -52%) scale(1.05,.9) rotate(8deg); }
+    48% { opacity: 1; transform: translate(-48%, -64%) scale(1.22,1.1) rotate(-7deg); }
+    72% { opacity: .88; transform: translate(-42%, -54%) scale(1.12,1.2) rotate(6deg); }
+    100% { opacity: 0; transform: translate(-34%, -78%) scale(1.42,1.35) rotate(15deg); }
   }
 
   @keyframes playerAttackThrust {

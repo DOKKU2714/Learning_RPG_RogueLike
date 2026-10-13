@@ -44,6 +44,11 @@ var RULE_ENGINE_SHARED = (function() {
 
   function normalizeEffectInstance(effect, sourceInfo, turn) {
     var payload = Object.assign({}, effect || {});
+    if (payload.effectId === 'debuff_burn' || payload.effectId === 'debuff_bleed' || payload.effectId === 'debuff_poison') {
+      payload.durationType = 'turn';
+      payload.stackable = true;
+      payload.maxStacks = Math.max(99, Number(payload.maxStacks || 0));
+    }
     payload.value = Number(payload.value || 0);
     payload.stackable = isTruthy(payload.stackable);
     payload.maxStacks = Math.max(1, Number(payload.maxStacks || 1));
@@ -190,6 +195,7 @@ var RULE_ENGINE_SHARED = (function() {
     if (!target) return 0;
     var totalDamage = 0;
     (target.effects || []).forEach(function(effect) {
+      if (effect.effectId === 'debuff_burn' || effect.effectId === 'debuff_bleed' || effect.effectId === 'debuff_poison') return;
       if (effect.triggerTiming !== timing || effect.statKey !== 'hp' || effect.effectType !== 'flat' || Number(effect.value || 0) >= 0) return;
       if (currentTurn !== undefined && effect.appliedAtTurn !== undefined && Number(effect.appliedAtTurn || 0) === Number(currentTurn || 0)) return;
       var damage = Math.abs(Number(effect.value || 0)) * Math.max(1, Number(effect.stacks || 1));
@@ -222,7 +228,7 @@ var RULE_ENGINE_SHARED = (function() {
       syncStatusBuckets(target);
     }
     target.effects = (target.effects || []).map(function(effect) {
-      if (effect.durationType === 'turn') {
+      if (effect.durationType === 'turn' && effect.effectId !== 'debuff_burn' && effect.effectId !== 'debuff_bleed' && effect.effectId !== 'debuff_poison') {
         if (effect.effectId !== 'debuff_foolish'
           && !(target.currentHp !== undefined && effect.statKey === 'action' && effect.effectType === 'control')
           && currentTurn !== undefined
