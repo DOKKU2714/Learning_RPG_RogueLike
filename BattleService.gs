@@ -1221,8 +1221,9 @@ function selectMonsterAction(monster, aiRows, battleState) {
     skillId: row.skillId || '',
     skillType: skill ? skill.type || '' : '',
     skillName: skill ? skill.name || '' : '',
+    skillAttackEffect: normalizedActionType === ACTION_TYPES.SKILL ? (row.skillAttackEffect || '') : '',
     attackEffect: normalizedActionType === ACTION_TYPES.SKILL
-      ? (skill && skill.monsterAttackEffect || '')
+      ? (row.skillAttackEffect || '')
       : (row.attackEffect || ''),
     hitCount: skill ? calculateMonsterSkillHitCount_(battleState, monster, skill) : 1,
     intentIcon: row.intentIcon || 'sword',
@@ -1507,7 +1508,8 @@ function refreshMonsterSkillIntent_(battleState, monster) {
   }
   intent.skillType = skill.type || '';
   intent.skillName = skill.name || '';
-  intent.attackEffect = skill.monsterAttackEffect || '';
+  intent.skillAttackEffect = String(intent.skillAttackEffect || '');
+  intent.attackEffect = intent.skillAttackEffect;
   intent.hitCount = calculateMonsterSkillHitCount_(battleState, monster, skill);
   intent.value = calculateMonsterIntentValue_(intent, monster, battleState, skill);
   intent.intentText = buildIntentText(intent, monster, battleState, skill);
@@ -1636,7 +1638,7 @@ function applyMonsterSkillIntent_(battleState, monster, intent) {
           actor: 'monster',
           type: ACTION_TYPES.SKILL,
           skillId: skill.skillId,
-          attackEffect: skill.monsterAttackEffect || '',
+          attackEffect: intent.attackEffect || '',
           monsterId: monster.instanceId || monster.monsterId,
           monsterName: monster.name,
           damage: 0,
@@ -1655,7 +1657,7 @@ function applyMonsterSkillIntent_(battleState, monster, intent) {
         actor: 'monster',
         type: ACTION_TYPES.SKILL,
         skillId: skill.skillId,
-        attackEffect: skill.monsterAttackEffect || '',
+        attackEffect: intent.attackEffect || '',
         monsterId: monster.instanceId || monster.monsterId,
         monsterName: monster.name,
         damage: result.damage,
@@ -1673,23 +1675,23 @@ function applyMonsterSkillIntent_(battleState, monster, intent) {
   } else if (skill.type === SKILL_TYPES.DEBUFF) {
     applyMonsterSkillEffect_(battleState.player, skill, 'player', battleState);
     normalizeBattleStateEffects_(battleState);
-    battleState.lastTurnEvents.push({ actor: 'monster', type: 'debuff', statusSnapshot: { effects: JSON.parse(JSON.stringify(battleState.player.effects || [])) }, skillId: skill.skillId, attackEffect: skill.monsterAttackEffect || '', monsterId: monster.instanceId || monster.monsterId, monsterName: monster.name, damage: 0, message: monster.name + '이 ' + skill.name + ' 사용!' });
+    battleState.lastTurnEvents.push({ actor: 'monster', type: 'debuff', statusSnapshot: { effects: JSON.parse(JSON.stringify(battleState.player.effects || [])) }, skillId: skill.skillId, attackEffect: intent.attackEffect || '', monsterId: monster.instanceId || monster.monsterId, monsterName: monster.name, damage: 0, message: monster.name + '이 ' + skill.name + ' 사용!' });
   } else if (skill.type === SKILL_TYPES.BUFF) {
     applyMonsterSkillEffect_(monster, skill, 'monster', battleState);
     normalizeBattleStateEffects_(battleState);
     syncPrimaryMonster_(battleState);
-    battleState.lastTurnEvents.push({ actor: 'monster', type: 'buff', statusSnapshot: { effects: JSON.parse(JSON.stringify(monster.effects || [])) }, skillId: skill.skillId, attackEffect: skill.monsterAttackEffect || '', monsterId: monster.instanceId || monster.monsterId, monsterName: monster.name, damage: 0, message: monster.name + '이 ' + skill.name + ' 사용!' });
+    battleState.lastTurnEvents.push({ actor: 'monster', type: 'buff', statusSnapshot: { effects: JSON.parse(JSON.stringify(monster.effects || [])) }, skillId: skill.skillId, attackEffect: intent.attackEffect || '', monsterId: monster.instanceId || monster.monsterId, monsterName: monster.name, damage: 0, message: monster.name + '이 ' + skill.name + ' 사용!' });
   } else if (skill.type === SKILL_TYPES.SHIELD) {
     var shield = Math.max(0, Math.round(Number(skill.baseValue || 0) + Number(monsterStats.defense || 0)));
     monster.shield = Number(monster.shield || 0) + shield;
     applyMonsterSkillEffect_(monster, skill, 'monster', battleState);
     normalizeBattleStateEffects_(battleState);
     syncPrimaryMonster_(battleState);
-    battleState.lastTurnEvents.push({ actor: 'monster', type: ACTION_TYPES.GUARD, skillId: skill.skillId, attackEffect: skill.monsterAttackEffect || '', monsterId: monster.instanceId || monster.monsterId, monsterName: monster.name, shield: shield, damage: 0, message: monster.name + '이 ' + skill.name + ' 사용!' });
+    battleState.lastTurnEvents.push({ actor: 'monster', type: ACTION_TYPES.GUARD, skillId: skill.skillId, attackEffect: intent.attackEffect || '', monsterId: monster.instanceId || monster.monsterId, monsterName: monster.name, shield: shield, damage: 0, message: monster.name + '이 ' + skill.name + ' 사용!' });
   } else if (skill.type === SKILL_TYPES.HEAL) {
     var heal = Math.max(0, Math.round(Number(skill.baseValue || 0)));
     monster.currentHp = Math.min(Number(monster.maxHp || 1), Number(monster.currentHp || 0) + heal);
-    battleState.lastTurnEvents.push({ actor: 'monster', type: 'heal', skillId: skill.skillId, attackEffect: skill.monsterAttackEffect || '', monsterId: monster.instanceId || monster.monsterId, monsterName: monster.name, heal: heal, damage: 0, message: monster.name + '이 ' + skill.name + ' 사용!' });
+    battleState.lastTurnEvents.push({ actor: 'monster', type: 'heal', skillId: skill.skillId, attackEffect: intent.attackEffect || '', monsterId: monster.instanceId || monster.monsterId, monsterName: monster.name, heal: heal, damage: 0, message: monster.name + '이 ' + skill.name + ' 사용!' });
   }
   normalizeBattleStateEffects_(battleState);
   syncPrimaryMonster_(battleState);
@@ -2672,7 +2674,7 @@ function buildClientMonsterAiRules_(battleState) {
       skillType: skill ? skill.type || '' : '',
       skillName: skill ? skill.name || '' : '',
       attackEffect: row.attackEffect || '',
-      skillAttackEffect: skill ? skill.monsterAttackEffect || '' : '',
+      skillAttackEffect: row.skillAttackEffect || '',
       skillBaseValue: skill ? Number(skill.baseValue || 0) : 0,
       skillHitCount: skill ? Math.max(1, Math.round(Number(skill.hitCount || 1))) : 1,
       skillRule: effectConfig,

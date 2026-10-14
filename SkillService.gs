@@ -35,7 +35,6 @@ function getAvailableSkills(runState, battleState) {
       effectDetails: buildSkillEffectDetails_(hydrated),
       clientEffects: buildClientSkillEffects_(hydrated),
       attackEffect: hydrated.attackEffect || '',
-      monsterAttackEffect: hydrated.monsterAttackEffect || '',
       previewText: buildSkillPreviewText_(hydrated, battleState),
       available: !reason,
       unavailableReason: reason,

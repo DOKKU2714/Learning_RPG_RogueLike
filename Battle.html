@@ -5192,8 +5192,17 @@
       if (directEffect) return directEffect;
       if (!event.skillId) return '';
       var rules = currentView && currentView.monsterAiRules || [];
+      var monsters = currentView && currentView.battle && currentView.battle.monsters || [];
+      var monster = monsters.filter(function(candidate) {
+        return String(candidate && (candidate.instanceId || candidate.monsterId) || '') === String(event.monsterId || '');
+      })[0];
+      var intent = monster && monster.intent;
+      if (intent && String(intent.skillId || '') === String(event.skillId)) {
+        return String(intent.attackEffect || '').trim();
+      }
       var rule = rules.filter(function(candidate) {
-        return String(candidate && candidate.skillId || '') === String(event.skillId);
+        return String(candidate && candidate.skillId || '') === String(event.skillId)
+          && (!monster || String(candidate && candidate.aiId || '') === String(monster.aiId || ''));
       })[0];
       return String(rule && rule.skillAttackEffect || '').trim();
     }
@@ -5512,6 +5521,7 @@
         skillId: rule.skillId || '',
         skillType: rule.skillType || '',
         skillName: rule.skillName || '',
+        skillAttackEffect: actionType === 'skill' ? (rule.skillAttackEffect || '') : '',
         skillBaseValue: Number(rule.skillBaseValue || 0),
         skillHitCount: calculateClientMonsterSkillHitCount(monster, rule),
         hitCount: calculateClientMonsterSkillHitCount(monster, rule),
