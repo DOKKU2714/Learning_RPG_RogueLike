@@ -2159,7 +2159,6 @@ function normalizeEffectCategory_(effect, fallbackCategory) {
 
 function hydrateEffectDisplayFields_(effect) {
   if (effect && effect.effectId === 'debuff_burn') {
-    effect.value = -1;
     effect.durationType = DURATION_TYPES.TURN;
     effect.stackable = true;
     effect.maxStacks = Math.max(1, Number(effect.maxStacks || 99));
@@ -2167,7 +2166,6 @@ function hydrateEffectDisplayFields_(effect) {
     effect.description = '턴 시작 시 스택당 최대 체력의 1% 피해를 받고 스택 1을 소모한다. 보호막이 먼저 피해를 흡수한다.';
   }
   if (effect && effect.effectId === 'debuff_bleed') {
-    effect.value = -0.7;
     effect.durationType = DURATION_TYPES.TURN;
     effect.stackable = true;
     effect.maxStacks = Math.max(1, Number(effect.maxStacks || 99));
@@ -2175,7 +2173,6 @@ function hydrateEffectDisplayFields_(effect) {
     effect.description = '대상이 행동할 때 스택당 최대 체력의 0.7% 피해를 받고 스택 1을 소모한다. 보호막을 무시한다.';
   }
   if (effect && effect.effectId === 'debuff_poison') {
-    effect.value = -1;
     effect.durationType = DURATION_TYPES.TURN;
     effect.stackable = true;
     effect.maxStacks = Math.max(1, Number(effect.maxStacks || 99));
@@ -2367,9 +2364,20 @@ function applyStackedDamageEffect_(target, effectId, battleState, actor) {
 
   var stacks = Math.max(1, Math.floor(Number(effect.stacks || 1)));
   var maxHp = Math.max(1, Number(isMonster ? target.maxHp || 1 : target.maxHp || target.stats && target.stats.hp || 1));
-  var rawDamage = effectId === 'debuff_poison'
-    ? stacks
-    : Math.max(1, Math.round(maxHp * stacks * (effectId === 'debuff_burn' ? 0.01 : 0.007)));
+  var effectDefinition = findCachedRowByKey_(DB_SHEETS.EFFECTS, 'effectId', effectId, 600);
+  var rawDamage;
+  if (effectDefinition && String(effectDefinition.damageFormula || '').trim()) {
+    // Effects.damageFormula supports maxHp, stacks, and value; the result is rounded and clamped to at least 1.
+    rawDamage = Math.max(1, Math.round(evaluateSkillFormula_(effectDefinition.damageFormula, {
+      maxHp: maxHp,
+      stacks: stacks,
+      value: Number(effect.value !== undefined ? effect.value : effectDefinition.value || 0),
+    }, battleState, null)));
+  } else {
+    rawDamage = effectId === 'debuff_poison'
+      ? stacks
+      : Math.max(1, Math.round(maxHp * stacks * (effectId === 'debuff_burn' ? 0.01 : 0.007)));
+  }
   var bypassesShield = effectId === 'debuff_poison' || effectId === 'debuff_bleed';
   var shieldDamage = bypassesShield ? 0 : Math.min(Math.max(0, Number(target.shield || 0)), rawDamage);
   var hpDamage = Math.min(currentHp, rawDamage - shieldDamage);

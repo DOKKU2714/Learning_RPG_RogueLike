@@ -122,6 +122,17 @@ var GAME_DATA_REQUEST_TABLES_ = {};
 function readTable_(sheetName) {
   var pinnedRows = getPinnedGameDataTable_(sheetName);
   if (pinnedRows !== null) return cloneGameDataRows_(pinnedRows);
+  if (sheetName === DB_SHEETS.EFFECTS) {
+    var effectsSheet = getSheet_(sheetName);
+    var isAddingDamageFormulaColumn = getHeaderRow_(effectsSheet).indexOf('damageFormula') === -1;
+    ensureTableColumns_(sheetName, DB_COLUMNS.EFFECTS);
+    if (isAddingDamageFormulaColumn) {
+      MASTER_EFFECTS.forEach(function(effect) {
+        if (!effect.damageFormula) return;
+        updateRowByKey_(sheetName, 'effectId', effect.effectId, { damageFormula: effect.damageFormula });
+      });
+    }
+  }
   if (isFreshGameDataSheet_(sheetName) && Object.prototype.hasOwnProperty.call(GAME_DATA_REQUEST_TABLES_, sheetName)) {
     return cloneGameDataRows_(GAME_DATA_REQUEST_TABLES_[sheetName]);
   }
@@ -476,7 +487,12 @@ function seedMasterData() {
   });
 
   MASTER_EFFECTS.forEach(function(effect) {
-    upsertRowByKey_(DB_SHEETS.EFFECTS, 'effectId', effect.effectId, effect);
+    var existingEffect = findRowByKey_(DB_SHEETS.EFFECTS, 'effectId', effect.effectId);
+    var seededEffect = Object.assign({}, effect);
+    if (existingEffect && existingEffect.damageFormula !== undefined && existingEffect.damageFormula !== '') {
+      seededEffect.damageFormula = existingEffect.damageFormula;
+    }
+    upsertRowByKey_(DB_SHEETS.EFFECTS, 'effectId', effect.effectId, seededEffect);
   });
 
   MASTER_MONSTER_AI.forEach(function(ai) {
