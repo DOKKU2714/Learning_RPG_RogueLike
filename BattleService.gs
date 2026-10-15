@@ -1124,6 +1124,12 @@ function applyMonsterTurn(battleState) {
     if (battleState.player.hp <= 0) {
       return;
     }
+    // Bleed triggers at the start of a monster's turn even when another
+    // control effect prevents that monster from taking its action.
+    applyStackedDamageEffect_(monster, 'debuff_bleed', battleState, 'monster');
+    if (Number(monster.currentHp || 0) <= 0) {
+      return;
+    }
     if (hasEffect_(monster, 'debuff_stun') || hasEffect_(monster, 'debuff_freeze') || hasEffect_(monster, 'debuff_sleep')) {
       events.push({
         actor: 'monster',
@@ -1134,7 +1140,6 @@ function applyMonsterTurn(battleState) {
       });
       return;
     }
-    applyStackedDamageEffect_(monster, 'debuff_bleed', battleState, 'monster');
     applyTimedEffectDamage_(monster, TRIGGER_TIMINGS.ON_ACTION, battleState, 'monster');
     if (Number(monster.currentHp || 0) <= 0) {
       return;
@@ -2415,6 +2420,7 @@ function logAnswer(answerPayload) {
 
 function queueQuestionAttemptStats_(battleState, question, isCorrect, answerPayload, log) {
   var payload = answerPayload || {};
+  var isMultipleChoice = question.type === QUESTION_TYPES.MULTIPLE_CHOICE;
   if (payload.attemptOnly) {
     if (isCorrect) throw new Error('오답 시도 기록에 정답이 포함되어 있습니다.');
     queueBattleAnswerLog_(battleState, Object.assign({}, log, { isCorrect: false }));
@@ -2423,12 +2429,16 @@ function queueQuestionAttemptStats_(battleState, question, isCorrect, answerPayl
   var wrongCount = Math.max(0, Math.min(question.type === QUESTION_TYPES.MULTIPLE_CHOICE ? 3 : 1000, Math.floor(Number(payload.wrongCountAfterTimeout || 0))));
   // Older clients send only the final result plus a count of earlier wrong choices.
   if (!payload.attemptsRecorded) {
-    for (var i = 0; i < wrongCount; i += 1) {
+    var wrongAttemptsToRecord = isMultipleChoice ? Math.min(1, wrongCount) : wrongCount;
+    for (var i = 0; i < wrongAttemptsToRecord; i += 1) {
       queueBattleAnswerLog_(battleState, Object.assign({}, log, {
         selectedAnswer: '[wrong attempt]', isCorrect: false, answeredCorrectly: false, elapsedMs: 0, efficiency: 0,
       }));
     }
   }
+  // For multiple choice, a wrong first selection is the one result for this
+  // displayed question. Ignore all later selections, including a correction.
+  if (isMultipleChoice && (wrongCount > 0 || payload.attemptsRecorded)) return;
   // A give-up or fatal wrong answer after recorded attempts adds no extra choice.
   if (!isCorrect && (wrongCount > 0 || payload.attemptsRecorded)) return;
   queueBattleAnswerLog_(battleState, Object.assign({}, log, { isCorrect: !!isCorrect }));

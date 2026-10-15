@@ -3002,6 +3002,93 @@
     animation: playerImpactFade 560ms ease-out forwards;
   }
 
+  .dot-effect-overlay {
+    --dot-color: #f23d45;
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    pointer-events: none;
+    z-index: 18;
+  }
+
+  .dot-effect-screen {
+    position: fixed;
+    z-index: 30;
+    border: 12px solid var(--dot-color);
+    box-shadow: inset 0 0 38px 10px var(--dot-color), 0 0 20px var(--dot-color);
+    animation: dotScreenPulse 900ms ease-out forwards;
+  }
+
+  .dot-effect-bleed { --dot-color: #f02f3c; }
+  .dot-effect-poison { --dot-color: #a84be8; }
+  .dot-effect-burn { --dot-color: #ff7628; }
+
+  .dot-effect-particle {
+    position: absolute;
+    display: block;
+    opacity: 0;
+  }
+
+  .dot-effect-bleed .dot-effect-particle,
+  .dot-effect-poison .dot-effect-particle {
+    top: -8%;
+    width: 12px;
+    height: 18px;
+    border-radius: 55% 55% 55% 5%;
+    background: radial-gradient(ellipse at 30% 25%, #fff 0 5%, var(--dot-color) 24%, #720b23 100%);
+    box-shadow: 0 0 10px var(--dot-color);
+    transform: rotate(-45deg);
+    animation-name: dotDropFall;
+    animation-timing-function: cubic-bezier(.35,.02,.7,.55);
+    animation-fill-mode: both;
+  }
+
+  .dot-effect-monster.dot-effect-bleed .dot-effect-particle,
+  .dot-effect-monster.dot-effect-poison .dot-effect-particle {
+    width: 9px;
+    height: 14px;
+  }
+
+  .dot-effect-poison .dot-effect-particle {
+    background: radial-gradient(ellipse at 30% 25%, #f9e6ff 0 5%, #be67f5 24%, #58218a 100%);
+  }
+
+  .dot-effect-burn .dot-effect-particle {
+    bottom: -18%;
+    width: 25px;
+    height: 42px;
+    border-radius: 55% 0 55% 55%;
+    background: radial-gradient(ellipse at 60% 68%, #fff6a4 0 8%, #ffd02f 22%, #ff6421 53%, #c81e12 78%, transparent 80%);
+    filter: drop-shadow(0 0 9px #ff5624);
+    transform: rotate(45deg) scale(.5);
+    animation-name: dotFlameRise;
+    animation-timing-function: ease-out;
+    animation-fill-mode: both;
+  }
+
+  .dot-effect-monster.dot-effect-burn .dot-effect-particle {
+    width: 18px;
+    height: 30px;
+  }
+
+  @keyframes dotScreenPulse {
+    0%, 100% { opacity: 0; }
+    14%, 62% { opacity: .92; }
+    80% { opacity: .35; }
+  }
+
+  @keyframes dotDropFall {
+    0% { opacity: 0; transform: translateY(-3vh) rotate(-45deg) scale(.55); }
+    18% { opacity: .98; }
+    100% { opacity: 0; transform: translateY(112vh) rotate(315deg) scale(.82); }
+  }
+
+  @keyframes dotFlameRise {
+    0% { opacity: 0; transform: translateY(12vh) rotate(45deg) scale(.45); }
+    20%, 48% { opacity: .96; }
+    100% { opacity: 0; transform: translateY(-92vh) rotate(28deg) scale(1.15); }
+  }
+
   .player-impact-slashes {
     position: absolute;
     inset: 0;

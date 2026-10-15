@@ -44,7 +44,8 @@ var RULE_ENGINE_SHARED = (function() {
 
   function normalizeEffectInstance(effect, sourceInfo, turn) {
     var payload = Object.assign({}, effect || {});
-    if (payload.effectId === 'debuff_burn' || payload.effectId === 'debuff_bleed' || payload.effectId === 'debuff_poison') {
+    var isStackedDamageEffect = payload.effectId === 'debuff_burn' || payload.effectId === 'debuff_bleed' || payload.effectId === 'debuff_poison';
+    if (isStackedDamageEffect) {
       payload.durationType = 'turn';
       payload.stackable = true;
       payload.maxStacks = Math.max(99, Number(payload.maxStacks || 0));
@@ -52,7 +53,10 @@ var RULE_ENGINE_SHARED = (function() {
     payload.value = Number(payload.value || 0);
     payload.stackable = isTruthy(payload.stackable);
     payload.maxStacks = Math.max(1, Number(payload.maxStacks || 1));
-    payload.stacks = Math.min(payload.maxStacks, Math.max(1, Math.floor(Number(payload.stacks || 1))));
+    var defaultStacks = isStackedDamageEffect
+      ? (payload.durationTurns || payload.remainingTurns || 1)
+      : 1;
+    payload.stacks = Math.min(payload.maxStacks, Math.max(1, Math.floor(Number(payload.stacks !== undefined && payload.stacks !== '' ? payload.stacks : defaultStacks))));
     payload.remainingTurns = payload.durationType === 'turn'
       ? Number(payload.durationTurns || payload.remainingTurns || 1)
       : '';
@@ -211,6 +215,7 @@ var RULE_ENGINE_SHARED = (function() {
           actor: 'effect',
           type: 'effectDamage',
           target: actor === 'monster' ? 'monster' : 'player',
+          effectId: effect.effectId || '',
           targetMonsterId: actor === 'monster' ? (target.instanceId || target.monsterId || '') : '',
           damage: damage,
           hpDamage: damage,
@@ -871,15 +876,23 @@ var RULE_ENGINE_SHARED = (function() {
   }
 
   function getQuestionSelectionPool(questions, usedQuestionIds, lastQuestionId) {
-    return questions || [];
+    var pool = questions || [];
+    var previousId = String(lastQuestionId || '');
+    if (!previousId) return pool;
+    return pool.filter(function(question) {
+      return String(question && question.questionId || '') !== previousId;
+    });
   }
 
   function getQuestionAccuracyWeight(question) {
     var total = Math.max(0, Number(question && question.totalCount || 0));
     var correct = Math.max(0, Math.min(total, Number(question && question.correctCount || 0)));
     var rate = (correct + 5) / (total + 10);
-    // Shared accuracy is a small correction; personal understanding dominates.
-    var accuracyWeight = 1 + 0.5 * (1 - rate);
+    // One wrong answer from a clean slate raises weight by about 0.25.
+    // A correct retry can reverse only one third of that adjustment.
+    // Keep the configured weight range between 0.4 and 2.0.
+    var accuracyWeight = Math.max(0.4, Math.min(2.0,
+      1.2 + 5.5 * (0.5 - rate) + Number(question && question.selectionWeightOffset || 0)));
     var rating = Number(question && question.understandingRating || 0);
     var understandingWeights = [1, 3, 2.4, 1.6, 0.8, 0.2];
     var exposureCount = Math.max(0, Number(question && question.selectionExposureCount || 0));
