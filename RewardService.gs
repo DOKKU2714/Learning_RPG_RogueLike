@@ -185,6 +185,7 @@ function previewRewardChoicesForStageResult(stagePayload, authToken) {
         return buildStageResultCommitView_(expiredRun, getStageState_(expiredRun));
       }
       var cacheKey = 'local-rewards:' + stagePayload.runId + ':' + (stagePayload.battle && stagePayload.battle.battleId || 'rest');
+      if (stagePayload.rewardRerollAction) return handleRewardReroll_(stagePayload, authToken, cacheKey);
       var cached = stagePayload.localAdvanceEnabled ? getChunkedRunCache_(cacheKey) : null;
       if (cached) {
         var cachedView = JSON.parse(cached);
@@ -231,9 +232,92 @@ function previewRewardChoicesForStageResult(stagePayload, authToken) {
         }
       }
       return view;
-    }, !stagePayload.localAdvanceEnabled);
+    }, !stagePayload.localAdvanceEnabled && !stagePayload.rewardRerollAction);
     return syncQuestionUnderstandingForRun_(stagePayload.runId, stagePayload.questionUnderstanding, authToken, response);
   } finally { RUN_SESSION_LOCK_HELD_ = previousLockHeld; lock.releaseLock(); }
+}
+
+// Keep the challenge and its result in the session, independently of client stage payloads.
+function handleRewardReroll_(payload, authToken, cacheKey) {
+  var run = requireRun_(payload.runId);
+  requireRewardRunOwner_(run, authToken);
+  requireRunBeforeWorkbookDeadline_(run);
+  if (!ACTIVE_RUN_SESSION_ || run.status !== STATUS.RUN_ACTIVE) throw new Error('진행 중인 런에서만 새로고침할 수 있습니다.');
+  var view = verifyLocalRewardView_(payload.rewardToken);
+  var battle = payload.battle || {};
+  var stageId = buildStageId_(run.currentFloor, run.currentStage);
+  var restStage = isFloorRestStage_(loadStage(stageId));
+  if (view.runId !== run.runId || view.stageId !== stageId || view.preparedDuringBattle
+      || battle.status !== STATUS.BATTLE_VICTORY || (battle.stage || {}).stageId !== stageId
+      || !restStage && battle.battleId !== (getStageState_(run).battle || {}).battleId
+      || view.localTransition && view.localTransition.battleId && view.localTransition.battleId !== battle.battleId) throw new Error('현재 승리 보상만 새로고침할 수 있습니다.');
+  var records = ACTIVE_RUN_SESSION_.rewardRerolls || (ACTIVE_RUN_SESSION_.rewardRerolls = {});
+  var key = stageId + ':' + (restStage ? 'rest' : battle.battleId);
+  var record = records[key];
+  if (!record) {
+    if (payload.rewardRerollAction !== 'start' && !view.rerollQuestion) throw new Error('새로고침 문제를 먼저 받아 주세요.');
+    var question = view.rerollQuestion || pickRewardRerollQuestion_(readRunQuestionsForBattle_(run));
+    if (!question) throw new Error('출제할 문제가 없습니다.');
+    ACTIVE_RUN_SESSION_.rewardRerolls = records = {};
+    record = records[key] = { question: question, view: view, status: 'pending' };
+    record.view.rerollUsed = true;
+  }
+  if (record.status === 'pending' && payload.rewardRerollAction === 'answer') {
+    var answer = payload.rerollAnswer || {};
+    var correct = !answer.giveUp && isCorrectAnswer_(record.question, answer.selectedAnswer, answer.selectedChoiceIndex, answer.selectedAnswerText);
+    // A submitted failure is terminal, independent of combat efficiency protections.
+    record.status = correct ? 'success' : 'failed';
+    if (correct) {
+      var state = Object.assign({}, record.view, { choices: [], selectedRewardId: '' });
+      var nextPayload = Object.assign({}, payload, { stageState: Object.assign({}, payload.stageState, { reward: state }) });
+      var next = previewRewardChoicesForStageResult_(nextPayload, authToken);
+      // Currency, regeneration and the verified completion time belong to this clear only once.
+      ['currencyAmount', 'regenAmount', 'currentHpAfterRegen', 'maxHpAfterRegen', 'battleCompletionReceipt'].forEach(function(field) { next[field] = record.view[field]; });
+      next.rerollUsed = true;
+      if (record.view.localTransition) {
+        var previousPermit = record.view.localTransition;
+        next = prepareLocalRewardTransitions_(next, payload, authToken, true);
+        if (previousPermit) {
+          next.localTransition.ghostSelection = previousPermit.ghostSelection;
+          var oldRest = previousPermit.restViews || {};
+          var oldRestView = oldRest[Object.keys(oldRest)[0]];
+          Object.keys(next.localTransition.restViews || {}).forEach(function(id) {
+            var rest = next.localTransition.restViews[id];
+            if (oldRestView) rest.localTransition.ghostSelection = oldRestView.localTransition.ghostSelection;
+            signLocalRewardView_(rest);
+          });
+        }
+      }
+      record.view = next;
+    }
+  }
+  record.view.rerollUsed = true;
+  if (record.view.localTransition) signLocalRewardView_(record.view);
+  putChunkedRunCache_(cacheKey, safeJsonStringify_(record.view));
+  return { rerollStatus: record.status, rerollQuestion: record.status === 'pending' ? sanitizeQuestionForBattleCache_(record.question, run.playerId) : null, rewardView: record.view };
+}
+
+function prepareRewardRerollQuestion_(view, run) {
+  if (!view.rerollUsed && !view.rerollQuestion) {
+    var question;
+    // Optional preloading must not prevent claiming normal rewards when the question sheet is unavailable.
+    try { question = pickRewardRerollQuestion_(readRunQuestionsForBattle_(run)); }
+    catch (error) { return view; }
+    if (question) view.rerollQuestion = sanitizeQuestionForBattleCache_(question, run.playerId);
+  }
+  return view;
+}
+
+function pickRewardRerollQuestion_(questions) {
+  var pool = [], lowest = Infinity;
+  (questions || []).forEach(function(question) {
+    if (question.status !== STATUS.QUESTION_APPROVED) return;
+    var total = Math.max(0, Number(question.totalCount || 0));
+    var rate = total ? Math.max(0, Number(question.correctCount || 0)) / total : 0;
+    if (rate < lowest) { lowest = rate; pool = []; }
+    if (rate === lowest) pool.push(question);
+  });
+  return pool.length ? pickRandom_(pool) : null;
 }
 
 function previewRewardChoicesForStageResult_(stagePayload, authToken) {
@@ -1755,7 +1839,10 @@ function buildRewardSkillDetail_(reward, battleState) {
     return null;
   }
 
-  var hydrated = hydrateSkill_(skill, Math.max(1, Number(reward.level || 1)));
+  // Sanitized choices retain the preview level in skillDetail, not reward.level.
+  // Victory refreshes must preserve that level when rebuilding the hover details.
+  var previewLevel = reward.level || reward.skillDetail && reward.skillDetail.level || 1;
+  var hydrated = hydrateSkill_(skill, Math.max(1, Number(previewLevel)));
   var previewBattleState = buildRewardSkillPreviewBattleState_(battleState);
   return {
     skillId: hydrated.skillId,
@@ -1864,6 +1951,7 @@ function buildRewardChoiceView_(runId, stageId, rewardGroupId, rewardState, owne
     stageId: stageId,
     rewardGroupId: rewardGroupId,
     bossItemRewards: bossItemRewards,
+    rerollUsed: !!rewardState.rerollUsed,
     currencyAmount: Number(rewardState.currencyAmount || 0),
     regenAmount: Number(rewardState.regenAmount || 0),
     currentHpAfterRegen: Number(rewardState.currentHpAfterRegen || 0),

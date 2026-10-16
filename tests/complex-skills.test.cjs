@@ -213,7 +213,7 @@ test('browser handlers call the shipped rules and refresh dynamic HP and shield 
 
 test('browser turn transitions expire escape, refill modified AP, and award reflection kills',()=>{
   const g=setup(),view={battle:copy(g.battle),availableSkills:[],score:0};
-  const c=vm.createContext({window:{LearningRpgLocalRunEngine:g.engine},localGameDataSnapshot:g.snapshot,currentView:view,
+  const c=vm.createContext({window:{LearningRpgLocalRunEngine:g.engine},RULE_ENGINE_SHARED:g.x.c.getSharedRuleEngine_(),localGameDataSnapshot:g.snapshot,currentView:view,
     normalizeClientActionPoints:()=>{},normalizeBattleView:x=>x,
     getFirstAliveMonster:b=>b.monsters.find(m=>m.currentHp>0),hasClientEffect:()=>false,
     applyClientTimedEffectDamage:()=>{},getClientIntentValue:i=>Number(i.value||0),

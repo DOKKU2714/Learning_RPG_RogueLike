@@ -185,6 +185,7 @@ function startRun(playerId, authToken, workbookId, questionManifest) {
     var snapshot = getGameDataSnapshot(authToken);
     snapshot.clientConfig = getBattleClientConfig_();
     snapshot.basePlayerStats = getConfiguredBasePlayerStats_();
+    snapshot.basePlayerStatsVersion = 1;
     var snapshotId = storeRunGameDataSnapshot_(snapshot);
     return withGameDataSnapshot_(snapshot, function() {
       var entry = createNewRun_(playerId, check.workbook, check.questionManifest, snapshotId);
@@ -584,6 +585,8 @@ function startBattle(runId) {
       actionPointMaxDelta: 0,
       nextTurnActionPointDelta: 0,
       baseStats: baseStats,
+      startingStats: getBattleStartingStats_(),
+      startingStatsVersion: 1,
       stats: stats,
       items: items,
       itemModifiers: itemModifiers,
@@ -741,7 +744,7 @@ function selectQuestionForAction(playerId, runId, actionType, difficultyBonus, a
   normalizeBattleStateEffects_(battleState);
   normalizeBattleMonsters_(battleState);
   normalizePlayerActionPoints_(battleState, false);
-  if (hasEffect_(battleState.player, 'debuff_stun') || hasEffect_(battleState.player, 'debuff_freeze') || hasEffect_(battleState.player, 'debuff_sleep')) {
+  if (getSharedRuleEngine_().hasActionBlock(battleState.player)) {
     throw new Error('행동할 수 없는 상태입니다.');
   }
   var skill = normalizedAction === ACTION_TYPES.SKILL && skillId ? findCachedRowByKey_(DB_SHEETS.SKILLS, 'skillId', skillId, 600) : null;
@@ -939,26 +942,31 @@ function calculateEfficiency(isCorrect, remainingMs, maxMs, wrongCountAfterTimeo
   var efficiencyRules = getAnswerEfficiencyRules_();
   var minEfficiency = Math.max(0, Math.min(1, efficiencyRules.minAnswerEfficiency + Number(questionModifiers && questionModifiers.questionMinEfficiencyPercent || 0) / 100));
   var maxEfficiency = calculateMaxAnswerEfficiency_(questionModifiers, efficiencyRules.maxAnswerEfficiency);
+  var caffeineBonus = Number(questionModifiers && questionModifiers.questionEfficiencyBonusPercent || 0) / 100;
   var extraPenalty = efficiencyRules.extraWrongEfficiencyPenalty;
   var penaltyCount = Math.max(0, Number(wrongCountAfterTimeout || 0));
   if (penaltyCount > 0) {
-    return roundTo_(Math.max(0, minEfficiency - (extraPenalty * (penaltyCount - 1))), 3);
+    return roundTo_(Math.max(0, minEfficiency - (extraPenalty * (penaltyCount - 1)) + caffeineBonus), 3);
   }
 
   if (isCorrect) {
     var correctEfficiencyBonus = getQuestionCorrectEfficiencyBonusPercent_(questionModifiers, question) / 100;
     var ratio = Math.max(0, Math.min(1, Number(remainingMs || 0) / Math.max(1, Number(maxMs || 1))));
+    if (maxEfficiency <= 1) {
+      var timedEfficiency = minEfficiency + ((maxEfficiency - minEfficiency) * ratio);
+      return roundTo_(Math.max(0, timedEfficiency + correctEfficiencyBonus + caffeineBonus), 3);
+    }
     if (ratio >= 0.5) {
       var highEfficiency = 1 + ((ratio - 0.5) * ((maxEfficiency - 1) / 0.5));
-      highEfficiency += correctEfficiencyBonus;
+      highEfficiency += correctEfficiencyBonus + caffeineBonus;
       return roundTo_(Math.max(0, highEfficiency), 3);
     }
     var lowEfficiency = minEfficiency + (ratio * ((1 - minEfficiency) / 0.5));
-    lowEfficiency += correctEfficiencyBonus;
+    lowEfficiency += correctEfficiencyBonus + caffeineBonus;
     return roundTo_(Math.max(0, lowEfficiency), 3);
   }
 
-  return roundTo_(minEfficiency, 3);
+  return roundTo_(Math.max(0, minEfficiency + caffeineBonus), 3);
 }
 
 function calculateMaxAnswerEfficiency_(questionModifiers, baseMaxEfficiency) {
@@ -1126,11 +1134,11 @@ function applyMonsterTurn(battleState) {
     }
     // Bleed triggers at the start of a monster's turn even when another
     // control effect prevents that monster from taking its action.
-    applyStackedDamageEffect_(monster, 'debuff_bleed', battleState, 'monster');
+    applyStackedDamageEffects_(monster, 'beforeAction', battleState, 'monster');
     if (Number(monster.currentHp || 0) <= 0) {
       return;
     }
-    if (hasEffect_(monster, 'debuff_stun') || hasEffect_(monster, 'debuff_freeze') || hasEffect_(monster, 'debuff_sleep')) {
+    if (getSharedRuleEngine_().hasActionBlock(monster)) {
       events.push({
         actor: 'monster',
         type: 'skip',
@@ -1140,6 +1148,7 @@ function applyMonsterTurn(battleState) {
       });
       return;
     }
+    applyStackedDamageEffects_(monster, 'onAction', battleState, 'monster');
     applyTimedEffectDamage_(monster, TRIGGER_TIMINGS.ON_ACTION, battleState, 'monster');
     if (Number(monster.currentHp || 0) <= 0) {
       return;
@@ -1226,10 +1235,10 @@ function selectMonsterAction(monster, aiRows, battleState) {
     skillId: row.skillId || '',
     skillType: skill ? skill.type || '' : '',
     skillName: skill ? skill.name || '' : '',
-    skillAttackEffect: normalizedActionType === ACTION_TYPES.SKILL ? (row.skillAttackEffect || '') : '',
+    skillAttackEffect: normalizedActionType === ACTION_TYPES.SKILL ? (skill && skill.attackEffect || (skill && skill.type === 'damage' ? 'slash' : 'none')) : '',
     attackEffect: normalizedActionType === ACTION_TYPES.SKILL
-      ? (row.skillAttackEffect || '')
-      : (row.attackEffect || ''),
+      ? (skill && skill.attackEffect || (skill && skill.type === 'damage' ? 'slash' : 'none'))
+      : (monster.attackEffect || 'slash'),
     hitCount: skill ? calculateMonsterSkillHitCount_(battleState, monster, skill) : 1,
     intentIcon: row.intentIcon || 'sword',
     intentTextTemplate: row.intentTextTemplate || '',
@@ -1513,7 +1522,7 @@ function refreshMonsterSkillIntent_(battleState, monster) {
   }
   intent.skillType = skill.type || '';
   intent.skillName = skill.name || '';
-  intent.skillAttackEffect = String(intent.skillAttackEffect || '');
+  intent.skillAttackEffect = String(skill.attackEffect || (skill.type === 'damage' ? 'slash' : 'none'));
   intent.attackEffect = intent.skillAttackEffect;
   intent.hitCount = calculateMonsterSkillHitCount_(battleState, monster, skill);
   intent.value = calculateMonsterIntentValue_(intent, monster, battleState, skill);
@@ -2537,10 +2546,19 @@ function buildBattleStateView_(run, stageState) {
   });
 }
 
+function getBattleStartingStats_() {
+  var snapshot = typeof ACTIVE_GAME_DATA_SNAPSHOT_ !== 'undefined' && ACTIVE_GAME_DATA_SNAPSHOT_;
+  return Object.assign({}, snapshot && snapshot.basePlayerStats || getConfiguredBasePlayerStats_());
+}
+
 function buildBattleView_(run, stageState, options) {
   options = options || {};
   var battleState = stageState.battle;
   var hasActiveBattle = !!(battleState && battleState.status === STATUS.BATTLE_ACTIVE);
+  if (battleState && battleState.player && battleState.player.startingStatsVersion !== 1) {
+    battleState.player.startingStats = getBattleStartingStats_();
+    battleState.player.startingStatsVersion = 1;
+  }
   if (hasActiveBattle) {
     syncBattlePlayerItemsFromRun_(battleState, run);
     normalizeBattleStateEffects_(battleState);
@@ -2683,8 +2701,8 @@ function buildClientMonsterAiRules_(battleState) {
       skillId: row.skillId || '',
       skillType: skill ? skill.type || '' : '',
       skillName: skill ? skill.name || '' : '',
-      attackEffect: row.attackEffect || '',
-      skillAttackEffect: row.skillAttackEffect || '',
+      attackEffect: '',
+      skillAttackEffect: skill ? (skill.attackEffect || (skill.type === 'damage' ? 'slash' : 'none')) : '',
       skillBaseValue: skill ? Number(skill.baseValue || 0) : 0,
       skillHitCount: skill ? Math.max(1, Math.round(Number(skill.hitCount || 1))) : 1,
       skillRule: effectConfig,
@@ -3995,6 +4013,7 @@ function buildBattleMonster_(monster, index) {
     criticalRate: Number(monster.criticalRate !== undefined && monster.criticalRate !== '' ? monster.criticalRate : baseStats.criticalRate),
     criticalDamage: Number(monster.criticalDamage !== undefined && monster.criticalDamage !== '' ? monster.criticalDamage : baseStats.criticalDamage),
     aiId: monster.aiId || 'ai_basic_attack',
+    attackEffect: monster.attackEffect || 'slash',
     skillIds: safeJsonParse_(monster.skillIds, []),
     shield: 0,
     intent: null,
@@ -4017,6 +4036,7 @@ function normalizeBattleMonsters_(battleState) {
     monster.skillIds = monster.skillIds || [];
     monster.shield = Number(monster.shield || 0);
     var monsterDefinition = monster.monsterId ? findMonsterRowById_(monster.monsterId) : null;
+    monster.attackEffect = String(monsterDefinition && monsterDefinition.attackEffect || monster.attackEffect || 'slash');
     var baseStats = getConfiguredBasePlayerStats_();
     if (monster.evasion === undefined || monster.evasion === '') {
       monster.evasion = clampPercent_(monsterDefinition && monsterDefinition.evasion);
@@ -4191,6 +4211,7 @@ function buildStageId_(floor, stage) {
 function getEffectFlatBonus_(activeEffects, statKey) {
   var foolishApplied = false;
   return (activeEffects || []).reduce(function(total, effect) {
+    if (effect.rules) return total + getSharedRuleEngine_().getRuleStatBonus(effect, statKey, 'flat');
     if (effect.statKey === statKey && effect.effectType === EFFECT_TYPES.FLAT) {
       if (effect.effectId === 'debuff_foolish' && statKey === STAT_KEYS.QUESTION_DIFFICULTY) {
         if (foolishApplied) return total;

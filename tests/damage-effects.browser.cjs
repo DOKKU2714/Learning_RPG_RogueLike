@@ -12,11 +12,14 @@ ${fs.readFileSync('UiStyles.html', 'utf8')}
 <div class="fixture monster-slot"><div class="monster-hp-bar"><div class="hp-current" style="width:50%"></div></div><span id="monsterText">50 / 100</span></div>
 <div class="fixture fixture-player"><div class="player-hp-track"><div class="player-hp-fill" style="width:50%"></div></div><span id="playerHpText">50 / 100</span></div>
 <script>var currentDamageEfficiency=1;
-${['spawnFloatingDamage','spawnFloatingText','spawnHpDamageFragment','getHpGaugeRect','flashHpBar'].map(extract).join('\n')}
+${['spawnFloatingDamage','spawnFloatingText','spawnHpDamageFragment','populateShieldDamageShards','getHpGaugeRect','flashHpBar'].map(extract).join('\n')}
 function showDamage(player,ratio,critical){
  const track=document.querySelector(player?'.player-hp-track':'.monster-hp-bar');
+ const fill=track.querySelector('.hp-current,.player-hp-fill');
+ fill.style.transition='none';fill.style.width='100%';void fill.offsetWidth;fill.style.transition='';
  track.damageHpRatio=ratio;track.damageNumberRatio=.65;
  spawnHpDamageFragment(track,100,ratio*100,100);
+ fill.style.width=(100-ratio*100)+'%';
  spawnFloatingDamage(document.getElementById(player?'playerHpText':'monsterText'),ratio*100,player?'damage-red':'damage-white',critical);
 }
 </script></body></html>`;
@@ -28,6 +31,44 @@ function showDamage(player,ratio,critical){
    const page = await browser.newPage({viewport:{width,height:844}});
    const errors=[];page.on('pageerror',e=>errors.push(e.message));
    await page.setContent(html);
+   for(const player of [false,true]) {
+    const feedback=await page.evaluate(p=>{
+     showDamage(p,.25,false);
+     const track=document.querySelector(p?'.player-hp-track':'.monster-hp-bar'),fill=track.querySelector('.hp-current,.player-hp-fill'),fragment=document.querySelector('.hp-damage-fragment');
+     const shake=track.getAnimations().find(a=>a.animationName==='hp-hit-shake');shake.pause();shake.currentTime=60;
+     const shrink=fill.getAnimations().find(a=>a.transitionProperty==='width');shrink.pause();shrink.currentTime=160;
+     const flight=fragment.getAnimations()[0];flight.pause();flight.currentTime=160;
+     const innerWidth=track.clientWidth;
+     const result={duration:getComputedStyle(fill).transitionDuration,flightDuration:flight.effect.getTiming().duration,translate:getComputedStyle(track).translate,
+       hpWidth:fill.getBoundingClientRect().width,missingWidth:innerWidth-fill.getBoundingClientRect().width,whiteWidth:fragment.getBoundingClientRect().width,innerWidth};
+     track.getAnimations().forEach(a=>a.finish());fill.getAnimations().forEach(a=>a.finish());fragment.remove();return result;
+    },player);
+    assert.equal(feedback.duration,'0.32s');assert.equal(feedback.flightDuration,720);assert.notEqual(feedback.translate,'0px');assert.notEqual(feedback.translate,'0px 0px');
+    assert.ok(feedback.hpWidth>feedback.innerWidth*.75 && feedback.hpWidth<feedback.innerWidth);
+    assert.ok(Math.abs(feedback.missingWidth-feedback.whiteWidth)<2,'white bar matches the HP already lost');
+    await page.locator('.floating-damage').evaluateAll(elements=>elements.forEach(e=>e.remove()));
+   }
+   for (const [efficiency,tone,suffix] of [[.75,'damage-low-efficiency',''],[.7501,'damage-white',''],[.76,'damage-white',''],[.99,'damage-white',''],[1,'damage-efficient','!'],[1.2,'damage-efficient','!']]) {
+    await page.evaluate(e=>{currentDamageEfficiency=e;showDamage(false,.1,false);},efficiency);
+    assert.equal(await page.locator('.floating-damage').evaluate(e=>e.classList.contains('damage-low-efficiency')?'damage-low-efficiency':e.classList.contains('damage-efficient')?'damage-efficient':'damage-white'),tone);
+    assert.equal(await page.locator('.floating-damage').textContent(),'-10'+suffix);
+    await page.locator('.floating-damage,.hp-damage-fragment').evaluateAll(elements=>elements.forEach(e=>e.remove()));
+   }
+   await page.evaluate(()=>showDamage(false,.1,true));
+   assert.equal(await page.locator('.damage-critical').count(),1);
+   await page.locator('.floating-damage,.hp-damage-fragment').evaluateAll(elements=>elements.forEach(e=>e.remove()));
+   const shapes=[];
+   for (let hit=0;hit<2;hit++) {
+    await page.evaluate(()=>spawnHpDamageFragment(document.querySelector('.monster-hp-bar'),100,40,100,true));
+    const pieces=page.locator('.shield-glass-piece');
+    assert.ok(await pieces.count()>=6 && await pieces.count()<=12);
+    shapes.push(await pieces.evaluateAll(elements=>elements.map(e=>e.style.clipPath).join('|')));
+    assert.equal(await pieces.first().evaluate(e=>getComputedStyle(e).animationName),'shield-glass-shatter');
+    await page.waitForTimeout(350);
+    await page.screenshot({path:path.join(output,`${width}-shield-${hit}.png`)});
+    await page.waitForFunction(()=>!document.querySelector('.shield-damage-fragment'));
+   }
+   assert.notEqual(shapes[0],shapes[1]);
    for (const player of [false,true]) {
     await page.evaluate(p=>showDamage(p,.499,false),player);
     assert.equal(await page.locator('.damage-heavy').count(),0);
@@ -51,6 +92,8 @@ function showDamage(player,ratio,critical){
    await page.evaluate(()=>showDamage(true,.1,true));
    assert.equal(await page.locator('.floating-damage').evaluate(e=>getComputedStyle(e).animationName),'critical-damage-rise');
    await page.emulateMedia({reducedMotion:'reduce'});
+   await page.evaluate(()=>spawnHpDamageFragment(document.querySelector('.monster-hp-bar'),100,40,100,true));
+   assert.equal(await page.locator('.shield-glass-piece').first().evaluate(e=>getComputedStyle(e).animationName),'playerImpactFade');
    assert.equal(await page.locator('.floating-damage').evaluate(e=>getComputedStyle(e).animationName),'playerImpactFade');
    assert.equal(await page.locator('.damage-critical-ray').first().evaluate(e=>getComputedStyle(e).display),'none');
    await page.waitForFunction(()=>!document.querySelector('.damage-critical-burst'));

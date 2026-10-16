@@ -185,9 +185,11 @@
         <div id="questionEfficiencyMeter" class="efficiency-meter">
           <span id="questionEfficiencyText" class="question-efficiency-text" aria-live="polite">
             <strong id="questionEfficiencyPercent">125%</strong>
+            <span id="questionEfficiencyBonus" class="question-efficiency-bonus"></span>
             <span id="questionEfficiencyActionValue" class="question-efficiency-action-value">(0)</span>
           </span>
           <span id="questionEfficiencyFill" class="meter-fill" style="width:100%;"></span>
+          <span id="questionEfficiencyBonusFill" class="meter-bonus-fill" aria-hidden="true"></span>
         </div>
         <div id="questionRemainingTime" class="question-time-left">10.0s</div>
       </div>
@@ -221,6 +223,13 @@
         <p>보상을 고르세요</p>
       </div>
       <div id="rewardChoices" class="reward-choice-grid"></div>
+      <div class="reward-reroll-row">
+        <span class="reward-reroll-control" data-tooltip-placement="above" data-tooltip="보상 전체 새로고침 · 스테이지마다 1회&#10;난이도와 관계없이 정답률이 가장 낮은 문제 중 하나가 출제됩니다.&#10;정답: 보상 전체 새로고침&#10;오답·포기: 효율 0%, 기존 보상 유지&#10;성공·실패 모두 해당 스테이지의 기회를 소모합니다.">
+        <button id="rewardRerollButton" type="button" onclick="startRewardReroll()" aria-label="문제를 풀고 보상 전체 새로고침 (스테이지마다 1회)" title="문제를 맞히면 보상 전체 새로고침 · 스테이지마다 1회">
+          <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 6.1A8 8 0 0 1 20 12M4 12a8 8 0 0 0 13.9 5.9"/></svg>
+        </button>
+        </span>
+      </div>
       <div class="reward-confirm-row">
         <button id="rewardConfirmButton" type="button" onclick="confirmRewardChoice()" disabled>확인</button>
       </div>
@@ -272,6 +281,7 @@
   <script>
     var WEB_APP_URL = '<?= getWebAppUrl_() ?>';
     var ASSET_BASE_URL = '<?= getAssetBaseUrl_() ?>';
+    var CLIENT_STARTING_STATS_JSON = '<?= encodeURIComponent(JSON.stringify(getConfiguredBasePlayerStats_())) ?>';
     var BATTLE_ENTRY_TOKEN = '<?= String(requestParams.entryToken || "").replace(/[^a-fA-F0-9]/g, "") ?>';
     var BATTLE_SOUND_EXTENSIONS = ['wav', 'mp3', 'ogg'];
     var BATTLE_SOUND_FILES = {
@@ -850,6 +860,9 @@
       stageResultCommitCallbacks = [];
       stageResultCommitFailureCallbacks = [];
       currentRewardView = null;
+      rewardRerollBusy = false;
+      rewardRerollQuestion = null;
+      rewardRerollAnswer = null;
       scoreModalDismissedWhileWaiting = false;
       victoryRewardPreload = null;
       battleRewardPreparation = null;
@@ -1242,13 +1255,26 @@
           positionHoverTooltip(statTooltip, activeTooltipTarget, event, 1);
         }
       });
-      document.addEventListener('mouseover', function(event) {
+      function showHoverTooltip(event) {
         var target = event.target.closest && event.target.closest('[data-tooltip]');
         if (!target) return;
+        if (event.type === 'focusin') {
+          var targetRect = target.getBoundingClientRect();
+          event = { clientX:targetRect.left, clientY:targetRect.bottom };
+        }
         var text = target.getAttribute('data-tooltip');
         if (!text) return;
         activeTooltipTarget = target;
         tooltip.textContent = text;
+        var itemDetail = target.hasAttribute('data-item-tooltip') && target.querySelector('.item-detail-card');
+        tooltip.classList.toggle('item-hover-tooltip', !!itemDetail);
+        if (itemDetail) {
+          tooltip.innerHTML = itemDetail.innerHTML;
+          tooltip.style.setProperty('--item-tooltip-color', window.getComputedStyle(target).color);
+        }
+        if (target.hasAttribute('data-stat-reward')) {
+          tooltip.innerHTML = buildBattleStatTooltipContent(target);
+        }
         tooltip.setAttribute('aria-hidden', 'false');
         tooltip.classList.add('active');
         var statText = target.getAttribute('data-stat-tooltip');
@@ -1266,6 +1292,11 @@
             positionHoverTooltip(statTooltip, activeTooltipTarget, event, 1);
           }
         });
+      }
+      document.addEventListener('mouseover', showHoverTooltip);
+      document.addEventListener('focusin', showHoverTooltip);
+      document.addEventListener('focusout', function(event) {
+        if (event.target.closest && event.target.closest('[data-tooltip]')) hideHoverTooltips();
       });
       document.addEventListener('mouseout', function(event) {
         if (event.target.closest && event.target.closest('[data-tooltip]')) {
@@ -1287,19 +1318,23 @@
 
     function positionHoverTooltip(tooltip, target, event, stackIndex) {
       if (!tooltip) return;
+      var width = tooltip.offsetWidth || 220;
+      var height = tooltip.offsetHeight || 40;
       var placement = target && target.getAttribute && target.getAttribute('data-tooltip-placement');
       if (placement === 'above') {
         var rect = target.getBoundingClientRect();
-        var width = tooltip.offsetWidth || 220;
-        var height = tooltip.offsetHeight || 40;
         var left = rect.left + (rect.width / 2) - (width / 2);
         var top = rect.top - height - 10 - (Number(stackIndex || 0) * (height + 6));
+        if (top < 8) top = rect.bottom + 10;
         tooltip.style.left = Math.max(8, Math.min(window.innerWidth - width - 8, left)) + 'px';
-        tooltip.style.top = Math.max(8, top) + 'px';
+        tooltip.style.top = Math.max(8, Math.min(window.innerHeight - height - 8, top)) + 'px';
         return;
       }
-      tooltip.style.left = ((event && event.clientX || 0) + (stackIndex ? 22 : 14)) + 'px';
-      tooltip.style.top = ((event && event.clientY || 0) + (stackIndex ? 78 : 14)) + 'px';
+      var x = (event && event.clientX || 0) + (stackIndex ? 22 : 14);
+      var y = (event && event.clientY || 0) + (stackIndex ? 78 : 14);
+      if (y + height > window.innerHeight - 8) y = (event && event.clientY || 0) - height - 14;
+      tooltip.style.left = Math.max(8, Math.min(window.innerWidth - width - 8, x)) + 'px';
+      tooltip.style.top = Math.max(8, Math.min(window.innerHeight - height - 8, y)) + 'px';
     }
 
     function hideActiveHoverTooltips() {
@@ -1616,14 +1651,20 @@
     }
 
     function formatEffectiveStat(baseStats, effectiveStats, statKey, suffix, itemStats) {
-      var base = Number(baseStats && baseStats[statKey] || 0);
       var effective = Number(effectiveStats && effectiveStats[statKey] || 0);
-      var itemValue = Number((itemStats || effectiveStats) && (itemStats || effectiveStats)[statKey] || 0);
       var rounded = Math.round(effective * 10) / 10;
-      var delta = Math.round((itemValue - base) * 10) / 10;
-      var value = escapeHtml(rounded + (suffix || ''));
-      if (!delta) return value;
-      return value + ' <span class="battle-stat-item-delta ' + (delta > 0 ? 'stat-item-increase' : 'stat-item-decrease') + '" title="스텟 보상·아이템 효과 합계">(' + (delta > 0 ? '+' : '') + delta + ')</span>';
+      return escapeHtml(rounded + (suffix || ''));
+    }
+
+    function buildBattleStatTooltipContent(target) {
+      var suffix = target.getAttribute('data-stat-unit') || '';
+      var rows = [['reward', '보상'], ['item', '아이템'], ['buff', '버프·디버프']].map(function(source) {
+        var amount = Math.round(Number(target.getAttribute('data-stat-' + source[0]) || 0) * 10) / 10;
+        if (!isFinite(amount) || !amount) return '';
+        return '<div class="battle-stat-tooltip-source stat-source-' + source[0] + '"><span>' + source[1] + '</span><strong' + (amount < 0 ? ' class="stat-source-negative"' : '') + '>' + escapeHtml((amount > 0 ? '+' : '') + amount + suffix) + '</strong></div>';
+      }).filter(Boolean).join('');
+      return '<div>' + escapeHtml(target.getAttribute('data-tooltip') || '') + '</div>' +
+        (rows ? '<div class="battle-stat-tooltip-breakdown">' + rows + '</div>' : '');
     }
 
     function toggleSkillPanel() {
@@ -1660,13 +1701,34 @@
 
     function renderFloorIntermissionActions() {
       var panel = document.getElementById('actionPanel');
-      if (!panel || panel.getAttribute('data-action-mode') === 'floor-intermission') return;
+      if (!panel) return;
+      if (panel.getAttribute('data-action-mode') === 'floor-intermission') {
+        var detail = document.getElementById('floorRestDetail');
+        if (detail) detail.innerHTML = renderFloorRestDetailContent();
+        return;
+      }
       panel.className = 'action-panel compact-actions floor-intermission-actions';
       panel.setAttribute('data-action-mode', 'floor-intermission');
       panel.innerHTML =
-        '<button id="floorRestButton" type="button" onclick="chooseFloorIntermissionAction(\'rest\')">휴식</button>' +
+        '<button id="floorRestButton" class="action-detail-button" type="button" aria-describedby="floorRestDetail" onclick="chooseFloorIntermissionAction(\'rest\')">휴식' +
+          '<span id="floorRestDetail" class="skill-detail-card action-detail-card" role="tooltip">' + renderFloorRestDetailContent() + '</span></button>' +
         '<button id="floorRewardButton" type="button" onclick="chooseFloorIntermissionAction(\'reward\')">보상</button>';
       skillPanelOpen = false;
+    }
+
+    function renderFloorRestDetailContent() {
+      var rewardView = getCurrentFloorIntermissionRewardView();
+      var rest = getFloorIntermissionChoice(rewardView, 'rest');
+      var header = '<span class="skill-detail-header"><strong class="skill-detail-name">휴식</strong></span>';
+      if (!rest) return header + '<span class="skill-detail-description">체력을 회복합니다.</span>';
+      var amount = Math.max(0, Number(rest.healAmount || 0));
+      var maxHp = Math.max(1, Number(rest.maxHpAfterRest || 1));
+      var afterHp = Math.max(0, Math.min(maxHp, Number(rest.currentHpAfterRest || 0)));
+      var beforeHp = Math.max(0, afterHp - amount);
+      return header +
+        '<span class="skill-detail-meta">최대 체력의 ' + escapeHtml(String(rest.value || 0)) + '% 회복</span>' +
+        '<span class="skill-detail-description">체력 <strong class="skill-damage-number">+' + escapeHtml(String(amount)) + '</strong> 회복</span>' +
+        '<span class="skill-detail-line">체력 ' + escapeHtml(String(beforeHp)) + ' → ' + escapeHtml(String(afterHp)) + ' / ' + escapeHtml(String(maxHp)) + '</span>';
     }
 
     function renderMonsters(monsters) {
@@ -2723,6 +2785,7 @@
     }
 
     function closeItemModal() {
+      hideActiveHoverTooltips();
       var modal = document.getElementById('itemModal');
       modal.classList.remove('active');
       modal.setAttribute('aria-hidden', 'true');
@@ -2758,7 +2821,7 @@
       var count = Math.max(1, Number(item.count || 1));
       var effectHtml = buildItemEffectDescription(item);
       var flavorHtml = buildItemFlavorDescription(item);
-      return '<article class="item-card rarity-' + escapeHtml(rarity) + '" tabindex="0">' +
+      return '<article class="item-card rarity-' + escapeHtml(rarity) + '" tabindex="0" data-item-tooltip data-tooltip="' + escapeHtml(item.name || item.itemId || '아이템') + '">' +
         '<span class="item-card-body">' +
           '<strong>' + escapeHtml(item.name || item.itemId || '아이템') + '</strong>' +
           '<span class="item-card-rarity">' + escapeHtml(rarityLabel) + '</span>' +
@@ -2791,6 +2854,18 @@
       }).join('<br>');
     }
 
+    function getBattleStatStartingStats(player) {
+      var snapshot = typeof localGameDataSnapshot !== 'undefined' && localGameDataSnapshot;
+      if (player.startingStatsVersion === 1 && player.startingStats) return player.startingStats;
+      if (snapshot && snapshot.basePlayerStatsVersion === 1 && snapshot.basePlayerStats) return snapshot.basePlayerStats;
+      // Older browser engines could mutate both the snapshot and startingStats.
+      // Use the server-rendered settings when that legacy metadata is untrusted.
+      try {
+        if (typeof CLIENT_STARTING_STATS_JSON !== 'undefined' && CLIENT_STARTING_STATS_JSON) return JSON.parse(decodeURIComponent(CLIENT_STARTING_STATS_JSON));
+      } catch (error) {}
+      return player.startingStats || snapshot && snapshot.basePlayerStats || player.baseStats || player.stats || {};
+    }
+
     function showBattleStats() {
       var panel = document.getElementById('battleStatsPanel');
       var player = currentView && currentView.battle ? currentView.battle.player || {} : {};
@@ -2799,20 +2874,20 @@
       var baseStats = player.baseStats || stats;
       var baseAp = Number(player.baseMaxActionPoint || 3);
       var itemApDelta = Number(player.itemModifiers && player.itemModifiers.actionPoint || 0);
-      var startingStats = typeof localGameDataSnapshot !== 'undefined' && localGameDataSnapshot && localGameDataSnapshot.basePlayerStats || baseStats;
+      var startingStats = getBattleStatStartingStats(player);
       var descriptions = {
-        '체력': ['hp', '현재 체력 / 최대 체력입니다. 체력이 0이 되면 쓰러집니다.'],
-        '방어막': ['', '체력보다 먼저 피해를 받아 주는 보호 수치입니다.'],
-        '행동력': ['ap', '현재 행동력 / 최대 행동력입니다. 공격·수비·스킬 사용에 소비됩니다.'],
-        '공격력': ['attack', '기본 공격과 공격 스킬의 피해량 계산에 사용됩니다.'],
-        '방어력': ['defense', '수비와 방어 스킬로 만드는 방어막의 양을 결정하는 수치입니다.'],
-        '체력 회복': ['hpRegen', '스테이지를 클리어할 때 회복하는 체력입니다. 최대 체력을 넘어서 회복하지 않습니다.'],
-        '명중률': ['accuracy', '공격이 적중할 확률의 기준입니다. 상대의 회피율에 따라 실제 적중 확률이 달라집니다.'],
-        '회피율': ['evasion', '상대의 공격을 피할 확률에 영향을 줍니다. 상대의 명중률도 함께 반영됩니다.'],
-        '치명타 확률': ['criticalRate', '공격이 치명타로 적중할 확률입니다.'],
-        '치명타 피해': ['criticalDamage', '치명타 피해의 배율입니다. 150%이면 기본 피해의 1.5배입니다.'],
+        '체력': ['hp', '현재 / 최대 체력. 0이 되면 쓰러집니다.'],
+        '방어막': ['', '체력 대신 먼저 소모됩니다.'],
+        '행동력': ['ap', '현재 / 최대 행동력. 행동할 때 소모됩니다.'],
+        '공격력': ['attack', '공격 피해에 반영됩니다.'],
+        '방어력': ['defense', '수비·방어 스킬의 방어막이 증가합니다.'],
+        '체력 회복': ['hpRegen', '스테이지 클리어 시 회복하는 체력입니다.'],
+        '명중률': ['accuracy', '공격이 적중할 확률입니다.'],
+        '회피율': ['evasion', '상대 공격을 피할 확률입니다.'],
+        '치명타 확률': ['criticalRate', '치명타가 발생할 확률입니다.'],
+        '치명타 피해': ['criticalDamage', '치명타 피해 배율입니다.'],
         '화폐': ['', '이번 게임에서 모은 화폐입니다.'],
-        '점수': ['', '이번 게임에서 획득한 점수입니다.']
+        '점수': ['', '이번 게임에서 얻은 점수입니다.']
       };
       var rows = [
         ['체력', escapeHtml((player.hp || 0) + ' / ') + formatEffectiveStat(startingStats, { hp: player.maxHp || stats.hp || 0 }, 'hp', '', stats), true],
@@ -2831,12 +2906,13 @@
       panel.innerHTML = '<div class="battle-quick-panel-header"><strong>현재 스텟</strong><button class="secondary" type="button" onclick="closeBattleStats()" aria-label="스텟 닫기">닫기</button></div>' + rows.map(function(row) {
         var definition = descriptions[row[0]] || ['', ''];
         var key = definition[0];
-        var changed = key === 'ap'
-          ? itemApDelta !== 0 || Number(player.maxActionPoint || baseAp) !== baseAp
-          : key && (Number((key === 'hpRegen' ? stats : effectiveStats)[key] || 0) !== Number(startingStats[key] || 0)
-            || Number(stats[key] || 0) !== Number(baseStats[key] || 0));
-        var description = definition[1] + (changed ? '\n노란색 수치는 추가 스텟·아이템·전투 효과가 반영된 값입니다.\n괄호의 증감은 시작 스텟 대비 스텟 보상·아이템 효과의 합계입니다.' : '');
-        return '<div class="battle-stat-row" tabindex="0" data-tooltip="' + escapeHtml(description) + '"><span>' + escapeHtml(row[0]) + '</span><b' + (changed ? ' class="battle-stat-value-changed"' : '') + '>' + (row[2] ? row[1] : escapeHtml(row[1])) + '</b></div>';
+        var rewardDelta = key && key !== 'ap' ? Number(baseStats[key] || 0) - Number(startingStats[key] || 0) : 0;
+        var itemDelta = key === 'ap' ? itemApDelta : key ? Number(stats[key] || 0) - Number(baseStats[key] || 0) : 0;
+        var finalValue = key === 'hp' ? Number(player.maxHp || stats.hp || 0) : Number((key === 'hpRegen' ? stats : effectiveStats)[key] || 0);
+        var buffDelta = key === 'ap' ? Number(player.maxActionPoint || baseAp) - baseAp : key ? finalValue - Number(stats[key] || 0) : 0;
+        var changed = [rewardDelta, itemDelta, buffDelta].some(function(value) { return Math.abs(value) >= 0.05; });
+        var breakdown = key ? ' data-stat-reward="' + rewardDelta + '" data-stat-item="' + itemDelta + '" data-stat-buff="' + buffDelta + '" data-stat-unit="' + (/^(accuracy|evasion|criticalRate|criticalDamage)$/.test(key) ? '%p' : '') + '"' : '';
+        return '<div class="battle-stat-row" tabindex="0" data-tooltip="' + escapeHtml(definition[1]) + '"' + breakdown + '><span>' + escapeHtml(row[0]) + '</span><b' + (changed ? ' class="battle-stat-value-changed"' : '') + '>' + (row[2] ? row[1] : escapeHtml(row[1])) + '</b></div>';
       }).join('');
       panel.classList.remove('hidden');
       panel.setAttribute('aria-hidden', 'false');
@@ -3563,6 +3639,7 @@
       return {
         questionDifficulty: Number(itemModifiers.questionDifficulty || 0),
         questionMaxEfficiencyMultiplier: RULE_ENGINE_SHARED.getQuestionMaxEfficiencyMultiplier(currentView && currentView.battle && currentView.battle.player && currentView.battle.player.effects),
+        questionEfficiencyBonusPercent: RULE_ENGINE_SHARED.getQuestionEfficiencyBonusPercent(currentView && currentView.battle && currentView.battle.player && currentView.battle.player.effects),
         questionMaxEfficiencyPercent: Number(itemModifiers.questionMaxEfficiencyPercent || 0),
         questionMaxEfficiencyFlatPercent: Number(itemModifiers.questionMaxEfficiencyFlatPercent || 0),
         questionMinEfficiencyPercent: Number(itemModifiers.questionMinEfficiencyPercent || 0),
@@ -3580,8 +3657,9 @@
       var baseSeconds = Number(config.baseQuestionTimeSec || 10);
       var perDifficultySeconds = Number(config.questionTimePerDifficultySec || 2);
       var effectSeconds = (currentView && currentView.battle && currentView.battle.player && currentView.battle.player.effects || []).reduce(function(total, effect) {
+        if (effect && effect.rules) return total + RULE_ENGINE_SHARED.getRuleStatBonus(effect, 'questionTime', 'flat');
         if (!effect || (effect.statKey !== 'caffeine' && (effect.statKey !== 'questionTime' || effect.effectType !== 'flat'))) return total;
-        return total + (Number(effect.value || 0) * Math.max(1, Number(effect.stacks || 1)) * (effect.statKey === 'caffeine' ? 0.1 : 1));
+        return total + (effect.statKey === 'caffeine' ? Math.max(1, Number(effect.stacks || 1)) * 0.3 : Number(effect.value || 0) * Math.max(1, Number(effect.stacks || 1)));
       }, 0);
       var seconds = baseSeconds
         + ((Math.max(1, Number(difficulty || 1)) - 1) * perDifficultySeconds)
@@ -3643,6 +3721,7 @@
       var effects = currentView && currentView.battle && currentView.battle.player && currentView.battle.player.effects || [];
       return effects.reduce(function(total, effect) {
         if (!effect) return total;
+        if (effect.rules) return total + RULE_ENGINE_SHARED.getRuleStatBonus(effect, 'questionDifficulty', 'flat');
         if (effect.statKey !== 'questionDifficulty' || effect.effectType !== 'flat') return total;
         if (effect.effectId === 'debuff_foolish') {
           if (foolishApplied) return total;
@@ -3786,7 +3865,7 @@
       resetQuestionEfficiencyFeedback();
       currentQuestionView = questionView;
       currentQuestionView.isDummy = !!dummy;
-      if (!dummy) recordQuestionExposure(questionView.question);
+      if (!dummy && !questionView.isRewardReroll) recordQuestionExposure(questionView.question);
       shortAnswerEnterSubmitLock = false;
       questionStartedAt = Date.now();
       wrongCountAfterTimeout = 0;
@@ -3934,6 +4013,7 @@
           });
           label.classList.add('selected');
           label.querySelector('input').checked = true;
+          if (currentQuestionView && currentQuestionView.isRewardReroll) submitQuestionAnswer();
         });
       });
     }
@@ -4270,7 +4350,7 @@
     function tickQuestionTimer() {
       if (!currentQuestionView) return;
       if (currentQuestionView.efficiencyLocked) {
-        updateQuestionEfficiencyMeter(currentQuestionView.lockedEfficiency || MIN_ANSWER_EFFICIENCY);
+        updateQuestionEfficiencyMeter(Number(currentQuestionView.lockedEfficiency || 0));
         return;
       }
       var maxMs = Number(currentQuestionView.maxMs || 10000);
@@ -4284,10 +4364,13 @@
     function calculateTimedEfficiency(remainingMs, maxMs) {
       var maxEfficiency = getQuestionMaxAnswerEfficiency();
       var ratio = Math.max(0, Math.min(1, Number(remainingMs || 0) / Math.max(1, Number(maxMs || 1))));
+      var minEfficiency = getQuestionMinAnswerEfficiency();
+      if (maxEfficiency <= 1) {
+        return minEfficiency + ((maxEfficiency - minEfficiency) * ratio);
+      }
       if (ratio >= 0.5) {
         return 1 + ((ratio - 0.5) * ((maxEfficiency - 1) / 0.5));
       }
-      var minEfficiency = getQuestionMinAnswerEfficiency();
       return minEfficiency + (ratio * ((1 - minEfficiency) / 0.5));
     }
 
@@ -4301,24 +4384,39 @@
     }
 
     function updateQuestionEfficiencyMeter(efficiency) {
-      var normalizedEfficiency = Math.max(0, Number(efficiency || 0));
+      var baseEfficiency = Math.max(0, Number(efficiency || 0));
+      var bonusPercent = currentQuestionView && !currentQuestionView.failedBySkillPenalty && !currentQuestionView.giveUp
+        ? Number(currentQuestionView.questionModifiers && currentQuestionView.questionModifiers.questionEfficiencyBonusPercent || 0)
+        : 0;
+      var bonusEfficiency = Math.max(0, bonusPercent / 100);
+      var totalEfficiency = baseEfficiency + bonusEfficiency;
       var maxEfficiency = getQuestionMaxAnswerEfficiency();
-      var percent = Math.round(normalizedEfficiency * 100);
+      var displayMaxEfficiency = Math.max(0.01, maxEfficiency + bonusEfficiency);
+      var percent = Math.round(baseEfficiency * 100);
       var fill = document.getElementById('questionEfficiencyFill');
+      var bonusFill = document.getElementById('questionEfficiencyBonusFill');
       var meter = document.getElementById('questionEfficiencyMeter');
       var percentText = document.getElementById('questionEfficiencyPercent');
+      var bonusText = document.getElementById('questionEfficiencyBonus');
       var actionValueText = document.getElementById('questionEfficiencyActionValue');
-      var actionValue = calculateQuestionActionActualValue(normalizedEfficiency);
+      var actionValue = calculateQuestionActionActualValue(totalEfficiency);
       percentText.textContent = percent + '%';
+      bonusText.textContent = bonusPercent > 0 ? '(+' + Math.round(bonusPercent) + '%)' : '';
       actionValueText.textContent = '(' + actionValue + ')';
-      meter.dataset.efficiency = String(normalizedEfficiency);
-      meter.setAttribute('aria-label', '효율 ' + percent + '퍼센트, 행동 수치 ' + actionValue);
-      fill.style.width = Math.round(Math.max(0, Math.min(1, normalizedEfficiency / Math.max(0.01, maxEfficiency))) * 100) + '%';
-      fill.classList.remove('efficiency-high', 'efficiency-mid', 'efficiency-low');
-      fill.classList.add(percent <= 50 ? 'efficiency-low' : (percent <= 100 ? 'efficiency-mid' : 'efficiency-high'));
+      meter.dataset.efficiency = String(totalEfficiency);
+      meter.dataset.baseEfficiency = String(baseEfficiency);
+      meter.setAttribute('aria-label', '효율 ' + percent + '퍼센트' + (bonusPercent > 0 ? ' 플러스 ' + Math.round(bonusPercent) + '퍼센트' : '') + ', 행동 수치 ' + actionValue);
+      var baseWidth = Math.max(0, Math.min(1, baseEfficiency / displayMaxEfficiency)) * 100;
+      var bonusWidth = Math.max(0, Math.min(1, bonusEfficiency / displayMaxEfficiency)) * 100;
+      fill.style.width = baseWidth + '%';
+      bonusFill.style.left = baseWidth + '%';
+      bonusFill.style.width = bonusWidth + '%';
+      fill.classList.remove('efficiency-high', 'efficiency-mid', 'efficiency-low', 'efficiency-over');
+      fill.classList.add(percent > 100 ? 'efficiency-over' : (percent >= 75 ? 'efficiency-high' : (percent > 50 ? 'efficiency-mid' : 'efficiency-low')));
     }
 
     function calculateQuestionActionActualValue(efficiency) {
+      if (currentQuestionView && currentQuestionView.isRewardReroll) return Number(efficiency || 0) > 0 ? 1 : 0;
       var battle = currentView && currentView.battle || {};
       var player = battle.player || {};
       var actionType = String(currentQuestionView && currentQuestionView.actionType || 'attack').toLowerCase();
@@ -4395,6 +4493,7 @@
       updateWorkbookCountdown();
       if (workbookDeadlineExpired) return;
       if (!currentQuestionView) return;
+      if (currentQuestionView.isRewardReroll) { submitRewardRerollAnswer(false); return; }
       if (currentQuestionView.resultHolding) {
         requestQuestionResultProceed();
         return;
@@ -4451,20 +4550,22 @@
         currentQuestionView.efficiencyLocked = true;
         currentQuestionView.lockedEfficiency = calculateWrongEfficiency(wrongCountAfterTimeout - Number(currentQuestionView.ignoredWrongCount || 0));
         updateQuestionEfficiencyMeter(currentQuestionView.lockedEfficiency);
-        animateQuestionEfficiencyPenalty(previousEfficiency, currentQuestionView.lockedEfficiency);
+        var caffeineEfficiencyBonus = Number(currentQuestionView.questionModifiers && currentQuestionView.questionModifiers.questionEfficiencyBonusPercent || 0) / 100;
+        animateQuestionEfficiencyPenalty(previousEfficiency, currentQuestionView.lockedEfficiency + caffeineEfficiencyBonus);
         markSelectedAnswerResult(false);
         showQuestionGiveUpButton();
-        document.getElementById('questionMessage').textContent = (wrongCountAfterTimeout - Number(currentQuestionView.ignoredWrongCount || 0)) === 1 ? '오답입니다. 효율이 50%로 고정됩니다.' : '오답입니다. 효율이 10% 감소했습니다.';
+        document.getElementById('questionMessage').textContent = (wrongCountAfterTimeout - Number(currentQuestionView.ignoredWrongCount || 0)) === 1 ? '오답입니다. 기본 효율이 50%로 고정됩니다.' : '오답입니다. 기본 효율이 10% 감소했습니다.';
         document.getElementById('questionMessage').className = 'message error';
         return;
       }
 
       clearInterval(questionTimerId);
+      var caffeineBonus = Number(currentQuestionView.questionModifiers && currentQuestionView.questionModifiers.questionEfficiencyBonusPercent || 0) / 100;
       var finalEfficiency = currentQuestionView.efficiencyLocked
-        ? Number(currentQuestionView.lockedEfficiency || 0)
-        : applyClientQuestionCorrectEfficiencyModifiers(calculateTimedEfficiency(Math.max(0, Number(currentQuestionView.maxMs || 10000) - elapsedMs), currentQuestionView.maxMs), currentQuestionView);
+        ? (currentQuestionView.failedBySkillPenalty ? 0 : Number(currentQuestionView.lockedEfficiency || 0) + caffeineBonus)
+        : applyClientQuestionCorrectEfficiencyModifiers(calculateTimedEfficiency(Math.max(0, Number(currentQuestionView.maxMs || 10000) - elapsedMs), currentQuestionView.maxMs), currentQuestionView) + caffeineBonus;
       currentDamageEfficiency = finalEfficiency;
-      updateQuestionEfficiencyMeter(finalEfficiency);
+      updateQuestionEfficiencyMeter(finalEfficiency - (currentQuestionView.failedBySkillPenalty ? 0 : caffeineBonus));
       animateQuestionEfficiencyCorrect();
       document.getElementById('questionSubmitButton').disabled = true;
       hideQuestionGiveUpButton();
@@ -4509,6 +4610,7 @@
     }
 
     function giveUpCurrentQuestion() {
+      if (currentQuestionView && currentQuestionView.isRewardReroll) { submitRewardRerollAnswer(true); return; }
       if (!currentQuestionView || currentQuestionView.resultHolding) return;
       var question = currentQuestionView.question || {};
       if (question.type !== 'shortAnswer') return;
@@ -5144,7 +5246,7 @@
               applyMonsterShieldDelta(monsterEvent.monsterId, monsterEvent.shield || 0);
               animateMonsterShield(monsterEvent.monsterId);
             };
-            if (monsterEvent.skillId && resolveMonsterSkillAttackEffect(monsterEvent)) {
+            if (monsterEvent.skillId && normalizeMonsterAttackEffect(resolveMonsterSkillAttackEffect(monsterEvent))) {
               await animateMonsterAttack(monsterEvent.monsterId, playMonsterGuard, resolveMonsterSkillAttackEffect(monsterEvent));
             } else {
               playMonsterGuard();
@@ -5156,7 +5258,7 @@
               animateMonsterStatusEffect(monsterEvent.monsterId, 'buff');
               refreshEventStatuses(monsterEvent, nextView);
             };
-            if (monsterEvent.skillId && resolveMonsterSkillAttackEffect(monsterEvent)) {
+            if (monsterEvent.skillId && normalizeMonsterAttackEffect(resolveMonsterSkillAttackEffect(monsterEvent))) {
               await animateMonsterAttack(monsterEvent.monsterId, playMonsterBuff, resolveMonsterSkillAttackEffect(monsterEvent));
             } else {
               playMonsterBuff();
@@ -5168,7 +5270,7 @@
               animatePlayerStatusEffect('debuff');
               refreshEventStatuses(monsterEvent, nextView);
             };
-            if (monsterEvent.skillId && resolveMonsterSkillAttackEffect(monsterEvent)) {
+            if (monsterEvent.skillId && normalizeMonsterAttackEffect(resolveMonsterSkillAttackEffect(monsterEvent))) {
               await animateMonsterAttack(monsterEvent.monsterId, playMonsterDebuff, resolveMonsterSkillAttackEffect(monsterEvent));
             } else {
               playMonsterDebuff();
@@ -5184,7 +5286,7 @@
                 spawnFloatingText(hpText, '+' + Number(monsterEvent.heal || 0), 'heal-green');
               }
             };
-            if (monsterEvent.skillId && resolveMonsterSkillAttackEffect(monsterEvent)) {
+            if (monsterEvent.skillId && normalizeMonsterAttackEffect(resolveMonsterSkillAttackEffect(monsterEvent))) {
               await animateMonsterAttack(monsterEvent.monsterId, playMonsterHeal, resolveMonsterSkillAttackEffect(monsterEvent));
             } else {
               playMonsterHeal();
@@ -5313,7 +5415,7 @@
         if (event.missed) {
           animatePlayerMiss();
         } else {
-          animatePlayerHit(event.damage || 0, event.hpDamage || 0, event.shieldDamage || 0, event.isCritical);
+          animatePlayerHit(event.damage || 0, event.hpDamage || 0, event.shieldDamage || 0, event.isCritical, resolveMonsterSkillAttackEffect(event));
         }
       }, resolveMonsterSkillAttackEffect(event));
     }
@@ -5322,7 +5424,12 @@
       event = event || {};
       var directEffect = String(event.attackEffect || '').trim();
       if (directEffect) return directEffect;
-      if (!event.skillId) return '';
+      if (!event.skillId) {
+        var basicMonster = (currentView && currentView.battle && currentView.battle.monsters || []).filter(function(candidate) {
+          return String(candidate.instanceId || candidate.monsterId) === String(event.monsterId || '');
+        })[0];
+        return basicMonster && basicMonster.attackEffect || 'slash';
+      }
       var rules = currentView && currentView.monsterAiRules || [];
       var monsters = currentView && currentView.battle && currentView.battle.monsters || [];
       var monster = monsters.filter(function(candidate) {
@@ -5422,7 +5529,7 @@
 
       (battle.monsters || []).forEach(function(monster) {
         if (Number(monster.currentHp || 0) <= 0 || Number(battle.player.hp || 0) <= 0) return;
-        if (hasClientEffect(monster, 'debuff_stun') || hasClientEffect(monster, 'debuff_freeze') || hasClientEffect(monster, 'debuff_sleep')) {
+        if (RULE_ENGINE_SHARED.hasActionBlock(monster)) {
           battle.lastTurnEvents.push({
             actor: 'monster',
             type: 'skip',
@@ -5666,7 +5773,7 @@
         skillRule: rule.skillRule || {},
         skillEffectChance: rule.skillEffectChance,
         skillEffect: rule.skillEffect || null,
-        attackEffect: actionType === 'skill' ? (rule.skillAttackEffect || '') : (rule.attackEffect || ''),
+        attackEffect: actionType === 'skill' ? (rule.skillAttackEffect || (rule.skillType === 'damage' ? 'slash' : 'none')) : (monster.attackEffect || 'slash'),
         intentIcon: rule.intentIcon || 'sword',
         intentTextTemplate: rule.intentTextTemplate || '',
         value: value,
@@ -5945,6 +6052,9 @@
       var efficiency = questionView.efficiencyLocked ? Number(questionView.lockedEfficiency || 0) : calculateTimedEfficiency(remainingMs, maxMs);
       if (!questionView.efficiencyLocked) {
         efficiency = applyClientQuestionCorrectEfficiencyModifiers(efficiency, questionView);
+      }
+      if (!questionView.failedBySkillPenalty && !questionView.giveUp) {
+        efficiency += Number(questionView.questionModifiers && questionView.questionModifiers.questionEfficiencyBonusPercent || 0) / 100;
       }
       currentDamageEfficiency = efficiency;
       battle.lastTurnEvents = [];
@@ -6683,6 +6793,8 @@
         if (rangeMode === 'max') return String(count * sides);
         return String(Math.round(count * ((1 + sides) / 2)));
       });
+      // Match the rule engine before replacing variables, e.g. 2n means 2*n.
+      source = source.replace(/(\d)(?=[A-Za-z_(])/g, '$1*');
       Object.keys(context || {}).sort(function(a, b) { return b.length - a.length; }).forEach(function(key) {
         var pattern = new RegExp('\\b' + escapeRegExpClient(key) + '\\b', 'g');
         source = source.replace(pattern, String(Number(context[key] || 0)));
@@ -7031,6 +7143,8 @@
           if (victoryRewardDisplayStarted && currentView && getVictoryRewardKey(currentView) === key) {
             currentRewardView = rewardView;
             ensureClientRewardState(rewardView);
+            var rerollButton = document.getElementById('rewardRerollButton');
+            if (rerollButton) rerollButton.disabled = !!rewardView.rerollUsed || !rewardView.localTransitionToken;
           }
           if (preload.pendingRewardId) {
             var rewardId = preload.pendingRewardId;
@@ -7114,6 +7228,7 @@
       currentView.stageState = currentView.stageState || {};
       currentView.stageState.reward = {
         stageId: rewardView.stageId,
+        rerollUsed: !!rewardView.rerollUsed,
         battleCompletionReceipt: rewardView.battleCompletionReceipt || null,
         rewardGroupId: rewardView.rewardGroupId,
         choices: rewardView.choices || [],
@@ -7174,6 +7289,8 @@
           maxHp: Number(player.maxHp || player.stats && player.stats.hp || 1),
           shield: Number(player.shield || 0),
           baseStats: copyStageResultValue(player.baseStats, {}),
+          startingStats: copyStageResultValue(getBattleStatStartingStats(player), {}),
+          startingStatsVersion: 1,
           stats: copyStageResultValue(player.stats, {}),
           itemModifiers: copyStageResultValue(player.itemModifiers, {}),
         },
@@ -7337,7 +7454,7 @@
       (view.battle.monsters || []).forEach(function(monster) {
         var definition = findLocalGameDataRow('monsters', 'monsterId', monster.monsterId || monster.instanceId);
         if (!definition) return;
-        ['name', 'type', 'aiId', 'skillIds', 'evasion', 'criticalRate', 'criticalDamage'].forEach(function(key) {
+        ['name', 'type', 'aiId', 'skillIds', 'attackEffect', 'evasion', 'criticalRate', 'criticalDamage'].forEach(function(key) {
           if (definition[key] !== undefined && definition[key] !== null && definition[key] !== '') {
             monster[key] = definition[key];
           }
@@ -7446,8 +7563,15 @@
 
     function renderRewardChoices(rewardView) {
       if (workbookDeadlineExpired) return;
+      var starLayer = document.getElementById('starBurstLayer');
+      if (starLayer) starLayer.replaceChildren();
       selectedRewardId = '';
       rewardSelectionApplying = false;
+      var rerollButton = document.getElementById('rewardRerollButton');
+      if (rerollButton) {
+        rerollButton.disabled = !!rewardView.rerollUsed || !!rewardView.preparedDuringBattle || !rewardView.localTransitionToken;
+        rerollButton.title = rewardView.rerollUsed ? '이 스테이지의 새로고침 기회를 사용했습니다' : '문제를 맞히면 보상 전체 새로고침 · 스테이지마다 1회';
+      }
       var regenAmount = Number(rewardView.regenAmount || 0);
       if (rewardView.intermissionStage) {
         renderBattleBackground(rewardView.intermissionStage);
@@ -7479,6 +7603,8 @@
         }
         var rarityBadge = reward.type === 'rest' ? '회복' : (reward.rarityLabel || getRewardRarityLabel(rarity));
         return '<button type="button" aria-pressed="false" class="reward-choice-card rarity-' + escapeHtml(rarity) + '" data-reward-id="' + escapeHtml(reward.rewardId) + '">' +
+          '<span class="reward-charge-light" aria-hidden="true"></span>' +
+          '<span class="reward-reveal-flash" aria-hidden="true"></span>' +
           '<span class="reward-choice-shortcut" aria-hidden="true">' + (index + 1) + '</span>' +
           '<span class="reward-choice-selected-label" aria-hidden="true">✓ 선택됨</span>' +
           renderRewardRarityGems(rarity) +
@@ -7511,10 +7637,129 @@
       rewardModal.classList.add('stage-clear-reward-overlay');
       rewardModal.classList.toggle('floor-rest-reward-overlay', !!rewardView.floorRestChoice);
       rewardModal.setAttribute('aria-hidden', 'false');
+      var rewardPanel = rewardModal.querySelector('.reward-modal');
+      rewardPanel.classList.remove('reward-entering');
+      void rewardPanel.offsetWidth;
+      rewardPanel.classList.add('reward-entering');
       window.requestAnimationFrame(function() {
         fitRewardCardText();
-        spawnStageClearBurst();
       });
+    }
+
+    var rewardRerollBusy = false;
+    var rewardRerollQuestion = null;
+    var rewardRerollAnswer = null;
+
+    function openRewardRerollQuestion(question) {
+      rewardRerollQuestion = question;
+      document.getElementById('rewardModal').classList.remove('active');
+      document.getElementById('rewardModal').setAttribute('aria-hidden', 'true');
+      openQuestionModal({question:question, isRewardReroll:true, actionType:'rewardReroll', actionPointCost:0,
+        finalDifficulty:Number(question.difficulty || 1), maxMs:calculateClientLocalQuestionTimeMs(question, Number(question.difficulty || 1), {}),
+        maxAnswerEfficiency:1, questionModifiers:{}}, false);
+      document.getElementById('questionTitle').textContent = '보상 새로고침 문제';
+      showQuestionGiveUpButton();
+    }
+
+    function startRewardReroll() {
+      if (rewardRerollBusy || rewardSelectionApplying || workbookDeadlineExpired || !currentRewardView
+          || currentRewardView.rerollUsed || !currentRewardView.localTransitionToken) return;
+      rewardSelectionApplying = true;
+      document.getElementById('rewardRerollButton').disabled = true;
+      if (currentRewardView.rerollQuestion) {
+        openRewardRerollQuestion(currentRewardView.rerollQuestion);
+      } else {
+        // Compatibility for reward plans prepared by an older open page.
+        requestRewardReroll('start');
+      }
+    }
+
+    function finishRewardReroll() {
+      if (!currentQuestionView || !currentQuestionView.rerollComplete || rewardRerollBusy) return;
+      var status = currentQuestionView.rerollStatus;
+      closeQuestionModal();
+      rewardRerollQuestion = null;
+      rewardRerollAnswer = null;
+      renderRewardChoices(currentRewardView);
+      document.getElementById('rewardMessage').textContent = status === 'success'
+        ? '정답입니다. 보상 전체를 새로고침했습니다.' : '새로고침에 실패했습니다. 기존 보상을 선택하세요.';
+    }
+
+    function submitRewardRerollAnswer(giveUp) {
+      var view = currentQuestionView;
+      if (!view || !view.isRewardReroll) return;
+      if (view.rerollComplete) { finishRewardReroll(); return; }
+      if (rewardRerollBusy) return;
+      var answer = rewardRerollAnswer || getSelectedAnswer(view.question);
+      if (!giveUp && !rewardRerollAnswer && !answer.selectedAnswer && !answer.selectedAnswerText) return;
+      answer = Object.assign({}, answer, {giveUp:!!giveUp || !!answer.giveUp});
+      rewardRerollAnswer = answer;
+      var correct = !answer.giveUp && isClientCorrectAnswer(view.question, answer);
+      clearInterval(questionTimerId);
+      view.efficiencyLocked = true;
+      view.lockedEfficiency = correct ? 1 : 0;
+      view.rerollAnswered = true;
+      updateQuestionEfficiencyMeter(view.lockedEfficiency);
+      markSelectedAnswerResult(correct);
+      setQuestionInputsDisabled(true);
+      hideQuestionGiveUpButton();
+      document.getElementById('questionSubmitButton').disabled = true;
+      document.getElementById('questionSubmitButton').textContent = '결과 반영 중...';
+      document.getElementById('questionMessage').textContent = correct ? '정답입니다. 보상을 새로고침하는 중입니다.' : '새로고침 실패 · 효율 0%';
+      document.getElementById('questionMessage').className = correct ? 'message ok' : 'message error';
+      requestRewardReroll('answer', answer);
+    }
+
+    function requestRewardReroll(action, answer) {
+      rewardRerollBusy = true;
+      rewardSelectionApplying = true;
+      var payload = buildStageResultPayload(currentView);
+      payload.rewardRerollAction = action;
+      payload.rewardToken = currentRewardView.localTransitionToken;
+      payload.rerollAnswer = answer;
+      google.script.run.withSuccessHandler(function(response) {
+        rememberRunSession(response);
+        rewardRerollBusy = false;
+        if (workbookDeadlineExpired) return;
+        if (response && response.battle && response.battle.status === 'defeat') {
+          rewardSelectionApplying = false;
+          closeQuestionModal();
+          handleRewardSelectionResponse(response);
+          return;
+        }
+        var intermissionRewardsOnly = currentRewardView && !currentRewardView.floorRestChoice && response.rewardView.floorRestChoice;
+        currentRewardView = response.rewardView;
+        if (intermissionRewardsOnly) currentRewardView = Object.assign({}, currentRewardView, { floorRestChoice:false, choices:getFloorIntermissionRewardChoices(currentRewardView) });
+        ensureClientRewardState(currentRewardView);
+        if (victoryRewardPreload) victoryRewardPreload.rewardView = currentRewardView;
+        if (response.rerollStatus === 'pending') {
+          openRewardRerollQuestion(response.rerollQuestion);
+          return;
+        }
+        if (!currentQuestionView || !currentQuestionView.isRewardReroll) return;
+        currentQuestionView.rerollComplete = true;
+        currentQuestionView.rerollStatus = response.rerollStatus;
+        currentQuestionView.lockedEfficiency = response.rerollStatus === 'success' ? 1 : 0;
+        updateQuestionEfficiencyMeter(currentQuestionView.lockedEfficiency);
+        setQuestionInputsDisabled(true);
+        var button = document.getElementById('questionSubmitButton');
+        button.disabled = false;
+        button.textContent = '보상으로 돌아가기';
+        document.getElementById('questionMessage').textContent = response.rerollStatus === 'success'
+          ? '정답입니다. 보상 전체를 새로고침했습니다.' : '새로고침 실패 · 효율 0% · 추가 답안을 선택할 수 없습니다.';
+      }).withFailureHandler(function(error) {
+        rewardRerollBusy = false;
+        if (workbookDeadlineExpired) return;
+        var message = error && error.message || '요청에 실패했습니다. 다시 시도하세요.';
+        if (currentQuestionView && currentQuestionView.isRewardReroll) {
+          document.getElementById('questionMessage').textContent = message;
+          document.getElementById('questionSubmitButton').disabled = false;
+          document.getElementById('questionSubmitButton').textContent = '결과 저장 재시도';
+        } else {
+          renderRewardChoices(currentRewardView);
+          document.getElementById('rewardMessage').textContent = message;
+        }
+      }).previewRewardChoicesForStageResult(payload, getAuthToken());
     }
 
     function renderRewardRarityGems(rarity) {
@@ -7968,7 +8213,9 @@
       } else {
         var cards = modal.querySelectorAll('.reward-choice-card');
         var card = cards[Number(event.key) - 1];
-        if (card && !card.disabled) {
+        var heading = card && card.querySelector ? card.querySelector('.reward-choice-heading') : null;
+        if (card && !card.disabled && (!heading || !heading.checkVisibility || heading.checkVisibility({ visibilityProperty: true }))
+            && (!card.checkVisibility || card.checkVisibility({ visibilityProperty: true }))) {
           selectRewardCandidate(card.getAttribute('data-reward-id'));
           card.focus({ preventScroll: true });
         }
@@ -9209,6 +9456,7 @@
       var target = document.querySelector('[data-monster-id="' + cssEscape(monsterId) + '"] .compact-monster');
       if (!target) return;
       var effectType = normalizePlayerAttackEffect(attackEffect);
+      if (effectType === 'none') return;
       target.dataset.attackEffect = effectType;
       playBattleSound('swing');
       target.classList.remove('incoming-slash');
@@ -9221,7 +9469,7 @@
 
     function normalizePlayerAttackEffect(value) {
       var effect = String(value || '').trim().toLowerCase();
-      return ['slash', 'blunt', 'punch', 'thrust', 'fire'].indexOf(effect) !== -1 ? effect : 'slash';
+      return ['slash', 'blunt', 'punch', 'thrust', 'fire', 'none'].indexOf(effect) !== -1 ? effect : 'slash';
     }
 
     async function animateMonsterAttack(monsterId, onImpact, attackEffect) {
@@ -9427,13 +9675,13 @@
       }, 980);
     }
 
-    function animatePlayerHit(damage, hpDamage, shieldDamage, isCritical) {
+    function animatePlayerHit(damage, hpDamage, shieldDamage, isCritical, attackEffect) {
       var shell = document.getElementById('battleShell');
       var visibleHpDamage = hpDamage === undefined || hpDamage === null ? Number(damage || 0) : Number(hpDamage || 0);
       applyPlayerDamageDelta(visibleHpDamage, shieldDamage || 0);
       if (visibleHpDamage <= 0) {
         if (Number(shieldDamage || 0) > 0) {
-          animatePlayerShieldBlock();
+          animatePlayerShieldBlock(attackEffect);
           spawnShieldBlockIcon();
           spawnFloatingDamage(document.getElementById('playerHpText') || document.getElementById('playerDamageAnchor'), Number(damage || 0), 'damage-red', isCritical);
         }
@@ -9445,7 +9693,7 @@
       void shell.offsetWidth;
       shell.classList.add('player-hit');
       restartScreenFlash('damage-flash-red');
-      spawnPlayerScreenImpact(isCritical, false);
+      spawnPlayerScreenImpact(isCritical, false, attackEffect === undefined ? 'none' : attackEffect);
       spawnFloatingDamage(document.getElementById('playerHpText') || document.getElementById('playerDamageAnchor'), Number(damage || 0), 'damage-red', isCritical);
     }
 
@@ -9508,7 +9756,7 @@
       return skippableAutoDelay(HIT_STATE_HOLD_MS);
     }
 
-    function animatePlayerShieldBlock() {
+    function animatePlayerShieldBlock(attackEffect) {
       var shell = document.getElementById('battleShell');
       if (!shell) return;
       playBattleSound('blockSuccess');
@@ -9517,16 +9765,24 @@
       void shell.offsetWidth;
       shell.classList.add('player-shield-block');
       restartScreenFlash('damage-flash-white');
-      spawnPlayerScreenImpact(false, true);
+      spawnPlayerScreenImpact(false, true, attackEffect === undefined ? 'none' : attackEffect);
     }
 
-    function spawnPlayerScreenImpact(isCritical, blocked) {
+    function spawnPlayerScreenImpact(isCritical, blocked, attackEffect) {
       var shell = document.getElementById('battleShell');
       if (!shell) return;
+      var effectType = normalizeMonsterAttackEffect(attackEffect);
+      if (!effectType) return;
       var effect = document.createElement('div');
-      effect.className = 'player-screen-impact' + (isCritical ? ' critical-impact' : '') + (blocked ? ' blocked-impact' : '');
+      effect.className = 'player-screen-impact impact-' + effectType + (isCritical ? ' critical-impact' : '') + (blocked ? ' blocked-impact' : '');
       effect.setAttribute('aria-hidden', 'true');
-      effect.innerHTML = '<svg class="player-impact-slashes" viewBox="0 0 1000 700" preserveAspectRatio="xMidYMid slice" aria-hidden="true"><path d="M100 590 L780 100 L290 510 Z"/><path d="M230 650 L920 140 L425 540 Z"/><path d="M20 420 L590 50 L190 360 Z"/></svg><div class="player-impact-ring"></div>';
+      var shapes = {
+        slash: '<path d="M100 590 L780 100 L290 510 Z"/><path d="M230 650 L920 140 L425 540 Z"/><path d="M20 420 L590 50 L190 360 Z"/>',
+        blunt: '<path d="M500 140 L535 265 L650 195 L605 310 L760 350 L610 390 L660 510 L535 440 L500 570 L465 440 L340 510 L390 390 L240 350 L395 310 L350 195 L465 265 Z"/>',
+        thrust: '<path d="M500 55 L535 315 L780 350 L535 385 L500 645 L465 385 L220 350 L465 315 Z"/>',
+        fire: '<path d="M500 95 C565 230 690 260 670 405 C660 505 590 565 500 575 C390 575 310 510 330 400 C340 330 395 300 390 235 C455 265 440 350 475 365 C535 300 465 215 500 95 Z"/>',
+      };
+      effect.innerHTML = '<svg class="player-impact-shape' + (effectType === 'slash' ? ' player-impact-slashes' : '') + '" viewBox="0 0 1000 700" preserveAspectRatio="xMidYMid slice" aria-hidden="true">' + shapes[effectType] + '</svg><div class="player-impact-ring"></div>';
       shell.appendChild(effect);
       // Separate nodes let consecutive hits finish without removing a newer effect.
       window.setTimeout(function() {
@@ -9592,7 +9848,7 @@
         buffs: player.buffs || [],
         debuffs: player.debuffs || [],
       });
-      spawnShieldEffect(document.querySelector('.player-compact-panel'));
+      spawnShieldEffect(null);
     }
 
     function animateMonsterShield(monsterId) {
@@ -9739,6 +9995,7 @@
       fragment.style.top = rect.top + 'px';
       fragment.style.width = (rect.width * hpLost / visualMax) + 'px';
       fragment.style.height = rect.height + 'px';
+      if (isShield) populateShieldDamageShards(fragment, rect.width * hpLost / visualMax);
       fragment.style['--hp-flight-x'] = ((Math.random() - .5) * 32) + 'px';
       var monsterTrack = track.classList.contains && track.classList.contains('monster-hp-bar');
       fragment.style['--hp-flight-y'] = ((monsterTrack ? 1 : -1) * (24 + Math.random() * 18)) + 'px';
@@ -9749,13 +10006,47 @@
         fragment.style['--hp-flight-y'] = ((monsterTrack ? 1 : -1) * (68 + Math.random() * 28)) + 'px';
         fragment.style['--hp-flight-spin'] = ((Math.random() < .5 ? -1 : 1) * 32) + 'deg';
       }
-      track.style['--hp-shake-distance'] = (1 + 11 * Math.min(1, hpLost / visualMax)) + 'px';
+      var damageRatio = isShield ? Math.max(Number(track.damageHpRatio || 0), hpLost / visualMax) : Number(track.damageHpRatio || hpLost / visualMax);
+      track.style['--hp-shake-distance'] = (2 + 14 * Math.max(0, Math.min(1, damageRatio))) + 'px';
+      var shakeToken = Number(track.hpShakeToken || 0) + 1;
+      track.hpShakeToken = shakeToken;
       track.classList.remove('hp-hit-shake');
       void track.offsetWidth;
       track.classList.add('hp-hit-shake');
-      window.setTimeout(function() { track.classList.remove('hp-hit-shake'); }, 320);
+      window.setTimeout(function() {
+        if (track.hpShakeToken === shakeToken) track.classList.remove('hp-hit-shake');
+      }, 380);
       document.body.appendChild(fragment);
-      window.setTimeout(function() { if (fragment.parentNode) fragment.parentNode.removeChild(fragment); }, 1100);
+      window.setTimeout(function() { if (fragment.parentNode) fragment.parentNode.removeChild(fragment); }, isShield ? 1100 : 800);
+    }
+
+    function populateShieldDamageShards(fragment, width) {
+      var sections = Math.max(3, Math.min(6, Math.ceil(width / 24)));
+      var topEdges = [0], bottomEdges = [0];
+      for (var edge = 1; edge < sections; edge += 1) {
+        topEdges.push((edge + (Math.random() - .5) * .65) * 100 / sections);
+        bottomEdges.push((edge + (Math.random() - .5) * .65) * 100 / sections);
+      }
+      topEdges.push(100);
+      bottomEdges.push(100);
+      for (var i = 0; i < sections; i += 1) {
+        var topLeft = topEdges[i] + '% 0%', topRight = topEdges[i + 1] + '% 0%';
+        var bottomLeft = bottomEdges[i] + '% 100%', bottomRight = bottomEdges[i + 1] + '% 100%';
+        var polygons = Math.random() < .5
+          ? [[topLeft, topRight, bottomLeft], [topRight, bottomRight, bottomLeft]]
+          : [[topLeft, topRight, bottomRight], [topLeft, bottomRight, bottomLeft]];
+        polygons.forEach(function(points) {
+          var piece = document.createElement('span');
+          piece.className = 'shield-glass-piece';
+          piece.style.clipPath = 'polygon(' + points.join(',') + ')';
+          piece.style.transformOrigin = ((topEdges[i] + bottomEdges[i + 1]) / 2) + '% 50%';
+          piece.style.setProperty('--glass-x', ((i / (sections - 1) - .5) * 65 + (Math.random() - .5) * 36) + 'px');
+          piece.style.setProperty('--glass-y', (-30 + Math.random() * 80) + 'px');
+          piece.style.setProperty('--glass-spin', ((Math.random() - .5) * 140) + 'deg');
+          piece.style.animationDuration = (780 + Math.random() * 250) + 'ms';
+          fragment.appendChild(piece);
+        });
+      }
     }
 
     function flashHpBar(track) {
@@ -9864,19 +10155,23 @@
     }
 
     function spawnShieldEffect(anchor, isMonsterGuard) {
-      if (!anchor) return;
-      var rect = anchor.getBoundingClientRect();
-      var layer = document.getElementById('floatingLayer');
-      var layerRect = layer.getBoundingClientRect();
+      if (isMonsterGuard && !anchor) return;
+      var layer = isMonsterGuard ? document.getElementById('floatingLayer') : document.body;
+      if (!layer) return;
       var element = document.createElement('div');
-      element.className = 'shield-effect' + (isMonsterGuard ? ' monster-guard-effect' : '');
+      element.className = 'shield-effect' + (isMonsterGuard ? ' monster-guard-effect' : ' player-guard-effect');
+      element.setAttribute('aria-hidden', 'true');
       element.innerHTML = isMonsterGuard ? '<span>✦</span><strong>방어</strong>' : '<span>DEF</span>';
-      element.style.left = (rect.left + (rect.width / 2) - layerRect.left) + 'px';
-      element.style.top = (rect.top + (rect.height / 2) - layerRect.top) + 'px';
+      if (isMonsterGuard) {
+        var rect = anchor.getBoundingClientRect();
+        var layerRect = layer.getBoundingClientRect();
+        element.style.left = (rect.left + (rect.width / 2) - layerRect.left) + 'px';
+        element.style.top = (rect.top + (rect.height / 2) - layerRect.top) + 'px';
+      }
       layer.appendChild(element);
       window.setTimeout(function() {
         if (element.parentNode) element.parentNode.removeChild(element);
-      }, 1900);
+      }, isMonsterGuard ? 1900 : 1200);
     }
 
     function spawnFloatingDamage(anchor, damage, className, isCritical) {
@@ -9887,7 +10182,8 @@
       var endRatio = fill ? Math.max(0, Math.min(1, parseFloat(fill.style.width || '0') / 100)) : .5;
       if (track && track.damageNumberRatio !== undefined) endRatio = Math.max(0, Math.min(1, Number(track.damageNumberRatio)));
       var efficient = monsterSlot && currentDamageEfficiency !== null && Number(currentDamageEfficiency) >= 1;
-      var tone = isCritical ? 'damage-critical' : (monsterSlot ? (efficient ? 'damage-efficient' : 'damage-low-efficiency') : className);
+      var lowEfficiency = currentDamageEfficiency === null || Number(currentDamageEfficiency) <= .75;
+      var tone = isCritical ? 'damage-critical' : (monsterSlot ? (efficient ? 'damage-efficient' : (lowEfficiency ? 'damage-low-efficiency' : 'damage-white')) : className);
       var suffix = isCritical ? '!!' : (efficient ? '!' : '');
       var element = spawnFloatingText(track || anchor, amount > 0 ? '-' + amount + suffix : '0', tone, true, endRatio);
       if (element) {
@@ -9920,18 +10216,6 @@
         sizeMin: 12,
         sizeMax: 24,
         durationMs: 920,
-      });
-    }
-
-    function spawnStageClearBurst() {
-      spawnStarBurst(document.getElementById('rewardTitle'), {
-        className: 'star-particle-clear',
-        count: 52,
-        spreadMin: 72,
-        spreadMax: 230,
-        sizeMin: 16,
-        sizeMax: 34,
-        durationMs: 1280,
       });
     }
 

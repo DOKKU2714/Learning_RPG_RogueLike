@@ -125,7 +125,7 @@ function getLocalRunEngineAdapters_() {
   function readTable_(name) {
     var keys = {}; keys[DB_SHEETS.STAGES]='stages'; keys[DB_SHEETS.MONSTER_GROUPS]='monsterGroups';
     keys[DB_SHEETS.MONSTERS]='monsters'; keys[DB_SHEETS.MONSTER_AI]='monsterAi'; keys[DB_SHEETS.SKILLS]='skills';
-    keys[DB_SHEETS.EFFECTS]='effects'; keys[DB_SHEETS.ITEMS]='items'; keys[DB_SHEETS.REWARDS]='rewards';
+    keys[DB_SHEETS.EFFECTS]='effects'; keys[DB_SHEETS.EFFECT_RULES]='effectRules'; keys[DB_SHEETS.ITEMS]='items'; keys[DB_SHEETS.REWARDS]='rewards';
     if (name === DB_SHEETS.ANSWER_LOGS) return [];
     if (!keys[name]) throw new Error('전투 스냅샷에 없는 테이블: ' + name);
     return cloneLocal(localSnapshot[keys[name]] || []);
@@ -142,7 +142,8 @@ function getLocalRunEngineAdapters_() {
   function getWorkbookPlayWindow_() { return localPlayWindow; }
   function requireRunBeforeWorkbookDeadline_() { if (localPlayWindow.endsAtMs && Date.now() >= localPlayWindow.endsAtMs) throw new Error('문제집 플레이 가능 시간이 종료되었습니다.'); }
   function getBattleClientConfig_() { return localSnapshot.clientConfig || {}; }
-  function getConfiguredBasePlayerStats_() { return localSnapshot.basePlayerStats || DEFAULT_BASE_PLAYER_STATS; }
+  function getConfiguredBasePlayerStats_() { return cloneLocal(localSnapshot.basePlayerStats || DEFAULT_BASE_PLAYER_STATS); }
+  function getBattleStartingStats_() { return getConfiguredBasePlayerStats_(); }
   function getSharedRuleEngine_() { return RULE_ENGINE_SHARED; }
   function updatePlayerProgressFromRun_() {}
   function flushQueuedBattleAnswerLogs_(battle) { battle.pendingAnswerLogs=[]; }
@@ -197,6 +198,7 @@ function buildLocalTransitionPermit_(run, stageId, battleId, ghostSelection) {
 }
 function prepareLocalRewardTransitions_(view, stagePayload, authToken, deferGhost) {
   var run = requireRun_(stagePayload.runId);
+  prepareRewardRerollQuestion_(view, run);
   var snapshot = ACTIVE_GAME_DATA_SNAPSHOT_;
   var battle = stagePayload.battle || {};
   var state = getStageState_(run);
@@ -234,6 +236,7 @@ function prepareLocalRewardTransitions_(view, stagePayload, authToken, deferGhos
         commitStageResultUnlocked_(payload, authToken);
         var response = selectRewardUnlocked_(run.runId, choice.rewardId, authToken, view);
         var restView = response.rewardView;
+        prepareRewardRerollQuestion_(restView, requireRun_(run.runId));
         restView.localTransition = Object.assign({}, childSeed, { ghostSelection: ghost });
         permit.restViews[choice.rewardId] = signLocalRewardView_(restView);
       } finally { ACTIVE_RUN_SESSION_ = previousSession; }

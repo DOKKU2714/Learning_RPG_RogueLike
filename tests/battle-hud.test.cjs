@@ -30,9 +30,18 @@ test('HP fragments match actual lost segment and disappear independently of HUD 
   const c={document:{createElement:()=>({style:{},setAttribute(){}}),body},window:{setTimeout:(f,ms)=>timers.push({f,ms})}};
   vm.createContext(c);vm.runInContext(fn('getHpGaugeRect'),c);vm.runInContext(fn('spawnHpDamageFragment'),c);vm.runInContext(fn('flashHpBar'),c);
   const track={style:{},classList:{add(){},remove(){}},getBoundingClientRect:()=>({left:10,top:20,width:200,height:36})};
-  c.spawnHpDamageFragment(track,75,25,100);assert.equal(fragments[0].style.left,'110px');assert.equal(fragments[0].style.width,'50px');assert.equal(fragments[0].style.height,'36px');assert.equal(track.style['--hp-shake-distance'],'3.75px');
+  c.spawnHpDamageFragment(track,75,25,100);assert.equal(fragments[0].style.left,'110px');assert.equal(fragments[0].style.width,'50px');assert.equal(fragments[0].style.height,'36px');assert.equal(track.style['--hp-shake-distance'],'5.5px');
   assert.ok(Math.abs(parseFloat(fragments[0].style['--hp-flight-x']))<=16);assert.ok(parseFloat(fragments[0].style['--hp-flight-y'])<=-24);assert.ok(parseFloat(fragments[0].style['--hp-flight-y'])>=-42);
-  c.spawnHpDamageFragment(track,75,0,100);assert.equal(fragments.length,1);const cleanup=timers.find(timer=>timer.ms===1100);assert.ok(cleanup);cleanup.f();assert.equal(fragments.length,0);
+  c.spawnHpDamageFragment(track,75,0,100);assert.equal(fragments.length,1);const cleanup=timers.find(timer=>timer.ms===800);assert.ok(cleanup);cleanup.f();assert.equal(fragments.length,0);
+});
+
+test('consecutive damage keeps the latest full-bar shake and scales it with HP loss',()=>{
+ const timers=[],track={style:{},classList:{add(k){this[k]=true;},remove(k){this[k]=false;}},getBoundingClientRect:()=>({left:0,top:0,width:200,height:20})};
+ const c={flashHpBar(){},document:{createElement:()=>({style:{},setAttribute(){}}),body:{appendChild(){}}},window:{setTimeout:(f,ms)=>timers.push({f,ms})}};
+ vm.createContext(c);vm.runInContext(fn('getHpGaugeRect')+fn('spawnHpDamageFragment'),c);
+ c.spawnHpDamageFragment(track,100,10,100);const small=parseFloat(track.style['--hp-shake-distance']);
+ c.spawnHpDamageFragment(track,90,50,100);assert.ok(parseFloat(track.style['--hp-shake-distance'])>small);
+ const cleanups=timers.filter(t=>t.ms===380);cleanups[0].f();assert.equal(track.classList['hp-hit-shake'],true);cleanups[1].f();assert.equal(track.classList['hp-hit-shake'],false);
 });
 
 test('shield loss flies from shield segment and only full depletion triggers break burst',()=>{
@@ -81,7 +90,7 @@ test('damage typography follows HP loss, efficiency and critical suffixes withou
  const node=()=>({style:{setProperty(k,v){this[k]=v;}},children:[],setAttribute(){},appendChild(e){this.children.push(e);},classList:{toggle(k,v){this[k]=v;}}});
  const c={currentDamageEfficiency:.99,document:{querySelector:()=>track,createElement:node},spawnFloatingText:(anchor,text,tone)=>{const e=Object.assign(node(),{text,tone});elements.push(e);return e;}};
  vm.createContext(c);vm.runInContext(fn('spawnFloatingDamage'),c);const anchor={closest:()=>slot};
- c.spawnFloatingDamage(anchor,10,'damage-white',false);assert.equal(elements[0].text,'-10');assert.equal(elements[0].tone,'damage-low-efficiency');
+ c.spawnFloatingDamage(anchor,10,'damage-white',false);assert.equal(elements[0].text,'-10');assert.equal(elements[0].tone,'damage-white');
  c.currentDamageEfficiency=1;c.spawnFloatingDamage(anchor,10,'damage-white',false);assert.equal(elements[1].text,'-10!');assert.equal(elements[1].tone,'damage-efficient');
  track.damageHpRatio=.5;c.spawnFloatingDamage(anchor,50,'damage-white',true);assert.equal(elements[2].text,'-50!!');assert.equal(elements[2].tone,'damage-critical');assert.ok(parseFloat(elements[2].style.fontSize)>parseFloat(elements[0].style.fontSize));
  assert.equal(elements[2].classList['damage-heavy'],true);assert.equal(elements[2].children[0].children.length,8);

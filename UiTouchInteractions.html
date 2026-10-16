@@ -70,6 +70,9 @@
         var text = document.createElement('div');
         text.className = 'touch-preview-text';
         text.textContent = content.text + (content.statText ? '\n\n' + content.statText : '');
+        if (typeof buildBattleStatTooltipContent === 'function' && target.hasAttribute('data-stat-reward')) {
+          text.innerHTML = buildBattleStatTooltipContent(target);
+        }
         panel.appendChild(text);
       }
       var hint = document.createElement('div');

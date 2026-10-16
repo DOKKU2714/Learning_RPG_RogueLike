@@ -1,0 +1,501 @@
+type	prompt	choice1	choice2	choice3	choice4	answer	answerAliases
+multipleChoice	"다음 영단어의 대표적인 뜻으로 가장 적절한 것은?
+contain"	제안하다	거부하다	포함하다	보존하다	3	[]
+shortAnswer	"다음 영단어의 뜻을 한국어로 하나 쓰시오.
+contain"					포함하다	["함유하다","담고 있다"]
+multipleChoice	"다음 예문에서 'contain'가 나타내는 뜻으로 가장 적절한 것은?
+The report contains several factual errors."	유지하다	지속시키다	포함하다	얻다	3	[]
+multipleChoice	"다음 문장의 해석으로 가장 적절한 것은?
+Although the package was small, it contained all the documents needed for the hearing."	소포는 작았지만 청문회에 필요한 모든 문서를 누락하고 있었다.	소포는 작았지만 청문회에 필요한 모든 문서를 파기하고 있었다.	소포는 작았지만 청문회에 필요한 모든 문서를 거부하고 있었다.	소포는 작았지만 청문회에 필요한 모든 문서를 포함하고 있었다.	4	[]
+shortAnswer	"다음 문장에서 'contain'의 문맥상 뜻을 한국어로 간단히 쓰시오.
+The emergency team set up barriers to contain the spread of the fire."					확산을 막다	["확산을 억제하다","번지는 것을 막다"]
+multipleChoice	"다음 영단어의 대표적인 뜻으로 가장 적절한 것은?
+obtain"	금지하다	획득하다	동봉하다	가정하다	2	[]
+shortAnswer	"다음 영단어의 뜻을 한국어로 하나 쓰시오.
+obtain"					얻다	["획득하다","입수하다"]
+multipleChoice	"다음 예문에서 'obtain'가 나타내는 뜻으로 가장 적절한 것은?
+You must obtain permission before entering."	소비하다	억제하다	얻다	재개하다	3	[]
+multipleChoice	"다음 문장의 해석으로 가장 적절한 것은?
+Applicants must obtain written approval before accessing the confidential records."	신청자는 기밀 기록에 접근하기 전에 서면 처벌을 받아야 한다.	신청자는 기밀 기록에 접근하기 전에 서면 경고을 받아야 한다.	신청자는 기밀 기록에 접근하기 전에 서면 거부을 받아야 한다.	신청자는 기밀 기록에 접근하기 전에 서면 승인을 받아야 한다.	4	[]
+multipleChoice	"다음 문맥에서 빈칸에 들어갈 단어로 가장 적절한 것은?
+Researchers can ____ reliable data only after repeated tests."	assume	prohibit	obtain	retain	3	[]
+multipleChoice	"다음 영단어의 대표적인 뜻으로 가장 적절한 것은?
+maintain"	노출하다	소비하다	유지하다	가로채다	3	[]
+shortAnswer	"다음 영단어의 뜻을 한국어로 하나 쓰시오.
+maintain"					유지하다	["지속하다","보존하다"]
+multipleChoice	"다음 예문에서 'maintain'가 나타내는 뜻으로 가장 적절한 것은?
+The company maintains high safety standards."	봉사하다	생각해내다	가로채다	유지하다	4	[]
+multipleChoice	"다음 문장의 해석으로 가장 적절한 것은?
+Despite budget cuts, the city managed to maintain essential public services."	예산 삭감에도 시는 필수 공공서비스를 유지하는 데 성공했다.	예산 삭감에도 시는 필수 공공서비스를 제한하는 데 성공했다.	예산 삭감에도 시는 필수 공공서비스를 폐지하는 데 성공했다.	예산 삭감에도 시는 필수 공공서비스를 변경하는 데 성공했다.	1	[]
+multipleChoice	"다음 문맥에서 빈칸에 들어갈 단어로 가장 적절한 것은?
+The museum spends heavily to ____ the historic building in good condition."	expose	consume	maintain	assume	3	[]
+multipleChoice	"다음 영단어의 대표적인 뜻으로 가장 적절한 것은?
+sustain"	개혁하다	촉진하다	지탱하다	알리다	3	[]
+shortAnswer	"다음 영단어의 뜻을 한국어로 하나 쓰시오.
+sustain"					지속시키다	["지탱하다","유지하다"]
+multipleChoice	"다음 예문에서 'sustain'가 나타내는 뜻으로 가장 적절한 것은?
+Regular investment can sustain economic growth."	알리다	개혁하다	촉진하다	지속시키다	4	[]
+multipleChoice	"다음 문장의 해석으로 가장 적절한 것은?
+The local economy could not sustain rapid growth without adequate infrastructure."	그 지역 경제는 적절한 기반시설 없이는 빠른 성장을 거부할 수 없었다.	그 지역 경제는 적절한 기반시설 없이는 빠른 성장을 중단할 수 없었다.	그 지역 경제는 적절한 기반시설 없이는 빠른 성장을 지속할 수 없었다.	그 지역 경제는 적절한 기반시설 없이는 빠른 성장을 숨김할 수 없었다.	3	[]
+multipleChoice	"다음 문맥에서 빈칸에 들어갈 단어로 가장 적절한 것은?
+Small farmers struggled to ____ their livelihoods during the prolonged drought."	intercept	exhibit	prohibit	sustain	4	[]
+multipleChoice	"다음 영단어의 대표적인 뜻으로 가장 적절한 것은?
+retain"	전시하다	폭로하다	보유하다	구성하다	3	[]
+shortAnswer	"다음 영단어의 뜻을 한국어로 하나 쓰시오.
+retain"					보유하다	["유지하다","간직하다"]
+multipleChoice	"다음 예문에서 'retain'가 나타내는 뜻으로 가장 적절한 것은?
+Employees can retain their benefits after the merger."	노출하다	반대하다	유지하다	제안하다	3	[]
+multipleChoice	"다음 문장의 해석으로 가장 적절한 것은?
+To retain public trust, officials must explain how the funds were used."	대중의 신뢰를 잃기하기 위해 공무원은 자금이 어떻게 사용되었는지 설명해야 한다.	대중의 신뢰를 침해하기하기 위해 공무원은 자금이 어떻게 사용되었는지 설명해야 한다.	대중의 신뢰를 거부하기하기 위해 공무원은 자금이 어떻게 사용되었는지 설명해야 한다.	대중의 신뢰를 유지하기 위해 공무원은 자금이 어떻게 사용되었는지 설명해야 한다.	4	[]
+multipleChoice	"다음 문맥에서 빈칸에 들어갈 단어로 가장 적절한 것은?
+The agreement allows the author to ____ full ownership of the manuscript."	exclude	disclose	consume	retain	4	[]
+multipleChoice	"다음 영단어의 대표적인 뜻으로 가장 적절한 것은?
+habitual"	충분한	능숙한	균일한	습관적인	4	[]
+shortAnswer	"다음 영단어의 뜻을 한국어로 하나 쓰시오.
+habitual"					습관적인	["상습적인"]
+multipleChoice	"다음 예문에서 'habitual'가 나타내는 뜻으로 가장 적절한 것은?
+Habitual lateness can affect job performance."	영향을 받기 쉬운	능숙한	습관적인	충분한	3	[]
+multipleChoice	"다음 문장의 해석으로 가장 적절한 것은?
+The supervisor warned that habitual delays would no longer be tolerated."	감독자는 일시적인 지연을 더는 용인하지 않을 것이라고 경고했다.	감독자는 예상치 못한 지연을 더는 용인하지 않을 것이라고 경고했다.	감독자는 습관적인 지연을 더는 용인하지 않을 것이라고 경고했다.	감독자는 합리적인 지연을 더는 용인하지 않을 것이라고 경고했다.	3	[]
+multipleChoice	"다음 문맥에서 빈칸에 들어갈 단어로 가장 적절한 것은?
+The employee's ____ absence, rather than a single mistake, led to disciplinary action."	proficient	habitual	sufficient	uniform	2	[]
+multipleChoice	"다음 영단어의 대표적인 뜻으로 가장 적절한 것은?
+habitat"	서식지	시설	제복	공식	1	[]
+shortAnswer	"다음 영단어의 뜻을 한국어로 하나 쓰시오.
+habitat"					서식지	["생물의 서식 환경"]
+multipleChoice	"다음 예문에서 'habitat'가 나타내는 뜻으로 가장 적절한 것은?
+Forests are a natural habitat for many species."	사업	증거	기준	서식지	4	[]
+multipleChoice	"다음 문장의 해석으로 가장 적절한 것은?
+Urban development has destroyed the natural habitat of several endangered birds."	도시 개발은 몇몇 멸종위기 조류의 자연 먹이를 파괴했다.	도시 개발은 몇몇 멸종위기 조류의 자연 시설를 파괴했다.	도시 개발은 몇몇 멸종위기 조류의 자연 이동 경로를 파괴했다.	도시 개발은 몇몇 멸종위기 조류의 자연 서식지를 파괴했다.	4	[]
+multipleChoice	"다음 문맥에서 빈칸에 들어갈 단어로 가장 적절한 것은?
+Climate change has reduced the available ____ for polar bears."	habitat	formula	facility	uniform	1	[]
+multipleChoice	"다음 영단어의 대표적인 뜻으로 가장 적절한 것은?
+inhabit"	속이다	인지하다	거주하다	추정하다	3	[]
+shortAnswer	"다음 영단어의 뜻을 한국어로 하나 쓰시오.
+inhabit"					거주하다	["살다","서식하다"]
+multipleChoice	"다음 예문에서 'inhabit'가 나타내는 뜻으로 가장 적절한 것은?
+Many rare animals inhabit this island."	인지하다	속이다	추정하다	서식하다	4	[]
+multipleChoice	"다음 문장의 해석으로 가장 적절한 것은?
+Only a few families still inhabit the remote mountain village during winter."	겨울 동안에도 몇몇 가족만이 외딴 산골 마을에 통제한다.	겨울 동안에도 몇몇 가족만이 외딴 산골 마을에 거주한다.	겨울 동안에도 몇몇 가족만이 외딴 산골 마을에 방문한다.	겨울 동안에도 몇몇 가족만이 외딴 산골 마을에 측량한다.	2	[]
+multipleChoice	"다음 문맥에서 빈칸에 들어갈 단어로 가장 적절한 것은?
+Several indigenous communities continue to ____ the rainforest."	obtain	exhibit	inhabit	exclude	3	[]
+multipleChoice	"다음 영단어의 대표적인 뜻으로 가장 적절한 것은?
+exhibit"	억제하다	전시하다	개혁하다	가정하다	2	[]
+shortAnswer	"다음 영단어의 뜻을 한국어로 하나 쓰시오.
+exhibit"					전시하다	["보이다","드러내다"]
+multipleChoice	"다음 예문에서 'exhibit'가 나타내는 뜻으로 가장 적절한 것은?
+The patient exhibited unusual symptoms."	절약하다	관찰하다	보이다	예약하다	3	[]
+multipleChoice	"다음 문장의 해석으로 가장 적절한 것은?
+The study found that children exposed to pollution were more likely to exhibit respiratory symptoms."	그 연구는 오염에 노출된 아동이 호흡기 증상을 감출 가능성이 더 높다고 밝혔다.	그 연구는 오염에 노출된 아동이 호흡기 증상을 치료할 가능성이 더 높다고 밝혔다.	그 연구는 오염에 노출된 아동이 호흡기 증상을 억제할 가능성이 더 높다고 밝혔다.	그 연구는 오염에 노출된 아동이 호흡기 증상을 보일 가능성이 더 높다고 밝혔다.	4	[]
+shortAnswer	"다음 문장에서 'exhibit'의 문맥상 뜻을 한국어로 간단히 쓰시오.
+The patient began to exhibit signs of severe fatigue."					나타내다	["보이다","드러내다"]
+multipleChoice	"다음 영단어의 대표적인 뜻으로 가장 적절한 것은?
+prohibit"	보장하다	구성하다	유지하다	금지하다	4	[]
+shortAnswer	"다음 영단어의 뜻을 한국어로 하나 쓰시오.
+prohibit"					금지하다	["막다"]
+multipleChoice	"다음 예문에서 'prohibit'가 나타내는 뜻으로 가장 적절한 것은?
+The law prohibits smoking indoors."	변화시키다	금지하다	따르다	제기하다	2	[]
+multipleChoice	"다음 문장의 해석으로 가장 적절한 것은?
+New regulations prohibit employers from collecting unnecessary personal information."	새 규정은 고용주가 불필요한 개인정보를 수집하는 것을 권장한다.	새 규정은 고용주가 불필요한 개인정보를 수집하는 것을 금지한다.	새 규정은 고용주가 불필요한 개인정보를 수집하는 것을 연기한다.	새 규정은 고용주가 불필요한 개인정보를 수집하는 것을 허가한다.	2	[]
+multipleChoice	"다음 문맥에서 빈칸에 들어갈 단어로 가장 적절한 것은?
+Safety rules ____ the storage of flammable materials near emergency exits."	facilitate	observe	prohibit	assure	3	[]
+multipleChoice	"다음 영단어의 대표적인 뜻으로 가장 적절한 것은?
+inhibit"	획득하다	억제하다	동봉하다	개혁하다	2	[]
+shortAnswer	"다음 영단어의 뜻을 한국어로 하나 쓰시오.
+inhibit"					억제하다	["방해하다","저해하다"]
+multipleChoice	"다음 예문에서 'inhibit'가 나타내는 뜻으로 가장 적절한 것은?
+High costs inhibit innovation."	처분하다	저해하다	제외하다	부과하다	2	[]
+multipleChoice	"다음 문장의 해석으로 가장 적절한 것은?
+A lack of reliable information may inhibit citizens from making informed decisions."	신뢰할 만한 정보의 부족은 시민들이 충분한 정보를 바탕으로 결정을 내리는 것을 허용할 수 있다.	신뢰할 만한 정보의 부족은 시민들이 충분한 정보를 바탕으로 결정을 내리는 것을 방해할 수 있다.	신뢰할 만한 정보의 부족은 시민들이 충분한 정보를 바탕으로 결정을 내리는 것을 보장할 수 있다.	신뢰할 만한 정보의 부족은 시민들이 충분한 정보를 바탕으로 결정을 내리는 것을 장려할 수 있다.	2	[]
+multipleChoice	"다음 문맥에서 빈칸에 들어갈 단어로 가장 적절한 것은?
+Fear of failure can ____ students' willingness to try new approaches."	inhibit	obtain	exhibit	facilitate	1	[]
+multipleChoice	"다음 영단어의 대표적인 뜻으로 가장 적절한 것은?
+consume"	지속시키다	얻다	소비하다	유지하다	3	[]
+shortAnswer	"다음 영단어의 뜻을 한국어로 하나 쓰시오.
+consume"					소비하다	["소모하다","먹다"]
+multipleChoice	"다음 예문에서 'consume'가 나타내는 뜻으로 가장 적절한 것은?
+These machines consume a lot of electricity."	유지하다	지속시키다	소비하다	얻다	3	[]
+multipleChoice	"다음 문장의 해석으로 가장 적절한 것은?
+The new heating system consumes far less energy than the old one."	새 난방 시스템은 기존 시스템보다 훨씬 적은 에너지를 생산한다.	새 난방 시스템은 기존 시스템보다 훨씬 적은 에너지를 배출한다.	새 난방 시스템은 기존 시스템보다 훨씬 적은 에너지를 소비한다.	새 난방 시스템은 기존 시스템보다 훨씬 적은 에너지를 비축한다.	3	[]
+multipleChoice	"다음 문맥에서 빈칸에 들어갈 단어로 가장 적절한 것은?
+The rapid expansion of data centers may ____ enormous amounts of electricity."	inform	conserve	retain	consume	4	[]
+multipleChoice	"다음 영단어의 대표적인 뜻으로 가장 적절한 것은?
+resume"	추정하다	보존하다	배제하다	재개하다	4	[]
+shortAnswer	"다음 영단어의 뜻을 한국어로 하나 쓰시오.
+resume"					재개하다	["다시 시작하다"]
+multipleChoice	"다음 예문에서 'resume'가 나타내는 뜻으로 가장 적절한 것은?
+Negotiations will resume next week."	재개하다	가정하다	억제하다	소비하다	1	[]
+multipleChoice	"다음 문장의 해석으로 가장 적절한 것은?
+After a brief interruption, the committee resumed its discussion of the proposal."	잠시 중단된 뒤 위원회는 제안에 관한 논의를 취소했다.	잠시 중단된 뒤 위원회는 제안에 관한 논의를 기록했다.	잠시 중단된 뒤 위원회는 제안에 관한 논의를 제한했다.	잠시 중단된 뒤 위원회는 제안에 관한 논의를 재개했다.	4	[]
+multipleChoice	"다음 문맥에서 빈칸에 들어갈 단어로 가장 적절한 것은?
+Once the power is restored, normal train service will ____ immediately."	prohibit	transform	resume	conclude	3	[]
+multipleChoice	"다음 영단어의 대표적인 뜻으로 가장 적절한 것은?
+assume"	가정하다	관찰하다	부과하다	공개하다	1	[]
+shortAnswer	"다음 영단어의 뜻을 한국어로 하나 쓰시오.
+assume"					가정하다	["추정하다","생각하다"]
+multipleChoice	"다음 예문에서 'assume'가 나타내는 뜻으로 가장 적절한 것은?
+Do not assume that every claim is true."	관찰하다	절약하다	가정하다	예약하다	3	[]
+multipleChoice	"다음 문장의 해석으로 가장 적절한 것은?
+Without checking the evidence, investigators should not assume the witness is mistaken."	증거를 확인하지 않은 채 조사관이 증인이 틀렸다고 공개해서는 안 된다.	증거를 확인하지 않은 채 조사관이 증인이 틀렸다고 증명해서는 안 된다.	증거를 확인하지 않은 채 조사관이 증인이 틀렸다고 가정해서는 안 된다.	증거를 확인하지 않은 채 조사관이 증인이 틀렸다고 금지해서는 안 된다.	3	[]
+shortAnswer	"다음 문장에서 'assume'의 문맥상 뜻을 한국어로 간단히 쓰시오.
+She agreed to assume responsibility for the failed project."					맡다	["떠맡다","부담하다","책임지다"]
+multipleChoice	"다음 영단어의 대표적인 뜻으로 가장 적절한 것은?
+presume"	포함하다	추정하다	보존하다	노출하다	2	[]
+shortAnswer	"다음 영단어의 뜻을 한국어로 하나 쓰시오.
+presume"					추정하다	["간주하다","가정하다"]
+multipleChoice	"다음 예문에서 'presume'가 나타내는 뜻으로 가장 적절한 것은?
+We presume that the data are accurate."	변화시키다	추정하다	따르다	제기하다	2	[]
+multipleChoice	"다음 문장의 해석으로 가장 적절한 것은?
+The court must presume the defendant innocent until guilt is proved."	법원은 유죄가 입증될 때까지 피고인이 무죄라고 제외해야 한다.	법원은 유죄가 입증될 때까지 피고인이 무죄라고 추정해야 한다.	법원은 유죄가 입증될 때까지 피고인이 무죄라고 선언해야 한다.	법원은 유죄가 입증될 때까지 피고인이 무죄라고 비난해야 한다.	2	[]
+multipleChoice	"다음 문맥에서 빈칸에 들어갈 단어로 가장 적절한 것은?
+Unless new evidence emerges, we should ____ that the current figures are correct."	intercept	prohibit	presume	disclose	3	[]
+multipleChoice	"다음 영단어의 대표적인 뜻으로 가장 적절한 것은?
+perceive"	인지하다	노출하다	제안하다	반대하다	1	[]
+shortAnswer	"다음 영단어의 뜻을 한국어로 하나 쓰시오.
+perceive"					인지하다	["알아차리다","인식하다"]
+multipleChoice	"다음 예문에서 'perceive'가 나타내는 뜻으로 가장 적절한 것은?
+People perceive risk differently."	노출하다	반대하다	인식하다	제안하다	3	[]
+multipleChoice	"다음 문장의 해석으로 가장 적절한 것은?
+Residents perceived the sudden policy change as a threat to their livelihoods."	주민들은 갑작스러운 정책 변화를 자신들의 생계에 대한 위협으로 수용했다.	주민들은 갑작스러운 정책 변화를 자신들의 생계에 대한 위협으로 기록했다.	주민들은 갑작스러운 정책 변화를 자신들의 생계에 대한 위협으로 인식했다.	주민들은 갑작스러운 정책 변화를 자신들의 생계에 대한 위협으로 제안했다.	3	[]
+multipleChoice	"다음 문맥에서 빈칸에 들어갈 단어로 가장 적절한 것은?
+Some consumers ____ higher prices as evidence of better quality."	prohibit	dispose	perceive	intercept	3	[]
+multipleChoice	"다음 영단어의 대표적인 뜻으로 가장 적절한 것은?
+deceive"	속이다	구성하다	촉진하다	보장하다	1	[]
+shortAnswer	"다음 영단어의 뜻을 한국어로 하나 쓰시오.
+deceive"					속이다	["기만하다"]
+multipleChoice	"다음 예문에서 'deceive'가 나타내는 뜻으로 가장 적절한 것은?
+False advertisements can deceive customers."	속이다	동봉하다	공개하다	포함하다	1	[]
+multipleChoice	"다음 문장의 해석으로 가장 적절한 것은?
+The contractor tried to deceive inspectors by submitting altered documents."	계약업체는 변조된 서류를 제출하여 조사관을 보호하려 했다.	계약업체는 변조된 서류를 제출하여 조사관을 속이려 했다.	계약업체는 변조된 서류를 제출하여 조사관을 안심시키려 했다.	계약업체는 변조된 서류를 제출하여 조사관을 도우려 했다.	2	[]
+multipleChoice	"다음 문맥에서 빈칸에 들어갈 단어로 가장 적절한 것은?
+They used a fake website to ____ visitors into revealing passwords."	facilitate	deceive	assure	inform	2	[]
+multipleChoice	"다음 영단어의 대표적인 뜻으로 가장 적절한 것은?
+conceive"	동봉하다	금지하다	반대하다	생각해내다	4	[]
+shortAnswer	"다음 영단어의 뜻을 한국어로 하나 쓰시오.
+conceive"					생각해내다	["상상하다","고안하다"]
+multipleChoice	"다음 예문에서 'conceive'가 나타내는 뜻으로 가장 적절한 것은?
+She conceived a new approach to the problem."	고안하다	전시하다	거주하다	금지하다	1	[]
+multipleChoice	"다음 문장의 해석으로 가장 적절한 것은?
+At first, the researchers could not conceive a practical solution to the complex problem."	처음에 연구원들은 그 복잡한 문제에 대한 실용적인 해결책을 검증할 수 없었다.	처음에 연구원들은 그 복잡한 문제에 대한 실용적인 해결책을 실행할 수 없었다.	처음에 연구원들은 그 복잡한 문제에 대한 실용적인 해결책을 생각해 낼 수 없었다.	처음에 연구원들은 그 복잡한 문제에 대한 실용적인 해결책을 배제할 수 없었다.	3	[]
+multipleChoice	"다음 문맥에서 빈칸에 들어갈 단어로 가장 적절한 것은?
+No one could ____ of a situation in which the entire network failed at once."	conceive	prohibit	disclose	observe	1	[]
+multipleChoice	"다음 영단어의 대표적인 뜻으로 가장 적절한 것은?
+intercept"	가로채다	알리다	순응하다	지속시키다	1	[]
+shortAnswer	"다음 영단어의 뜻을 한국어로 하나 쓰시오.
+intercept"					가로채다	["차단하다","중간에 막다"]
+multipleChoice	"다음 예문에서 'intercept'가 나타내는 뜻으로 가장 적절한 것은?
+The police intercepted the illegal shipment."	가로채다	속이다	추정하다	인지하다	1	[]
+multipleChoice	"다음 문장의 해석으로 가장 적절한 것은?
+The agency intercepted the message before it reached the intended recipient."	기관은 메시지가 원래 수신자에게 도달하기 전에 그것을 보관했다.	기관은 메시지가 원래 수신자에게 도달하기 전에 그것을 전달했다.	기관은 메시지가 원래 수신자에게 도달하기 전에 그것을 가로챘다.	기관은 메시지가 원래 수신자에게 도달하기 전에 그것을 공개했다.	3	[]
+multipleChoice	"다음 문맥에서 빈칸에 들어갈 단어로 가장 적절한 것은?
+The defense system was designed to ____ missiles before impact."	intercept	retain	include	propose	1	[]
+multipleChoice	"다음 영단어의 대표적인 뜻으로 가장 적절한 것은?
+susceptible"	부족한	영향을 받기 쉬운	균일한	습관적인	2	[]
+shortAnswer	"다음 영단어의 뜻을 한국어로 하나 쓰시오.
+susceptible"					영향을 받기 쉬운	["걸리기 쉬운","취약한"]
+multipleChoice	"다음 예문에서 'susceptible'가 나타내는 뜻으로 가장 적절한 것은?
+Older adults may be susceptible to infection."	균일한	부족한	습관적인	걸리기 쉬운	4	[]
+multipleChoice	"다음 문장의 해석으로 가장 적절한 것은?
+People with weakened immune systems are particularly susceptible to certain infections."	면역체계가 약해진 사람들은 특정 감염에 특히 걸리기 쉽다.	면역체계가 약해진 사람들은 특정 감염에 특히 익숙하다.	면역체계가 약해진 사람들은 특정 감염에 특히 강하다.	면역체계가 약해진 사람들은 특정 감염에 특히 무관하다.	1	[]
+multipleChoice	"다음 문맥에서 빈칸에 들어갈 단어로 가장 적절한 것은?
+Young seedlings are highly ____ to damage from sudden frost."	habitual	susceptible	sufficient	proficient	2	[]
+multipleChoice	"다음 영단어의 대표적인 뜻으로 가장 적절한 것은?
+serve"	제외하다	추정하다	봉사하다	가로채다	3	[]
+shortAnswer	"다음 영단어의 뜻을 한국어로 하나 쓰시오.
+serve"					봉사하다	["제공하다","역할을 하다"]
+multipleChoice	"다음 예문에서 'serve'가 나타내는 뜻으로 가장 적절한 것은?
+This room serves as a temporary office."	제기하다	구성하다	역할을 하다	변화시키다	3	[]
+multipleChoice	"다음 문장의 해석으로 가장 적절한 것은?
+The new community center will serve as a shelter during emergencies."	새 주민센터는 비상시에 대피소 시설을 철거할 것이다.	새 주민센터는 비상시에 대피소 운영을 중단할 것이다.	새 주민센터는 비상시에 대피소 역할을 할 것이다.	새 주민센터는 비상시에 대피소 이용을 금지할 것이다.	3	[]
+shortAnswer	"다음 문장에서 'serve'의 문맥상 뜻을 한국어로 간단히 쓰시오.
+He was sentenced to serve five years in prison."					복역하다	["형을 살다","징역을 살다"]
+multipleChoice	"다음 영단어의 대표적인 뜻으로 가장 적절한 것은?
+preserve"	소비하다	제안하다	노출하다	보존하다	4	[]
+shortAnswer	"다음 영단어의 뜻을 한국어로 하나 쓰시오.
+preserve"					보존하다	["보호하다","유지하다"]
+multipleChoice	"다음 예문에서 'preserve'가 나타내는 뜻으로 가장 적절한 것은?
+We must preserve historical records."	동봉하다	얻다	보존하다	포함하다	3	[]
+multipleChoice	"다음 문장의 해석으로 가장 적절한 것은?
+Experts are working to preserve the manuscripts despite severe water damage."	전문가들은 심각한 수해에도 원고를 공개하기 위해 노력하고 있다.	전문가들은 심각한 수해에도 원고를 폐기하기 위해 노력하고 있다.	전문가들은 심각한 수해에도 원고를 복제하기 위해 노력하고 있다.	전문가들은 심각한 수해에도 원고를 보존하기 위해 노력하고 있다.	4	[]
+multipleChoice	"다음 문맥에서 빈칸에 들어갈 단어로 가장 적절한 것은?
+A special archive was built to ____ fragile documents for future generations."	expose	preserve	consume	exclude	2	[]
+multipleChoice	"다음 영단어의 대표적인 뜻으로 가장 적절한 것은?
+conserve"	속이다	부과하다	구성하다	보존하다	4	[]
+shortAnswer	"다음 영단어의 뜻을 한국어로 하나 쓰시오.
+conserve"					절약하다	["보존하다","아끼다"]
+multipleChoice	"다음 예문에서 'conserve'가 나타내는 뜻으로 가장 적절한 것은?
+Switch off lights to conserve energy."	억제하다	금지하다	절약하다	전시하다	3	[]
+multipleChoice	"다음 문장의 해석으로 가장 적절한 것은?
+The campaign encourages households to conserve water during the dry season."	그 캠페인은 건기 동안 가정에서 물을 절약하도록 권장한다.	그 캠페인은 건기 동안 가정에서 물을 구매하도록 권장한다.	그 캠페인은 건기 동안 가정에서 물을 낭비하도록 권장한다.	그 캠페인은 건기 동안 가정에서 물을 방출하도록 권장한다.	1	[]
+multipleChoice	"다음 문맥에서 빈칸에 들어갈 단어로 가장 적절한 것은?
+Engineers redesigned the engine to ____ fuel without reducing performance."	disclose	obtain	consume	conserve	4	[]
+multipleChoice	"다음 영단어의 대표적인 뜻으로 가장 적절한 것은?
+reserve"	가정하다	소비하다	재개하다	예약하다	4	[]
+shortAnswer	"다음 영단어의 뜻을 한국어로 하나 쓰시오.
+reserve"					예약하다	["남겨 두다","비축하다"]
+multipleChoice	"다음 예문에서 'reserve'가 나타내는 뜻으로 가장 적절한 것은?
+Please reserve a seat in advance."	재개하다	소비하다	예약하다	가정하다	3	[]
+multipleChoice	"다음 문장의 해석으로 가장 적절한 것은?
+The hotel agreed to reserve several rooms for emergency personnel."	호텔은 긴급구조 인력을 위해 객실 여러 개를 수리하기로 했다.	호텔은 긴급구조 인력을 위해 객실 여러 개를 취소해 버리기로 했다.	호텔은 긴급구조 인력을 위해 객실 여러 개를 예약해 두기로 했다.	호텔은 긴급구조 인력을 위해 객실 여러 개를 공개하기로 했다.	3	[]
+shortAnswer	"다음 문장에서 'reserve'의 문맥상 뜻을 한국어로 간단히 쓰시오.
+The judge decided to reserve judgment until further evidence was presented."					판단을 유보하다	["판단을 보류하다","결정을 미루다"]
+multipleChoice	"다음 영단어의 대표적인 뜻으로 가장 적절한 것은?
+observe"	제안하다	가정하다	개혁하다	관찰하다	4	[]
+shortAnswer	"다음 영단어의 뜻을 한국어로 하나 쓰시오.
+observe"					관찰하다	["준수하다","지키다"]
+multipleChoice	"다음 예문에서 'observe'가 나타내는 뜻으로 가장 적절한 것은?
+Scientists observe changes in temperature."	관찰하다	보존하다	봉사하다	가로채다	1	[]
+multipleChoice	"다음 문장의 해석으로 가장 적절한 것은?
+The researchers observed a gradual decline in air quality over several years."	연구원들은 수년에 걸친 대기 질의 점진적인 악화를 은폐했다.	연구원들은 수년에 걸친 대기 질의 점진적인 악화를 유발했다.	연구원들은 수년에 걸친 대기 질의 점진적인 악화를 관찰했다.	연구원들은 수년에 걸친 대기 질의 점진적인 악화를 부정했다.	3	[]
+shortAnswer	"다음 문장에서 'observe'의 문맥상 뜻을 한국어로 간단히 쓰시오.
+Public officials must observe the rules governing confidential data."					준수하다	["지키다","따르다"]
+multipleChoice	"다음 영단어의 대표적인 뜻으로 가장 적절한 것은?
+assure"	억제하다	제외하다	확신시키다	동봉하다	3	[]
+shortAnswer	"다음 영단어의 뜻을 한국어로 하나 쓰시오.
+assure"					안심시키다	["확신시키다","보장하다"]
+multipleChoice	"다음 예문에서 'assure'가 나타내는 뜻으로 가장 적절한 것은?
+The officer assured us that the road was safe."	개혁하다	알리다	안심시키다	따르다	3	[]
+multipleChoice	"다음 문장의 해석으로 가장 적절한 것은?
+The spokesperson assured the public that the drinking water met safety standards."	대변인은 식수가 안전 기준을 충족한다고 대중을 위협했다.	대변인은 식수가 안전 기준을 충족한다고 대중을 속였다.	대변인은 식수가 안전 기준을 충족한다고 대중을 비난했다.	대변인은 식수가 안전 기준을 충족한다고 대중을 안심시켰다.	4	[]
+multipleChoice	"다음 문맥에서 빈칸에 들어갈 단어로 가장 적절한 것은?
+Officials tried to ____ residents that the evacuation plan was reliable."	exclude	intercept	assure	deceive	3	[]
+multipleChoice	"다음 영단어의 대표적인 뜻으로 가장 적절한 것은?
+facility"	충분함	공식	서식지	시설	4	[]
+shortAnswer	"다음 영단어의 뜻을 한국어로 하나 쓰시오.
+facility"					시설	["설비","편의시설"]
+multipleChoice	"다음 예문에서 'facility'가 나타내는 뜻으로 가장 적절한 것은?
+The town needs a new medical facility."	시설	제복	감독관	관습	1	[]
+multipleChoice	"다음 문장의 해석으로 가장 적절한 것은?
+The aging treatment facility must be renovated to meet current standards."	노후한 처리 제도은 현행 기준에 맞추기 위해 개보수해야 한다.	노후한 처리 서식지은 현행 기준에 맞추기 위해 개보수해야 한다.	노후한 처리 공식은 현행 기준에 맞추기 위해 개보수해야 한다.	노후한 처리 시설은 현행 기준에 맞추기 위해 개보수해야 한다.	4	[]
+shortAnswer	"다음 문장에서 'facility'의 문맥상 뜻을 한국어로 간단히 쓰시오.
+The interpreter showed remarkable facility with difficult technical terms."					능숙함	["재능","솜씨","숙련"]
+multipleChoice	"다음 영단어의 대표적인 뜻으로 가장 적절한 것은?
+facilitate"	촉진하다	동봉하다	얻다	포함하다	1	[]
+shortAnswer	"다음 영단어의 뜻을 한국어로 하나 쓰시오.
+facilitate"					촉진하다	["용이하게 하다","쉽게 하다"]
+multipleChoice	"다음 예문에서 'facilitate'가 나타내는 뜻으로 가장 적절한 것은?
+Online tools facilitate communication."	동봉하다	용이하게 하다	포함하다	얻다	2	[]
+multipleChoice	"다음 문장의 해석으로 가장 적절한 것은?
+The new application system is intended to facilitate access to public services."	새 신청 시스템은 공공서비스에 대한 접근을 어렵게 하려는 것이다.	새 신청 시스템은 공공서비스에 대한 접근을 무관하게 하려는 것이다.	새 신청 시스템은 공공서비스에 대한 접근을 불가능하게 하려는 것이다.	새 신청 시스템은 공공서비스에 대한 접근을 용이하게 하려는 것이다.	4	[]
+multipleChoice	"다음 문맥에서 빈칸에 들어갈 단어로 가장 적절한 것은?
+Clear instructions can ____ cooperation between agencies."	prohibit	facilitate	intercept	inhibit	2	[]
+multipleChoice	"다음 영단어의 대표적인 뜻으로 가장 적절한 것은?
+proficient"	습관적인	균일한	능숙한	결핍된	3	[]
+shortAnswer	"다음 영단어의 뜻을 한국어로 하나 쓰시오.
+proficient"					능숙한	["숙련된"]
+multipleChoice	"다음 예문에서 'proficient'가 나타내는 뜻으로 가장 적절한 것은?
+She is proficient in Korean and English."	능숙한	부족한	영향을 받기 쉬운	충분한	1	[]
+multipleChoice	"다음 문장의 해석으로 가장 적절한 것은?
+Applicants must be proficient in spreadsheet software to perform the assigned tasks."	지원자는 지정된 업무를 수행하기 위해 스프레드시트 소프트웨어에 익숙하지 않아야 한다.	지원자는 지정된 업무를 수행하기 위해 스프레드시트 소프트웨어에 미숙해야 한다.	지원자는 지정된 업무를 수행하기 위해 스프레드시트 소프트웨어에 서툴러야 한다.	지원자는 지정된 업무를 수행하기 위해 스프레드시트 소프트웨어에 능숙해야 한다.	4	[]
+multipleChoice	"다음 문맥에서 빈칸에 들어갈 단어로 가장 적절한 것은?
+The position requires someone ____ in statistical analysis."	proficient	susceptible	deficient	habitual	1	[]
+multipleChoice	"다음 영단어의 대표적인 뜻으로 가장 적절한 것은?
+sufficient"	습관적인	결핍된	취약한	충분한	4	[]
+shortAnswer	"다음 영단어의 뜻을 한국어로 하나 쓰시오.
+sufficient"					충분한	["족한","충족되는"]
+multipleChoice	"다음 예문에서 'sufficient'가 나타내는 뜻으로 가장 적절한 것은?
+We have sufficient time to finish."	균일한	습관적인	충분한	부족한	3	[]
+multipleChoice	"다음 문장의 해석으로 가장 적절한 것은?
+The auditor concluded that there was sufficient evidence to support the decision."	감사관은 해당 결정을 뒷받침할 무관한 증거가 있다고 결론 내렸다.	감사관은 해당 결정을 뒷받침할 충분한 증거가 있다고 결론 내렸다.	감사관은 해당 결정을 뒷받침할 불충분한 증거가 있다고 결론 내렸다.	감사관은 해당 결정을 뒷받침할 왜곡된 증거가 있다고 결론 내렸다.	2	[]
+multipleChoice	"다음 문맥에서 빈칸에 들어갈 단어로 가장 적절한 것은?
+The emergency supplies are ____ to last for at least three days."	habitual	deficient	uniform	sufficient	4	[]
+multipleChoice	"다음 영단어의 대표적인 뜻으로 가장 적절한 것은?
+deficient"	능숙한	충분한	부족한	균일한	3	[]
+shortAnswer	"다음 영단어의 뜻을 한국어로 하나 쓰시오.
+deficient"					부족한	["결핍된"]
+multipleChoice	"다음 예문에서 'deficient'가 나타내는 뜻으로 가장 적절한 것은?
+The soil is deficient in nutrients."	영향을 받기 쉬운	습관적인	부족한	능숙한	3	[]
+multipleChoice	"다음 문장의 해석으로 가장 적절한 것은?
+The inspection revealed that several public buildings were deficient in fire safety measures."	점검 결과 몇몇 공공건물의 화재 안전 대책이 충분한 것으로 드러났다.	점검 결과 몇몇 공공건물의 화재 안전 대책이 숙련된 것으로 드러났다.	점검 결과 몇몇 공공건물의 화재 안전 대책이 부족한 것으로 드러났다.	점검 결과 몇몇 공공건물의 화재 안전 대책이 균일한 것으로 드러났다.	3	[]
+multipleChoice	"다음 문맥에서 빈칸에 들어갈 단어로 가장 적절한 것은?
+The report found the training program ____ in practical exercises."	sufficient	proficient	uniform	deficient	4	[]
+multipleChoice	"다음 영단어의 대표적인 뜻으로 가장 적절한 것은?
+formula"	제복	시설	공식	관습	3	[]
+shortAnswer	"다음 영단어의 뜻을 한국어로 하나 쓰시오.
+formula"					공식	["방식","계산식"]
+multipleChoice	"다음 예문에서 'formula'가 나타내는 뜻으로 가장 적절한 것은?
+The scientist explained the formula."	시설	제복	관습	공식	4	[]
+multipleChoice	"다음 문장의 해석으로 가장 적절한 것은?
+A simple formula was used to estimate the annual cost of the program."	사업의 연간 비용을 추정하기 위해 간단한 통계표가 사용되었다.	사업의 연간 비용을 추정하기 위해 간단한 예산표가 사용되었다.	사업의 연간 비용을 추정하기 위해 간단한 공식이 사용되었다.	사업의 연간 비용을 추정하기 위해 간단한 설문지가 사용되었다.	3	[]
+multipleChoice	"다음 문맥에서 빈칸에 들어갈 단어로 가장 적절한 것은?
+The engineer applied a mathematical ____ to predict material stress."	facility	formula	uniform	habit	2	[]
+multipleChoice	"다음 영단어의 대표적인 뜻으로 가장 적절한 것은?
+uniform"	능숙한	균일한	취약한	결핍된	2	[]
+shortAnswer	"다음 영단어의 뜻을 한국어로 하나 쓰시오.
+uniform"					균일한	["일정한","한결같은","제복"]
+multipleChoice	"다음 예문에서 'uniform'가 나타내는 뜻으로 가장 적절한 것은?
+The workers wear a uniform."	서식지	공식	시설	제복	4	[]
+multipleChoice	"다음 문장의 해석으로 가장 적절한 것은?
+Every applicant must follow a uniform set of evaluation criteria."	모든 지원자는 통일된 평가 기준을 따라야 한다.	모든 지원자는 임의의 평가 기준을 따라야 한다.	모든 지원자는 서로 다른 평가 기준을 따라야 한다.	모든 지원자는 누락된 평가 기준을 따라야 한다.	1	[]
+shortAnswer	"다음 문장에서 'uniform'의 문맥상 뜻을 한국어로 간단히 쓰시오.
+All security guards were required to appear in uniform."					제복	["유니폼","근무복"]
+multipleChoice	"다음 영단어의 대표적인 뜻으로 가장 적절한 것은?
+inform"	알리다	억제하다	예약하다	지탱하다	1	[]
+shortAnswer	"다음 영단어의 뜻을 한국어로 하나 쓰시오.
+inform"					알리다	["통지하다","안내하다"]
+multipleChoice	"다음 예문에서 'inform'가 나타내는 뜻으로 가장 적절한 것은?
+Please inform me of any changes."	거주하다	알리다	지속시키다	보유하다	2	[]
+multipleChoice	"다음 문장의 해석으로 가장 적절한 것은?
+Passengers must be informed of schedule changes before tickets are issued."	승객들은 승차권이 발급되기 전에 일정 변경을 속아아야 한다.	승객들은 승차권이 발급되기 전에 일정 변경을 배제되아야 한다.	승객들은 승차권이 발급되기 전에 일정 변경을 조사받아야 한다.	승객들은 승차권이 발급되기 전에 일정 변경을 안내받아야 한다.	4	[]
+multipleChoice	"다음 문맥에서 빈칸에 들어갈 단어로 가장 적절한 것은?
+Please ____ the staff of any errors in the application form."	assume	intercept	inform	impose	3	[]
+multipleChoice	"다음 영단어의 대표적인 뜻으로 가장 적절한 것은?
+reform"	가로채다	개혁하다	동봉하다	관찰하다	2	[]
+shortAnswer	"다음 영단어의 뜻을 한국어로 하나 쓰시오.
+reform"					개혁하다	["개선하다","개혁"]
+multipleChoice	"다음 예문에서 'reform'가 나타내는 뜻으로 가장 적절한 것은?
+The government plans to reform the system."	재개하다	가정하다	개혁하다	추정하다	3	[]
+multipleChoice	"다음 문장의 해석으로 가장 적절한 것은?
+The minister promised to reform outdated procedures that delayed applications."	장관은 신청 처리를 지연시키는 낡은 절차를 확대하겠다고 약속했다.	장관은 신청 처리를 지연시키는 낡은 절차를 은폐하겠다고 약속했다.	장관은 신청 처리를 지연시키는 낡은 절차를 개혁하겠다고 약속했다.	장관은 신청 처리를 지연시키는 낡은 절차를 유지하겠다고 약속했다.	3	[]
+multipleChoice	"다음 문맥에서 빈칸에 들어갈 단어로 가장 적절한 것은?
+The commission recommended legislation to ____ the outdated tax system."	conform	enclose	inform	reform	4	[]
+multipleChoice	"다음 영단어의 대표적인 뜻으로 가장 적절한 것은?
+conform"	보존하다	절약하다	따르다	봉사하다	3	[]
+shortAnswer	"다음 영단어의 뜻을 한국어로 하나 쓰시오.
+conform"					따르다	["부합하다","순응하다"]
+multipleChoice	"다음 예문에서 'conform'가 나타내는 뜻으로 가장 적절한 것은?
+Products must conform to safety standards."	봉사하다	보존하다	절약하다	부합하다	4	[]
+multipleChoice	"다음 문장의 해석으로 가장 적절한 것은?
+The revised construction plan must conform to strict environmental regulations."	수정된 건설 계획은 엄격한 환경 규정에 부합해야 한다.	수정된 건설 계획은 엄격한 환경 규정에서 벗어나야 한다.	수정된 건설 계획은 엄격한 환경 규정을 폐지해야 한다.	수정된 건설 계획은 엄격한 환경 규정을 무시해도 된다.	1	[]
+multipleChoice	"다음 문맥에서 빈칸에 들어갈 단어로 가장 적절한 것은?
+All imported products must ____ to national safety requirements."	propose	expose	conform	transform	3	[]
+multipleChoice	"다음 영단어의 대표적인 뜻으로 가장 적절한 것은?
+transform"	보존하다	변형하다	추정하다	금지하다	2	[]
+shortAnswer	"다음 영단어의 뜻을 한국어로 하나 쓰시오.
+transform"					변화시키다	["변형하다","바꾸다"]
+multipleChoice	"다음 예문에서 'transform'가 나타내는 뜻으로 가장 적절한 것은?
+Technology can transform education."	알리다	개혁하다	변화시키다	따르다	3	[]
+multipleChoice	"다음 문장의 해석으로 가장 적절한 것은?
+Rapid advances in automation have transformed the way public agencies process data."	자동화 기술의 급속한 발전은 공공기관의 데이터 처리 방식을 변화시켰다.	자동화 기술의 급속한 발전은 공공기관의 데이터 처리 방식을 유지했다.	자동화 기술의 급속한 발전은 공공기관의 데이터 처리 방식을 보존했다.	자동화 기술의 급속한 발전은 공공기관의 데이터 처리 방식을 금지했다.	1	[]
+multipleChoice	"다음 문맥에서 빈칸에 들어갈 단어로 가장 적절한 것은?
+New digital tools could ____ the delivery of health services in remote areas."	transform	conform	retain	exclude	1	[]
+multipleChoice	"다음 영단어의 대표적인 뜻으로 가장 적절한 것은?
+pose"	보유하다	알리다	제기하다	제외하다	3	[]
+shortAnswer	"다음 영단어의 뜻을 한국어로 하나 쓰시오.
+pose"					제기하다	["야기하다","위험을 초래하다"]
+multipleChoice	"다음 예문에서 'pose'가 나타내는 뜻으로 가장 적절한 것은?
+The situation poses a serious risk."	제기하다	처분하다	부과하다	반대하다	1	[]
+multipleChoice	"다음 문장의 해석으로 가장 적절한 것은?
+The rapid spread of false information poses a threat to public confidence."	허위 정보의 빠른 확산은 공공의 신뢰에 큰 이익이 된다.	허위 정보의 빠른 확산은 공공의 신뢰에 심각한 위협이 된다.	허위 정보의 빠른 확산은 공공의 신뢰에 도움이 된다.	허위 정보의 빠른 확산은 공공의 신뢰에 아무 영향을 주지 않는다.	2	[]
+shortAnswer	"다음 문장에서 'pose'의 문맥상 뜻을 한국어로 간단히 쓰시오.
+The shortage of qualified staff poses a major challenge to the project."					야기하다	["초래하다","제기하다","일으키다"]
+multipleChoice	"다음 영단어의 대표적인 뜻으로 가장 적절한 것은?
+compose"	반대하다	구성하다	획득하다	노출하다	2	[]
+shortAnswer	"다음 영단어의 뜻을 한국어로 하나 쓰시오.
+compose"					구성하다	["작곡하다","작성하다"]
+multipleChoice	"다음 예문에서 'compose'가 나타내는 뜻으로 가장 적절한 것은?
+Ten members compose the committee."	얻다	유지하다	포함하다	구성하다	4	[]
+multipleChoice	"다음 문장의 해석으로 가장 적절한 것은?
+The panel is composed of experts from several different disciplines."	그 위원단은 여러 다른 학문 분야의 전문가들에게 반대하고 있다.	그 위원단은 여러 다른 학문 분야의 전문가들을 파견하고 있다.	그 위원단은 여러 다른 학문 분야의 전문가들로 구성되어 있다.	그 위원단은 여러 다른 학문 분야의 전문가들을 배제하고 있다.	3	[]
+shortAnswer	"다음 문장에서 'compose'의 문맥상 뜻을 한국어로 간단히 쓰시오.
+She took a moment to compose herself before addressing the audience."					마음을 가라앉히다	["진정하다","침착함을 되찾다","마음을 추스르다"]
+multipleChoice	"다음 영단어의 대표적인 뜻으로 가장 적절한 것은?
+propose"	억제하다	소비하다	금지하다	제안하다	4	[]
+shortAnswer	"다음 영단어의 뜻을 한국어로 하나 쓰시오.
+propose"					제안하다	["제의하다"]
+multipleChoice	"다음 예문에서 'propose'가 나타내는 뜻으로 가장 적절한 것은?
+They proposed a new schedule."	금지하다	소비하다	억제하다	제안하다	4	[]
+multipleChoice	"다음 문장의 해석으로 가장 적절한 것은?
+The council proposed a revised budget to address urgent infrastructure needs."	의회는 시급한 기반시설 수요를 해결하기 위해 수정 예산안을 제안했다.	의회는 시급한 기반시설 수요를 해결하기 위해 수정 예산안을 강요했다.	의회는 시급한 기반시설 수요를 해결하기 위해 수정 예산안을 은폐했다.	의회는 시급한 기반시설 수요를 해결하기 위해 수정 예산안을 거부했다.	1	[]
+multipleChoice	"다음 문맥에서 빈칸에 들어갈 단어로 가장 적절한 것은?
+The advisory board plans to ____ several changes to the existing rules."	dispose	propose	oppose	impose	2	[]
+multipleChoice	"다음 영단어의 대표적인 뜻으로 가장 적절한 것은?
+expose"	개혁하다	동봉하다	유지하다	노출하다	4	[]
+shortAnswer	"다음 영단어의 뜻을 한국어로 하나 쓰시오.
+expose"					노출하다	["폭로하다","드러내다"]
+multipleChoice	"다음 예문에서 'expose'가 나타내는 뜻으로 가장 적절한 것은?
+The article exposed serious corruption."	가로채다	폭로하다	생각해내다	속이다	2	[]
+multipleChoice	"다음 문장의 해석으로 가장 적절한 것은?
+The investigation exposed weaknesses in the agency's internal controls."	조사는 기관의 내부 통제상 취약점을 해결했다.	조사는 기관의 내부 통제상 취약점을 감췄다.	조사는 기관의 내부 통제상 취약점을 정당화했다.	조사는 기관의 내부 통제상 취약점을 드러냈다.	4	[]
+shortAnswer	"다음 문장에서 'expose'의 문맥상 뜻을 한국어로 간단히 쓰시오.
+The journalist worked for months to expose the cover-up."					폭로하다	["드러내다","밝히다"]
+multipleChoice	"다음 영단어의 대표적인 뜻으로 가장 적절한 것은?
+suppose"	보존하다	촉진하다	생각하다	가로채다	3	[]
+shortAnswer	"다음 영단어의 뜻을 한국어로 하나 쓰시오.
+suppose"					가정하다	["생각하다"]
+multipleChoice	"다음 예문에서 'suppose'가 나타내는 뜻으로 가장 적절한 것은?
+I suppose the plan will work."	안심시키다	촉진하다	생각하다	알리다	3	[]
+multipleChoice	"다음 문장의 해석으로 가장 적절한 것은?
+Suppose that the cost of materials doubles; how would the budget change?"	자재비가 두 배로 늘어난다고 부정해 보자. 그러면 예산이 어떻게 달라질까?	자재비가 두 배로 늘어난다고 입증해 보자. 그러면 예산이 어떻게 달라질까?	자재비가 두 배로 늘어난다고 확인해 보자. 그러면 예산이 어떻게 달라질까?	자재비가 두 배로 늘어난다고 가정해 보자. 그러면 예산이 어떻게 달라질까?	4	[]
+multipleChoice	"다음 문맥에서 빈칸에 들어갈 단어로 가장 적절한 것은?
+Let us ____ that every applicant satisfies the minimum requirements."	suppose	intercept	exclude	disclose	1	[]
+multipleChoice	"다음 영단어의 대표적인 뜻으로 가장 적절한 것은?
+oppose"	포함하다	충분하다	확신시키다	반대하다	4	[]
+shortAnswer	"다음 영단어의 뜻을 한국어로 하나 쓰시오.
+oppose"					반대하다	["대항하다"]
+multipleChoice	"다음 예문에서 'oppose'가 나타내는 뜻으로 가장 적절한 것은?
+Many residents oppose the proposal."	구성하다	제안하다	제기하다	반대하다	4	[]
+multipleChoice	"다음 문장의 해석으로 가장 적절한 것은?
+Several civic groups opposed the construction project because of environmental concerns."	여러 시민단체는 환경 문제에 대한 우려 때문에 건설 사업에 평가했다.	여러 시민단체는 환경 문제에 대한 우려 때문에 건설 사업에 홍보했다.	여러 시민단체는 환경 문제에 대한 우려 때문에 건설 사업에 동의했다.	여러 시민단체는 환경 문제에 대한 우려 때문에 건설 사업에 반대했다.	4	[]
+multipleChoice	"다음 문맥에서 빈칸에 들어갈 단어로 가장 적절한 것은?
+Workers may ____ the plan if it threatens their job security."	assure	propose	include	oppose	4	[]
+multipleChoice	"다음 영단어의 대표적인 뜻으로 가장 적절한 것은?
+impose"	동봉하다	공개하다	결론짓다	부과하다	4	[]
+shortAnswer	"다음 영단어의 뜻을 한국어로 하나 쓰시오.
+impose"					부과하다	["강요하다","지우다"]
+multipleChoice	"다음 예문에서 'impose'가 나타내는 뜻으로 가장 적절한 것은?
+The city imposed a fine on the company."	부과하다	결론짓다	공개하다	동봉하다	1	[]
+multipleChoice	"다음 문장의 해석으로 가장 적절한 것은?
+The regulation imposes additional reporting duties on large businesses."	그 규정은 대기업에 추가적인 보고 의무를 취소한다.	그 규정은 대기업에 추가적인 보고 의무를 제한한다.	그 규정은 대기업에 추가적인 보고 의무를 면제한다.	그 규정은 대기업에 추가적인 보고 의무를 부과한다.	4	[]
+multipleChoice	"다음 문맥에서 빈칸에 들어갈 단어로 가장 적절한 것은?
+The government may ____ a penalty on firms that violate the rules."	impose	propose	exclude	observe	1	[]
+multipleChoice	"다음 영단어의 대표적인 뜻으로 가장 적절한 것은?
+dispose"	전시하다	가정하다	처분하다	지속시키다	3	[]
+shortAnswer	"다음 영단어의 뜻을 한국어로 하나 쓰시오.
+dispose"					처분하다	["처리하다","없애다"]
+multipleChoice	"다음 예문에서 'dispose'가 나타내는 뜻으로 가장 적절한 것은?
+We need to dispose of this waste properly."	전시하다	처분하다	거주하다	보유하다	2	[]
+multipleChoice	"다음 문장의 해석으로 가장 적절한 것은?
+Residents must dispose of hazardous materials at designated collection sites."	주민들은 유해 물질을 지정된 수거 장소에서 구매해야 한다.	주민들은 유해 물질을 지정된 수거 장소에서 전시해야 한다.	주민들은 유해 물질을 지정된 수거 장소에서 보관해야 한다.	주민들은 유해 물질을 지정된 수거 장소에서 처리해야 한다.	4	[]
+multipleChoice	"다음 문맥에서 빈칸에 들어갈 단어로 가장 적절한 것은?
+The laboratory must ____ of chemical waste in accordance with safety regulations."	dispose	propose	pose	oppose	1	[]
+multipleChoice	"다음 영단어의 대표적인 뜻으로 가장 적절한 것은?
+include"	개혁하다	관찰하다	포함하다	추정하다	3	[]
+shortAnswer	"다음 영단어의 뜻을 한국어로 하나 쓰시오.
+include"					포함하다	["함유하다"]
+multipleChoice	"다음 예문에서 'include'가 나타내는 뜻으로 가장 적절한 것은?
+The fee includes all taxes."	포함하다	인지하다	추정하다	속이다	1	[]
+multipleChoice	"다음 문장의 해석으로 가장 적절한 것은?
+The revised training course includes sessions on digital security and privacy."	개정된 교육 과정에는 디지털 보안과 개인정보 보호에 관한 수업이 금지된다.	개정된 교육 과정에는 디지털 보안과 개인정보 보호에 관한 수업이 축소된다.	개정된 교육 과정에는 디지털 보안과 개인정보 보호에 관한 수업이 포함된다.	개정된 교육 과정에는 디지털 보안과 개인정보 보호에 관한 수업이 제외된다.	3	[]
+multipleChoice	"다음 문맥에서 빈칸에 들어갈 단어로 가장 적절한 것은?
+The annual report should ____ both operating costs and maintenance expenses."	include	exclude	conceive	oppose	1	[]
+multipleChoice	"다음 영단어의 대표적인 뜻으로 가장 적절한 것은?
+exclude"	동봉하다	보장하다	소비하다	제외하다	4	[]
+shortAnswer	"다음 영단어의 뜻을 한국어로 하나 쓰시오.
+exclude"					제외하다	["배제하다"]
+multipleChoice	"다음 예문에서 'exclude'가 나타내는 뜻으로 가장 적절한 것은?
+The figures exclude travel expenses."	제외하다	절약하다	예약하다	보존하다	1	[]
+multipleChoice	"다음 문장의 해석으로 가장 적절한 것은?
+The new policy excludes temporary workers from certain benefits."	새 정책은 임시직 근로자를 일부 복리후생 혜택에서 보호한다.	새 정책은 임시직 근로자를 일부 복리후생 혜택에서 제외한다.	새 정책은 임시직 근로자를 일부 복리후생 혜택에서 포함한다.	새 정책은 임시직 근로자를 일부 복리후생 혜택에서 채용한다.	2	[]
+multipleChoice	"다음 문맥에서 빈칸에 들어갈 단어로 가장 적절한 것은?
+The analysis will ____ incomplete surveys to avoid misleading results."	maintain	exclude	contain	include	2	[]
+multipleChoice	"다음 영단어의 대표적인 뜻으로 가장 적절한 것은?
+conclude"	개혁하다	결론짓다	따르다	변화시키다	2	[]
+shortAnswer	"다음 영단어의 뜻을 한국어로 하나 쓰시오.
+conclude"					결론짓다	["결론을 내리다","마치다"]
+multipleChoice	"다음 예문에서 'conclude'가 나타내는 뜻으로 가장 적절한 것은?
+We concluded that the claim was false."	개혁하다	변화시키다	결론짓다	따르다	3	[]
+multipleChoice	"다음 문장의 해석으로 가장 적절한 것은?
+After reviewing the records, investigators concluded that no funds were missing."	기록을 검토한 후 조사관들은 자금이 사라진 적이 없다고 숨겼다.	기록을 검토한 후 조사관들은 자금이 사라진 적이 없다고 제안했다.	기록을 검토한 후 조사관들은 자금이 사라진 적이 없다고 가정했다.	기록을 검토한 후 조사관들은 자금이 사라진 적이 없다고 결론 내렸다.	4	[]
+shortAnswer	"다음 문장에서 'conclude'의 문맥상 뜻을 한국어로 간단히 쓰시오.
+The chairperson concluded the meeting shortly after noon."					끝내다	["마치다","종료하다"]
+multipleChoice	"다음 영단어의 대표적인 뜻으로 가장 적절한 것은?
+disclose"	가정하다	예약하다	구성하다	공개하다	4	[]
+shortAnswer	"다음 영단어의 뜻을 한국어로 하나 쓰시오.
+disclose"					공개하다	["폭로하다","밝히다"]
+multipleChoice	"다음 예문에서 'disclose'가 나타내는 뜻으로 가장 적절한 것은?
+The company refused to disclose its records."	공개하다	반대하다	부과하다	처분하다	1	[]
+multipleChoice	"다음 문장의 해석으로 가장 적절한 것은?
+Officials must disclose any potential conflicts of interest before taking office."	공직자는 취임 전에 잠재적인 이해충돌을 모두 조작해야 한다.	공직자는 취임 전에 잠재적인 이해충돌을 모두 은폐해야 한다.	공직자는 취임 전에 잠재적인 이해충돌을 모두 공개해야 한다.	공직자는 취임 전에 잠재적인 이해충돌을 모두 추정해야 한다.	3	[]
+multipleChoice	"다음 문맥에서 빈칸에 들어갈 단어로 가장 적절한 것은?
+The witness agreed to ____ previously hidden financial transactions."	retain	enclose	prohibit	disclose	4	[]
+multipleChoice	"다음 영단어의 대표적인 뜻으로 가장 적절한 것은?
+enclose"	억제하다	획득하다	반대하다	동봉하다	4	[]
+shortAnswer	"다음 영단어의 뜻을 한국어로 하나 쓰시오.
+enclose"					동봉하다	["둘러싸다","첨부하다"]
+multipleChoice	"다음 예문에서 'enclose'가 나타내는 뜻으로 가장 적절한 것은?
+Please enclose a copy of your ID."	지속시키다	얻다	동봉하다	유지하다	3	[]
+multipleChoice	"다음 문장의 해석으로 가장 적절한 것은?
+The notice instructed applicants to enclose proof of residence with the form."	안내문은 신청자에게 신청서와 함께 거주 증명서를 보관하도록 지시했다.	안내문은 신청자에게 신청서와 함께 거주 증명서를 폐기하도록 지시했다.	안내문은 신청자에게 신청서와 함께 거주 증명서를 전시하도록 지시했다.	안내문은 신청자에게 신청서와 함께 거주 증명서를 동봉하도록 지시했다.	4	[]
+multipleChoice	"다음 문맥에서 빈칸에 들어갈 단어로 가장 적절한 것은?
+When submitting the application by mail, remember to ____ the required certificates."	exclude	enclose	conclude	disclose	2	[]

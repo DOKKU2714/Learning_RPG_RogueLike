@@ -14,6 +14,7 @@ function getPinnedGameDataTable_(sheetName) {
   names[DB_SHEETS.MONSTER_AI] = 'monsterAi';
   names[DB_SHEETS.SKILLS] = 'skills';
   names[DB_SHEETS.EFFECTS] = 'effects';
+  names[DB_SHEETS.EFFECT_RULES] = 'effectRules';
   names[DB_SHEETS.ITEMS] = 'items';
   names[DB_SHEETS.REWARDS] = 'rewards';
   return names[sheetName] ? ACTIVE_GAME_DATA_SNAPSHOT_[names[sheetName]] || [] : null;

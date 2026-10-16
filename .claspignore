@@ -1,6 +1,7 @@
 .git/**
 .agents/**
 .codex/**
+.codex-temp/**
 doc/**
 docs/**
 outputs/**

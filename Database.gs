@@ -55,6 +55,20 @@ function getSheet_(sheetName) {
   return sheet;
 }
 
+function readSheetRangeValues_(sheet, row, column, rowCount, columnCount) {
+  for (var attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      return sheet.getRange(row, column, rowCount, columnCount).getValues();
+    } catch (error) {
+      var message = String(error && error.message || error);
+      var transient = /\bINTERNAL\b|server error|internal error|서버 오류|내부 오류/i.test(message);
+      if (!transient || attempt === 2) throw error;
+      // Retry only the read, never the surrounding reward or write operation.
+      Utilities.sleep(attempt === 0 ? 250 : 750);
+    }
+  }
+}
+
 function ensureSheet_(sheetName, headers) {
   var spreadsheet = getSpreadsheet_();
   var sheet = spreadsheet.getSheetByName(sheetName);
@@ -72,7 +86,7 @@ function ensureSheet_(sheetName, headers) {
     if (!hasExistingHeader) {
       sheet.insertRowsBefore(1, 1);
     }
-    var existingHeaders = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    var existingHeaders = readSheetRangeValues_(sheet, 1, 1, 1, sheet.getLastColumn())[0];
     var seenHeaders = {};
     existingHeaders.forEach(function(header) { if (header) seenHeaders[header] = true; });
     var missingHeaders = headers.filter(function(header) { return !seenHeaders[header]; });
@@ -96,7 +110,7 @@ function ensureSheet_(sheetName, headers) {
 function ensureTableColumns_(sheetName, headers) {
   if (getPinnedGameDataTable_(sheetName) !== null || isDeferredRunTable_(sheetName)) return headers;
   var sheet = getSheet_(sheetName);
-  var currentHeaders = sheet.getLastColumn() ? sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0] : [];
+  var currentHeaders = sheet.getLastColumn() ? readSheetRangeValues_(sheet, 1, 1, 1, sheet.getLastColumn())[0] : [];
   var existing = {};
   currentHeaders.forEach(function(header) {
     existing[header] = true;
@@ -122,6 +136,8 @@ var GAME_DATA_REQUEST_TABLES_ = {};
 function readTable_(sheetName) {
   var pinnedRows = getPinnedGameDataTable_(sheetName);
   if (pinnedRows !== null) return cloneGameDataRows_(pinnedRows);
+  // Code may be deployed before the optional v2 tab has been installed.
+  if (sheetName === DB_SHEETS.EFFECT_RULES && !getSpreadsheet_().getSheetByName(sheetName)) return [];
   if (sheetName === DB_SHEETS.EFFECTS) {
     var effectsSheet = getSheet_(sheetName);
     var isAddingDamageFormulaColumn = getHeaderRow_(effectsSheet).indexOf('damageFormula') === -1;
@@ -137,6 +153,9 @@ function readTable_(sheetName) {
     return cloneGameDataRows_(GAME_DATA_REQUEST_TABLES_[sheetName]);
   }
   var rows = readTableUncached_(sheetName);
+  if (sheetName === DB_SHEETS.EFFECTS && rows.some(function(row) { return Number(row.rulesVersion) === 2; })) {
+    rows = getSharedRuleEngine_().compileEffectDefinitions(rows, readTable_(DB_SHEETS.EFFECT_RULES));
+  }
   if (isFreshGameDataSheet_(sheetName)) GAME_DATA_REQUEST_TABLES_[sheetName] = rows;
   return isFreshGameDataSheet_(sheetName) ? cloneGameDataRows_(rows) : rows;
 }
@@ -149,7 +168,7 @@ function readTableUncached_(sheetName) {
     return [];
   }
 
-  var values = sheet.getRange(1, 1, lastRow, lastColumn).getValues();
+  var values = readSheetRangeValues_(sheet, 1, 1, lastRow, lastColumn);
   var headers = values[0].filter(function(header) {
     return header !== '';
   });
@@ -171,6 +190,7 @@ function isFreshGameDataSheet_(sheetName) {
     DB_SHEETS.MONSTER_AI,
     DB_SHEETS.SKILLS,
     DB_SHEETS.EFFECTS,
+    DB_SHEETS.EFFECT_RULES,
     DB_SHEETS.ITEMS,
     DB_SHEETS.REWARDS,
   ].indexOf(sheetName) !== -1;
@@ -225,6 +245,7 @@ function clearMasterTableCaches_() {
     DB_SHEETS.MONSTER_AI,
     DB_SHEETS.SKILLS,
     DB_SHEETS.EFFECTS,
+    DB_SHEETS.EFFECT_RULES,
     DB_SHEETS.ITEMS,
     DB_SHEETS.REWARDS,
     DB_SHEETS.NOTICES,
@@ -244,6 +265,7 @@ function refreshBattleDefinitionCaches_() {
     DB_SHEETS.MONSTER_AI,
     DB_SHEETS.SKILLS,
     DB_SHEETS.EFFECTS,
+    DB_SHEETS.EFFECT_RULES,
     DB_SHEETS.ITEMS,
   ];
   battleSheets.forEach(clearTableCache_);
@@ -282,12 +304,15 @@ function getGameDataSnapshot(authToken) {
     snapshotKey: 'global',
     loadedAt: new Date(),
     dataVersion: String(settings.appVersion || settings.dataVersion || ''),
+    basePlayerStats: getConfiguredBasePlayerStats_(),
+    basePlayerStatsVersion: 1,
     stages: readTable_(DB_SHEETS.STAGES),
     monsterGroups: readTable_(DB_SHEETS.MONSTER_GROUPS),
     monsters: readTable_(DB_SHEETS.MONSTERS),
     monsterAi: readTable_(DB_SHEETS.MONSTER_AI),
     skills: readTable_(DB_SHEETS.SKILLS),
     effects: readTable_(DB_SHEETS.EFFECTS),
+    effectRules: readTable_(DB_SHEETS.EFFECT_RULES),
     items: readTable_(DB_SHEETS.ITEMS),
     rewards: readTable_(DB_SHEETS.REWARDS),
   });
@@ -337,7 +362,7 @@ function updateRowByKey_(sheetName, keyColumn, keyValue, patchObject) {
   if (!rowNumber) {
     return null;
   }
-  var currentRow = sheet.getRange(rowNumber, 1, 1, headers.length).getValues()[0];
+  var currentRow = readSheetRangeValues_(sheet, rowNumber, 1, 1, headers.length)[0];
   var currentObject = rowToObject_(headers, currentRow);
   var updatedObject = Object.assign({}, currentObject, patchObject);
   var updatedRow = headers.map(function(header) {
@@ -374,14 +399,14 @@ function findRowByKeyUncached_(sheetName, keyColumn, keyValue) {
   if (!rowNumber) {
     return null;
   }
-  var row = sheet.getRange(rowNumber, 1, 1, headers.length).getValues()[0];
+  var row = readSheetRangeValues_(sheet, rowNumber, 1, 1, headers.length)[0];
   return rowToObject_(headers, row);
 }
 
 function findSheetRowNumberByKey_(sheet, headers, keyIndex, sheetName, keyColumn, keyValue) {
   var cachedRowNumber = getCachedSheetRowNumber_(sheetName, keyColumn, keyValue);
   if (cachedRowNumber && cachedRowNumber >= 2 && cachedRowNumber <= sheet.getLastRow()) {
-    var cachedValue = sheet.getRange(cachedRowNumber, keyIndex + 1).getValue();
+    var cachedValue = readSheetRangeValues_(sheet, cachedRowNumber, keyIndex + 1, 1, 1)[0][0];
     if (String(cachedValue) === String(keyValue)) {
       return cachedRowNumber;
     }
@@ -391,7 +416,7 @@ function findSheetRowNumberByKey_(sheet, headers, keyIndex, sheetName, keyColumn
   if (lastRow < 2) {
     return 0;
   }
-  var keyValues = sheet.getRange(2, keyIndex + 1, lastRow - 1, 1).getValues();
+  var keyValues = readSheetRangeValues_(sheet, 2, keyIndex + 1, lastRow - 1, 1);
   for (var i = 0; i < keyValues.length; i += 1) {
     if (String(keyValues[i][0]) === String(keyValue)) {
       var rowNumber = i + 2;
@@ -467,6 +492,41 @@ function setupDatabase() {
   });
 }
 
+// Run once after deployment. Keep legacy AI columns for reference; never overwrite configured values.
+function migrateMonsterAttackEffects() {
+  ensureTableColumns_(DB_SHEETS.MONSTERS, DB_COLUMNS.MONSTERS);
+  ensureTableColumns_(DB_SHEETS.SKILLS, DB_COLUMNS.SKILLS);
+  var rules = readTable_(DB_SHEETS.MONSTER_AI);
+  var report = { updatedMonsters: [], updatedSkills: [], conflicts: [] };
+  function migrate(rows, sheetName, key, getValues, updated) {
+    rows.forEach(function(row) {
+      if (String(row.attackEffect || '').trim()) return;
+      var values = getValues(row).map(function(value) { return String(value || '').trim().toLowerCase(); })
+        .filter(function(value, index, all) { return value && all.indexOf(value) === index; });
+      if (!values.length) return;
+      if (values.length !== 1 || ['slash', 'blunt', 'thrust', 'fire', 'none'].indexOf(values[0]) === -1) {
+        report.conflicts.push({ sheet: sheetName, id: row[key], values: values });
+        return;
+      }
+      updateRowByKey_(sheetName, key, row[key], { attackEffect: values[0] });
+      updated.push(row[key]);
+    });
+  }
+  migrate(readTable_(DB_SHEETS.MONSTERS), DB_SHEETS.MONSTERS, 'monsterId', function(monster) {
+    return rules.filter(function(rule) {
+      return (!rule.aiId || rule.aiId === monster.aiId)
+        && normalizeMonsterAiActionType_(rule.actionType, rule.skillId) === ACTION_TYPES.ATTACK;
+    }).map(function(rule) { return rule.attackEffect; });
+  }, report.updatedMonsters);
+  migrate(readTable_(DB_SHEETS.SKILLS), DB_SHEETS.SKILLS, 'skillId', function(skill) {
+    return rules.filter(function(rule) { return rule.skillId === skill.skillId; })
+      .map(function(rule) { return rule.skillAttackEffect; });
+  }, report.updatedSkills);
+  clearMasterTableCaches_();
+  Logger.log(JSON.stringify(report));
+  return report;
+}
+
 function setupQuestionSpreadsheet() {
   getQuestionsSpreadsheet_();
   return {
@@ -488,6 +548,7 @@ function seedMasterData() {
 
   MASTER_EFFECTS.forEach(function(effect) {
     var existingEffect = findRowByKey_(DB_SHEETS.EFFECTS, 'effectId', effect.effectId);
+    if (existingEffect && Number(existingEffect.rulesVersion) === 2) return;
     var seededEffect = Object.assign({}, effect);
     if (existingEffect && existingEffect.damageFormula !== undefined && existingEffect.damageFormula !== '') {
       seededEffect.damageFormula = existingEffect.damageFormula;
@@ -564,7 +625,7 @@ function getHeaderRow_(sheet) {
     return [];
   }
 
-  return sheet.getRange(1, 1, 1, lastColumn).getValues()[0].filter(function(header) {
+  return readSheetRangeValues_(sheet, 1, 1, 1, lastColumn)[0].filter(function(header) {
     return header !== '';
   });
 }

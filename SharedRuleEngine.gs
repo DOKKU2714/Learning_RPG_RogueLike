@@ -42,13 +42,121 @@ var RULE_ENGINE_SHARED = (function() {
     return Math.floor(rand() * (high - low + 1)) + low;
   }
 
+  // Only v2 definitions opt in. Old signed snapshots keep their original rules.
+  function migrateLegacyEffectDefinitions(effects, existingRules) {
+    var rules = (existingRules || []).slice();
+    var definitions = (effects || []).map(function(source) {
+      var effect = Object.assign({}, source);
+      if (Number(effect.rulesVersion) === 2) return effect;
+      var stacked = ['debuff_bleed', 'debuff_poison', 'debuff_burn'].indexOf(effect.effectId) >= 0;
+      var foolish = effect.effectId === 'debuff_foolish';
+      effect.rulesVersion = 2;
+      effect.baseValue = foolish ? 1 : effect.value;
+      effect.stackMode = stacked || foolish || isTruthy(effect.stackable) ? 'add' : 'replace';
+      effect.maxStacks = stacked ? Math.max(99, Number(effect.maxStacks || 0)) : Math.max(1, Number(effect.maxStacks || 1));
+      effect.reapplyDurationPolicy = 'max';
+      effect.durationClock = stacked ? 'stacks' : 'turns';
+      effect.decayTiming = stacked ? 'onTrigger' : foolish ? 'turnEnd' : 'none';
+      effect.decayStacks = stacked || foolish ? 1 : 0;
+      effect.decrementOnApplyTurn = foolish;
+      function add(operation, timing, stat, mode, formula, shield) {
+        rules.push({effectId:effect.effectId, ruleOrder:rules.filter(function(rule) { return rule.effectId === effect.effectId; }).length + 1,
+          triggerTiming:timing, operation:operation, statKey:stat || '', valueMode:mode || '', valueFormula:formula || '', shieldPolicy:shield || '', description:''});
+      }
+      if (stacked) {
+        var timing = {debuff_bleed:'beforeAction', debuff_poison:'turnEnd', debuff_burn:'beforeMonsterTurn'}[effect.effectId];
+        // An empty value really means zero in the current game. Do not repair
+        // balance data during a structural migration (damage still clamps to 1).
+        var fallback = effect.effectId === 'debuff_poison' ? 'stacks' : 'maxHp*stacks*' + (effect.effectId === 'debuff_burn' ? '0.01' : '0.007');
+        add('damage', timing, 'hp', 'flat', String(effect.damageFormula || '').trim() || fallback, effect.effectId === 'debuff_burn' ? 'absorb' : 'bypass');
+        // The old stat reducer also saw DOT rows. Keep that projection when a
+        // skill overrides value; removing it here would change effective HP.
+        add('modifyStat', 'passive', effect.statKey || 'hp', effect.effectType || 'flat', 'value*stacks');
+      } else if (effect.statKey === 'caffeine') {
+        add('modifyStat', 'passive', 'questionEfficiencyBonusPercent', 'flat', '3*stacks');
+        add('modifyStat', 'passive', 'questionTime', 'flat', '0.3*stacks');
+        // Preserve the otherwise unused synthetic stat for existing snapshots.
+        add('modifyStat', 'passive', 'caffeine', 'flat', 'value*stacks');
+      } else if (effect.effectType === 'control') {
+        if (['debuff_freeze', 'debuff_stun', 'debuff_sleep'].indexOf(effect.effectId) >= 0) add('blockAction', 'passive');
+        if (effect.effectId === 'debuff_freeze') {
+          add('damageTakenMultiplier', 'onHit', '', '', '1.5');
+          add('removeOnHit', 'onHit');
+        }
+      } else if (effect.statKey) {
+        add('modifyStat', 'passive', effect.statKey, effect.effectType || 'flat', foolish ? '1' : 'value*stacks');
+      }
+      if (!rules.some(function(rule) { return rule.effectId === effect.effectId; })) throw new Error('Cannot migrate effect: ' + effect.effectId);
+      return effect;
+    });
+    return {effects:definitions, rules:rules};
+  }
+
+  function compileEffectDefinitions(effects, rules) {
+    var byId = {}, seen = {};
+    (rules || []).forEach(function(rule) {
+      if (!rule.effectId) return;
+      var key = rule.effectId + ':' + rule.ruleOrder;
+      if (!isFinite(Number(rule.ruleOrder)) || Number(rule.ruleOrder) < 1 || Math.floor(Number(rule.ruleOrder)) !== Number(rule.ruleOrder)) throw new Error('Invalid EffectRules order: ' + key);
+      if (seen[key]) throw new Error('Duplicate EffectRules key: ' + key);
+      seen[key] = true;
+      if (['modifyStat', 'damage', 'blockAction', 'damageTakenMultiplier', 'removeOnHit'].indexOf(rule.operation) < 0) throw new Error('Unsupported effect operation: ' + rule.operation);
+      if (['passive', 'turnStart', 'turnEnd', 'onAction', 'beforeAction', 'beforeMonsterTurn', 'onHit'].indexOf(rule.triggerTiming) < 0) throw new Error('Unsupported effect timing: ' + rule.triggerTiming);
+      if (rule.operation === 'modifyStat' && (!rule.statKey || ['flat', 'percent'].indexOf(rule.valueMode) < 0)) throw new Error('Invalid stat rule: ' + key);
+      if ((rule.operation === 'modifyStat' || rule.operation === 'blockAction') && rule.triggerTiming !== 'passive') throw new Error('Stat/control rules require passive timing: ' + key);
+      if ((rule.operation === 'damageTakenMultiplier' || rule.operation === 'removeOnHit') && rule.triggerTiming !== 'onHit') throw new Error('Hit rules require onHit timing: ' + key);
+      if ((rule.operation === 'modifyStat' || rule.operation === 'damage' || rule.operation === 'damageTakenMultiplier') && !String(rule.valueFormula || '').trim()) throw new Error('Missing effect formula: ' + key);
+      if (rule.operation === 'damage' && ['absorb', 'bypass'].indexOf(rule.shieldPolicy) < 0) throw new Error('Invalid shield policy: ' + key);
+      if (String(rule.valueFormula || '').trim()) evaluateFormula(rule.valueFormula, {value:1, stacks:1, maxHp:100, remainingTurns:1}, {
+        random:function() { return 0; },
+        warn:function(message) { throw new Error('Invalid EffectRules formula (' + key + '): ' + message); }
+      });
+      (byId[rule.effectId] || (byId[rule.effectId] = [])).push(Object.assign({}, rule));
+    });
+    return (effects || []).map(function(definition) {
+      var effect = Object.assign({}, definition);
+      if (Number(effect.rulesVersion) !== 2) return effect;
+      if (!byId[effect.effectId] || !byId[effect.effectId].length) throw new Error('Missing EffectRules: ' + effect.effectId);
+      effect.rules = byId[effect.effectId].slice().sort(function(a, b) { return Number(a.ruleOrder) - Number(b.ruleOrder); });
+      effect.value = Number(effect.baseValue || 0);
+      effect.stackable = effect.stackMode === 'add';
+      if (['add', 'replace'].indexOf(effect.stackMode) < 0 || ['max', 'refresh', 'extend', 'keep'].indexOf(effect.reapplyDurationPolicy) < 0 || ['turns', 'stacks'].indexOf(effect.durationClock) < 0) throw new Error('Invalid effect lifecycle: ' + effect.effectId);
+      // Project the first rule for existing skill upgrades and status displays.
+      var primary = effect.rules.filter(function(rule) { return rule.operation === 'modifyStat' || rule.operation === 'blockAction'; })[0];
+      if (!effect.statKey && primary) effect.statKey = primary.statKey || 'action';
+      if (!effect.effectType && primary) effect.effectType = primary.operation === 'blockAction' ? 'control' : primary.valueMode;
+      return effect;
+    });
+  }
+
+  function getEffectRuleValue(effect, rule, target) {
+    return evaluateFormula(rule.valueFormula, {
+      value: Number(effect.value || 0), stacks: Math.max(1, Number(effect.stacks || 1)),
+      maxHp: Math.max(1, Number(target && (target.maxHp || target.stats && target.stats.hp) || 1)),
+      remainingTurns: Number(effect.remainingTurns || 0)
+    }, {});
+  }
+
+  function getRuleStatBonus(effect, statKey, valueMode) {
+    return (effect.rules || []).reduce(function(total, rule) {
+      return total + (rule.operation === 'modifyStat' && rule.triggerTiming === 'passive' && rule.statKey === statKey && rule.valueMode === valueMode ? getEffectRuleValue(effect, rule) : 0);
+    }, 0);
+  }
+
+  function hasActionBlock(target) {
+    return (target && target.effects || []).some(function(effect) {
+      if (effect.rules) return effect.rules.some(function(rule) { return rule.operation === 'blockAction' && rule.triggerTiming === 'passive'; });
+      return ['debuff_stun', 'debuff_freeze', 'debuff_sleep'].indexOf(effect.effectId) >= 0;
+    });
+  }
+
   function normalizeEffectInstance(effect, sourceInfo, turn) {
     var payload = Object.assign({}, effect || {});
-    var isStackedDamageEffect = payload.effectId === 'debuff_burn' || payload.effectId === 'debuff_bleed' || payload.effectId === 'debuff_poison';
+    var isStackedDamageEffect = payload.rules ? payload.durationClock === 'stacks' : payload.effectId === 'debuff_burn' || payload.effectId === 'debuff_bleed' || payload.effectId === 'debuff_poison';
     if (isStackedDamageEffect) {
       payload.durationType = 'turn';
       payload.stackable = true;
-      payload.maxStacks = Math.max(99, Number(payload.maxStacks || 0));
+      payload.maxStacks = Math.max(payload.rules ? 1 : 99, Number(payload.maxStacks || 0));
     }
     payload.value = Number(payload.value || 0);
     payload.stackable = isTruthy(payload.stackable);
@@ -131,7 +239,10 @@ var RULE_ENGINE_SHARED = (function() {
     if (existing && effect.stackable) {
       existing.stacks = Math.min(Number(effect.maxStacks || 99), Math.max(1, Number(existing.stacks || 1)) + Math.max(1, Number(effect.stacks || 1)));
       if (effect.remainingTurns !== '') {
-        existing.remainingTurns = Math.max(Number(existing.remainingTurns || 0), Number(effect.remainingTurns || 0));
+        var policy = effect.reapplyDurationPolicy || 'max';
+        if (policy === 'refresh') existing.remainingTurns = Number(effect.remainingTurns || 0);
+        else if (policy === 'extend') existing.remainingTurns = Number(existing.remainingTurns || 0) + Number(effect.remainingTurns || 0);
+        else if (policy !== 'keep') existing.remainingTurns = Math.max(Number(existing.remainingTurns || 0), Number(effect.remainingTurns || 0));
       }
       syncStatusBuckets(target);
       return existing;
@@ -148,13 +259,24 @@ var RULE_ENGINE_SHARED = (function() {
   }
 
   function getQuestionMaxEfficiencyMultiplier(effects) {
-    var caffeine = (effects || []).reduce(function(total, effect) {
-      return total + (effect.statKey === 'caffeine' ? Number(effect.value || 0) * Math.max(1, Number(effect.stacks || 1)) : 0);
-    }, 0);
-    return (1 + caffeine * 0.02) * (effects || []).reduce(function(multiplier, effect) {
+    return (effects || []).reduce(function(multiplier, effect) {
+      if (effect.rules) {
+        return effect.rules.reduce(function(result, rule) {
+          return rule.operation === 'modifyStat' && rule.triggerTiming === 'passive' && rule.statKey === 'questionMaxEfficiency' && rule.valueMode === 'percent' ? result * Math.max(0, 1 + getEffectRuleValue(effect, rule) / 100) : result;
+        }, multiplier);
+      }
       if (effect.statKey !== 'questionMaxEfficiency' || effect.effectType !== 'percent') return multiplier;
       return multiplier * Math.max(0, 1 + Number(effect.value || 0) * Math.max(1, Number(effect.stacks || 1)) / 100);
     }, 1);
+  }
+
+  function getQuestionEfficiencyBonusPercent(effects) {
+    return (effects || []).reduce(function(total, effect) {
+      if (effect.rules) return total + getRuleStatBonus(effect, 'questionEfficiencyBonusPercent', 'flat');
+      return total + (effect.statKey === 'caffeine'
+        ? Math.max(1, Number(effect.stacks || 1)) * 3
+        : 0);
+    }, 0);
   }
 
   function consumeQuestionEffects(player) {
@@ -171,6 +293,14 @@ var RULE_ENGINE_SHARED = (function() {
       ? target[statKey]
       : target && target.stats && target.stats[statKey] !== undefined ? target.stats[statKey] : 0);
     return (target && target.effects || []).reduce(function(value, effect) {
+      if (effect.rules) {
+        if (['questionTime', 'questionDifficulty', 'questionMaxEfficiency', 'questionEfficiencyBonusPercent', 'action'].indexOf(statKey) >= 0) return value;
+        return effect.rules.reduce(function(result, rule) {
+          if (rule.operation !== 'modifyStat' || rule.triggerTiming !== 'passive' || rule.statKey !== statKey) return result;
+          var amount = getEffectRuleValue(effect, rule, target);
+          return rule.valueMode === 'percent' ? result * (1 + amount / 100) : result + amount;
+        }, value);
+      }
       if (effect.statKey !== statKey) return value;
       if (effect.statKey === 'questionTime' || effect.statKey === 'questionDifficulty' || effect.statKey === 'questionMaxEfficiency' || effect.statKey === 'action') return value;
       var effectValue = Number(effect.value || 0) * Math.max(1, Number(effect.stacks || 1));
@@ -183,6 +313,14 @@ var RULE_ENGINE_SHARED = (function() {
   function calculateEffectiveStats(baseStats, activeEffects) {
     var stats = Object.assign({}, baseStats || {});
     (activeEffects || []).forEach(function(effect) {
+      if (effect.rules) {
+        var keys = {};
+        effect.rules.forEach(function(rule) { if (rule.operation === 'modifyStat') keys[rule.statKey] = true; });
+        Object.keys(keys).forEach(function(key) {
+          if (['questionTime', 'questionDifficulty', 'questionMaxEfficiency', 'questionEfficiencyBonusPercent', 'action'].indexOf(key) < 0) stats[key] = getEffectiveStat({ stats: stats, effects: [effect] }, key);
+        });
+        return;
+      }
       if (!effect.statKey || effect.statKey === 'questionTime' || effect.statKey === 'questionDifficulty' || effect.statKey === 'questionMaxEfficiency' || effect.statKey === 'action') return;
       stats[effect.statKey] = getEffectiveStat({ stats: stats, effects: [effect] }, effect.statKey);
     });
@@ -199,6 +337,28 @@ var RULE_ENGINE_SHARED = (function() {
     if (!target) return 0;
     var totalDamage = 0;
     (target.effects || []).forEach(function(effect) {
+      // Stack-clock damage is dispatched at its explicit lifecycle event by the
+      // server rules (also exported verbatim to the browser).
+      if (effect.rules) {
+        if (effect.durationClock === 'stacks') return;
+        if (currentTurn !== undefined && effect.appliedAtTurn !== undefined && Number(effect.appliedAtTurn) === Number(currentTurn) && !isTruthy(effect.decrementOnApplyTurn)) return;
+        effect.rules.forEach(function(rule) {
+          if (rule.operation !== 'damage' || rule.triggerTiming !== timing) return;
+          var damage = Math.max(1, Math.round(getEffectRuleValue(effect, rule, target)));
+          var currentHp = Number(target.currentHp !== undefined ? target.currentHp : target.hp || 0);
+          var shieldDamage = rule.shieldPolicy === 'bypass' ? 0 : Math.min(Number(target.shield || 0), damage);
+          var hpDamage = Math.min(currentHp, damage - shieldDamage);
+          if (target.currentHp !== undefined) target.currentHp = Math.max(0, currentHp - hpDamage);
+          else target.hp = Math.max(0, currentHp - hpDamage);
+          if (rule.shieldPolicy !== 'bypass') target.shield = Math.max(0, Number(target.shield || 0) - shieldDamage);
+          totalDamage += hpDamage + shieldDamage;
+          if (battle) {
+            battle.lastTurnEvents = battle.lastTurnEvents || [];
+            battle.lastTurnEvents.push({actor:'effect', type:'effectDamage', target:actor === 'monster' ? 'monster' : 'player', effectId:effect.effectId, targetMonsterId:actor === 'monster' ? target.instanceId || target.monsterId || '' : '', damage:hpDamage + shieldDamage, hpDamage:hpDamage, shieldDamage:shieldDamage, message:(effect.name || effect.effectId) + '로 ' + (hpDamage + shieldDamage) + ' 피해!'});
+          }
+        });
+        return;
+      }
       if (effect.effectId === 'debuff_burn' || effect.effectId === 'debuff_bleed' || effect.effectId === 'debuff_poison') return;
       if (effect.triggerTiming !== timing || effect.statKey !== 'hp' || effect.effectType !== 'flat' || Number(effect.value || 0) >= 0) return;
       if (currentTurn !== undefined && effect.appliedAtTurn !== undefined && Number(effect.appliedAtTurn || 0) === Number(currentTurn || 0)) return;
@@ -233,6 +393,13 @@ var RULE_ENGINE_SHARED = (function() {
       syncStatusBuckets(target);
     }
     target.effects = (target.effects || []).map(function(effect) {
+      if (effect.rules) {
+        if (effect.durationType !== 'turn' || effect.durationClock === 'stacks') return effect;
+        if (!isTruthy(effect.decrementOnApplyTurn) && !(target.currentHp !== undefined && hasActionBlock({effects:[effect]})) && currentTurn !== undefined && effect.appliedAtTurn !== undefined && Number(effect.appliedAtTurn) === Number(currentTurn)) return effect;
+        if (effect.decayTiming === 'turnEnd') effect.stacks = Math.max(0, Number(effect.stacks || 1) - Number(effect.decayStacks || 0));
+        effect.remainingTurns = Number(effect.remainingTurns || 0) - 1;
+        return effect;
+      }
       if (effect.durationType === 'turn' && effect.effectId !== 'debuff_burn' && effect.effectId !== 'debuff_bleed' && effect.effectId !== 'debuff_poison') {
         if (effect.effectId !== 'debuff_foolish'
           && !(target.currentHp !== undefined && effect.statKey === 'action' && effect.effectType === 'control')
@@ -831,13 +998,15 @@ var RULE_ENGINE_SHARED = (function() {
   function applyQuestionModifiers(questionView, effects) {
     if (!questionView || questionView.clientEffectsApplied) return questionView;
     var difficultyDelta = (effects || []).reduce(function(total, effect) {
+      if (effect.rules) return total + getRuleStatBonus(effect, 'questionDifficulty', 'flat');
       return effect.statKey === 'questionDifficulty' && effect.effectType === 'flat'
         ? total + Number(effect.value || 0) * Math.max(1, Number(effect.stacks || 1))
         : total;
     }, 0);
     var timeDeltaSeconds = (effects || []).reduce(function(total, effect) {
+      if (effect.rules) return total + getRuleStatBonus(effect, 'questionTime', 'flat');
       return (effect.statKey === 'questionTime' && effect.effectType === 'flat') || effect.statKey === 'caffeine'
-        ? total + Number(effect.value || 0) * Math.max(1, Number(effect.stacks || 1)) * (effect.statKey === 'caffeine' ? 0.1 : 1)
+        ? total + (effect.statKey === 'caffeine' ? Math.max(1, Number(effect.stacks || 1)) * 0.3 : Number(effect.value || 0) * Math.max(1, Number(effect.stacks || 1)))
         : total;
     }, 0);
     if (difficultyDelta) questionView.finalDifficulty = Math.max(1, Math.min(10, Math.round(Number(questionView.finalDifficulty || 1) + difficultyDelta)));
@@ -901,8 +1070,14 @@ var RULE_ENGINE_SHARED = (function() {
   }
 
   return {
+    migrateLegacyEffectDefinitions: migrateLegacyEffectDefinitions,
+    compileEffectDefinitions: compileEffectDefinitions,
+    getEffectRuleValue: getEffectRuleValue,
+    getRuleStatBonus: getRuleStatBonus,
+    hasActionBlock: hasActionBlock,
     getQuestionSelectionPool: getQuestionSelectionPool,
     getQuestionMaxEfficiencyMultiplier: getQuestionMaxEfficiencyMultiplier,
+    getQuestionEfficiencyBonusPercent: getQuestionEfficiencyBonusPercent,
     consumeQuestionEffects: consumeQuestionEffects,
     getQuestionAccuracyWeight: getQuestionAccuracyWeight,
     dealDamageToMonster: dealDamageToMonster,

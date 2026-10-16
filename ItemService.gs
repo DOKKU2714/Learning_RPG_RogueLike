@@ -853,7 +853,7 @@ function buildItemModifiers_(ownedItems) {
 }
 
 function calculateStatsWithItemEffects_(baseStats, ownedItems) {
-  var source = Object.assign(getConfiguredBasePlayerStats_(), baseStats || {});
+  var source = Object.assign({}, getConfiguredBasePlayerStats_(), baseStats || {});
   var modifiers = buildItemModifiers_(ownedItems);
   var stats = Object.assign({}, source);
   Object.keys(modifiers.statPercent).forEach(function(statKey) {
@@ -1016,6 +1016,7 @@ function getItemQuestionModifiers_(battleState, question) {
   return {
     questionDifficulty: Number(modifiers.questionDifficulty || 0),
     questionMaxEfficiencyMultiplier: getSharedRuleEngine_().getQuestionMaxEfficiencyMultiplier(battleState && battleState.player && battleState.player.effects),
+    questionEfficiencyBonusPercent: getSharedRuleEngine_().getQuestionEfficiencyBonusPercent(battleState && battleState.player && battleState.player.effects),
     questionMaxEfficiencyPercent: Number(modifiers.questionMaxEfficiencyPercent || 0),
     questionMaxEfficiencyFlatPercent: Number(modifiers.questionMaxEfficiencyFlatPercent || 0),
     questionMinEfficiencyPercent: Number(modifiers.questionMinEfficiencyPercent || 0),

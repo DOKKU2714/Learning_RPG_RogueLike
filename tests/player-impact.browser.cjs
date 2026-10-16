@@ -5,9 +5,10 @@ const assert=require('node:assert/strict');
 const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
 const source=fs.readFileSync('Battle.html','utf8');
 const extract=name=>source.match(new RegExp('    (?:async )?function '+name+'\\([^]*?\\n    \\}'))[0];
-const funcs=['animateMonsterAttack','resetMonsterSpriteState','playMonsterAttackImpact','playMonsterMultiHitSequence','animatePlayerHit','animatePlayerMiss','animatePlayerShieldBlock','spawnPlayerScreenImpact','restartScreenFlash'];
+const funcs=['animateMonsterAttack','resetMonsterSpriteState','playMonsterAttackImpact','playMonsterMultiHitSequence','animatePlayerHit','animatePlayerMiss','animatePlayerShieldBlock','spawnPlayerScreenImpact','restartScreenFlash','normalizeMonsterAttackEffect','resolveMonsterSkillAttackEffect'];
 const styles=fs.readFileSync('UiStyles.html','utf8');
 const script=`var MONSTER_ATTACK_WINDUP_MS=180,MONSTER_ATTACK_IMPACT_DELAY_MS=120,MONSTER_ATTACK_LUNGE_MS=680,MULTI_HIT_EFFECT_INTERVAL_MS=250,HIT_STATE_HOLD_MS=350;
+var currentView={battle:{monsters:[{instanceId:"m",attackEffect:"slash"}]},monsterAiRules:[]};
 var workbookDeadlineExpired=false,hp=100,shield=20,impacts=[],states=[];
 var cssEscape=String,pushLog=()=>{},playBattleSound=()=>{},playBattleHitSound=()=>{},spawnFloatingDamage=()=>{},spawnFloatingText=()=>{},spawnShieldBlockIcon=()=>{};
 var applyPlayerDamageDelta=(h,s)=>{hp-=h;shield-=s;impacts.push({at:performance.now(),hp:h,shield:s});};
@@ -51,11 +52,26 @@ const html='<!doctype html><html><head><meta charset="utf-8"><meta name="viewpor
    assert.equal(await page.evaluate(()=>hp),81);
    assert.equal(await page.evaluate(()=>impacts.length),3);
    await page.waitForFunction(()=>!document.querySelector('.player-screen-impact'));
-   await page.evaluate(()=>animatePlayerHit(4,0,4));
+   await page.evaluate(()=>animatePlayerHit(4,0,4,false,'slash'));
    assert.equal(await page.locator('.blocked-impact').count(),1);assert.equal(await page.evaluate(()=>hp),81);
    await page.emulateMedia({reducedMotion:'reduce'});
    assert.equal(await page.locator('.player-impact-slashes').evaluate(e=>getComputedStyle(e).animationName),'none');
    await page.waitForFunction(()=>!document.querySelector('.player-screen-impact'));
+   await page.emulateMedia({reducedMotion:'no-preference'});
+   for (const effect of ['blunt','thrust','fire','none']) {
+    await page.evaluate(effect=>{window.sequence=playMonsterAttackImpact({monsterId:'m',damage:1,hpDamage:1,attackEffect:effect},true);},effect);
+    await page.waitForTimeout(340);
+    assert.equal(await page.locator('.player-impact-slashes').count(),0);
+    assert.equal(await page.locator('.player-screen-impact').count(),effect==='none'?0:1);
+    if(effect!=='none') {
+     assert.equal(await page.locator('.player-screen-impact').evaluate((e,effect)=>e.classList.contains('impact-'+effect),effect),true);
+     await page.screenshot({path:path.join(output,(mobile?'mobile':'desktop')+'-'+effect+'.png')});
+    }
+    await page.evaluate(()=>window.sequence);
+    await page.waitForFunction(()=>!document.querySelector('.player-screen-impact'));
+   }
+   await page.evaluate(()=>animatePlayerHit(1,1,0));
+   assert.equal(await page.locator('.player-impact-slashes').count(),0,'effect damage does not add claw marks');
    assert.deepEqual(errors,[]);console.log('Impact timing, damage, multi-hit, miss, shield and cleanup OK: '+(mobile?'mobile':'desktop'));
    await page.close();
   }

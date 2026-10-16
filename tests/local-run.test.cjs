@@ -6,6 +6,28 @@ const path = require('node:path');
 const {context,start,copy} = require('./run-session.test.cjs');
 const progressSheets = ['Runs','PlayerData','WorkbookPlayerData','AnswerLogs','BattleLogs','RunSettlements'];
 
+test('starting stat baseline survives item calculation, local stat rewards and stage transitions',()=>{
+  const g=localGame(),baseline=copy(g.initial.gameDataSnapshot.basePlayerStats);
+  assert.equal(g.initial.gameDataSnapshot.basePlayerStatsVersion,1);
+  assert.equal(g.initial.battle.player.startingStatsVersion,1);
+  const configured={...baseline};
+  const original=g.x.c.getConfiguredBasePlayerStats_;
+  g.x.c.getConfiguredBasePlayerStats_=()=>configured;
+  g.x.c.calculateStatsWithItemEffects_({...baseline,hp:baseline.hp+3},[]);
+  assert.deepEqual(configured,baseline,'stat calculations must not mutate shared configuration');
+  g.x.c.getConfiguredBasePlayerStats_=original;
+  for(const [key,value] of [['hp',3],['attack',2]]){
+    const {payload,reward}=g.prepare();
+    reward.choices=[{rewardId:'baseline-'+key,type:'stat',targetId:key,value,rarity:'common'}];
+    g.x.c.signLocalRewardView_(reward);payload.stageState.reward=copy(reward);
+    const next=g.choose('stat');
+    assert.deepEqual(copy(g.initial.gameDataSnapshot.basePlayerStats),baseline,'browser snapshot must stay immutable');
+    assert.deepEqual(copy(next.battle.player.startingStats),baseline,'each battle keeps the original baseline');
+    assert.equal(next.battle.player.startingStatsVersion,1);
+    assert.equal(JSON.parse(next.localRunState.statsJson)[key],baseline[key]+value);
+  }
+});
+
 function localGame() {
   const x=context(), initial=start(x);
   const source=x.c.getLocalRunEngineSource_();

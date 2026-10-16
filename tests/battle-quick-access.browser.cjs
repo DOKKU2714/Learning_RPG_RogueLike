@@ -17,8 +17,8 @@ var normalizeRewardRarity=r=>r||'common',getRewardRarityLabel=()=> '일반';`;
 const startingStats = `var localGameDataSnapshot={basePlayerStats:{hp:25,attack:5,defense:4,hpRegen:3,accuracy:100,evasion:0,criticalRate:5,criticalDamage:150}};`;
 const funcs = ['getBattleQuickStatSignature','getBattleQuickItemCounts','saveBattleQuickAccessState','updateBattleQuickAccess',
   'markBattleQuickAccessRead','renderBattleQuickAccessIcons','toggleBattleStats','closeBattleStats','toggleBattleInventory',
-  'toggleBattleMenu','closeBattleMenu','showBattleStats','formatEffectiveStat','showBattleItems','closeItemModal',
-  'getOwnedItemDetailsForModal','renderOwnedItemCard','buildItemEffectDescription','buildItemFlavorDescription','bindHoverTooltips','positionHoverTooltip'];
+  'toggleBattleMenu','closeBattleMenu','showBattleStats','getBattleStatStartingStats','formatEffectiveStat','buildBattleStatTooltipContent','showBattleItems','closeItemModal',
+  'getOwnedItemDetailsForModal','renderOwnedItemCard','buildItemEffectDescription','buildItemFlavorDescription','bindHoverTooltips','positionHoverTooltip','hideActiveHoverTooltips'];
 const html = '<!doctype html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">'+styles+touch+
   '</head><body>'+body.replaceAll('<?= getAssetBaseUrl_() ?>','https://assets.test')+'<script>'+script+
   startingStats+funcs.map(extract).join('\n')+'\nbindHoverTooltips();updateBattleQuickAccess(currentView);</script></body></html>';
@@ -54,29 +54,29 @@ const html = '<!doctype html><html><head><meta charset="UTF-8"><meta name="viewp
       assert.equal(await page.locator('#battleInventoryNotification').isVisible(),true);
       assert.match(await page.locator('#battleStatsPanel').innerText(),/공격력.*10/s);
       const statRow=label=>page.locator('.battle-stat-row').filter({has:page.locator('span', {hasText:new RegExp('^'+label+'$')})});
-      assert.equal(await statRow('공격력').locator('.stat-item-increase').innerText(),'(+5)');
-      assert.equal(await statRow('방어력').locator('.stat-item-decrease').innerText(),'(-1)');
-      assert.equal(await statRow('체력').locator('.stat-item-increase').innerText(),'(+5)');
-      assert.equal(await statRow('명중률').locator('.stat-item-decrease').innerText(),'(-1)');
+      assert.equal(await statRow('공격력').getAttribute('data-stat-reward'),'3');
+      assert.equal(await statRow('공격력').getAttribute('data-stat-item'),'2');
+      assert.equal(await statRow('방어력').getAttribute('data-stat-item'),'-1');
+      assert.equal(await statRow('체력').getAttribute('data-stat-reward'),'2');
+      assert.equal(await statRow('명중률').getAttribute('data-stat-item'),'-1');
       assert.equal(await statRow('회피율').locator('.battle-stat-item-delta').count(),0);
-      assert.equal(await statRow('체력 회복').locator('b').innerText(),'5 (+2)');
+      assert.equal(await statRow('체력 회복').locator('b').innerText(),'5');
       assert.equal(await statRow('체력 회복').locator('b').evaluate(e=>getComputedStyle(e).color),'rgb(255, 224, 138)');
       assert.equal(await statRow('체력 회복').locator('b').evaluate(e=>getComputedStyle(e).fontWeight),'900');
       assert.equal(await statRow('치명타 확률').locator('.battle-stat-value-changed').count(),1);
-      assert.equal(await statRow('치명타 확률').locator('.battle-stat-item-delta').innerText(),'(+2)');
-      assert.match(await statRow('공격력').getAttribute('data-tooltip'),/스텟 보상·아이템 효과의 합계/);
+      assert.equal(await statRow('치명타 확률').getAttribute('data-stat-reward'),'2');
+      assert.equal(await statRow('공격력').getAttribute('data-tooltip'),'공격 피해에 반영됩니다.');
       assert.equal(await statRow('회피율').locator('.battle-stat-value-changed').count(),0);
-      assert.match(await statRow('체력 회복').getAttribute('data-tooltip'),/스테이지를 클리어할 때 회복/);
+      assert.match(await statRow('체력 회복').getAttribute('data-tooltip'),/스테이지 클리어 시 회복/);
       assert.equal(await page.locator('.battle-stat-row[data-tooltip]').count(),12);
       if(!mobile){
         await statRow('체력 회복').locator('b').hover();
         assert.equal(await page.locator('#hoverTooltip').getAttribute('aria-hidden'),'false');
-        assert.match(await page.locator('#hoverTooltip').innerText(),/최대 체력을 넘어서 회복하지 않습니다/);
+        assert.match(await page.locator('#hoverTooltip').innerText(),/보상.*\+1.*아이템.*\+1/s);
         await page.mouse.move(200,200);
       }
-      assert.equal(await statRow('공격력').locator('.stat-item-increase').evaluate(e=>getComputedStyle(e).color),'rgb(120, 201, 255)');
-      assert.equal(await statRow('방어력').locator('.stat-item-decrease').evaluate(e=>getComputedStyle(e).color),'rgb(255, 129, 124)');
-      assert.equal(await page.evaluate(()=>formatEffectiveStat({attack:5},{attack:12},'attack','',{attack:10})), '12 <span class="battle-stat-item-delta stat-item-increase" title="스텟 보상·아이템 효과 합계">(+5)</span>');
+      assert.equal(await statRow('공격력').locator('b').evaluate(e=>getComputedStyle(e).color),'rgb(255, 224, 138)');
+      assert.equal(await page.evaluate(()=>formatEffectiveStat({attack:5},{attack:12},'attack','',{attack:10})), '12');
       await page.evaluate(()=>{currentView.battle.player.stats.attack=12;updateBattleQuickAccess(currentView);});
       assert.equal(await page.locator('#battleStatsNotification').isVisible(),false);
       await page.screenshot({path:path.join(output,mobile?'mobile-stats.png':'desktop-stats.png')});
@@ -86,6 +86,15 @@ const html = '<!doctype html><html><head><meta charset="UTF-8"><meta name="viewp
       assert.match(await page.locator('#battleInventoryIcon').getAttribute('src'),/Backpack_Open\.png$/);
       assert.equal(await page.locator('#battleInventoryNotification').isVisible(),false);
       assert.match(await page.locator('#itemModalGrid').innerText(),/장갑/);
+      if (!mobile) {
+        await page.locator('#itemModalGrid .item-card').first().hover();
+        const detail = page.locator('#hoverTooltip.item-hover-tooltip');
+        assert.equal(await detail.isVisible(), true);
+        assert.match(await detail.innerText(), /장갑/);
+        assert.equal(await detail.evaluate(el => el.parentElement === document.body), true);
+        const box = await detail.boundingBox();
+        assert.ok(box.x >= 0 && box.y >= 0 && box.x + box.width <= 1280 && box.y + box.height <= 800);
+      }
       await activate('#itemModal .modal-topline button');
       assert.match(await page.locator('#battleInventoryIcon').getAttribute('src'),/Backpack_Close\.png$/);
       await page.evaluate(()=>{currentView.battle.player.items[0].count=2;currentView.battle.player.itemDetails[0].count=2;updateBattleQuickAccess(currentView);sessionStorage.setItem('fixtureCurrentView',JSON.stringify(currentView));});
@@ -96,6 +105,16 @@ const html = '<!doctype html><html><head><meta charset="UTF-8"><meta name="viewp
       assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
       await page.evaluate(()=>{currentView.runId='new-run';updateBattleQuickAccess(currentView);});
       assert.equal(await page.locator('.battle-quick-notification:not(.hidden)').count(),0);
+      if (!mobile) {
+        await page.evaluate(() => document.getElementById('rewardModal').classList.add('active'));
+        await page.locator('.reward-reroll-control').hover();
+        assert.match(await page.locator('#hoverTooltip').innerText(), /스테이지마다 1회/);
+        assert.match(await page.locator('#hoverTooltip').innerText(), /정답률이 가장 낮은 문제/);
+        await page.evaluate(() => document.getElementById('rewardRerollButton').disabled = true);
+        await page.mouse.move(10,10);
+        await page.locator('.reward-reroll-control').hover();
+        assert.equal(await page.locator('#hoverTooltip').isVisible(), true);
+      }
       assert.deepEqual(errors,[]);console.log('Quick access, item images, notifications, reload and input OK:',mobile?'mobile':'desktop');
       await context.close();
     }

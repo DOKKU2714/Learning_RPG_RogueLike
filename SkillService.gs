@@ -168,6 +168,7 @@ function getSkillUnavailableReason(skill, runState, battleState) {
     return '빙결 상태입니다.';
   }
   if (hasControlEffect_(player, 'debuff_sleep')) return '수면 상태입니다.';
+  if (getSharedRuleEngine_().hasActionBlock(player)) return '행동할 수 없는 상태입니다.';
   if (conditions.afterTurn && Number(battleState.turn || 1) < Number(conditions.afterTurn)) {
     return Number(conditions.afterTurn) + '턴 이후 사용할 수 있습니다.';
   }
@@ -1797,8 +1798,10 @@ function applyEffect(target, effect, source) {
 function tickEffectsAtTurnStart(battleState) {
   normalizeBattleStateEffects_(battleState);
   processSkillTriggers_(battleState, 'onTurnStart', {});
+  applyStackedDamageEffects_(battleState.player, 'turnStart', battleState, 'player');
   applyTimedEffectDamage_(battleState.player, TRIGGER_TIMINGS.TURN_START, battleState, 'player');
   getAliveMonsters_(battleState).forEach(function(monster) {
+    applyStackedDamageEffects_(monster, 'turnStart', battleState, 'monster');
     applyTimedEffectDamage_(monster, TRIGGER_TIMINGS.TURN_START, battleState, 'monster');
   });
   return battleState;
@@ -1806,7 +1809,8 @@ function tickEffectsAtTurnStart(battleState) {
 
 function tickEffectsOnPlayerAction(battleState) {
   normalizeBattleStateEffects_(battleState);
-  applyStackedDamageEffect_(battleState.player, 'debuff_bleed', battleState, 'player');
+  applyStackedDamageEffects_(battleState.player, 'beforeAction', battleState, 'player');
+  applyStackedDamageEffects_(battleState.player, 'onAction', battleState, 'player');
   applyTimedEffectDamage_(battleState.player, TRIGGER_TIMINGS.ON_ACTION, battleState, 'player');
   return battleState;
 }
@@ -1816,11 +1820,11 @@ function tickEffectsAtTurnEnd(battleState) {
   processSkillTriggers_(battleState, 'onTurnEnd', {});
   applyTimedEffectDamage_(battleState.player, TRIGGER_TIMINGS.TURN_END, battleState, 'player');
   getAliveMonsters_(battleState).forEach(function(monster) {
-    applyStackedDamageEffect_(monster, 'debuff_poison', battleState, 'monster');
+    applyStackedDamageEffects_(monster, 'turnEnd', battleState, 'monster');
     applyTimedEffectDamage_(monster, TRIGGER_TIMINGS.TURN_END, battleState, 'monster');
     decrementTurnEffects_(monster, battleState);
   });
-  applyStackedDamageEffect_(battleState.player, 'debuff_poison', battleState, 'player');
+  applyStackedDamageEffects_(battleState.player, 'turnEnd', battleState, 'player');
   decrementTurnEffects_(battleState.player, battleState);
   cleanupSkillTriggersForTurn_(battleState);
   return battleState;
@@ -1843,7 +1847,7 @@ function calculateFinalQuestionTimeLimit(baseDifficulty, activeEffects, question
   var finalDifficulty = clampDifficulty_(Number(baseDifficulty || GAME_RULES.MIN_DIFFICULTY));
   var extraSeconds = getEffectFlatBonus_(activeEffects, STAT_KEYS.QUESTION_TIME);
   extraSeconds += (activeEffects || []).reduce(function(total, effect) {
-    return total + (effect.statKey === 'caffeine' ? Number(effect.value || 0) * Math.max(1, Number(effect.stacks || 1)) * 0.1 : 0);
+    return total + (!effect.rules && effect.statKey === 'caffeine' ? Math.max(1, Number(effect.stacks || 1)) * 0.3 : 0);
   }, 0);
   extraSeconds += Number(questionModifiers && questionModifiers.questionTimeSeconds || 0);
   var timeSettings = getQuestionTimeSettings_();
@@ -2158,6 +2162,8 @@ function normalizeEffectCategory_(effect, fallbackCategory) {
 }
 
 function hydrateEffectDisplayFields_(effect) {
+  // Keep the existing saved-state normalization for legacy IDs. The rules
+  // below control behavior; new effects need no ID-specific normalization.
   if (effect && effect.effectId === 'debuff_burn') {
     effect.durationType = DURATION_TYPES.TURN;
     effect.stackable = true;
@@ -2195,6 +2201,9 @@ function hydrateEffectDisplayFields_(effect) {
   var master = findCachedRowByKey_(DB_SHEETS.EFFECTS, 'effectId', effect.effectId, 600);
   if (!master) {
     return effect;
+  }
+  if (master.rules) {
+    ['rules', 'rulesVersion', 'stackMode', 'reapplyDurationPolicy', 'durationClock', 'decayTiming', 'decayStacks', 'decrementOnApplyTurn'].forEach(function(key) { effect[key] = master[key]; });
   }
   effect.name = effect.name || master.name || '';
   effect.description = effect.description || master.description || '';
@@ -2300,7 +2309,7 @@ function applySkillLinkedEffect_(target, skill, source, battleState) {
 }
 
 function buildEffectInstance_(effect, source) {
-  return {
+  return Object.assign({}, effect, {
     effectId: effect.effectId,
     name: effect.name,
     category: effect.category,
@@ -2315,7 +2324,7 @@ function buildEffectInstance_(effect, source) {
     triggerTiming: effect.triggerTiming,
     stacks: 1,
     source: source || {},
-  };
+  });
 }
 
 function applyTimedEffectDamage_(target, timing, battleState, actor) {
@@ -2350,10 +2359,27 @@ function applyTimedEffectDamage_(target, timing, battleState, actor) {
 }
 
 function applyMonsterBurnDamage_(monster, battleState) {
-  return applyStackedDamageEffect_(monster, 'debuff_burn', battleState, 'monster');
+  return applyStackedDamageEffects_(monster, 'beforeMonsterTurn', battleState, 'monster');
 }
 
-function applyStackedDamageEffect_(target, effectId, battleState, actor) {
+function applyStackedDamageEffects_(target, timing, battleState, actor) {
+  if (!target) return 0;
+  normalizeTargetStatusBuckets_(target);
+  var total = 0;
+  (target.effects || []).slice().forEach(function(effect) {
+    if (effect.rules) {
+      if (effect.durationClock !== 'stacks') return;
+      var rules = effect.rules.filter(function(rule) { return rule.operation === 'damage' && rule.triggerTiming === timing; });
+      rules.forEach(function(rule, index) { total += applyStackedDamageEffect_(target, effect.effectId, battleState, actor, rule, index === rules.length - 1); });
+    } else {
+      var legacyTiming = {debuff_burn:'beforeMonsterTurn', debuff_bleed:'beforeAction', debuff_poison:'turnEnd'};
+      if (legacyTiming[effect.effectId] === timing) total += applyStackedDamageEffect_(target, effect.effectId, battleState, actor);
+    }
+  });
+  return total;
+}
+
+function applyStackedDamageEffect_(target, effectId, battleState, actor, ruleOverride, consumeStacks) {
   if (!target) return 0;
   var isMonster = actor === 'monster';
   var currentHp = Number(isMonster ? target.currentHp || 0 : target.hp || 0);
@@ -2366,7 +2392,10 @@ function applyStackedDamageEffect_(target, effectId, battleState, actor) {
   var maxHp = Math.max(1, Number(isMonster ? target.maxHp || 1 : target.maxHp || target.stats && target.stats.hp || 1));
   var effectDefinition = findCachedRowByKey_(DB_SHEETS.EFFECTS, 'effectId', effectId, 600);
   var rawDamage;
-  if (effectDefinition && String(effectDefinition.damageFormula || '').trim()) {
+  var damageRule = ruleOverride || (effect.rules || []).filter(function(rule) { return rule.operation === 'damage'; })[0];
+  if (damageRule) {
+    rawDamage = Math.max(1, Math.round(getSharedRuleEngine_().getEffectRuleValue(effect, damageRule, target)));
+  } else if (effectDefinition && String(effectDefinition.damageFormula || '').trim()) {
     // Effects.damageFormula supports maxHp, stacks, and value; the result is rounded and clamped to at least 1.
     rawDamage = Math.max(1, Math.round(evaluateSkillFormula_(effectDefinition.damageFormula, {
       maxHp: maxHp,
@@ -2378,14 +2407,15 @@ function applyStackedDamageEffect_(target, effectId, battleState, actor) {
       ? stacks
       : Math.max(1, Math.round(maxHp * stacks * (effectId === 'debuff_burn' ? 0.01 : 0.007)));
   }
-  var bypassesShield = effectId === 'debuff_poison' || effectId === 'debuff_bleed';
+  var bypassesShield = damageRule ? damageRule.shieldPolicy === 'bypass' : effectId === 'debuff_poison' || effectId === 'debuff_bleed';
   var shieldDamage = bypassesShield ? 0 : Math.min(Math.max(0, Number(target.shield || 0)), rawDamage);
   var hpDamage = Math.min(currentHp, rawDamage - shieldDamage);
   if (!bypassesShield) target.shield = Math.max(0, Number(target.shield || 0) - shieldDamage);
   if (isMonster) target.currentHp = Math.max(0, currentHp - hpDamage);
   else target.hp = Math.max(0, currentHp - hpDamage);
 
-  effect.stacks = stacks - 1;
+  var decay = damageRule ? (effect.decayTiming === 'onTrigger' ? Number(effect.decayStacks || 0) : 0) : 1;
+  effect.stacks = stacks - (consumeStacks === false ? 0 : decay);
   effect.remainingTurns = effect.stacks;
   if (effect.stacks <= 0) {
     target.effects = (target.effects || []).filter(function(candidate) { return candidate.effectId !== effectId; });
@@ -2429,8 +2459,18 @@ function filterNonStageEffects_(effects) {
 }
 
 function applyFrozenBonusIfNeeded_(target, damage) {
+  var hitEffect = (target.effects || []).filter(function(effect) {
+    return effect.rules && effect.rules.some(function(rule) { return rule.triggerTiming === 'onHit' && (rule.operation === 'damageTakenMultiplier' || rule.operation === 'removeOnHit'); });
+  })[0];
+  if (hitEffect) {
+    var rule = hitEffect.rules.filter(function(candidate) { return candidate.triggerTiming === 'onHit' && candidate.operation === 'damageTakenMultiplier'; })[0];
+    if (hitEffect.rules.some(function(candidate) { return candidate.triggerTiming === 'onHit' && candidate.operation === 'removeOnHit'; })) {
+      target.effects = target.effects.filter(function(effect) { return effect.effectId !== hitEffect.effectId; });
+    }
+    return Math.round(Number(damage || 0) * (rule ? getSharedRuleEngine_().getEffectRuleValue(hitEffect, rule, target) : 1));
+  }
   var frozen = (target.effects || []).filter(function(effect) {
-    return effect.effectId === 'debuff_freeze';
+    return !effect.rules && effect.effectId === 'debuff_freeze';
   })[0];
   if (!frozen) {
     return damage;
