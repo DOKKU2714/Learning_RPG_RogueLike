@@ -478,7 +478,7 @@ function shouldRegenerateRewardChoices_(rewardState, ownedItems) {
     return false;
   }
   var choices = rewardState.choices || [];
-  if (rewardState.floorRestChoice && choices.some(function(choice) { return choice && choice.type === 'rewardClaim'; })) {
+  if (rewardState.floorRestChoice && choices.some(function(choice) { return choice && (choice.type === 'rewardClaim' || choice.type === REWARD_TYPES.SKILL); })) {
     return true;
   }
   if (!rewardState.floorRestChoice) {
@@ -535,9 +535,11 @@ function buildFloorRestRewardChoice_(run, battle) {
 }
 
 function buildFloorRestChoices_(run, battle, rewardGroupId, floor, ownedSkills, ownedItems, excludedChoices) {
-  return [buildFloorRestRewardChoice_(run, battle)].concat(
-    pickRewardChoices_(rewardGroupId, floor, ownedSkills, ownedItems, excludedChoices)
-  );
+  var upgrades = normalizeOwnedSkills_(ownedSkills).map(function(owned) {
+    var row = findCachedRowByKey_(DB_SHEETS.SKILLS,'skillId',owned.skillId,600);
+    return row && isSkillUpgradable_(row) ? adaptRewardForChoice_(buildAutoSkillUpgradeReward_(row),ownedSkills) : null;
+  }).filter(Boolean);
+  return [buildFloorRestRewardChoice_(run, battle)].concat(upgrades);
 }
 
 function buildFloorRestRewardViewForRun_(run, stageState) {
@@ -1788,7 +1790,7 @@ function getAvailableSkillRewardPool_(rarity, ownedSkills, config) {
     if (config && config.onlyOwnedSkills && !ownedMap[skillId]) {
       return false;
     }
-    if (ownedMap[skillId] && !isSkillUpgradable_(skill)) return false;
+    if (ownedMap[skillId] && !(config && config.onlyOwnedSkills)) return false;
     return true;
   });
   return pool;

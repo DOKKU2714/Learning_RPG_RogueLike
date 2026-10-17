@@ -839,6 +839,17 @@ var RULE_ENGINE_SHARED = (function() {
   function readCombatBehavior(value) {
     var behavior = safeJsonParse(value, {});
     if (!behavior || typeof behavior !== 'object' || Array.isArray(behavior)) throw new Error('Invalid effect behaviorJson');
+    // New options travel inside an existing container so older deployments can
+    // still load the sheet. Expand them only in engines that implement them.
+    var extensions = behavior.combat && behavior.combat.additional && behavior.combat.additional.extensions;
+    if (extensions) {
+      if (typeof extensions !== 'object' || Array.isArray(extensions)) throw new Error('Invalid combat extensions');
+      behavior = Object.assign({},behavior,{combat:Object.assign({},behavior.combat)});
+      Object.keys(extensions).forEach(function(key) {
+        if (['skillCost','consumeOnQuestion','capEfficiency'].indexOf(key)<0) throw new Error('Unsupported combat extension: '+key);
+        behavior.combat[key] = extensions[key];
+      });
+    }
     Object.keys(behavior).forEach(function(key) {
       if (['control', 'invulnerable', 'hitDamage', 'retainShield', 'combat'].indexOf(key) < 0) throw new Error('Unsupported effect behavior: ' + key);
     });
@@ -850,9 +861,15 @@ var RULE_ENGINE_SHARED = (function() {
       Object.keys(behavior.combat).forEach(function(key){if(['outgoing','incomingMultiplier','retaliationMultiplier','critical','criticalBank','random','fatalGuard','blockShield','dot','additional','relay','preserveDecayEffect','skillCost','consumeOnQuestion','capEfficiency'].indexOf(key)<0)throw new Error('Unsupported combat behavior: '+key);});
     }
     if (behavior.hitDamage) {
-      if (typeof behavior.hitDamage !== 'object' || Array.isArray(behavior.hitDamage) || !Number.isFinite(Number(behavior.hitDamage.damagePerStack)) || Number(behavior.hitDamage.damagePerStack) < 0) throw new Error('Invalid hitDamage behavior');
-      Object.keys(behavior.hitDamage).forEach(function(key) { if (key !== 'damagePerStack') throw new Error('Unsupported hitDamage behavior: '+key); });
+      if (typeof behavior.hitDamage !== 'object' || Array.isArray(behavior.hitDamage)) throw new Error('Invalid hitDamage behavior');
+      Object.keys(behavior.hitDamage).forEach(function(key) {
+        if (['damagePerStack','baseDamage','attackRatio','consumeStacks'].indexOf(key)<0) throw new Error('Unsupported hitDamage behavior: '+key);
+        if (!Number.isFinite(Number(behavior.hitDamage[key])) || Number(behavior.hitDamage[key])<0) throw new Error('Invalid hitDamage value: '+key);
+      });
     }
+    // Keep the legacy hitDamage shape readable by older deployments during rollout.
+    var additionalHit = behavior.combat && behavior.combat.additional && behavior.combat.additional.hitDamage;
+    if (additionalHit !== undefined) readCombatBehavior({hitDamage:additionalHit});
     if (behavior.control) {
       var control = behavior.control;
       if (typeof control !== 'object' || Array.isArray(control)) throw new Error('Invalid control behavior');
@@ -1032,11 +1049,16 @@ var RULE_ENGINE_SHARED = (function() {
     target.shield = Math.min(Number(target.shield || 0), (target.effects || []).reduce(function(sum,e) { return sum + Number(e.retainedShield || 0); },0));
   }
 
-  function directHitReactions(target) {
+  function directHitReactions(target, attacker) {
     var packets = [], removed = [];
     (target.effects || []).slice().forEach(function(effect) {
       var behavior = effect.behavior || {};
-      if (behavior.hitDamage) packets.push({damageKind:'additional', effectId:effect.effectId, amount:effectStacks(target,effect.effectId)*Math.max(0,Number(behavior.hitDamage.damagePerStack || 0))});
+      if (behavior.hitDamage) {
+        var hit = behavior.combat && behavior.combat.additional && behavior.combat.additional.hitDamage || behavior.hitDamage;
+        packets.push({damageKind:'additional', effectId:effect.effectId,
+          amount:Number(hit.baseDamage || 0)+Math.max(0,getEffectiveStat(attacker,'attack'))*Number(hit.attackRatio || 0)+effectStacks(target,effect.effectId)*Number(hit.damagePerStack || 0),
+          consumeStacks:Number(hit.consumeStacks || 0)});
+      }
       var control = behavior.control;
       if (control && control.breakOnDirectHit) {
         var amount = effectStacks(target,control.stackEffectId) * Math.max(0,Number(control.damagePerStack || 0));

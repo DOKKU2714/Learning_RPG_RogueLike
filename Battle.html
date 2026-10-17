@@ -87,6 +87,7 @@
       <div class="battle-stage-hud"><span>현재 스테이지</span><strong id="battleStageText">5층 1스테이지</strong></div>
       <div class="battle-log-compact">
         <div id="battleLog" class="battle-log">전투 시작!</div>
+        <button id="rewardLoadRetryButton" class="secondary" type="button" hidden onclick="retryVictoryRewards()">보상 다시 불러오기</button>
       </div>
 
       <div id="actionPanel" class="action-panel compact-actions">
@@ -156,7 +157,15 @@
     </section>
   </div>
 
-  <div id="levelUpBanner" class="level-up-banner" aria-hidden="true">Level UP!</div>
+  <div id="levelUpBanner" class="level-up-banner" aria-hidden="true"><span>LevelUP</span></div>
+  <div id="levelSkillModal" class="level-stat-overlay" aria-hidden="true">
+    <section class="level-stat-panel" role="dialog" aria-modal="true" aria-labelledby="levelSkillTitle">
+      <h2 id="levelSkillTitle">레벨업 · 스킬 강화</h2>
+      <p>강화할 스킬 하나를 선택하세요.</p>
+      <div id="levelSkillChoices" class="level-skill-choices"></div>
+      <p id="levelSkillError" role="alert"></p>
+    </section>
+  </div>
   <div id="levelStatModal" class="level-stat-overlay" aria-hidden="true">
     <section class="level-stat-panel" role="dialog" aria-modal="true" aria-labelledby="levelStatTitle">
       <h2 id="levelStatTitle">레벨 업!</h2>
@@ -236,7 +245,7 @@
     <section class="question-modal reward-modal" role="dialog" aria-modal="true" aria-labelledby="rewardTitle">
       <div class="reward-clear-header">
         <h2 id="rewardTitle">스테이지 클리어</h2>
-        <p>보상을 고르세요</p>
+        <p>스킬을 선택하세요</p>
       </div>
       <div id="rewardChoices" class="reward-choice-grid"></div>
       <div class="reward-reroll-row">
@@ -320,6 +329,8 @@
       escape: 'Resources/Sounds/Escape',
       gameover: 'Resources/Sounds/Gameover',
       kill: 'Resources/Sounds/Kill.mp3',
+      xp: 'Resources/Sounds/Xp.mp3',
+      levelUp: 'Resources/Sounds/LevelUp.mp3',
       bigDamage: 'Resources/Sounds/Hit/BigDamage.mp3',
       hitDefault: 'Resources/Sounds/Hit/Default',
       hitDefault2: 'Resources/Sounds/Hit/Default2',
@@ -661,7 +672,7 @@
       setPlayerTurn(false);
       finishBattleStartFade();
       hideLoadingModal(true);
-      ['rewardModal', 'scoreModal', 'levelStatModal', 'levelUpBanner', 'monsterDropModal'].forEach(function(id) {
+      ['rewardModal', 'scoreModal', 'levelStatModal', 'levelSkillModal', 'levelUpBanner', 'monsterDropModal'].forEach(function(id) {
         var modal = document.getElementById(id);
         if (modal) { modal.classList.remove('active'); modal.setAttribute('aria-hidden','true'); }
       });
@@ -827,6 +838,7 @@
       renderBattle(currentView);
       if (workbookDeadlineExpired) return;
       await presentLevelStatAllocation(currentView);
+      await presentLevelSkillUpgrade(currentView);
       if (workbookDeadlineExpired) return;
       await presentMonsterItemDrops(currentView);
       if (workbookDeadlineExpired) return;
@@ -906,6 +918,8 @@
       victoryRewardRecoveryComplete = false;
       victoryRewardDisplayStarted = false;
       victoryRegenPresentationKey = '';
+      var rewardRetryButton = document.getElementById('rewardLoadRetryButton');
+      if (rewardRetryButton) rewardRetryButton.hidden = true;
     }
 
     function finishBattleStartFade() {
@@ -1766,6 +1780,105 @@
         '<span class="skill-detail-line">체력 ' + escapeHtml(String(beforeHp)) + ' → ' + escapeHtml(String(afterHp)) + ' / ' + escapeHtml(String(maxHp)) + '</span>';
     }
 
+    function getMonsterChillStacks(monster) {
+      var effects = monster && (Array.isArray(monster.effects) ? monster.effects : monster.debuffs) || [];
+      return effects.reduce(function(total, effect) {
+        if (['effect_v2_chill','debuff_chill'].indexOf(effect.effectId) < 0) return total;
+        var stacks = effect.stacks === undefined ? 1 : Number(effect.stacks);
+        return total + (Number.isFinite(stacks) ? Math.max(0, stacks) : 0);
+      }, 0);
+    }
+
+    function syncMonsterChillVisual(monsterId, monster) {
+      var scope = document.querySelector('[data-monster-id="' + cssEscape(monsterId) + '"] .compact-monster');
+      if (!scope) return;
+      var stacks = getMonsterChillStacks(monster);
+      var overlay = scope.querySelector('.chill-persistent');
+      if (!stacks) {
+        if (overlay) overlay.remove();
+        return;
+      }
+      if (!overlay) {
+        // Adopt the application burst rather than layering another cloud over it.
+        overlay = scope.querySelector('.element-vfx-chill');
+        if (!overlay) {
+          playDamageTypeEffect('chill', 'monster', monsterId);
+          overlay = scope.querySelector('.element-vfx-chill');
+        }
+        if (!overlay) return;
+        overlay.classList.add('chill-persistent');
+      }
+      if (overlay.dataset.chillStacks === String(stacks)) return;
+      overlay.dataset.chillStacks = String(stacks);
+      // Keep high stack counts legible and bounded on mobile.
+      var strength = Math.min(12, stacks), count = 6 + Math.ceil(strength * 2);
+      overlay.style.setProperty('--chill-opacity', String(.3 + strength * .05));
+      overlay.style.setProperty('--chill-scale', String(1 + strength * .035));
+      overlay.style.setProperty('--chill-speed', (2300 - strength * 90) + 'ms');
+      overlay.querySelectorAll('.element-particle').forEach(function(particle) { particle.remove(); });
+      for (var i = 0; i < count; i++) {
+        var particle = document.createElement('i');
+        particle.className = 'element-particle';
+        particle.style.setProperty('--x', (12 + (i * 37 % 76)) + '%');
+        particle.style.setProperty('--y', (20 + (i * 29 % 65)) + '%');
+        particle.style.setProperty('--size', (18 + strength + i % 5 * 3) + 'px');
+        particle.style.setProperty('--delay', (-i * 173) + 'ms');
+        particle.style.setProperty('--drift', ((i % 2 ? 1 : -1) * (12 + strength * 2)) + 'px');
+        overlay.appendChild(particle);
+      }
+    }
+
+    function hasMonsterFreeze(monster) {
+      return !!monster && (monster.effects || []).concat(monster.debuffs || []).some(function(effect) {
+        return effect.effectId === 'debuff_freeze' || effect.effectId === 'effect_v2_freeze';
+      });
+    }
+
+    function syncMonsterFreezeVisual(monsterId, monster) {
+      var scope = document.querySelector('[data-monster-id="' + cssEscape(monsterId) + '"] .compact-monster');
+      if (!scope) return;
+      if (hasMonsterFreeze(monster)) {
+        if (!scope.classList.contains('monster-frozen')) {
+          scope.classList.add('monster-frozen');
+          setMonsterSpriteState(scope, 'hit');
+          playDamageTypeEffect('freeze', 'monster', monsterId);
+        }
+      } else if (scope.classList.contains('monster-frozen')) {
+        releaseMonsterFreeze(monsterId, 'melt');
+      }
+    }
+
+    function releaseMonsterFreeze(monsterId, reason) {
+      var scope = document.querySelector('[data-monster-id="' + cssEscape(monsterId) + '"] .compact-monster');
+      if (!scope) return Promise.resolve();
+      var ice = scope.querySelector('.element-vfx-freeze');
+      scope.classList.remove('monster-frozen');
+      var art = scope.querySelector('.monster-art');
+      if (art) art.classList.remove('element-tint-freeze');
+      if (!ice) return Promise.resolve();
+      ice.classList.remove('ice-persistent');
+      ice.classList.add(reason === 'shatter' ? 'ice-shattering' : 'ice-melting');
+      var reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      var duration = reduced ? 80 : (reason === 'shatter' ? 500 : 850);
+      var pieces = ice.querySelectorAll('.element-ice path');
+      if (reason === 'shatter') {
+        pieces.forEach(function(piece, index) {
+          if (!piece.animate) return;
+          var angle = index * 2.4;
+          piece.animate([{transform:'translate(0,0) rotate(0deg)',opacity:1},
+            {transform:'translate(' + Math.cos(angle)*100 + 'px,' + (Math.sin(angle)*70+45) + 'px) rotate(' + (index%2 ? 65 : -65) + 'deg)',opacity:0}],
+            {duration:duration,easing:'ease-out',fill:'forwards'});
+        });
+      }
+      return new Promise(function(resolve) {
+        window.setTimeout(function() {
+          ice.remove();
+          if (!scope.classList.contains('monster-frozen') && !scope.classList.contains('monster-state-death')) resetMonsterSpriteState(scope);
+          resolve();
+        },duration);
+      });
+    }
+
     function renderMonsters(monsters) {
       var layer = document.getElementById('monsterLayer');
       var recoveries = [];
@@ -1809,6 +1922,7 @@
         var slot = layer.querySelector('[data-monster-id="' + cssEscape(recovery.id) + '"]');
         if (slot) spawnHpRecoveryFragment(slot.querySelector('.monster-hp-bar'), recovery.before, recovery.hp - recovery.before, Math.max(recovery.max, recovery.hp + recovery.shield), { text: slot.querySelector('.monster-hp-text'), shield: recovery.shield, max: recovery.max });
       });
+      monsters.forEach(function(monster) { syncMonsterFreezeVisual(monster.instanceId || monster.monsterId, monster); syncMonsterChillVisual(monster.instanceId || monster.monsterId, monster); });
       bindMonsterTargetClicks();
     }
 
@@ -2017,13 +2131,20 @@
     function playResolvedBattleSound(soundKey, baseAudio) {
       if (!baseAudio) return;
       var audio = baseAudio.cloneNode ? baseAudio.cloneNode(true) : new Audio(baseAudio.src);
+      if (soundKey === 'xp') {
+        audio.playbackRate = 0.92 + Math.random()*0.16;
+        audio.preservesPitch = false;
+        audio.mozPreservesPitch = false;
+        audio.webkitPreservesPitch = false;
+      }
       if (soundKey === 'shieldBreak') {
         audio.playbackRate = 0.8;
         audio.preservesPitch = false;
         audio.mozPreservesPitch = false;
         audio.webkitPreservesPitch = false;
       }
-      audio.volume = 0.75;
+      audio.volume = soundKey === 'kill' ? 1 : 0.75;
+      audio.dataset.battleSoundKey = soundKey;
       audio.muted = !isSoundEnabled();
       activeBattleSounds.push(audio);
       audio.addEventListener('ended', function() {
@@ -2136,7 +2257,7 @@
       activeBattleSounds = activeBattleSounds.filter(function(audio) {
         if (!audio) return false;
         audio.muted = !enabled;
-        audio.volume = enabled ? 0.75 : 0;
+        audio.volume = enabled ? (audio.dataset.battleSoundKey === 'kill' ? 1 : 0.75) : 0;
         if (!enabled) {
           try {
             audio.pause();
@@ -2558,45 +2679,129 @@
         var reward = rewards[i];
         var track = document.getElementById('playerExpTrack');
         if (!track) continue;
-        renderPlayerExperience(null,reward.before);
+        var sharedProgress = deathRewardPresentation && deathRewardPresentation.progress;
+        renderPlayerExperience(null,sharedProgress || reward.before);
         var source = document.querySelector('[data-monster-id="' + cssEscape(reward.monsterId) + '"]');
         var targetRect = track.getBoundingClientRect();
-        var sourceRect = source ? source.getBoundingClientRect() : {left:window.innerWidth/2,top:window.innerHeight/3,width:0,height:0};
+        var sourceRect = reward.sourceRect || (source ? source.getBoundingClientRect() : {left:window.innerWidth/2,top:window.innerHeight/3,width:0,height:0});
         var reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-        var duration = reduced ? 80 : 620;
+        var duration = reduced ? 80 : 780;
         var flights = [];
-        for (var orbIndex=0;orbIndex<5;orbIndex++) {
+        var progress = sharedProgress || {level:Number(reward.before.level || 1),xp:Number(reward.before.xp || 0)};
+        var amount = Math.max(0,Number(reward.amount || 0)), orbCount = Math.ceil(amount/5), arrived=0;
+        var fill = document.getElementById('playerExpFill');
+        fill.style.transition = reduced ? 'none' : 'width 70ms linear';
+        var levelPops = [];
+        function absorbOrb(value, node) {
+          node.remove();
+          if (workbookDeadlineExpired) return;
+          playBattleSound('xp');
+          arrived += value;
+          progress.xp += value;
+          var required = 100+25*(progress.level-1);
+          while (progress.xp>=required) {
+            progress.xp -= required;
+            progress.level++;
+            levelPops.push(presentLevelUpFlash());
+            required = 100+25*(progress.level-1);
+          }
+          renderPlayerExperience(null,progress);
+          var text = document.getElementById('experienceGainText');
+          if (!text) {
+            text = document.createElement('span'); text.id='experienceGainText'; text.className='experience-gain-text';
+            text.setAttribute('role','status'); document.body.appendChild(text);
+          }
+          text.textContent='+' + arrived + ' EXP';
+        }
+        for (var orbIndex=0;orbIndex<orbCount;orbIndex++) {
           var orb = document.createElement('span');
           orb.className = 'experience-orb';
           orb.setAttribute('aria-hidden','true');
-          var x = sourceRect.left+sourceRect.width/2 + (orbIndex-2)*10;
+          var x = sourceRect.left+sourceRect.width/2;
           var y = sourceRect.top+sourceRect.height/2;
           orb.style.left = x + 'px'; orb.style.top = y + 'px';
           document.body.appendChild(orb);
           var dx = targetRect.left+targetRect.width/2-x, dy = targetRect.top+targetRect.height/2-y;
+          var angle = orbIndex*2.399963+Math.random()*0.25, radius = 65+Math.random()*85;
+          var spreadX=Math.cos(angle)*radius, spreadY=Math.sin(angle)*radius;
+          var value = Math.min(5,amount-orbIndex*5);
+          var landed = (function(v,node){return function(){absorbOrb(v,node);};})(value,orb);
           if (orb.animate) {
-            var flight = orb.animate([{transform:'translate(0,0) scale(1)',opacity:1},
-              {transform:'translate(' + (dx*0.45) + 'px,' + (dy*0.25-65) + 'px) scale(1.3)',opacity:1,offset:0.45},
-              {transform:'translate(' + dx + 'px,' + dy + 'px) scale(0.3)',opacity:0}],
-              {duration:duration,delay:reduced ? 0 : orbIndex*45,easing:'ease-in-out',fill:'forwards'});
-            flights.push(flight.finished.catch(function(){}).then((function(node){return function(){node.remove();};})(orb)));
-          } else { orb.remove(); }
+            var flight = orb.animate(reduced ? [{opacity:1},{opacity:0}] : [
+              {transform:'translate(0,0) scale(.5)',opacity:0,easing:'cubic-bezier(.1,.7,.2,1)'},
+              {transform:'translate(' + spreadX + 'px,' + spreadY + 'px) scale(1.2)',opacity:1,offset:.28},
+              {transform:'translate(' + spreadX + 'px,' + spreadY + 'px) scale(1)',opacity:1,offset:.42,easing:'cubic-bezier(.6,0,.9,.4)'},
+              {transform:'translate(' + dx + 'px,' + dy + 'px) scale(.25)',opacity:.5}],
+              {duration:duration+(reduced ? 0 : orbIndex*55),easing:'linear',fill:'forwards'});
+            flights.push(flight.finished.then(landed,(function(node){return function(){node.remove();};})(orb)));
+          } else { landed(); }
         }
         await Promise.all(flights);
-        spawnFloatingText(track,'+' + reward.amount + ' EXP','experience-text');
-        var level = Number(reward.before.level || 1);
-        var fill = document.getElementById('playerExpFill');
-        while (level < Number(reward.after.level)) {
-          renderPlayerExperience(null,{level:level,xp:100+25*(level-1)});
-          await new Promise(function(resolve){window.setTimeout(resolve,reduced ? 30 : 360);});
-          fill.style.transition = 'none';
-          renderPlayerExperience(null,{level:level+1,xp:0});
-          void fill.offsetWidth;
-          fill.style.transition = '';
-          level++;
-        }
-        renderPlayerExperience(null,reward.after);
-        await new Promise(function(resolve){window.setTimeout(resolve,reduced ? 30 : 360);});
+        await Promise.all(levelPops);
+        fill.style.transition = '';
+        renderPlayerExperience(null,sharedProgress || reward.after);
+        await new Promise(function(resolve){window.setTimeout(resolve,reduced ? 30 : 200);});
+        var gain = document.getElementById('experienceGainText');
+        if (gain) gain.remove();
+      }
+    }
+
+    async function presentLevelUpFlash() {
+      var banner = document.getElementById('levelUpBanner');
+      if (!banner) return;
+      var token = {};
+      banner.flashToken = token;
+      banner.classList.remove('active'); void banner.offsetWidth;
+      banner.classList.add('active'); banner.setAttribute('aria-hidden','false');
+      playBattleSound('levelUp');
+      await new Promise(function(resolve){window.setTimeout(resolve,900);});
+      if (banner.flashToken === token) { banner.classList.remove('active'); banner.setAttribute('aria-hidden','true'); }
+    }
+
+    async function presentLevelSkillUpgrade(view) {
+      var battle = view && view.battle, engine = window.LearningRpgLocalRunEngine;
+      if (!battle || Number(battle.player.hp)<=0 || !engine || !engine.upgradeOptions || !engine.upgrade) return;
+      var progress = getPlayerLevelProgress(battle.player), modal = document.getElementById('levelSkillModal');
+      var counts = progress.skillUpgrades || {};
+      var remaining = Number(progress.level || 1)-1-Object.keys(counts).reduce(function(sum,key){return sum+Number(counts[key]);},0);
+      while (remaining>0 && !workbookDeadlineExpired) {
+        var options = engine.upgradeOptions(localGameDataSnapshot,battle,view.availableSkills || []);
+        if (!options.length) break;
+        setBattleInputLocked(true);
+        modal.classList.add('active'); modal.setAttribute('aria-hidden','false');
+        document.getElementById('levelSkillTitle').textContent='레벨업 · 스킬 강화 (' + remaining + '회)';
+        document.getElementById('levelSkillError').textContent='';
+        var choices=document.getElementById('levelSkillChoices');
+        choices.innerHTML=options.map(function(s){
+          var detail=(view.availableSkills || []).filter(function(a){return a.skillId===s.skillId;})[0] || s;
+          return '<button type="button" data-upgrade-skill="' + escapeHtml(s.skillId) + '"><strong>' + escapeHtml(detail.name || s.skillId) + '</strong><span>Lv.' + s.level + ' → Lv.' + (s.level+1) + '</span><small>' + escapeHtml(detail.description || '') + '</small></button>';
+        }).join('');
+        var trap=function(event){
+          if(event.key==='Escape')event.preventDefault();
+          if(event.key==='Tab'){
+            var buttons=Array.prototype.slice.call(choices.querySelectorAll('button'));
+            var index=buttons.indexOf(document.activeElement);
+            event.preventDefault();buttons[(index+(event.shiftKey?-1:1)+buttons.length)%buttons.length].focus();
+          }
+          event.stopImmediatePropagation();
+        };
+        document.addEventListener('keydown',trap,true);
+        choices.querySelector('button').focus();
+        var selected=await new Promise(function(resolve){
+          levelAllocationCancel=function(){resolve(false);};
+          choices.onclick=function(event){
+            var button=event.target.closest('[data-upgrade-skill]');if(!button)return;
+            try {
+              var skills=engine.upgrade(localGameDataSnapshot,battle,view.availableSkills,button.dataset.upgradeSkill);
+              view.availableSkills=engine.skills(localGameDataSnapshot,battle,skills);view.questionCache=[];
+              victoryRewardPreload=null;victoryRewardResultPayload=null;resolve(true);
+            } catch(error){document.getElementById('levelSkillError').textContent=error.message;}
+          };
+        });
+        levelAllocationCancel=null;choices.onclick=null;document.removeEventListener('keydown',trap,true);
+        modal.classList.remove('active');modal.setAttribute('aria-hidden','true');
+        if(!selected)break;
+        remaining--;renderBattle(view);
       }
     }
 
@@ -2609,10 +2814,6 @@
       if (!engine || !engine.allocate) return;
       levelAllocationActive = true;
       setBattleInputLocked(true);
-      var banner = document.getElementById('levelUpBanner');
-      banner.classList.add('active'); banner.setAttribute('aria-hidden','false');
-      await new Promise(function(resolve){window.setTimeout(resolve,1000);});
-      banner.classList.remove('active'); banner.setAttribute('aria-hidden','true');
       if (workbookDeadlineExpired) { levelAllocationActive=false; return; }
       var modal = document.getElementById('levelStatModal');
       var confirm = document.getElementById('levelStatConfirm');
@@ -2629,7 +2830,7 @@
           var count = Number(allocation[option.key] || 0);
           var value = Number(battle.player.baseStats && battle.player.baseStats[option.key] || 0);
           return '<div class="level-stat-row"><span class="level-stat-label" tabindex="0" data-tooltip="' + escapeHtml(getStatDescription(option.key)) + '"><strong>' + escapeHtml(option.label) + '</strong><small>포인트당 +' + option.amount + (option.percent ? '%p' : '') + '</small></span>' +
-            '<span class="level-stat-value">' + value + ' → ' + Math.round((value+option.amount*count)*100)/100 + (option.percent ? '%' : '') + '</span>' +
+            '<span class="level-stat-value' + (count ? ' increased' : '') + '">' + Math.round((value+option.amount*count)*100)/100 + (option.percent ? '%' : '') + (count ? ' (+' + Math.round(option.amount*count*100)/100 + ')' : '') + '</span>' +
             '<button type="button" data-level-key="' + option.key + '" data-level-delta="-1" aria-label="' + escapeHtml(option.label) + ' 감소"' + (count ? '' : ' disabled') + '>−</button>' +
             '<span class="level-stat-count">' + count + '</span><button type="button" data-level-key="' + option.key + '" data-level-delta="1" aria-label="' + escapeHtml(option.label) + ' 증가"' + (remaining ? '' : ' disabled') + '>+</button></div>';
         }).join('');
@@ -3050,6 +3251,52 @@
       '</article>';
     }
 
+    var deathRewardPresentation = null;
+
+    function startMonsterDeathRewards(monsterId, rect) {
+      var state = deathRewardPresentation;
+      if (!state || state.started[monsterId]) return;
+      state.started[monsterId] = true;
+      var rewards = state.events.filter(function(event) { return event.type === 'experience' && event.monsterId === monsterId; });
+      rewards.forEach(function(reward) { reward.sourceRect = rect; });
+      // Start at impact, before the death sprite disappears or the formation moves.
+      state.flights.push(animateExperienceRewards(rewards));
+      Object.keys(state.drops).forEach(function(id) {
+        var drop = state.drops[id];
+        if (drop.monsterId === monsterId && drop.status === 'pending' && drop.reward && !drop.presentationStarted) {
+          drop.presentationStarted = true;
+          state.flights.push(animateMonsterItemPickup(drop, rect));
+        }
+      });
+    }
+
+    async function animateMonsterItemPickup(drop, sourceRect) {
+      var target = document.getElementById('battleInventoryIcon') || document.getElementById('playerExpTrack');
+      if (!target) return;
+      var source = sourceRect || target.getBoundingClientRect(), destination = target.getBoundingClientRect();
+      var node = document.createElement('span');
+      var rarity = normalizeRewardRarity(drop.reward.itemDetail && drop.reward.itemDetail.rarity);
+      node.className = 'monster-item-pickup rarity-' + rarity;
+      node.setAttribute('aria-hidden','true');
+      node.innerHTML = '<span class="item-drop-aura"></span><span class="item-drop-pillar"></span><span class="item-drop-rays"></span><img src="' + ASSET_BASE_URL + '/Resources/Item.png" alt="">';
+      var x = source.left + source.width/2, y = source.top + source.height/2;
+      node.style.left = x + 'px'; node.style.top = y + 'px';
+      document.body.appendChild(node);
+      try {
+        if (node.animate) {
+          var reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+          var dx = destination.left + destination.width/2 - x, dy = destination.top + destination.height/2 - y;
+          await node.animate(reduced ? [{opacity:1},{opacity:0}] : [
+            {transform:'translate(0,0) scale(.5)',opacity:0},
+            {transform:'translate(32px,-48px) scale(1.1)',opacity:1,offset:.23},
+            {transform:'translate(32px,-36px) scale(1)',opacity:1,offset:.58},
+            {transform:'translate(' + dx + 'px,' + dy + 'px) scale(.2)',opacity:0}
+          ], {duration:reduced ? 80 : 1250,easing:'ease-in-out',fill:'forwards'}).finished;
+        }
+      } catch (error) { /* A cancelled animation still releases the reward queue. */ }
+      finally { node.remove(); }
+    }
+
     var monsterDropActive = false;
     var monsterDropCancel = null;
     async function presentMonsterItemDrops(view) {
@@ -3061,6 +3308,12 @@
       monsterDropActive=true;setBattleInputLocked(true);
       var modal=document.getElementById('monsterDropModal'),claim=document.getElementById('monsterDropClaim'),ignore=document.getElementById('monsterDropIgnore');
       var previousFocus=document.activeElement;
+      await Promise.all(queue.filter(function(drop) { return !drop.presentationStarted; }).map(function(drop) {
+        drop.presentationStarted = true;
+        var source = document.querySelector('[data-monster-id="' + cssEscape(drop.monsterId || '') + '"]');
+        return animateMonsterItemPickup(drop, source && source.getBoundingClientRect());
+      }));
+      if (workbookDeadlineExpired) { monsterDropActive=false; return; }
       var trap=function(event){
         if(event.key==='Tab'){
           var targets=Array.prototype.slice.call(modal.querySelectorAll('button:not(:disabled),[tabindex="0"]'));
@@ -5467,6 +5720,8 @@
       var row = slot.querySelector('.monster-status-row');
       if (row) row.remove();
       slot.insertAdjacentHTML('beforeend', renderStatusIcons(statusTarget));
+      syncMonsterFreezeVisual(targetId, statusTarget);
+      syncMonsterChillVisual(targetId, statusTarget);
     }
 
     async function playTurnEffectEvent(event) {
@@ -5474,6 +5729,7 @@
         var effectEventMessage = event.message || '';
         if (event.target === 'monster') {
           event.targetMonsterId = event.targetMonsterId || getFirstAliveMonsterId(currentView && currentView.battle);
+          if (event.statusSnapshot) syncMonsterChillVisual(event.targetMonsterId, event.statusSnapshot);
           var elementalHit = playDamageTypeEffect(getDamageVisualType(event.damageKind) || event.effectId, 'monster', event.targetMonsterId);
           if (!elementalHit && !event.effectId && event.attackEffect) {
             await animatePlayerAttack(event.targetMonsterId, event.attackEffect);
@@ -5564,6 +5820,10 @@
         preloadVictoryRewardChoices(nextView);
       }
       var events = (nextView.battle.lastTurnEvents || []).slice();
+      deathRewardPresentation = {events:events, drops:nextView.battle.monsterItemDrops || {}, started:{}, flights:[], progress:Object.assign({}, (events.find(function(event) { return event.type === 'experience'; }) || {}).before || getPlayerLevelProgress(currentView.battle.player))};
+      if (window.LearningRpgLocalRunEngine && window.LearningRpgLocalRunEngine.itemDrops) {
+        deathRewardPresentation.drops = window.LearningRpgLocalRunEngine.itemDrops(localGameDataSnapshot,nextView.battle);
+      }
       var firstMonsterEventIndex = events.findIndex(function(event) { return event.actor === 'monster'; });
       var monsterTurnAdvanced = Number(nextView.battle.turn || 1) > Number(currentView.battle.turn || 1);
       var consumedSimultaneousEvents = {};
@@ -5582,6 +5842,7 @@
       }
 
       var monsterEvents = events.filter(function(event, index) {
+        if (event.type === 'experience') return false;
         return event.actor === 'monster' || (firstMonsterEventIndex >= 0 && index >= firstMonsterEventIndex && (event.actor === 'effect' || event.turnPhase === 'playerTurnStart'));
       });
       var playerTurnAnnounced = false;
@@ -5686,7 +5947,17 @@
         }
       }
 
-      await animateExperienceRewards(events);
+      // Catch rewards for monsters already absent from the DOM (restored turns).
+      events.filter(function(event) { return event.type === 'experience'; }).forEach(function(event) {
+        startMonsterDeathRewards(event.monsterId, null);
+      });
+      await Promise.all(deathRewardPresentation.flights);
+      deathRewardPresentation = null;
+      await Promise.all((nextView.battle.monsters || []).map(function(monster) {
+        var id = monster.instanceId || monster.monsterId;
+        var scope = document.querySelector('[data-monster-id="' + cssEscape(id) + '"] .monster-frozen');
+        return scope && !hasMonsterFreeze(monster) ? releaseMonsterFreeze(id, 'melt') : Promise.resolve();
+      }));
       actionPointAnimationValue = null;
       currentView = normalizeBattleView(nextView);
       resetBattleQuestionCacheFromView(currentView, battleQuestionCache);
@@ -5695,6 +5966,7 @@
         renderBattle(currentView);
       }
       await presentLevelStatAllocation(currentView);
+      await presentLevelSkillUpgrade(currentView);
       if (workbookDeadlineExpired) { isAnimatingTurn=false; return; }
       await presentMonsterItemDrops(currentView);
       if (workbookDeadlineExpired) { isAnimatingTurn=false; return; }
@@ -7624,6 +7896,22 @@
       google.script.run
         .withSuccessHandler(function(rewardView) {
           if (victoryRewardPreload !== preload) return;
+          if (!rewardView || (!(rewardView.battle && rewardView.battle.status === 'defeat') && (!Array.isArray(rewardView.choices) || !rewardView.choices.length))) {
+            if (!preload.emptyResponseRetried) {
+              preload.emptyResponseRetried = true;
+              requestFinalReward(plan);
+              return;
+            }
+            preload.loading = false;
+            preload.error = {message:'서버가 비어 있는 보상 응답을 반환했습니다. 보상 다시 불러오기를 눌러주세요.'};
+            if (preload.pendingRewardId) {
+              preload.pendingRewardId = null;
+              rewardSelectionApplying = false;
+              document.getElementById('rewardConfirmButton').disabled = false;
+              document.getElementById('rewardMessage').textContent = preload.error.message;
+            }
+            return;
+          }
           preload.loading = false;
           rememberRunSession(rewardView);
           if (rewardView && rewardView.battle && rewardView.battle.status === 'defeat') {
@@ -7697,6 +7985,8 @@
       var preload = preloadVictoryRewardChoices(currentView);
       if (!preload) return;
       if (preload.rewardView) {
+        var retryButton = document.getElementById('rewardLoadRetryButton');
+        if (retryButton) retryButton.hidden = true;
         victoryRewardDisplayStarted = true;
         currentRewardView = preload.rewardView;
         ensureClientRewardState(preload.rewardView);
@@ -7716,6 +8006,20 @@
         return;
       }
       pushLog(preload.error && preload.error.message || '보상 선택지를 불러오지 못했습니다.');
+      var retryButton = document.getElementById('rewardLoadRetryButton');
+      if (retryButton) retryButton.hidden = false;
+    }
+
+    function retryVictoryRewards() {
+      if (workbookDeadlineExpired || !currentView || !currentView.battle || currentView.battle.status !== 'victory') return;
+      if (victoryRewardPreload && victoryRewardPreload.loading) return;
+      var button = document.getElementById('rewardLoadRetryButton');
+      if (button) button.hidden = true;
+      // Keep the original pre-regeneration receipt and let the server reuse its
+      // saved draw. Retrying must not heal again or choose a different reward.
+      victoryRewardPreload = null;
+      victoryRewardDisplayStarted = false;
+      showPreparedVictoryReward();
     }
 
     function ensureClientRewardState(rewardView) {
@@ -8084,7 +8388,7 @@
         rewardTitle.textContent = rewardView.intermissionRewardOnly ? '보상' : (rewardView.floorRestChoice ? '층 정비' : '스테이지 클리어');
       }
       if (rewardSubtitle) {
-        rewardSubtitle.textContent = rewardView.intermissionRewardOnly ? '보상을 확인하세요' : (rewardView.floorRestChoice ? '휴식하거나 보상을 하나 고르세요' : '보상을 고르세요');
+        rewardSubtitle.textContent = rewardView.intermissionRewardOnly ? '스킬을 선택하세요' : (rewardView.floorRestChoice ? '휴식하거나 스킬을 강화하세요' : '스킬을 선택하세요');
       }
       rewardContainer.classList.remove('has-selection');
       rewardContainer.innerHTML = rewardView.choices.map(function(reward, index) {
@@ -10063,6 +10367,9 @@
       var visibleHpDamage = hpDamage === undefined || hpDamage === null ? Number(damage || 0) : Number(hpDamage || 0);
       var visibleShieldDamage = Number(shieldDamage || 0);
       var attackDamage = displayDamage === undefined || displayDamage === null ? Number(damage || 0) : Number(displayDamage || 0);
+      if (!elementalHit && visibleHpDamage + visibleShieldDamage > 0 && target.classList.contains('monster-frozen')) {
+        releaseMonsterFreeze(monsterId, 'shatter');
+      }
       applyMonsterDamageDelta(monsterId, visibleHpDamage, shieldDamage || 0);
       if (visibleHpDamage <= 0 && visibleShieldDamage <= 0) return Promise.resolve();
       if (elementalHit) {
@@ -10137,6 +10444,7 @@
     function animateMonsterDeath(monsterId) {
       var slot = document.querySelector('[data-monster-id="' + cssEscape(monsterId) + '"]');
       if (!slot || slot.classList.contains('monster-defeated')) return;
+      startMonsterDeathRewards(monsterId, slot.getBoundingClientRect());
       playBattleSound('kill');
       var target = slot.querySelector('.compact-monster');
       if (target) {
@@ -10153,6 +10461,7 @@
       if (!target) return;
       var image = target.querySelector('.monster-art');
       if (!image) return;
+      if (target.classList.contains('monster-frozen') && state !== 'death') state = 'hit';
       var attr = state === 'attack' ? 'attackSrc' : (state === 'hit' ? 'hitSrc' : (state === 'death' ? 'deathSrc' : 'idleSrc'));
       var src = target.dataset[attr] || (state === 'death' ? target.dataset.hitSrc : '') || target.dataset.idleSrc || '';
       if (!src) return;
@@ -10171,6 +10480,7 @@
 
     function resetMonsterSpriteState(target) {
       if (!target) return;
+      if (target.classList.contains('monster-frozen')) { setMonsterSpriteState(target, 'hit'); return; }
       var image = target.querySelector('.monster-art');
       if (image && target.dataset.idleSrc) {
         image.src = target.dataset.idleSrc;
@@ -10269,7 +10579,7 @@
         debuff_burn:'burn', effect_v2_burn:'burn', burn:'burn', fire:'burn',
         explosion:'explosion', effect_v2_explosion:'explosion',
         effect_v2_chill:'chill', chill:'chill', cold:'chill',
-        effect_v2_freeze:'freeze', freeze:'freeze', frozen:'freeze', shatter:'freeze',
+        debuff_freeze:'freeze', effect_v2_freeze:'freeze', freeze:'freeze', frozen:'freeze', shatter:'shatter',
         debuff_poison:'poison', effect_v2_poison:'poison', poison:'poison',
         effect_v2_shock:'shock', shock:'shock'
       };
@@ -10286,6 +10596,9 @@
         ? document.querySelector('.player-compact-panel') || document.getElementById('playerDamageAnchor')
         : document.querySelector('[data-monster-id="' + cssEscape(monsterId) + '"] .compact-monster');
       if (!scope) return false;
+      if (type === 'shatter') { releaseMonsterFreeze(monsterId, 'shatter'); return true; }
+      if (type === 'freeze' && scope.querySelector('.ice-persistent')) return true;
+      if (type === 'chill' && scope.querySelector('.chill-persistent')) return true;
       var art = scope.querySelector('.monster-art');
       var overlay = document.createElement('div');
       overlay.className = 'element-vfx element-vfx-' + type;
@@ -10327,6 +10640,7 @@
       var previous=scope.querySelectorAll('.element-vfx-'+type);
       if(previous.length>=3)previous[0].remove();
       scope.appendChild(overlay);
+      if (type === 'freeze' && scope.classList.contains('monster-frozen')) overlay.classList.add('ice-persistent');
       var tintTarget=art || scope;
       var tintClass='element-tint-'+type;
       var tintKey='elementTint'+type;
@@ -10337,6 +10651,7 @@
         tintTarget.dataset[tintKey]=token;
       }
       window.setTimeout(function(){
+        if (overlay.classList.contains('ice-persistent') || overlay.classList.contains('chill-persistent')) return;
         overlay.remove();
         if(token && tintTarget.dataset[tintKey]===token)tintTarget.classList.remove(tintClass);
       },duration);

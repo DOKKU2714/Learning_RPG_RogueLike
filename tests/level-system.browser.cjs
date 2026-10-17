@@ -7,15 +7,15 @@ const styles=fs.readFileSync('UiStyles.html','utf8');
 const extract=(source,name)=>source.match(new RegExp('(?:    )?(?:async )?function '+name+'\\([^]*?\\n'+(source===client?'    ':'')+'\\}'))[0];
 const panel=client.slice(client.indexOf('  <div id="levelUpBanner"'),client.indexOf('  <div id="questionModal"'));
 const script=`
-var levelAllocationActive=false,levelAllocationCancel=null,workbookDeadlineExpired=false,localGameDataSnapshot={},victoryRewardPreload={},victoryRewardResultPayload={},currentView={battle:{status:'victory',player:{hp:30,maxHp:30,baseStats:{hp:30,attack:10,criticalRate:5,levelProgress:{level:2,xp:20,points:3,spent:{}}},stats:{hp:30},items:[]}},availableSkills:[]};
-var locked=false;function setBattleInputLocked(value){locked=value;}
+var deathRewardPresentation=null,levelAllocationActive=false,levelAllocationCancel=null,workbookDeadlineExpired=false,localGameDataSnapshot={},victoryRewardPreload={},victoryRewardResultPayload={},currentView={battle:{status:'victory',player:{hp:30,maxHp:30,baseStats:{hp:30,attack:10,criticalRate:5,levelProgress:{level:2,xp:20,points:3,spent:{}}},stats:{hp:30},items:[]}},availableSkills:[]};
+var locked=false,sounds=[],arrivalOrbs=[];function setBattleInputLocked(value){locked=value;}function playBattleSound(key){sounds.push(key);if(key==='xp')arrivalOrbs.push(document.querySelectorAll('.experience-orb').length);}
 function escapeHtml(s){return String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;');}
 function cssEscape(s){return CSS.escape(s);}
 function renderBattle(view){renderPlayerExperience(view.battle.player);}
 function calculateStatsWithItemEffects_(stats){return {...stats};}
 ${['getLevelStatOptions_','ensureLevelProgress_','allocateLevelStats_'].map(name=>extract(server,name)).join('\n')}
 window.LearningRpgLocalRunEngine={levelOptions:getLevelStatOptions_,allocate:(_,b,a)=>allocateLevelStats_(b,a),skills:()=>[]};
-${['getStatDescription','bindHoverTooltips','positionHoverTooltip','getPlayerLevelProgress','renderPlayerExperience','animateExperienceRewards','presentLevelStatAllocation','spawnFloatingText'].map(name=>extract(client,name)).join('\n')}
+${['getStatDescription','bindHoverTooltips','positionHoverTooltip','getPlayerLevelProgress','renderPlayerExperience','animateExperienceRewards','presentLevelUpFlash','presentLevelStatAllocation','presentLevelSkillUpgrade','spawnFloatingText'].map(name=>extract(client,name)).join('\n')}
 bindHoverTooltips();
 `;
 (async()=>{
@@ -33,8 +33,13 @@ bindHoverTooltips();
         window.flight=animateExperienceRewards([{type:'experience',monsterId:'m',amount:30,before:{level:1,xp:90},after:{level:2,xp:20}}]);
       });
       await page.waitForSelector('.experience-orb');
-      assert.equal(await page.locator('.experience-orb').count(),5);
+      assert.equal(await page.locator('.experience-orb').count(),6);
+      const frames=await page.locator('.experience-orb').evaluateAll(nodes=>nodes.map(e=>e.getAnimations()[0].effect.getKeyframes()));
+      assert.ok(frames.every(f=>f.length===4 && f[1].offset===.28 && f[2].offset===.42));
       await page.evaluate(()=>window.flight);
+      assert.equal(await page.evaluate(()=>arrivalOrbs[0]),5,'XP starts filling while five orbs remain');
+      assert.deepEqual(await page.evaluate(()=>sounds.filter(k=>k==='xp').length),6);
+      assert.equal(await page.evaluate(()=>sounds.filter(k=>k==='levelUp').length),1);
       assert.equal(await page.locator('#playerLevelLabel').textContent(),'Lv.2');
       assert.equal(await page.locator('#playerExpText').textContent(),'20 / 125');
       assert.equal(await page.locator('#playerLevelLabel').isVisible(),false);
@@ -46,9 +51,9 @@ bindHoverTooltips();
       assert.equal(xpBounds.y+xpBounds.height,viewport.height,'experience bar touches the viewport bottom');
       assert.equal(xpBounds.x,0);
       assert.equal(xpBounds.width,viewport.width);
-      assert.ok(await page.locator('.experience-text').count());
       await page.evaluate(()=>{window.investment=presentLevelStatAllocation(currentView);});
       await page.waitForSelector('#levelStatModal.active');
+      assert.equal(await page.locator('.level-stat-value').first().textContent(),'10');
       assert.equal(await page.locator('.level-stat-row').count(),9);
       const descriptions=[
         '기본공격이나 스킬의 피해량을 높여주는 수치 입니다.',
@@ -76,6 +81,8 @@ bindHoverTooltips();
       assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
       if(process.env.LEVEL_PREVIEW_DIR){fs.mkdirSync(process.env.LEVEL_PREVIEW_DIR,{recursive:true});await page.screenshot({path:path.join(process.env.LEVEL_PREVIEW_DIR,`level-up-${viewport.width}.png`)});}
       for(const key of ['attack','criticalRate','questionEfficiency']) await page.locator(`[data-level-key="${key}"][data-level-delta="1"]`).click();
+      assert.equal(await page.locator('.level-stat-value').first().textContent(),'11 (+1)');
+      assert.equal(await page.locator('.level-stat-value').first().evaluate(e=>getComputedStyle(e).color),'rgb(255, 225, 107)');
       assert.equal(await page.locator('#levelStatPoints').textContent(),'0');
       await page.locator('[data-level-key="attack"][data-level-delta="-1"]').click();
       assert.equal(await page.locator('#levelStatConfirm').isDisabled(),true);
@@ -86,6 +93,18 @@ bindHoverTooltips();
       const stats=await page.evaluate(()=>currentView.battle.player.baseStats);
       assert.equal(stats.attack,11);assert.equal(stats.criticalRate,6.5);assert.equal(stats.questionEfficiency,2);assert.equal(stats.levelProgress.points,0);
       assert.equal(await page.evaluate(()=>victoryRewardPreload===null && victoryRewardResultPayload===null),true);
+      await page.evaluate(()=>{
+        currentView.availableSkills=[{skillId:'power',name:'강타',level:1,description:'적에게 피해를 줍니다.'}];
+        LearningRpgLocalRunEngine.upgradeOptions=(_,b,skills)=>skills;
+        LearningRpgLocalRunEngine.upgrade=(_,b,skills,id)=>{b.player.baseStats.levelProgress.skillUpgrades={[id]:1};return skills.map(s=>({...s,level:s.level+1}));};
+        LearningRpgLocalRunEngine.skills=(_,b,skills)=>skills;
+        window.upgrading=presentLevelSkillUpgrade(currentView);
+      });
+      await page.waitForSelector('#levelSkillModal.active');
+      await page.locator('[data-upgrade-skill="power"]').click();
+      await page.evaluate(()=>window.upgrading);
+      assert.equal(await page.evaluate(()=>currentView.availableSkills[0].level),2);
+      assert.equal(await page.locator('#levelSkillModal').getAttribute('aria-hidden'),'true');
       await page.evaluate(()=>{currentView.battle.player.baseStats.levelProgress.points=3;window.expiring=presentLevelStatAllocation(currentView);});
       await page.waitForSelector('#levelStatModal.active');
       await page.evaluate(()=>{workbookDeadlineExpired=true;levelAllocationCancel();});

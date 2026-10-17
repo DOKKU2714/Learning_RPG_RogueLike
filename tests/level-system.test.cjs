@@ -48,16 +48,48 @@ test('level system: server and browser kill awards are identical and never dupli
   assert.equal(browser.lastTurnEvents.filter(e=>e.type==='experience').length,1);
 });
 
-test('level system: boss always levels up, carries excess XP and grants three points per level',()=>{
+test('level system: boss grants exactly 100 XP without forcing a level, excess carries normally',()=>{
   const {c,battle}=game();
   battle.player.baseStats.levelProgress={level:4,xp:0,points:0,spent:{}};
   const m={instanceId:'boss',monsterId:'boss',type:'boss',currentHp:0,experience:1};
   const event=c.awardMonsterExperience_(battle,m);
-  assert.equal(event.amount,175);assert.equal(event.after.level,5);assert.equal(event.after.points,3);
+  assert.equal(event.amount,100);assert.equal(event.after.level,4);assert.equal(event.after.points,0);
   m.instanceId='next';m.experience=600;
   const next=c.awardMonsterExperience_(battle,m);
-  assert.equal(next.levelsGained,2);assert.equal(next.after.points,9);
-  assert.equal(next.after.xp,175);
+  assert.equal(next.amount,100);assert.equal(next.levelsGained,1);assert.equal(next.after.points,3);
+  assert.equal(next.after.xp,25);
+});
+
+test('level system: level skill upgrade is limited, validated, saved once and restored',()=>{
+  const g=game(), owned=[{skillId:'skill_power',level:1}];
+  g.x.seed(g.c.DB_SHEETS.SKILLS,[{skillId:'skill_power',name:'강타',type:'damage',effectJson:'{}',upgradeJson:'{}'},
+    {skillId:'fixed',conditionJson:'{"notUpgradable":true}',effectJson:'{}'}]);
+  g.c.clearTableCache_(g.c.DB_SHEETS.SKILLS);
+  g.c.updateRowByKey_(g.c.DB_SHEETS.RUNS,'runId',g.view.runId,{skillsJson:JSON.stringify(owned)});
+  g.snapshot.skills=copy(g.x.c.readTable_(g.c.DB_SHEETS.SKILLS));
+  g.battle.player.baseStats.levelProgress={level:2,xp:0,points:0,spent:{}};
+  assert.throws(()=>g.engine.upgrade(g.snapshot,g.battle,[{skillId:'fixed',level:1}],'fixed'));
+  const result=g.engine.upgrade(g.snapshot,g.battle,owned,'skill_power');
+  assert.equal(result[0].level,2);
+  assert.throws(()=>g.engine.upgrade(g.snapshot,g.battle,result,'skill_power'));
+  const state=JSON.parse(g.view.localRunState.stageStateJson);state.battle=g.battle;
+  g.c.saveStageState_(g.view.runId,state,g.battle);
+  g.c.saveStageState_(g.view.runId,state,g.battle);
+  const saved=g.c.requireRun_(g.view.runId);
+  assert.equal(JSON.parse(saved.skillsJson)[0].level,2);
+  assert.equal(g.c.getAvailableSkills(saved,g.battle)[0].level,2);
+  assert.throws(()=>g.c.validateLevelSkillUpgrades_(saved,{level:2,skillUpgrades:{skill_power:2}}));
+  assert.throws(()=>g.c.validateLevelSkillUpgrades_(saved,{level:2,skillUpgrades:{}}));
+});
+
+test('level system: sixth stage offers rest and owned upgradable skills',()=>{
+  const g=game();
+  g.x.seed(g.c.DB_SHEETS.SKILLS,[{skillId:'upgradable',name:'강타',effectJson:'{}',upgradeJson:'{}'},
+    {skillId:'fixed',conditionJson:'{"notUpgradable":true}',effectJson:'{}'}]);
+  g.c.clearTableCache_(g.c.DB_SHEETS.SKILLS);
+  const choices=g.c.buildFloorRestChoices_(g.c.requireRun_(g.view.runId),g.battle,'',1,[{skillId:'upgradable',level:2},{skillId:'fixed',level:1}],[]);
+  assert.equal(choices[0].type,'rest');
+  assert.deepEqual(copy(choices.slice(1).map(r=>[r.type,r.targetId])),[['skillUpgrade','upgradable']]);
 });
 
 test('level system: allocations validate atomically and preserve fractional stat increments',()=>{
@@ -117,12 +149,13 @@ test('level system: efficiency investment raises both endpoints on the server an
   assert.ok(atMiddle>=atEnd);
 });
 
-test('level system: investments survive prefetched rewards, next-stage replay and cached receipts',()=>{
+test('level system: investments and skill upgrades survive prefetched rewards, next-stage replay and cached receipts',()=>{
   const g=game();
   const originalSnapshot=g.snapshot;
   g.view=g.c.withRunSession_(g.view.runId,g.view.runSessionToken,'auth',()=>{
     const run=g.c.requireRun_(g.view.runId),state=g.c.getStageState_(run);
     state.battle.player.baseStats.levelProgress={level:1,xp:90,points:0,spent:{}};
+    g.c.updateRowByKey_(g.c.DB_SHEETS.RUNS,'runId',run.runId,{skillsJson:JSON.stringify([{skillId:'skill_basic_slash',level:1}])});
     const saved=g.c.saveStageState_(run.runId,state,state.battle);
     return g.c.buildBattleStateView_(saved,state);
   });
@@ -142,6 +175,7 @@ test('level system: investments survive prefetched rewards, next-stage replay an
   const points=g.battle.player.baseStats.levelProgress.points;
   assert.ok(points>=3);
   g.engine.allocate(g.snapshot,g.battle,{hpRegen:points});
+  g.engine.upgrade(g.snapshot,g.battle,g.view.availableSkills,'skill_basic_slash');
   p.battle=serializer.buildStageResultBattlePayload(g.battle);
   const reward=g.c.previewRewardChoicesForStageResult(copy(p),'auth');
   assert.equal(reward.regenAmount,prepared.regenAmount+points);
@@ -155,6 +189,8 @@ test('level system: investments survive prefetched rewards, next-stage replay an
   assert.equal(next.battle.player.baseStats.levelProgress.points,0);
   assert.equal(next.battle.player.stats.hpRegen,g.battle.player.stats.hpRegen);
   assert.equal(next.localRunState.statsJson,checked.localRunState.statsJson);
+  assert.equal(next.localRunState.skillsJson,checked.localRunState.skillsJson);
+  assert.equal(JSON.parse(next.localRunState.skillsJson).find(s=>s.skillId==='skill_basic_slash').level,2);
 });
 
 test('level system: malformed or inflated progression cannot bypass run stat validation',()=>{

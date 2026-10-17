@@ -478,7 +478,7 @@
       "stackable": false,
       "triggerTiming": "passive",
       "damageFormula": "",
-      "behaviorJson": "{\"combat\":{\"consumeOnQuestion\":true,\"capEfficiency\":true}}"
+      "behaviorJson": "{\"combat\":{\"additional\":{\"extensions\":{\"consumeOnQuestion\":true,\"capEfficiency\":true}}}}"
     },
     {
       "effectId": "effect_normal_calm",
@@ -526,7 +526,7 @@
       "stackable": false,
       "triggerTiming": "",
       "damageFormula": "",
-      "behaviorJson": "{\"combat\":{\"skillCost\":{\"amount\":1,\"uses\":2,\"minimum\":1}}}"
+      "behaviorJson": "{\"combat\":{\"additional\":{\"extensions\":{\"skillCost\":{\"amount\":1,\"uses\":2,\"minimum\":1}}}}}"
     }
   ],
   "effectRules": [

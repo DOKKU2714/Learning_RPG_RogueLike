@@ -1,0 +1,32 @@
+const test=require('node:test');
+const assert=require('node:assert/strict');
+const vm=require('node:vm');
+const {context,copy}=require('./run-session.test.cjs');
+const original=require('./fixtures/skill-rework-2026-10-17.json');
+
+for(const mode of ['server','browser']) test('shock remake: '+mode+' attack scaling, accuracy, consumption, no recursion or natural decay',()=>{
+  const x=context(),c=x.c,pack=copy(original);
+  const shock=pack.effects.find(e=>e.effectId==='effect_v2_shock');
+  shock.behaviorJson='{"hitDamage":{"damagePerStack":1},"combat":{"additional":{"hitDamage":{"baseDamage":2,"attackRatio":0.1,"consumeStacks":1}}}}';
+  shock.decayTiming='onTrigger';
+  pack.effectRules.push({effectId:'effect_v2_shock',ruleOrder:1,triggerTiming:'passive',operation:'modifyStat',statKey:'accuracy',valueMode:'flat',valueFormula:'-5*stacks',shieldPolicy:''});
+  x.seed(c.DB_SHEETS.SKILLS,pack.skills);x.seed(c.DB_SHEETS.EFFECTS,pack.effects);x.seed(c.DB_SHEETS.EFFECT_RULES,pack.effectRules);
+  const effects=c.readTable_(c.DB_SHEETS.EFFECTS),snapshot={skills:pack.skills,effects:copy(effects),effectRules:pack.effectRules};
+  const local=vm.runInNewContext(c.getLocalRunEngineSource_(),{Date:c.Date,Math:c.Math});
+  const battle={battleId:'shock',turn:1,status:'active',suppressMonsterScoreBookkeeping:true,lastTurnEvents:[],player:{hp:100,maxHp:100,stats:{hp:100,attack:30},effects:[]},monsters:[{instanceId:'a',monsterId:'a',currentHp:1000,maxHp:1000,shield:0,effects:[]}]};
+  const target=battle.monsters[0];
+  c.applyEffect(target,{...effects.find(e=>e.effectId==='effect_v2_shock'),stacks:3},{turn:1});
+  assert.equal(c.calculateEffectiveStats({accuracy:100},target.effects).accuracy,85);
+  const hit=(amount,kind='direct')=>mode==='server'?c.dealDamageToMonster_(battle,target,amount,{damageKind:kind}):local.damage(snapshot,battle,'a',amount,{damageKind:kind});
+  hit(10);assert.equal(target.currentHp,985);assert.equal(target.effects[0].stacks,2);
+  assert.equal(c.calculateEffectiveStats({accuracy:100},target.effects).accuracy,90);
+  assert.equal(battle.lastTurnEvents.filter(e=>e.damageKind==='additional').length,1);
+  assert.equal(battle.lastTurnEvents.find(e=>e.damageKind==='additional').damage,5);
+  battle.turn=2;
+  if(mode==='server')c.tickEffectsAtTurnStart(battle);else local.tick(snapshot,battle,'turnStart');
+  assert.equal(target.effects[0].stacks,2);
+  hit(1,'effect');assert.equal(target.effects[0].stacks,2);
+  hit(1);hit(1);assert.equal(c.getSharedRuleEngine_().effectStacks(target,'effect_v2_shock'),0);
+  assert.equal(c.calculateEffectiveStats({accuracy:100},target.effects).accuracy,100);
+  const before=target.currentHp;hit(1);assert.equal(target.currentHp,before-1);
+});

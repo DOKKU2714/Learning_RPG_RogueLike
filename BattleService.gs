@@ -2076,7 +2076,7 @@ function dealDamageToMonster_(battleState, monster, damage, damageContext) {
   prepareMonsterKit_(battleState, monster);
   damage=modifyCombatOutgoing_(battleState,monster,damage,context);
   damage=reduceMonsterKitDamage_(battleState,monster,damage,context);
-  var reactions = context.damageKind === 'direct' ? getSharedRuleEngine_().directHitReactions(monster) : {packets:[],removed:[]};
+  var reactions = context.damageKind === 'direct' ? getSharedRuleEngine_().directHitReactions(monster, battleState.player) : {packets:[],removed:[]};
   var totalDamage = Math.max(0, Math.round(Number(damage || 0)));
   var shieldBefore = Number(monster.shield || 0);
   var hpBefore = Number(monster.currentHp || 0);
@@ -2107,8 +2107,9 @@ function dealDamageToMonster_(battleState, monster, damage, damageContext) {
     if(packet.damageKind==='shatter')packetAmount*=Number(context.shatterMultiplier || 1);
     packetAmount=modifyCombatAdditional_(battleState,monster,packetAmount,packetContext);
     var extra = dealDamageToMonster_(battleState, monster, packetAmount, packetContext);
+    if (packet.consumeStacks > 0) getSharedRuleEngine_().consumeEffectStacks(monster,packet.effectId,packet.consumeStacks);
     relayCombatAdditional_(battleState,monster,extra.damage,packetContext);
-    battleState.lastTurnEvents.splice(Number.isInteger(extra.eventIndex) ? extra.eventIndex : battleState.lastTurnEvents.length, 0, {actor:'effect',type:'effectDamage',target:'monster',targetMonsterId:monster.instanceId || monster.monsterId,effectId:packet.effectId,damageKind:packet.damageKind,damage:extra.damage,hpDamage:extra.hpDamage,shieldDamage:extra.shieldDamage});
+    battleState.lastTurnEvents.splice(Number.isInteger(extra.eventIndex) ? extra.eventIndex : battleState.lastTurnEvents.length, 0, {actor:'effect',type:'effectDamage',target:'monster',targetMonsterId:monster.instanceId || monster.monsterId,effectId:packet.effectId,damageKind:packet.damageKind,damage:extra.damage,hpDamage:extra.hpDamage,shieldDamage:extra.shieldDamage,statusSnapshot:{effects:JSON.parse(JSON.stringify(monster.effects || []))}});
   });
   return Object.assign({}, result, { killScore: killScore, eventIndex: eventIndex });
 }
@@ -2185,7 +2186,7 @@ function awardMonsterExperience_(battle, monster) {
     ? Math.max(1,Number(monster.experience)) : boss ? 90 : 30;
   var floorMultiplier = 1 + 0.2*(Math.max(1,Number(battle.stage && battle.stage.floor || 1))-1);
   var amount = Math.max(1,Math.round(base*floorMultiplier*multiplier));
-  if (boss) amount = Math.max(amount,levelExperienceRequired_(progress.level)-progress.xp);
+  if (boss) amount = 100;
   progress.xp += amount;
   while (progress.xp >= levelExperienceRequired_(progress.level)) {
     progress.xp -= levelExperienceRequired_(progress.level);
@@ -2232,6 +2233,25 @@ function allocateLevelStats_(battle, allocation) {
   return progress;
 }
 
+function getLevelSkillUpgradeOptions_(battle, skills) {
+  return normalizeOwnedSkills_(skills || []).filter(function(owned) {
+    var row = findCachedRowByKey_(DB_SHEETS.SKILLS,'skillId',owned.skillId,600);
+    return row && isSkillUpgradable_(row);
+  });
+}
+
+function applyLevelSkillUpgrade_(battle, skills, skillId) {
+  var progress = ensureLevelProgress_(battle.player);
+  var counts = progress.skillUpgrades || {};
+  var spent = Object.keys(counts).reduce(function(sum,key){return sum+Number(counts[key] || 0);},0);
+  if (spent >= progress.level-1) throw new Error('사용 가능한 레벨업 강화가 없습니다.');
+  var owned = getLevelSkillUpgradeOptions_(battle,skills).filter(function(s){return s.skillId===skillId;})[0];
+  if (!owned) throw new Error('강화할 수 없는 스킬입니다.');
+  progress.skillUpgrades = Object.assign({},counts);
+  progress.skillUpgrades[skillId] = Number(counts[skillId] || 0)+1;
+  return normalizeOwnedSkills_(skills).map(function(s){return s.skillId===skillId ? Object.assign({},s,{level:s.level+1}) : s;});
+}
+
 function validateLevelStatsForCommit_(run, serverBattle, receivedBattle) {
   var expected = safeJsonParse_(run.statsJson, {});
   var received = receivedBattle.player && receivedBattle.player.baseStats || {};
@@ -2265,6 +2285,7 @@ function validateLevelStatsForCommit_(run, serverBattle, receivedBattle) {
     used+=count;deltas[option.key]=count*option.amount;
   });
   if (used>calculated.points || Number(actual.points)!==calculated.points-used) throw new Error('스탯 포인트가 레벨 기록과 다릅니다.');
+  validateLevelSkillUpgrades_(run,actual);
   var keys=Object.keys(expected).concat(Object.keys(received));
   keys.forEach(function(key) {
     if(key==='levelProgress')return;
@@ -2272,6 +2293,20 @@ function validateLevelStatsForCommit_(run, serverBattle, receivedBattle) {
     if (!isFinite(Number(received[key] || 0)) || Math.abs(Number(received[key] || 0)-wanted)>0.000001) throw new Error('플레이어 능력치가 게임 진행 기록과 다릅니다.');
   });
   return true;
+}
+
+function validateLevelSkillUpgrades_(run, progress) {
+  var previous = safeJsonParse_(run.statsJson,{}).levelProgress || {};
+  var before = previous.skillUpgrades || {}, after = progress.skillUpgrades || {};
+  var owned = normalizeOwnedSkills_(safeJsonParse_(run.skillsJson,[])), total = 0;
+  Object.keys(before).concat(Object.keys(after)).filter(function(key,i,all){return all.indexOf(key)===i;}).forEach(function(id) {
+    var count = Number(after[id] || 0), old = Number(before[id] || 0);
+    if (!isFinite(count) || count<old || count!==Math.floor(count)) throw new Error('스킬 강화 기록이 올바르지 않습니다.');
+    if (count>old && (!owned.some(function(s){return s.skillId===id;}) || !isSkillUpgradable_(findCachedRowByKey_(DB_SHEETS.SKILLS,'skillId',id,600)))) throw new Error('강화할 수 없는 스킬입니다.');
+    total += count;
+  });
+  if (total>Number(progress.level || 1)-1) throw new Error('스킬 강화 횟수가 레벨 기록과 다릅니다.');
+  return owned.map(function(s){return Object.assign({},s,{level:s.level+Number(after[s.skillId] || 0)-Number(before[s.skillId] || 0)});});
 }
 
 function setActiveMonsterScoreContext_(battleState, questionId, efficiency) {
@@ -4053,6 +4088,8 @@ function saveStageState_(runId, stageState, battleState) {
   };
 
   if (Array.isArray(battleState.player.items)) patch.itemsJson=safeJsonStringify_(normalizeOwnedItems_(battleState.player.items));
+  var savedRun = requireRun_(runId);
+  patch.skillsJson = safeJsonStringify_(validateLevelSkillUpgrades_(savedRun,ensureLevelProgress_(battleState.player)));
 
   if (battleState.status === STATUS.BATTLE_DEFEAT) {
     patch.status = STATUS.RUN_FAILED;

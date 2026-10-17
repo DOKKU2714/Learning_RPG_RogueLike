@@ -26,7 +26,7 @@ function getLocalRunEngineSource_() {
     applySkillEffect, processSkillTriggers_, processSkillFailPenaltyAfterAnswer_,
     tickEffectsAtTurnStart, tickEffectsAtTurnEnd, tickEffectsOnPlayerAction,
      getAvailableSkills, normalizePlayerActionPoints_, refreshPreparedRewardView_,
-     dealDamageToPlayer_, dealDamageToMonster_, beginCombatActorTurn_, clearPlayerTurnShield_, prepareCombatHit_, applyMonsterBurnDamage_, selectMonsterAction, executeMonsterKitIntent_, recordExperienceQuestion_, settleMonsterExperience_, allocateLevelStats_, getLevelStatOptions_, settleMonsterItemDrops_, decideMonsterItemDrop_].forEach(collect);
+     dealDamageToPlayer_, dealDamageToMonster_, beginCombatActorTurn_, clearPlayerTurnShield_, prepareCombatHit_, applyMonsterBurnDamage_, selectMonsterAction, executeMonsterKitIntent_, recordExperienceQuestion_, settleMonsterExperience_, allocateLevelStats_, getLevelStatOptions_, getLevelSkillUpgradeOptions_, applyLevelSkillUpgrade_, settleMonsterItemDrops_, decideMonsterItemDrop_].forEach(collect);
   var constants = { DB_SHEETS: DB_SHEETS, DB_COLUMNS: DB_COLUMNS, STATUS: STATUS, AVATAR_TYPES: AVATAR_TYPES,
     QUESTION_TYPES: QUESTION_TYPES, ACTION_TYPES: ACTION_TYPES, SKILL_TYPES: SKILL_TYPES, REWARD_TYPES: REWARD_TYPES,
     RARITIES: RARITIES, RARITY_LABELS: RARITY_LABELS, EFFECT_CATEGORIES: EFFECT_CATEGORIES, EFFECT_TYPES: EFFECT_TYPES,
@@ -38,7 +38,7 @@ function getLocalRunEngineSource_() {
     ALLOWED_REWARD_STAT_KEYS_: ALLOWED_REWARD_STAT_KEYS_, MASTER_ITEMS: MASTER_ITEMS,
     MASTER_EFFECTS: MASTER_EFFECTS, MASTER_MONSTERS: MASTER_MONSTERS, MASTER_SETTINGS: MASTER_SETTINGS };
   var declarations = Object.keys(constants).map(function(name) { return 'var ' + name + '=' + JSON.stringify(constants[name]) + ';'; }).join('\n');
-   var source = '(function(nativeDate,nativeMath){\n' + declarations + '\n' + adapters + '\n' + getSharedRuleEngineSource_() + '\n' + sources.join('\n') + '\nreturn {advance: advanceLocalRun, reward: refreshLocalReward, skill: applyLocalBattleSkill, trigger: processLocalBattleTrigger, tick: tickLocalBattleEffects, skills: getLocalBattleSkills, damage:applyLocalCombatDamage, playerDamage:applyLocalPlayerDamage, actorTurn:beginLocalActorTurn, hitStats:localCombatHitStats, monsterIntent:localMonsterIntent, monsterAction:localMonsterAction, experienceQuestion:recordExperienceQuestion_, settleExperience:settleMonsterExperience_, levelOptions:getLevelStatOptions_, levelRequired:levelExperienceRequired_, allocate:allocateLocalLevelStats, itemDrops:localMonsterItemDrops, decideDrop:localDecideMonsterItemDrop};\n})(Date,Math)';
+   var source = '(function(nativeDate,nativeMath){\n' + declarations + '\n' + adapters + '\n' + getSharedRuleEngineSource_() + '\n' + sources.join('\n') + '\nreturn {advance: advanceLocalRun, reward: refreshLocalReward, skill: applyLocalBattleSkill, trigger: processLocalBattleTrigger, tick: tickLocalBattleEffects, skills: getLocalBattleSkills, damage:applyLocalCombatDamage, playerDamage:applyLocalPlayerDamage, actorTurn:beginLocalActorTurn, hitStats:localCombatHitStats, monsterIntent:localMonsterIntent, monsterAction:localMonsterAction, experienceQuestion:recordExperienceQuestion_, settleExperience:settleMonsterExperience_, levelOptions:getLevelStatOptions_, levelRequired:levelExperienceRequired_, allocate:allocateLocalLevelStats, upgradeOptions:localLevelUpgradeOptions, upgrade:localLevelUpgrade, itemDrops:localMonsterItemDrops, decideDrop:localDecideMonsterItemDrop};\n})(Date,Math)';
   if (/\b(?:SpreadsheetApp|PropertiesService|CacheService|LockService|UrlFetchApp|ScriptApp)\b/.test(source)) throw new Error('클라이언트 전투 규칙에 서버 의존성이 남아 있습니다.');
   return source;
 }
@@ -77,6 +77,12 @@ function getLocalRunEngineAdapters_() {
   }
   function allocateLocalLevelStats(snapshot, battle, allocation) {
     return withLocalBattleRules(snapshot,battle,function() { return allocateLevelStats_(battle,allocation); });
+  }
+  function localLevelUpgradeOptions(snapshot, battle, skills) {
+    return withLocalBattleRules(snapshot,battle,function(){return getLevelSkillUpgradeOptions_(battle,skills);});
+  }
+  function localLevelUpgrade(snapshot, battle, skills, skillId) {
+    return withLocalBattleRules(snapshot,battle,function(){return applyLevelSkillUpgrade_(battle,skills,skillId);});
   }
   function localMonsterItemDrops(snapshot,battle) {
     return withLocalBattleRules(snapshot,battle,function(){return settleMonsterItemDrops_(battle);});

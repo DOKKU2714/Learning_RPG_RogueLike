@@ -150,6 +150,33 @@ test('victory finalization sends current answers for reroll eligibility instead 
   assert.deepEqual(copy(requested.answerLogs),[{questionId:'recent'}]);
 });
 
+test('empty victory responses retry once and expose a useful error instead of a dead end', () => {
+  const html=fs.readFileSync('Battle.html','utf8');
+  for(const recover of [true,false]) {
+    let callback,calls=0;
+    const c=vm.createContext({currentView:{runId:'run',battle:{battleId:'battle',status:'victory',stage:{stageId:'1-1'}}},
+      isDummyMode:false,workbookDeadlineExpired:false,victoryRewardPreload:null,victoryRewardResultPayload:null,battleRewardPreparation:null,
+      runSessionToken:'token',localRunTransitions:[],victoryRewardDisplayStarted:false,
+      getPendingQuestionUnderstanding:()=>[],getAuthToken:()=> 'auth',buildStageResultPayload:v=>({runId:v.runId,battle:copy(v.battle)}),rememberRunSession:()=>{},
+      google:{script:{run:{withSuccessHandler(fn){callback=fn;return this;},withFailureHandler(){return this;},previewRewardChoicesForStageResult(){calls++;callback(recover&&calls===2?{choices:[{rewardId:'saved-choice'}]}:null);}}}}});
+    for(const name of ['getVictoryRewardKey','preloadVictoryRewardChoices'])vm.runInContext(html.match(new RegExp('    function '+name+'\\([^]*?\\n    \\}'))[0],c);
+    c.preloadVictoryRewardChoices(c.currentView);
+    assert.equal(calls,2);assert.equal(c.victoryRewardPreload.loading,false);
+    if(recover)assert.equal(c.victoryRewardPreload.rewardView.choices[0].rewardId,'saved-choice');
+    else assert.match(c.victoryRewardPreload.error.message,/비어 있는 보상 응답/);
+  }
+});
+
+test('manual reward retry preserves the result captured before regeneration',()=>{
+  const html=fs.readFileSync('Battle.html','utf8'),receipt={key:'run:battle',payload:{battle:{player:{hp:1}}}};
+  let requests=0;const button={hidden:false};
+  const c=vm.createContext({workbookDeadlineExpired:false,currentView:{battle:{status:'victory'}},victoryRewardPreload:{loading:false},
+    victoryRewardResultPayload:receipt,victoryRewardDisplayStarted:false,document:{getElementById:()=>button},showPreparedVictoryReward:()=>requests++});
+  vm.runInContext(html.match(/    function retryVictoryRewards\([^]*?\n    \}/)[0],c);
+  c.retryVictoryRewards();assert.equal(requests,1);assert.equal(c.victoryRewardResultPayload,receipt);assert.equal(button.hidden,true);
+  c.victoryRewardPreload={loading:true};c.retryVictoryRewards();assert.equal(requests,1);
+});
+
 test('background preparation uses the existing RPC and falls back on an older server', async () => {
   const html=fs.readFileSync('Battle.html','utf8');
   const calls=[]; let failure;

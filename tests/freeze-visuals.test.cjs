@@ -1,0 +1,21 @@
+const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
+const source=fs.readFileSync('Battle.html','utf8');
+const extract=name=>source.match(new RegExp('    (?:async )?function '+name+'\\([^]*?\\n    \\}'))[0];
+const classes=()=>{const set=new Set();return {add:(...v)=>v.forEach(x=>set.add(x)),remove:(...v)=>v.forEach(x=>set.delete(x)),contains:v=>set.has(v),toggle:(v,on)=>on?set.add(v):set.delete(v)};};
+const art={classList:classes(),src:''},animations=[],timers=[],calls=[];
+let removed=false;
+const ice={classList:classes(),querySelectorAll:()=>[{animate:(frames,options)=>animations.push({frames,options})}],remove:()=>removed=true};
+const scope={classList:classes(),dataset:{hitSrc:'Hit.png',idleSrc:'Idle.png'},querySelector:s=>s==='.monster-art'?art:(s==='.element-vfx-freeze'?ice:null)};
+const c={document:{querySelector:()=>scope},cssEscape:s=>s,window:{setTimeout:f=>timers.push(f),matchMedia:()=>({matches:false})},playDamageTypeEffect:()=>{ice.classList.add('ice-persistent');calls.push('form');}};
+vm.createContext(c);vm.runInContext(['hasMonsterFreeze','syncMonsterFreezeVisual','releaseMonsterFreeze','setMonsterSpriteState','resetMonsterSpriteState'].map(extract).join('\n'),c);
+(async()=>{
+ const frozen={effects:[{effectId:'debuff_freeze'}]};
+ c.syncMonsterFreezeVisual('m',frozen);assert.equal(art.src,'Hit.png');assert.ok(scope.classList.contains('monster-frozen'));
+ c.resetMonsterSpriteState(scope);assert.equal(art.src,'Hit.png');c.setMonsterSpriteState(scope,'attack');assert.equal(art.src,'Hit.png');
+ c.syncMonsterFreezeVisual('m',frozen);assert.equal(calls.length,1);
+ const breaking=c.releaseMonsterFreeze('m','shatter');assert.ok(ice.classList.contains('ice-shattering'));assert.equal(animations.length,1);assert.equal(scope.classList.contains('monster-frozen'),false);timers.shift()();await breaking;assert.ok(removed);assert.equal(art.src,'Idle.png');
+ removed=false;c.syncMonsterFreezeVisual('m',frozen);c.syncMonsterFreezeVisual('m',{effects:[]});assert.ok(ice.classList.contains('ice-melting'));timers.shift()();assert.ok(removed);
+ assert.ok(extract('animateMonsterHit').indexOf("releaseMonsterFreeze(monsterId, 'shatter')")<extract('animateMonsterHit').indexOf('applyMonsterDamageDelta'));
+ assert.equal(source.includes("shatter:'shatter'"),true);
+ console.log('Freeze visuals passed: persistent Hit pose, deduplication, impact shatter, expiry melt and reset.');
+})().catch(e=>{console.error(e);process.exitCode=1;});
