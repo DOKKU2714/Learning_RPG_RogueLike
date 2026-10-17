@@ -1,6 +1,17 @@
 const fs=require('fs'),vm=require('vm'),test=require('node:test'),assert=require('node:assert/strict');
 function ctx(){const c={readTableCached_:()=>[],safeJsonParse_:(s,f)=>{try{return JSON.parse(s);}catch{return f;}},safeJsonStringify_:JSON.stringify};vm.createContext(c);for(const file of ['Constants.gs','ItemService.gs','SharedRuleEngine.gs'])vm.runInContext(fs.readFileSync(file,'utf8'),c);vm.runInContext(c.getSharedRuleEngineSource_(),c);return c;}
 const ids=['item_honor_fist','item_miracle_eraser','item_honor_badge','item_vampire_pen'];
+test('corrected Crocs sheet effect grants defense and evasion, including duplicate copies',()=>{
+  const c=ctx();
+  const item=c.normalizeItemRow_({'아이템명':'크록스','등급':'희귀',
+    '효과 1':'type=stat; stat=defense; mode=flat; value=3; label=방어력+3',
+    '효과 2':'type=stat; stat=evasion; mode=flat; value=5; label=회피율+5%'});
+  c.getItemById_=()=>item;
+  for(const count of [1,2]){
+    const m=c.buildItemModifiers_([{itemId:item.itemId,count}]);
+    assert.equal(m.statFlat.defense,3*count);assert.equal(m.statFlat.evasion,5*count);
+  }
+});
 test('four items parse from master definitions and existing spreadsheet DSL with their requested rarities',()=>{const c=ctx();for(const id of ids)assert.ok(c.getItemById_(id));assert.equal(c.getItemById_(ids[0]).rarity,'epic');assert.equal(c.getItemById_(ids[1]).rarity,'legendary');const row=c.normalizeItemRow_({'아이템명':'우등생의 주먹','등급':'영웅','효과 1':'type=perfectAnswerEffect; effectId=buff_power; stacks=1; label=효율 100% 이상이면 힘 1중첩'});assert.equal(row.itemId,ids[0]);assert.equal(JSON.parse(row.effectJson)[0].effectId,'buff_power');});
 function battle(c){return {turn:1,player:{hp:10,maxHp:30,effects:[],itemModifiers:c.buildItemModifiers_(ids.map(itemId=>({itemId,count:1})))}};}
 test('100% and higher grant one strength and toughness stack per solved question; lower efficiency and give-up do not',()=>{const c=ctx(),b=battle(c);assert.equal(b.player.itemModifiers.perfectAnswerEffects.length,2);c.RULE_ENGINE_SHARED.applyPerfectAnswerItems(b,.999,false);assert.equal(b.player.effects.length,0);c.RULE_ENGINE_SHARED.applyPerfectAnswerItems(b,1,true);assert.equal(b.player.effects.length,0);c.RULE_ENGINE_SHARED.applyPerfectAnswerItems(b,1,false);assert.deepEqual(Array.from(b.player.effects,e=>e.stacks),[1,1]);c.RULE_ENGINE_SHARED.applyPerfectAnswerItems(b,1.5,false);assert.deepEqual(Array.from(b.player.effects,e=>e.stacks),[2,2]);assert.ok(b.player.effects.every(e=>e.durationType==='stage'));});

@@ -24,7 +24,7 @@
       "hitCount": 1,
       "cooldown": 1,
       "conditionJson": "{\"notUpgradable\":true}",
-      "description": "다음 문제의 최대 문제풀이 효율이 50% 증가합니다.",
+      "description": "다음 문제의 최대 문제풀이 효율이 50% 증가하고, 최소 효율이 50%p 증가합니다(기본 50% → 100%).",
       "effectJson": "{\"targetMode\":\"self\",\"applyEffects\":[{\"target\":\"self\",\"effectId\":\"buff_motivation\"}]}",
       "rewardEnabled": 1,
       "type": "buff",
@@ -114,6 +114,14 @@
       "effectId": "buff_motivation",
       "name": "동기부여",
       "category": "buff",
+      "rulesVersion": 2,
+      "baseValue": 50,
+      "stackMode": "replace",
+      "reapplyDurationPolicy": "max",
+      "durationClock": "turns",
+      "decayTiming": "none",
+      "decayStacks": 0,
+      "decrementOnApplyTurn": false,
       "statKey": "questionMaxEfficiency",
       "effectType": "percent",
       "value": 50,
@@ -122,7 +130,31 @@
       "stackable": false,
       "maxStacks": 1,
       "triggerTiming": "passive",
-      "description": "다음 문제의 최대 문제풀이 효율이 50% 증가합니다."
+      "description": "다음 문제의 최대 문제풀이 효율이 50% 증가하고, 최소 효율이 50%p 증가합니다(기본 50% → 100%)."
+    }
+  ],
+  "effectRules": [
+    {
+      "effectId": "buff_motivation",
+      "ruleOrder": 1,
+      "triggerTiming": "passive",
+      "operation": "modifyStat",
+      "statKey": "questionMaxEfficiency",
+      "valueMode": "percent",
+      "valueFormula": "value*stacks",
+      "shieldPolicy": "",
+      "description": ""
+    },
+    {
+      "effectId": "buff_motivation",
+      "ruleOrder": 2,
+      "triggerTiming": "passive",
+      "operation": "modifyStat",
+      "statKey": "questionMinEfficiencyPercent",
+      "valueMode": "flat",
+      "valueFormula": "value*stacks",
+      "shieldPolicy": "",
+      "description": "다음 문제 최소 효율 +50%p (기본 50% → 100%)"
     }
   ]
 }

@@ -2312,6 +2312,10 @@
       var description = buildStatusDescription(status, type);
       var duration = status.remainingTurns ? '\n남은 턴: ' + status.remainingTurns : '';
       var stack = Number(status.stacks || 1) > 1 ? '\n중첩: ' + Number(status.stacks || 1) : '';
+      if(status.criticalCharges!==undefined)stack+='\n남은 타격 횟수: '+status.criticalCharges;
+      if(status.criticalBank!==undefined)stack+='\n현재 저금: '+status.criticalBank;
+      if(status.badLuck!==undefined)stack+='\n현재 불운 적립: '+status.badLuck;
+      if(status.combatUses===0)stack+='\n공격 강화 사용 완료';
       return {
         main: name + '\n' + description + duration + stack,
         stat: hasCustomDescription ? '' : buildStatusStatTooltip(status),
@@ -3109,7 +3113,9 @@
       requestQuestionFromServer(actionType, '', targetId || '');
     }
 
+    var pendingCombatSkillChoice=null;
     function chooseSkill(skillId) {
+      pendingCombatSkillChoice={skillId:skillId};
       updateWorkbookCountdown();
       if (workbookDeadlineExpired) return;
       if (!isPlayerTurn || isAnimatingTurn || isBattleResultLoading()) {
@@ -3147,6 +3153,23 @@
       if (workbookDeadlineExpired) return;
       var targetSkill = findAvailableSkill(skillId);
       var targetRule = safeJsonParseClient(targetSkill && targetSkill.effectJson, {});
+      var combatTarget=getAliveClientMonsters().filter(function(m){return getMonsterRuntimeId(m)===targetId;})[0];
+      var combatCondition=targetRule.combat || {};
+      if(combatCondition.requireStacks && (!combatTarget || RULE_ENGINE_SHARED.effectStacks(combatTarget,combatCondition.requireStacks.effectId)<combatCondition.requireStacks.min)){pushLog('필요한 상태 스택을 가진 대상을 선택하세요.');return;}
+      if(combatCondition.requireTargetShield && (!combatTarget || !(combatTarget.shield>0))){pushLog('방어막이 있는 대상을 선택하세요.');return;}
+      if(combatCondition.eitherHpBelow && currentView.battle.player.hp/currentView.battle.player.maxHp*100>combatCondition.eitherHpBelow && (!combatTarget || combatTarget.currentHp/combatTarget.maxHp*100>combatCondition.eitherHpBelow)){pushLog('자신 또는 대상이 저체력이어야 합니다.');return;}
+      if(!pendingCombatSkillChoice || pendingCombatSkillChoice.skillId!==skillId)pendingCombatSkillChoice={skillId:skillId};
+      var choice=pendingCombatSkillChoice;
+      if((targetRule.actions || []).some(function(a){return a.operation==='moveStacks' || a.operation==='copyStacks';}) && !choice.secondaryTargetId){
+        beginTargetSelection({actionType:'skill',secondaryFor:skillId,primaryTargetId:targetId});pushLog('이전받을 다른 적을 선택하세요.',{instant:true});return;
+      }
+      var cooldownAction=(targetRule.actions || []).filter(function(a){return a.operation==='cooldownSelect';})[0];
+      if(cooldownAction && !choice.cooldownTargetSkillId){
+        var candidates=(currentView.availableSkills || []).filter(function(s){return s.skillId!==skillId && normalizeSkillTags(s.tags).indexOf(cooldownAction.tag)>=0 && Number(currentView.battle.skillCooldowns && currentView.battle.skillCooldowns[s.skillId])>0;});
+        if(!candidates.length){pushLog('쿨타임 중인 해당 컨셉 스킬이 없습니다.');return;}
+        if(candidates.length===1)choice.cooldownTargetSkillId=candidates[0].skillId;
+        else {openCombatCooldownChoice(candidates,function(id){choice.cooldownTargetSkillId=id;startSkillQuestion(skillId,targetId);});return;}
+      }
       var requiredTargetEffects = targetRule.requireCondition && targetRule.requireCondition.targetEffects;
       if (Array.isArray(requiredTargetEffects)) {
         var chosenTarget = getAliveClientMonsters().filter(function(monster) { return getMonsterRuntimeId(monster) === targetId; })[0];
@@ -3242,6 +3265,10 @@
       pendingTargetSelection = null;
       renderMonsters(currentView && currentView.battle ? currentView.battle.monsters : []);
       if (!selection) return;
+      if(selection.secondaryFor){
+        if(targetId===selection.primaryTargetId){beginTargetSelection(selection);pushLog('원본과 다른 적을 선택하세요.');return;}
+        pendingCombatSkillChoice.secondaryTargetId=targetId;startSkillQuestion(selection.secondaryFor,selection.primaryTargetId);return;
+      }
       if (selection.actionType === 'skill') {
         startSkillQuestion(selection.skillId, targetId);
       } else {
@@ -3255,6 +3282,13 @@
       if (rerender !== false) {
         renderMonsters(currentView && currentView.battle ? currentView.battle.monsters : []);
       }
+    }
+
+    function openCombatCooldownChoice(skills,onChoose) {
+      var dialog=document.createElement('dialog');dialog.className='combat-choice-dialog';
+      var title=document.createElement('h3');title.textContent='쿨타임을 줄일 스킬 선택';dialog.appendChild(title);
+      skills.forEach(function(skill){var button=document.createElement('button');button.type='button';button.textContent=skill.name;button.addEventListener('click',function(){dialog.close();dialog.remove();onChoose(skill.skillId);});dialog.appendChild(button);});
+      var cancel=document.createElement('button');cancel.type='button';cancel.textContent='취소';cancel.addEventListener('click',function(){dialog.close();dialog.remove();});dialog.appendChild(cancel);dialog.addEventListener('cancel',function(){dialog.remove();});document.body.appendChild(dialog);dialog.showModal();
     }
 
     function passTurn() {
@@ -3642,7 +3676,7 @@
         questionEfficiencyBonusPercent: RULE_ENGINE_SHARED.getQuestionEfficiencyBonusPercent(currentView && currentView.battle && currentView.battle.player && currentView.battle.player.effects),
         questionMaxEfficiencyPercent: Number(itemModifiers.questionMaxEfficiencyPercent || 0),
         questionMaxEfficiencyFlatPercent: Number(itemModifiers.questionMaxEfficiencyFlatPercent || 0),
-        questionMinEfficiencyPercent: Number(itemModifiers.questionMinEfficiencyPercent || 0),
+        questionMinEfficiencyPercent: Number(itemModifiers.questionMinEfficiencyPercent || 0) + RULE_ENGINE_SHARED.getQuestionMinEfficiencyBonusPercent(currentView && currentView.battle && currentView.battle.player && currentView.battle.player.effects),
         questionTimeSeconds: timeSeconds,
         questionChanceByType: Object.assign({}, itemModifiers.questionChanceByType || {}),
         answerCorrectEfficiencyPercent: Number(itemModifiers.answerCorrectEfficiencyPercent || 0),
@@ -3861,6 +3895,7 @@
     }
 
     function openQuestionModal(questionView, dummy) {
+      if(questionView.actionType==='skill' && pendingCombatSkillChoice && pendingCombatSkillChoice.skillId===questionView.skillId){questionView.secondaryTargetId=pendingCombatSkillChoice.secondaryTargetId || '';questionView.cooldownTargetSkillId=pendingCombatSkillChoice.cooldownTargetSkillId || '';pendingCombatSkillChoice=null;}
       resetQuestionResultHold();
       resetQuestionEfficiencyFeedback();
       currentQuestionView = questionView;
@@ -5527,9 +5562,12 @@
         return normalizeBattleView(nextView);
       }
 
+      if(hasLocalBattleSkillEngine())window.LearningRpgLocalRunEngine.tick(localGameDataSnapshot,battle,'beforeMonsterTurn');
       (battle.monsters || []).forEach(function(monster) {
         if (Number(monster.currentHp || 0) <= 0 || Number(battle.player.hp || 0) <= 0) return;
-        if (RULE_ENGINE_SHARED.hasActionBlock(monster)) {
+        var commonTurn = hasLocalBattleSkillEngine() && window.LearningRpgLocalRunEngine.actorTurn
+          ? window.LearningRpgLocalRunEngine.actorTurn(localGameDataSnapshot,battle,monster) : null;
+        if (commonTurn ? commonTurn.blocked : RULE_ENGINE_SHARED.hasActionBlock(monster)) {
           battle.lastTurnEvents.push({
             actor: 'monster',
             type: 'skip',
@@ -5542,6 +5580,7 @@
         applyClientTimedEffectDamage(monster, 'onAction', battle, 'monster');
         if (Number(monster.currentHp || 0) <= 0) return;
         var intent = monster.intent || {};
+        RULE_ENGINE_SHARED.beginCombatAction(battle, {skillId:intent.skillId || ''});
         monster.intent = null;
         var actionType = String(intent.actionType || 'attack');
         var intentValue = getClientIntentValue(intent);
@@ -5617,6 +5656,10 @@
         for (var hitIndex = 0; hitIndex < hitCount && Number(battle.player.hp || 0) > 0; hitIndex += 1) {
           var hit = rollClientHit(monster, battle.player);
           if (!hit.hit) {
+            if (hasLocalBattleSkillEngine()) {
+              window.LearningRpgLocalRunEngine.trigger(localGameDataSnapshot,battle,'onMiss',{actor:'monster',target:battle.player,damageKind:'direct'});
+              window.LearningRpgLocalRunEngine.trigger(localGameDataSnapshot,battle,'onEvade',{actor:'player',target:monster,damageKind:'direct'});
+            }
             battle.lastTurnEvents.push({
               actor: 'monster',
               type: actionType === 'skill' ? 'skill' : 'attack',
@@ -5664,7 +5707,7 @@
         }
       });
 
-      battle.player.shield = 0;
+      RULE_ENGINE_SHARED.clearCombatTurnShield(battle.player);
       if (hasLocalBattleSkillEngine()) {
         window.LearningRpgLocalRunEngine.tick(localGameDataSnapshot, battle, 'turnEnd');
       } else {
@@ -6092,6 +6135,7 @@
       if (questionView.actionType === 'guard') {
         var defense = getClientEffectiveStat(battle.player, 'defense');
         var shield = Math.max(0, Math.round((CLIENT_BASE_GUARD_SHIELD + defense) * efficiency));
+        if(!RULE_ENGINE_SHARED.canGainShield(battle.player))shield=0;
         battle.player.shield = Number(battle.player.shield || 0) + shield;
         battle.lastTurnEvents.push({ actor: 'player', type: 'guard', shield: shield, message: '수비로 방어막 ' + shield + '을 만들었습니다.' });
       } else if (questionView.actionType === 'skill') {
@@ -6281,7 +6325,7 @@
     function applyOptimisticSkillAction(battle, questionView, efficiency) {
       var skill = findAvailableSkill(questionView.skillId) || {};
       if (hasLocalBattleSkillEngine()) {
-        window.LearningRpgLocalRunEngine.skill(localGameDataSnapshot, battle, skill, questionView.targetId,
+        window.LearningRpgLocalRunEngine.skill(localGameDataSnapshot, battle, Object.assign({},skill,{secondaryTargetId:questionView.secondaryTargetId || '',cooldownTargetSkillId:questionView.cooldownTargetSkillId || ''}), questionView.targetId,
           efficiency, !questionView.failedBySkillPenalty);
         return;
       }
@@ -6659,6 +6703,7 @@
 
     function getSkillFormulaDamageRange(rule, context) {
       if (!rule || typeof rule !== 'object') return null;
+      if(typeof RULE_ENGINE_SHARED!=='undefined' && rule.combat && rule.combat.random)return RULE_ENGINE_SHARED.randomDamageRange(rule,context);
       var baseMin = rule.damageFormula ? evaluateSkillDisplayFormula(rule.damageFormula, context, 'min') : 0;
       var baseMax = rule.damageFormula ? evaluateSkillDisplayFormula(rule.damageFormula, context, 'max') : 0;
       if (rule.randomMin !== undefined || rule.randomMax !== undefined) {
@@ -6872,8 +6917,12 @@
     function applyOptimisticMonsterDamage(battle, targetId, damage, actionType, skill, simultaneousGroupId) {
       var target = findOptimisticTargetMonster(battle, targetId);
       if (!target) return;
+      if (actionType !== 'skill') RULE_ENGINE_SHARED.beginCombatAction(battle, null);
+      var hitStats=getClientEffectiveStats(battle.player);
+      if(hasLocalBattleSkillEngine() && window.LearningRpgLocalRunEngine.hitStats)hitStats=window.LearningRpgLocalRunEngine.hitStats(localGameDataSnapshot,battle,skill,hitStats);
       var hit = rollClientHit(battle.player, target);
       if (!hit.hit) {
+        if (hasLocalBattleSkillEngine()) window.LearningRpgLocalRunEngine.trigger(localGameDataSnapshot,battle,'onMiss',{actor:'player',target:target,damageKind:'direct',sourceSkillId:skill && skill.skillId || ''});
         battle.lastTurnEvents.push({
           actor: 'player',
           type: actionType || 'attack',
@@ -6890,12 +6939,14 @@
         });
         return;
       }
-      var critical = rollClientCriticalDamage(battle, damage);
+      var critical = rollClientCriticalDamageFromStats(damage,hitStats);
       var totalDamage = applyClientOutgoingItemDamageModifiers(battle, critical.damage, {
         actionType: actionType || 'attack',
         skill: skill,
       });
-      var damageResult = RULE_ENGINE_SHARED.dealDamageToMonster(target, totalDamage, battle);
+      var damageResult = hasLocalBattleSkillEngine() && window.LearningRpgLocalRunEngine.damage
+        ? window.LearningRpgLocalRunEngine.damage(localGameDataSnapshot,battle,target.instanceId || target.monsterId,totalDamage,{damageKind:'direct',sourceSkillId:skill && skill.skillId || '',isCritical:critical.isCritical})
+        : RULE_ENGINE_SHARED.dealDamageToMonster(target, totalDamage, battle);
       var shieldDamage = damageResult.shieldDamage;
       var hpDamage = damageResult.hpDamage;
       var displayDamage = damageResult.displayDamage;
@@ -7030,6 +7081,9 @@
     }
 
     function applyOptimisticPlayerDamage(battle, damage, attacker) {
+      if (hasLocalBattleSkillEngine() && window.LearningRpgLocalRunEngine.playerDamage) {
+        return window.LearningRpgLocalRunEngine.playerDamage(localGameDataSnapshot,battle,damage,attacker);
+      }
       var totalDamage = Math.max(0, Math.round(Number(damage || 0)));
       var shieldBefore = Number(battle.player.shield || 0);
       var shieldDamage = Math.min(shieldBefore, totalDamage);
@@ -7114,7 +7168,7 @@
       victoryRewardPreload = preload;
       // Capture the result before the regeneration presentation changes the HUD's HP.
       if (!victoryRewardResultPayload || victoryRewardResultPayload.key !== key) {
-        victoryRewardResultPayload = {key:key, payload:buildStageResultPayload(view, { includeAnswerLogs: false })};
+        victoryRewardResultPayload = {key:key, payload:buildStageResultPayload(view)};
       }
       var payload = JSON.parse(JSON.stringify(victoryRewardResultPayload.payload));
       var preparation = battleRewardPreparation && battleRewardPreparation.key === key ? battleRewardPreparation : null;
@@ -7144,7 +7198,11 @@
             currentRewardView = rewardView;
             ensureClientRewardState(rewardView);
             var rerollButton = document.getElementById('rewardRerollButton');
-            if (rerollButton) rerollButton.disabled = !!rewardView.rerollUsed || !rewardView.localTransitionToken;
+            if (rerollButton) {
+              rerollButton.disabled = !!rewardView.rerollUsed || !!rewardView.rerollUnavailable || !rewardView.localTransitionToken;
+              rerollButton.title = rewardView.rerollUnavailableReason || (rewardView.rerollUsed ? '이 스테이지의 새로고침 기회를 사용했습니다' : '문제를 맞히면 보상 전체 새로고침 · 스테이지마다 1회');
+            }
+            if (rewardView.rerollUnavailable) document.getElementById('rewardMessage').textContent = rewardView.rerollUnavailableReason;
           }
           if (preload.pendingRewardId) {
             var rewardId = preload.pendingRewardId;
@@ -7315,6 +7373,7 @@
         skillUseCounts: copyStageResultValue(battle.skillUseCounts, {}),
         usedSkillCountByTagThisBattle: copyStageResultValue(battle.usedSkillCountByTagThisBattle, {}),
         usedSkillCountByTagThisTurn: copyStageResultValue(battle.usedSkillCountByTagThisTurn, {}),
+        combatRuntime: copyStageResultValue(battle.combatRuntime, null),
         lastMessage: battle.lastMessage || '',
       };
     }
@@ -7569,8 +7628,8 @@
       rewardSelectionApplying = false;
       var rerollButton = document.getElementById('rewardRerollButton');
       if (rerollButton) {
-        rerollButton.disabled = !!rewardView.rerollUsed || !!rewardView.preparedDuringBattle || !rewardView.localTransitionToken;
-        rerollButton.title = rewardView.rerollUsed ? '이 스테이지의 새로고침 기회를 사용했습니다' : '문제를 맞히면 보상 전체 새로고침 · 스테이지마다 1회';
+        rerollButton.disabled = !!rewardView.rerollUsed || !!rewardView.rerollUnavailable || !!rewardView.preparedDuringBattle || !rewardView.localTransitionToken;
+        rerollButton.title = rewardView.rerollUnavailableReason || (rewardView.rerollUsed ? '이 스테이지의 새로고침 기회를 사용했습니다' : '문제를 맞히면 보상 전체 새로고침 · 스테이지마다 1회');
       }
       var regenAmount = Number(rewardView.regenAmount || 0);
       if (rewardView.intermissionStage) {
@@ -7602,9 +7661,24 @@
           name = getRewardDisplayTitle(reward.type);
         }
         var rarityBadge = reward.type === 'rest' ? '회복' : (reward.rarityLabel || getRewardRarityLabel(rarity));
+        // A bounded, deterministic burst follows the light-card as it contracts.
+        var dustCount = { epic: 24, legendary: 32, unique: 40 }[rarity] || 0;
+        var dust = [];
+        for (var particleIndex = 0; particleIndex < dustCount; particleIndex += 1) {
+          var angle = particleIndex * 2.399963;
+          var spread = 30 + (particleIndex % 7) * 6;
+          dust.push('<span class="reward-dust-particle" style="--dust-x:' + (50 + Math.cos(angle) * 46).toFixed(2) + '%;' +
+            '--dust-y:' + (50 + Math.sin(angle) * 46).toFixed(2) + '%;' +
+            '--dust-dx:' + (Math.cos(angle) * spread).toFixed(2) + 'px;' +
+            '--dust-dy:' + (Math.sin(angle) * spread - 48).toFixed(2) + 'px;' +
+            '--dust-delay:' + ((particleIndex * 37) % 190) + 'ms;' +
+            '--dust-duration:' + (1000 + (particleIndex % 6) * 160) + 'ms;' +
+            '--dust-size:' + (1.5 + (particleIndex % 4) * .65) + 'px"></span>');
+        }
         return '<button type="button" aria-pressed="false" class="reward-choice-card rarity-' + escapeHtml(rarity) + '" data-reward-id="' + escapeHtml(reward.rewardId) + '">' +
-          '<span class="reward-charge-light" aria-hidden="true"></span>' +
-          '<span class="reward-reveal-flash" aria-hidden="true"></span>' +
+          '<span class="reward-reveal-effect reward-charge-light" aria-hidden="true"><span class="reward-charge-spectrum"></span><span class="reward-charge-star"></span></span>' +
+          '<span class="reward-reveal-effect reward-reveal-flash" aria-hidden="true"><span class="reward-light-card"></span></span>' +
+          (dustCount ? '<span class="reward-reveal-effect reward-rarity-dust" aria-hidden="true">' + dust.join('') + '</span>' : '') +
           '<span class="reward-choice-shortcut" aria-hidden="true">' + (index + 1) + '</span>' +
           '<span class="reward-choice-selected-label" aria-hidden="true">✓ 선택됨</span>' +
           renderRewardRarityGems(rarity) +
@@ -7630,7 +7704,7 @@
         confirmButton.textContent = '확인';
       }
       var rewardModal = document.getElementById('rewardModal');
-      document.getElementById('rewardMessage').textContent = rewardView.choices.map(function(reward, index) { return index + 1; }).join(' · ') + ' 선택 / Enter 확정';
+      document.getElementById('rewardMessage').textContent = rewardView.rerollUnavailableReason || (rewardView.choices.map(function(reward, index) { return index + 1; }).join(' · ') + ' 선택 / Enter 확정');
       document.getElementById('rewardMessage').className = 'message';
       rewardModal.classList.remove('reward-applying');
       rewardModal.classList.add('active');
@@ -7663,7 +7737,7 @@
 
     function startRewardReroll() {
       if (rewardRerollBusy || rewardSelectionApplying || workbookDeadlineExpired || !currentRewardView
-          || currentRewardView.rerollUsed || !currentRewardView.localTransitionToken) return;
+          || currentRewardView.rerollUsed || currentRewardView.rerollUnavailable || !currentRewardView.localTransitionToken) return;
       rewardSelectionApplying = true;
       document.getElementById('rewardRerollButton').disabled = true;
       if (currentRewardView.rerollQuestion) {
@@ -7711,6 +7785,23 @@
     }
 
     function requestRewardReroll(action, answer) {
+      function showRequestError(message) {
+        rewardRerollBusy = false;
+        if (workbookDeadlineExpired) return;
+        if (currentQuestionView && currentQuestionView.isRewardReroll) {
+          document.getElementById('questionMessage').textContent = message;
+          document.getElementById('questionSubmitButton').disabled = false;
+          document.getElementById('questionSubmitButton').textContent = '결과 저장 재시도';
+        } else {
+          rewardSelectionApplying = false;
+          var rerollButton = document.getElementById('rewardRerollButton');
+          rerollButton.disabled = !!currentRewardView.rerollUsed || !!currentRewardView.rerollUnavailable;
+          rerollButton.title = currentRewardView.rerollUnavailableReason || message;
+          // Preserve the displayed cards and selection; an error is not a reveal.
+          document.getElementById('rewardMessage').textContent = message;
+          document.getElementById('rewardMessage').className = 'message error';
+        }
+      }
       rewardRerollBusy = true;
       rewardSelectionApplying = true;
       var payload = buildStageResultPayload(currentView);
@@ -7727,16 +7818,30 @@
           handleRewardSelectionResponse(response);
           return;
         }
+        if (!response || !response.rewardView || ['pending','success','failed','unavailable'].indexOf(response.rerollStatus) === -1
+            || response.rerollStatus === 'pending' && !response.rerollQuestion) {
+          showRequestError('새로고침 응답을 확인할 수 없습니다. 페이지와 Apps Script 배포 버전을 확인해 주세요.');
+          return;
+        }
         var intermissionRewardsOnly = currentRewardView && !currentRewardView.floorRestChoice && response.rewardView.floorRestChoice;
         currentRewardView = response.rewardView;
         if (intermissionRewardsOnly) currentRewardView = Object.assign({}, currentRewardView, { floorRestChoice:false, choices:getFloorIntermissionRewardChoices(currentRewardView) });
         ensureClientRewardState(currentRewardView);
         if (victoryRewardPreload) victoryRewardPreload.rewardView = currentRewardView;
+        if (response.rerollStatus === 'unavailable') {
+          showRequestError(response.rerollMessage || currentRewardView.rerollUnavailableReason);
+          return;
+        }
         if (response.rerollStatus === 'pending') {
           openRewardRerollQuestion(response.rerollQuestion);
           return;
         }
-        if (!currentQuestionView || !currentQuestionView.isRewardReroll) return;
+        if (!currentQuestionView || !currentQuestionView.isRewardReroll) {
+          rewardSelectionApplying = false;
+          if (response.rerollStatus === 'success') renderRewardChoices(currentRewardView);
+          else showRequestError('새로고침에 실패했습니다. 기존 보상을 선택하세요.');
+          return;
+        }
         currentQuestionView.rerollComplete = true;
         currentQuestionView.rerollStatus = response.rerollStatus;
         currentQuestionView.lockedEfficiency = response.rerollStatus === 'success' ? 1 : 0;
@@ -7748,17 +7853,8 @@
         document.getElementById('questionMessage').textContent = response.rerollStatus === 'success'
           ? '정답입니다. 보상 전체를 새로고침했습니다.' : '새로고침 실패 · 효율 0% · 추가 답안을 선택할 수 없습니다.';
       }).withFailureHandler(function(error) {
-        rewardRerollBusy = false;
-        if (workbookDeadlineExpired) return;
         var message = error && error.message || '요청에 실패했습니다. 다시 시도하세요.';
-        if (currentQuestionView && currentQuestionView.isRewardReroll) {
-          document.getElementById('questionMessage').textContent = message;
-          document.getElementById('questionSubmitButton').disabled = false;
-          document.getElementById('questionSubmitButton').textContent = '결과 저장 재시도';
-        } else {
-          renderRewardChoices(currentRewardView);
-          document.getElementById('rewardMessage').textContent = message;
-        }
+        showRequestError(message);
       }).previewRewardChoicesForStageResult(payload, getAuthToken());
     }
 

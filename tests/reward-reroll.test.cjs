@@ -34,8 +34,27 @@ test('reroll chooses randomly only among the lowest accuracy questions across di
     { questionId: 'excluded', correctCount: 0, totalCount: 10, status: 'pending' },
   ].map(q => ({ status: 'approved', ...q }));
   assert.ok(['low1', 'low2'].includes(c.pickRewardRerollQuestion_(questions).questionId));
-  assert.equal(c.pickRewardRerollQuestion_([{ ...questions[0], questionId: 'unattempted', totalCount: 0 }, ...questions]).questionId, 'unattempted');
+  assert.ok(['low1', 'low2'].includes(c.pickRewardRerollQuestion_([{ ...questions[0], questionId: 'unattempted', totalCount: 0 }, ...questions]).questionId));
   assert.equal(c.pickRewardRerollQuestion_([]), null);
+});
+
+test('reroll excludes unattempted questions and still allows attempted questions with zero correct answers', () => {
+  const { c } = context();
+  const unattempted = [0, undefined, '', -1, 'invalid', Infinity].map((totalCount, i) => ({
+    questionId: 'unattempted-' + i, status: 'approved', totalCount, correctCount: 0,
+  }));
+  assert.equal(c.pickRewardRerollQuestion_(unattempted), null);
+  const wrong = { questionId: 'wrong', status: 'approved', totalCount: 1, correctCount: 0 };
+  assert.equal(c.pickRewardRerollQuestion_([...unattempted, wrong]).questionId, 'wrong');
+});
+
+test('no attempted questions leaves normal rewards intact and does not preload a reroll question', () => {
+  const { c } = context();
+  c.readRunQuestionsForBattle_ = () => [{ questionId: 'new', status: 'approved', totalCount: 0, correctCount: 0 }];
+  const view = { rerollUsed: false, choices: [{rewardId:'keep'}] };
+  assert.equal(c.prepareRewardRerollQuestion_(view, {}), view);
+  assert.equal(view.rerollQuestion, undefined);
+  assert.deepEqual(view.choices, [{rewardId:'keep'}]);
 });
 
 test('reroll wrong multiple choice fails once, keeps all rewards and survives cache loss', () => {
@@ -61,6 +80,10 @@ test('reroll success issues signed choices without extra currency or healing and
   assert.equal(result.rerollStatus, 'success');
   assert.equal(result.rewardView.rerollUsed, true);
   assert.notEqual(result.rewardView.localTransitionToken, g.original.localTransitionToken);
+  assert.equal(result.rewardView.choices.length,g.original.choices.length);
+  const identity = reward => [reward.type,reward.targetId,reward.value].join(':');
+  const previous = g.original.choices.map(identity);
+  assert.ok(result.rewardView.choices.every(reward => !previous.includes(identity(reward))), 'reroll excludes all previous choices even with fixed randomness');
   assert.equal(result.rewardView.currencyAmount, g.original.currencyAmount);
   assert.equal(result.rewardView.currentHpAfterRegen, g.original.currentHpAfterRegen);
   assert.deepEqual(copy(result.rewardView.battleCompletionReceipt), copy(g.original.battleCompletionReceipt));
@@ -73,6 +96,55 @@ test('reroll success issues signed choices without extra currency or healing and
   assert.equal(next.localRunState.currentStage, 2);
   const duplicate = g.request('start');
   assert.equal(duplicate.rewardView.localTransitionToken, result.rewardView.localTransitionToken);
+});
+
+test('reroll counts current-run attempts before sheet settlement and never double-counts committed battles', () => {
+  const x=context(),initial=start(x),run=x.c.decodeRunSession_(initial.runSessionToken).run;
+  const question={questionId:'recent',workbookId:'w',type:'multipleChoice',status:'approved',answer:'2',correctCount:0,totalCount:0};
+  x.c.readRunQuestionsForBattle_=()=>[question,{...question,questionId:'unseen'}];
+  const base={questionId:'recent',questionSnapshot:question,questionSignature:x.c.signLocalQuestionSnapshot_(question),attemptsRecorded:true};
+  const payload={battle:initial.battle,answerLogs:[{...base,selectedChoiceIndex:1,attemptOnly:true},{...base,selectedChoiceIndex:2,wrongCountAfterTimeout:1}]};
+  const counts=x.c.getRewardRerollQuestions_(run,payload);
+  assert.deepEqual(copy(counts.map(q=>[q.questionId,q.totalCount,q.correctCount])),[['recent',1,0],['unseen',0,0]]);
+  assert.equal(x.c.pickRewardRerollQuestion_(counts).questionId,'recent');
+  assert.equal(question.totalCount,0,'master question statistics remain unchanged');
+  x.c.ACTIVE_RUN_SESSION_={answerBatches:[{battle:{battleId:initial.battle.battleId},logs:[{questionId:'recent',isCorrect:false}]}]};
+  assert.deepEqual(copy(x.c.getRewardRerollQuestions_(run,payload)),copy(counts));
+  x.c.ACTIVE_RUN_SESSION_=null;
+});
+
+test('reroll refreshes an unavailable combat plan with the just-completed battle answers', () => {
+  const x=context(),initial=start(x);
+  const question={questionId:'recent',workbookId:'w',creatorId:'p',type:'multipleChoice',status:'approved',prompt:'문제',answer:'2',choice1:'오답',choice2:'정답',difficulty:1,correctCount:0,totalCount:0};
+  x.c.readRunQuestionsForBattle_=()=>[question];
+  const payload={runId:initial.runId,runSessionToken:initial.runSessionToken,localAdvanceEnabled:true,localTransitions:[],battle:copy(initial.battle),stageState:copy(initial.stageState),answerLogs:[]};
+  const plan=x.c.prepareRewardChoicesDuringBattle(payload,'auth');
+  assert.equal(plan.rerollUnavailable,true);
+  payload.runSessionToken=plan.runSessionToken;
+  payload.battle.status='victory';payload.battle.monsters.forEach(m=>{m.currentHp=0;});
+  payload.rewardPreparationToken=plan.rewardPreparationToken;
+  payload.answerLogs=[{questionId:'recent',questionSnapshot:question,questionSignature:x.c.signLocalQuestionSnapshot_(question),selectedChoiceIndex:1,wrongCountAfterTimeout:1}];
+  const reward=x.c.previewRewardChoicesForStageResult(payload,'auth');
+  assert.equal(reward.rerollUnavailable,false);
+  assert.equal(reward.rerollQuestion.questionId,'recent');
+  assert.equal(reward.rerollQuestion.totalCount,1);
+  assert.equal(reward.rerollQuestion.correctCount,0);
+  const pending=x.c.previewRewardChoicesForStageResult({...payload,runSessionToken:reward.runSessionToken,rewardToken:reward.localTransitionToken,rewardRerollAction:'start'},'auth');
+  assert.equal(pending.rerollStatus,'pending');
+  assert.equal(pending.rerollQuestion.questionId,'recent');
+});
+
+test('reroll without attempted questions reports unavailable without consuming the chance or redrawing rewards', () => {
+  const g=game(),view=copy(g.original);
+  delete view.rerollQuestion;
+  g.x.c.readRunQuestionsForBattle_=()=>[{questionId:'new',type:'multipleChoice',status:'approved',totalCount:0}];
+  g.payload.rewardToken=g.x.c.signLocalRewardView_(view).localTransitionToken;
+  const response=g.request('start');
+  assert.equal(response.rerollStatus,'unavailable');
+  assert.equal(response.rewardView.rerollUsed,false);
+  assert.equal(response.rewardView.rerollUnavailable,true);
+  assert.match(response.rerollMessage,/풀이 기록/);
+  assert.deepEqual(copy(response.rewardView.choices),copy(view.choices));
 });
 
 test('reroll ships its question with rewards and accepts the first answer without a start round trip', () => {

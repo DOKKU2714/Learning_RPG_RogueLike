@@ -492,7 +492,7 @@ function setupDatabase() {
   });
 }
 
-// Run once after deployment. Keep legacy AI columns for reference; never overwrite configured values.
+// Run before removing legacy AI columns; never overwrite configured destination values.
 function migrateMonsterAttackEffects() {
   ensureTableColumns_(DB_SHEETS.MONSTERS, DB_COLUMNS.MONSTERS);
   ensureTableColumns_(DB_SHEETS.SKILLS, DB_COLUMNS.SKILLS);
@@ -501,7 +501,10 @@ function migrateMonsterAttackEffects() {
   function migrate(rows, sheetName, key, getValues, updated) {
     rows.forEach(function(row) {
       if (String(row.attackEffect || '').trim()) return;
-      var values = getValues(row).map(function(value) { return String(value || '').trim().toLowerCase(); })
+      var values = getValues(row).map(function(value) {
+        var normalized = String(value || '').trim().toLowerCase();
+        return { punch: 'blunt', thurst: 'thrust' }[normalized] || normalized;
+      })
         .filter(function(value, index, all) { return value && all.indexOf(value) === index; });
       if (!values.length) return;
       if (values.length !== 1 || ['slash', 'blunt', 'thrust', 'fire', 'none'].indexOf(values[0]) === -1) {
@@ -520,7 +523,7 @@ function migrateMonsterAttackEffects() {
   }, report.updatedMonsters);
   migrate(readTable_(DB_SHEETS.SKILLS), DB_SHEETS.SKILLS, 'skillId', function(skill) {
     return rules.filter(function(rule) { return rule.skillId === skill.skillId; })
-      .map(function(rule) { return rule.skillAttackEffect; });
+      .map(function(rule) { return rule.skillAttackEffect || rule.attackEffect; });
   }, report.updatedSkills);
   clearMasterTableCaches_();
   Logger.log(JSON.stringify(report));

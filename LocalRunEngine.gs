@@ -25,7 +25,8 @@ function getLocalRunEngineSource_() {
   [commitStageResultUnlocked_, selectRewardUnlocked_, startBattle, buildBattleStateView_,
     applySkillEffect, processSkillTriggers_, processSkillFailPenaltyAfterAnswer_,
     tickEffectsAtTurnStart, tickEffectsAtTurnEnd, tickEffectsOnPlayerAction,
-     getAvailableSkills, normalizePlayerActionPoints_, refreshPreparedRewardView_].forEach(collect);
+     getAvailableSkills, normalizePlayerActionPoints_, refreshPreparedRewardView_,
+     dealDamageToPlayer_, dealDamageToMonster_, beginCombatActorTurn_, clearPlayerTurnShield_, prepareCombatHit_, applyMonsterBurnDamage_].forEach(collect);
   var constants = { DB_SHEETS: DB_SHEETS, DB_COLUMNS: DB_COLUMNS, STATUS: STATUS, AVATAR_TYPES: AVATAR_TYPES,
     QUESTION_TYPES: QUESTION_TYPES, ACTION_TYPES: ACTION_TYPES, SKILL_TYPES: SKILL_TYPES, REWARD_TYPES: REWARD_TYPES,
     RARITIES: RARITIES, RARITY_LABELS: RARITY_LABELS, EFFECT_CATEGORIES: EFFECT_CATEGORIES, EFFECT_TYPES: EFFECT_TYPES,
@@ -37,7 +38,7 @@ function getLocalRunEngineSource_() {
     ALLOWED_REWARD_STAT_KEYS_: ALLOWED_REWARD_STAT_KEYS_, MASTER_ITEMS: MASTER_ITEMS,
     MASTER_EFFECTS: MASTER_EFFECTS, MASTER_MONSTERS: MASTER_MONSTERS, MASTER_SETTINGS: MASTER_SETTINGS };
   var declarations = Object.keys(constants).map(function(name) { return 'var ' + name + '=' + JSON.stringify(constants[name]) + ';'; }).join('\n');
-   var source = '(function(nativeDate,nativeMath){\n' + declarations + '\n' + adapters + '\n' + getSharedRuleEngineSource_() + '\n' + sources.join('\n') + '\nreturn {advance: advanceLocalRun, reward: refreshLocalReward, skill: applyLocalBattleSkill, trigger: processLocalBattleTrigger, tick: tickLocalBattleEffects, skills: getLocalBattleSkills};\n})(Date,Math)';
+   var source = '(function(nativeDate,nativeMath){\n' + declarations + '\n' + adapters + '\n' + getSharedRuleEngineSource_() + '\n' + sources.join('\n') + '\nreturn {advance: advanceLocalRun, reward: refreshLocalReward, skill: applyLocalBattleSkill, trigger: processLocalBattleTrigger, tick: tickLocalBattleEffects, skills: getLocalBattleSkills, damage:applyLocalCombatDamage, playerDamage:applyLocalPlayerDamage, actorTurn:beginLocalActorTurn, hitStats:localCombatHitStats};\n})(Date,Math)';
   if (/\b(?:SpreadsheetApp|PropertiesService|CacheService|LockService|UrlFetchApp|ScriptApp)\b/.test(source)) throw new Error('클라이언트 전투 규칙에 서버 의존성이 남아 있습니다.');
   return source;
 }
@@ -69,7 +70,7 @@ function getLocalRunEngineAdapters_() {
       var master = findCachedRowByKey_(DB_SHEETS.SKILLS, 'skillId', skill.skillId);
       var hydrated = hydrateSkill_(master || skill, skill.level);
       if (!processSkillFailPenaltyAfterAnswer_(battle, hydrated, isCorrect)) {
-        applySkillEffect(battle, Object.assign({}, hydrated, {targetId:targetId || ''}), efficiency, isCorrect);
+        applySkillEffect(battle, Object.assign({}, hydrated, {targetId:targetId || '',secondaryTargetId:skill.secondaryTargetId || '',cooldownTargetSkillId:skill.cooldownTargetSkillId || ''}), efficiency, isCorrect);
       }
       return battle;
     });
@@ -77,10 +78,23 @@ function getLocalRunEngineAdapters_() {
   function processLocalBattleTrigger(snapshot, battle, timing, payload) {
     return withLocalBattleRules(snapshot, battle, function() { processSkillTriggers_(battle, timing, payload || {}); });
   }
+  function applyLocalCombatDamage(snapshot, battle, targetId, amount, context) {
+    return withLocalBattleRules(snapshot, battle, function() { return dealDamageToMonster_(battle, getSkillTarget_(battle,{target:'enemy'},targetId), amount, context); });
+  }
+  function localCombatHitStats(snapshot,battle,skill,stats) {
+    return withLocalBattleRules(snapshot,battle,function(){return prepareCombatHit_(battle,skill,stats);});
+  }
+  function applyLocalPlayerDamage(snapshot, battle, amount, attacker, context) {
+    return withLocalBattleRules(snapshot, battle, function() { return dealDamageToPlayer_(battle,amount,attacker,context); });
+  }
+  function beginLocalActorTurn(snapshot, battle, target) {
+    return withLocalBattleRules(snapshot, battle, function() { return beginCombatActorTurn_(battle,target); });
+  }
   function tickLocalBattleEffects(snapshot, battle, timing) {
     return withLocalBattleRules(snapshot, battle, function() {
       if (timing === 'turnStart') { normalizePlayerActionPoints_(battle, true); return tickEffectsAtTurnStart(battle); }
       if (timing === 'turnEnd') return tickEffectsAtTurnEnd(battle);
+      if (timing === 'beforeMonsterTurn') {processSkillTriggers_(battle,'onBeforeMonsterTurn',{});getAliveMonsters_(battle).forEach(function(m){applyMonsterBurnDamage_(m,battle);});return battle;}
       return tickEffectsOnPlayerAction(battle);
     });
   }
@@ -198,7 +212,7 @@ function buildLocalTransitionPermit_(run, stageId, battleId, ghostSelection) {
 }
 function prepareLocalRewardTransitions_(view, stagePayload, authToken, deferGhost) {
   var run = requireRun_(stagePayload.runId);
-  prepareRewardRerollQuestion_(view, run);
+  prepareRewardRerollQuestion_(view, run, stagePayload);
   var snapshot = ACTIVE_GAME_DATA_SNAPSHOT_;
   var battle = stagePayload.battle || {};
   var state = getStageState_(run);

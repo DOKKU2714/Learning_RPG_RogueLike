@@ -67,6 +67,7 @@ function buildClientSkillEffects_(skill) {
   if (rule.efficiencyBonus && Array.isArray(rule.efficiencyBonus.applyEffects)) {
     effects = effects.concat(rule.efficiencyBonus.applyEffects);
   }
+  effects=effects.concat((rule.actions || []).concat(rule.combat && rule.combat.onEachHit || []).filter(function(a){return a.operation==='applyEffect';}));
   return effects.map(function(effectRule) {
     var effect = effectRule.effectId ? findCachedRowByKey_(DB_SHEETS.EFFECTS, 'effectId', effectRule.effectId, 600) : null;
     if (!effect) {
@@ -120,6 +121,7 @@ function buildSkillEffectDetails_(skill) {
   if (rule.efficiencyBonus && Array.isArray(rule.efficiencyBonus.applyEffects)) {
     effects = effects.concat(rule.efficiencyBonus.applyEffects);
   }
+  effects=effects.concat((rule.actions || []).concat(rule.combat && rule.combat.onEachHit || []).filter(function(a){return a.operation==='applyEffect';}));
   return effects.map(function(effectRule) {
     var effect = effectRule.effectId ? findCachedRowByKey_(DB_SHEETS.EFFECTS, 'effectId', effectRule.effectId, 600) : null;
     var value = effectRule.valueFormula !== undefined && effectRule.valueFormula !== null && effectRule.valueFormula !== ''
@@ -286,6 +288,8 @@ function useSkill(runId, skillId, targetId, answerPayload) {
       actionType: ACTION_TYPES.SKILL,
       skillId: skill.skillId,
       targetId: targetId || '',
+      secondaryTargetId:payload.secondaryTargetId || '',
+      cooldownTargetSkillId:payload.cooldownTargetSkillId || '',
       actionPointCost: getActionPointCostForAction_(ACTION_TYPES.SKILL, skill, battleState),
       questionId: questionResult.question.questionId,
       question: sanitizeQuestionForBattleCache_(questionResult.question, player.playerId),
@@ -355,7 +359,7 @@ function useSkill(runId, skillId, targetId, answerPayload) {
     processSkillTriggers_(battleState, isCorrect ? 'onCorrect' : 'onWrong', { isCorrect: isCorrect, efficiency: efficiency });
     var blockedByPenalty = processSkillFailPenaltyAfterAnswer_(battleState, skill, isCorrect);
     if (!blockedByPenalty && battleState.player.hp > 0 && battleState.status === STATUS.BATTLE_ACTIVE) {
-      applySkillEffect(battleState, Object.assign({}, skill, { targetId: pendingAction.targetId || '' }), efficiency, isCorrect);
+      applySkillEffect(battleState, Object.assign({}, skill, { targetId: pendingAction.targetId || '',secondaryTargetId:pendingAction.secondaryTargetId || payload.secondaryTargetId || '',cooldownTargetSkillId:pendingAction.cooldownTargetSkillId || payload.cooldownTargetSkillId || '' }), efficiency, isCorrect);
     }
     clearActiveMonsterScoreContext_(battleState);
   }
@@ -404,6 +408,7 @@ function applySkillEffect(battleState, skill, efficiency, isCorrect) {
   if (shouldUseSkillRuleEngine_(skillRule)) {
     return executeSkillByRule_(battleState, skill, skillRule, efficiency, isCorrect);
   }
+  getSharedRuleEngine_().beginCombatAction(battleState, skill);
 
   normalizeBattleStateEffects_(battleState);
   var effectiveStats = calculateEffectiveStats(battleState.player.stats || {}, battleState.player.effects || []);
@@ -442,7 +447,7 @@ function applySkillEffect(battleState, skill, efficiency, isCorrect) {
         var critical = rollCriticalDamage_(areaBaseDamage, effectiveStats, skillRule.criticalBonus);
         var damage = applyFrozenBonusIfNeeded_(damageTarget, critical.damage);
         damage = applyOutgoingItemDamageModifiers_(battleState, damage, { actionType: ACTION_TYPES.SKILL, skill: skill });
-        var damageResult = dealDamageToMonster_(battleState, damageTarget, damage);
+        var damageResult = dealDamageToMonster_(battleState, damageTarget, damage, {damageKind:'direct',sourceSkillId:skill.skillId,isCritical:critical.isCritical});
         getSharedRuleEngine_().applyCriticalItemHealing(battleState, critical.isCritical, damageResult.damage);
         events.push({
           actor: 'player',
@@ -500,7 +505,7 @@ function applySkillEffect(battleState, skill, efficiency, isCorrect) {
       var critical = rollCriticalDamage_(baseDamage, effectiveStats, skillRule.criticalBonus);
       var damage = applyFrozenBonusIfNeeded_(target, critical.damage);
       damage = applyOutgoingItemDamageModifiers_(battleState, damage, { actionType: ACTION_TYPES.SKILL, skill: skill });
-      var damageResult = dealDamageToMonster_(battleState, target, damage);
+      var damageResult = dealDamageToMonster_(battleState, target, damage, {damageKind:'direct',sourceSkillId:skill.skillId,isCritical:critical.isCritical});
       getSharedRuleEngine_().applyCriticalItemHealing(battleState, critical.isCritical, damageResult.damage);
       events.push({
         actor: 'player',
@@ -524,6 +529,7 @@ function applySkillEffect(battleState, skill, efficiency, isCorrect) {
     battleState.lastMessage = skill.name + '을 사용했습니다.';
   } else if (skill.type === SKILL_TYPES.SHIELD) {
     var shield = Math.max(0, Math.round((Number(skill.baseValue || 0) + Number(effectiveStats.defense || 0)) * Number(efficiency || 0)));
+    if(combatShieldBlocked_(battleState.player))shield=0;
     battleState.player.shield = Number(battleState.player.shield || 0) + shield;
     events.push({ actor: 'player', type: ACTION_TYPES.GUARD, shield: shield, message: skill.name + '으로 방어막 ' + shield + ' 생성!' });
     applySkillLinkedEffect_(battleState.player, skill, 'self', battleState);
@@ -620,10 +626,22 @@ function validateSkillEfficiencyBonusRule_(battleState, skill, efficiencyBonus) 
 
 function executeSkillByRule_(battleState, skill, rule, efficiency, isCorrect) {
   validateSkillRuleKeys_(battleState, skill, rule);
+  getSharedRuleEngine_().validateSkillRule(rule);
+  getSharedRuleEngine_().validateCombatActions(rule.actions);
+  var combatTarget=getSkillTarget_(battleState,skill,skill.targetId || '');
+  var combatReason=checkCombatSkillConditions_(battleState,skill,rule,combatTarget);
+  if(combatReason)throw new Error(combatReason);
+  (rule.actions || []).forEach(function(a){if(a.operation!=='cooldownSelect')return;var choices=combatCooldownCandidates_(battleState,skill,a.tag);if(!skill.cooldownTargetSkillId && choices.length===1)skill.cooldownTargetSkillId=choices[0].skillId;if(!choices.some(function(s){return s.skillId===skill.cooldownTargetSkillId;}))throw new Error('쿨타임을 줄일 스킬을 선택하세요.');});
+  if ((rule.actions || []).some(function(action) { return action.target === 'secondary' || action.operation === 'moveStacks' || action.operation === 'copyStacks'; })) {
+    var secondary = (battleState.monsters || []).filter(function(monster) { return Number(monster.currentHp) > 0 && (monster.instanceId || monster.monsterId) === skill.secondaryTargetId; })[0];
+    if (!secondary) throw new Error('살아 있는 보조 대상을 선택해야 합니다.');
+  }
   normalizeBattleStateEffects_(battleState);
   normalizeBattleMonsters_(battleState);
   normalizePlayerActionPoints_(battleState, false);
   battleState.lastTurnEvents = battleState.lastTurnEvents || [];
+  getSharedRuleEngine_().beginCombatAction(battleState, skill);
+  rule = prepareCombatSkill_(battleState, skill, rule);
   if (rule.consumeEffect && getSkillEffectTotal_(battleState.player, rule.consumeEffect.effectId) < Number(rule.consumeEffect.minValue || 1)) return battleState;
   if (rule.requireCondition && rule.requireCondition.requireEfficiencyAtLeast && Number(efficiency || 0) < Number(rule.requireCondition.requireEfficiencyAtLeast)) {
     battleState.lastTurnEvents.push({ actor: 'player', type: ACTION_TYPES.SKILL, skillId: skill.skillId, message: skill.name + ' 사용 조건을 만족하지 못했습니다.' });
@@ -704,8 +722,11 @@ function executeSkillByRule_(battleState, skill, rule, efficiency, isCorrect) {
         evasion: damageTarget.evasion,
         accuracy: 100,
       }, damageTarget.effects || []);
-      var hit = rollHit_(criticalStats, targetStats);
+      var hitStats = prepareCombatHit_(battleState, skill, criticalStats);
+      if (rule.combat && rule.combat.ignoreEvasion) targetStats.evasion = 0;
+      var hit = rollHit_(hitStats, targetStats);
       if (!hit.hit) {
+        processSkillTriggers_(battleState, 'onMiss', {actor:'player',target:damageTarget,damageKind:'direct',sourceSkillId:skill.skillId});
         battleState.lastTurnEvents.push({
           actor: 'player',
           type: ACTION_TYPES.SKILL,
@@ -722,13 +743,14 @@ function executeSkillByRule_(battleState, skill, rule, efficiency, isCorrect) {
       }
       var criticalRule = rule.criticalBonus;
       if (criticalRule && Array.isArray(criticalRule.targetEffects) && !criticalRule.targetEffects.some(function(id) { return hasEffect_(damageTarget, id); })) criticalRule = null;
-      var critical = rollCriticalDamage_(damage, criticalStats, criticalRule);
+      var critical = rollCriticalDamage_(damage, hitStats, criticalRule);
       damage = applyFrozenBonusIfNeeded_(damageTarget, critical.damage);
       damage = applyOutgoingItemDamageModifiers_(battleState, damage, { actionType: ACTION_TYPES.SKILL, skill: skill });
-      var damageResult = dealDamageToMonster_(battleState, damageTarget, damage);
+      var damageResult = dealDamageToMonster_(battleState, damageTarget, damage, {damageKind:'direct', sourceSkillId:skill.skillId, isCritical:critical.isCritical, shatterMultiplier:rule.combat && rule.combat.shatterMultiplier, shieldOnlyDamage:rule.combat && rule.combat.shieldDamageFormula ? evaluateSkillFormula_(rule.combat.shieldDamageFormula,targetContext,battleState,skill) : 0});
       getSharedRuleEngine_().applyCriticalItemHealing(battleState, critical.isCritical, damageResult.damage);
       damageEvents += 1;
       totalDamageDealt += Number(damageResult.damage || 0);
+      if (rule.combat && rule.combat.onEachHit) executeCombatActions_(battleState,skill,rule.combat.onEachHit,[damageTarget],targetContext);
       if (critical.isCritical && criticalRule && Array.isArray(criticalRule.applyEffects)) {
         applySkillRuleEffects_(battleState, skill, {applyEffects:criticalRule.applyEffects}, [damageTarget], targetContext);
       }
@@ -739,20 +761,24 @@ function executeSkillByRule_(battleState, skill, rule, efficiency, isCorrect) {
         attackEffect: skill.attackEffect || '',
         targetMonsterId: damageTarget.instanceId || damageTarget.monsterId,
         damage: damageResult.damage,
+        displayDamage: damageResult.displayDamage,
         shieldDamage: damageResult.shieldDamage,
         hpDamage: damageResult.hpDamage,
         isCritical: critical.isCritical,
         criticalMultiplier: critical.multiplier,
         simultaneousGroupId: normalizedTargetMode === 'allEnemies' ? skill.skillId + ':allEnemies:' + i : (hitCount > 1 ? skill.skillId + ':multiHit' : ''),
         message: critical.isCritical
-          ? skill.name + ' 치명타! ' + damageResult.damage + ' 피해!'
-          : skill.name + '으로 ' + damageResult.damage + ' 피해!',
+          ? skill.name + ' 치명타! ' + damageResult.displayDamage + ' 피해!'
+          : skill.name + '으로 ' + damageResult.displayDamage + ' 피해!',
       });
     }
   });
 
   applySkillRuleDamageHeal_(battleState, skill, rule, context, totalDamageDealt);
   applySkillRuleEffects_(battleState, skill, rule, targets, context);
+  executeCombatActions_(battleState, skill, rule.actions, targets, context);
+  context.landedHits=damageEvents;
+  finishCombatSkill_(battleState,skill,rule,targets,context);
   if (rule.efficiencyBonus && Number(efficiency || 0) >= Number(rule.efficiencyBonus.threshold || 0) && Array.isArray(rule.efficiencyBonus.applyEffects)) {
     applySkillRuleEffects_(battleState, skill, { applyEffects: rule.efficiencyBonus.applyEffects }, targets, context);
   }
@@ -765,6 +791,7 @@ function executeSkillByRule_(battleState, skill, rule, efficiency, isCorrect) {
   if (!battleState.suppressSkillUseBookkeeping) {
     applyCooldownModify_(battleState, skill, rule.cooldownModify);
     trackSkillTagsForUse_(battleState, skill);
+    trackCombatAttack_(battleState,skill,rule);
   }
   syncPrimaryMonster_(battleState);
   battleState.lastMessage = skill.name + '을 사용했습니다.';
@@ -787,7 +814,8 @@ function buildSkillRulePreviewText_(skill, battleState, rule) {
       previewDamage += evaluateSkillFormula_(rule.extraDamageFormula, context, battleState, skill);
     }
     previewDamage = Math.max(0, Math.round(previewDamage));
-    parts.push('Damage ' + previewDamage);
+    var randomRange=getSharedRuleEngine_().randomDamageRange(rule,context);
+    parts.push('Damage ' + (randomRange?randomRange.min+'-'+randomRange.max:previewDamage));
   }
   var shield = getSkillRuleDisplayShield_(battleState, skill, rule, context);
   if (shield > 0) {
@@ -831,6 +859,8 @@ function getSkillRuleDisplayShield_(battleState, skill, rule, context) {
 
 function collectSkillRuleShieldFormulas_(rule) {
   var formulas = [];
+  (rule && rule.actions || []).forEach(function(a){if(a.operation==='shield' && a.amountFormula)formulas.push(a.amountFormula);});
+  if(rule && rule.combat && rule.combat.randomShield)formulas.push(rule.combat.randomShield.high);
   appendSkillRuleShieldFormula_(formulas, rule);
   appendSkillRuleShieldFormula_(formulas, rule && rule.onUse);
   appendSkillRuleShieldFormula_(formulas, rule && rule.onCorrect);
@@ -872,6 +902,7 @@ function calculateSkillRuleDamage_(battleState, skill, rule, context, efficiency
 }
 
 function applySkillRuleShield_(battleState, skill, rule, context, efficiency) {
+  if (combatShieldBlocked_(battleState.player)) return;
   if (rule.shieldFormula === undefined || rule.shieldFormula === null || rule.shieldFormula === '') {
     return;
   }
@@ -903,7 +934,7 @@ function applySkillRuleCopyActions_(battleState, skill, rule, targets) {
   var copyShield = rule.copyTargetShield === true || String(rule.copyTargetShield).toLowerCase() === 'true' || String(rule.copyTargetShield) === '1';
   var copyBuffs = rule.copyTargetBuffs === true || String(rule.copyTargetBuffs).toLowerCase() === 'true' || String(rule.copyTargetBuffs) === '1';
 
-  if (copyShield) {
+  if (copyShield && !combatShieldBlocked_(battleState.player)) {
     var copiedShield = Math.max(0, Math.round(Number(source.shield || 0)));
     if (copiedShield > 0) {
       battleState.player.shield = Number(battleState.player.shield || 0) + copiedShield;
@@ -1074,6 +1105,8 @@ function checkSkillConditions_(rule, skill, battleState, target) {
   }
   normalizeSkillRuntimeState_(battleState);
   var condition = rule.requireCondition || {};
+  var combatReason = checkCombatSkillConditions_(battleState,skill,rule,target);
+  if (combatReason) return combatReason;
   if (Array.isArray(condition.targetEffects)) {
     var candidates = skill.targetId ? [target].filter(Boolean) : getAliveMonsters_(battleState);
     if (!candidates.some(function(candidate) { return condition.targetEffects.some(function(id) { return hasEffect_(candidate, id); }); })) return '기절 또는 수면 상태의 대상이 필요합니다.';
@@ -1137,7 +1170,7 @@ function buildSkillFormulaContext_(battleState, skill, target, efficiency) {
   var upgradeLevel = Math.max(0, level - 1);
   var tagCounts = battleState.usedSkillCountByTagThisBattle || {};
   var turnTagCounts = battleState.usedSkillCountByTagThisTurn || {};
-  return {
+  return Object.assign({
     n: upgradeLevel,
     upgrade: upgradeLevel,
     level: level,
@@ -1164,7 +1197,7 @@ function buildSkillFormulaContext_(battleState, skill, target, efficiency) {
     efficiency: Number(efficiency || 0),
     usedStrikeSkillCountThisBattle: Number(tagCounts.strike || tagCounts['타격'] || 0),
     usedStrikeSkillCountThisTurn: Number(turnTagCounts.strike || turnTagCounts['타격'] || 0),
-  };
+  }, combatFormulaContext_(battleState,skill,target));
 }
 
 function evaluateSkillFormulaValue_(value, context, fallback, battleState, skill) {
@@ -1326,6 +1359,8 @@ function applySkillEffectRule_(battleState, skill, effectRule, targets, context)
   if (effectRule.stacksFormula !== undefined) applied.stacks = Math.max(1, Math.round(evaluateSkillFormula_(effectRule.stacksFormula, context, battleState, skill)));
 
   getTargetsForEffectRule_(battleState, effectRule, targets).forEach(function(target) {
+    if (target.currentHp!==undefined && target.currentHp<=0) return;
+    if (getSharedRuleEngine_().hasActionBlock({effects:[applied]}) && (target.controlImmune || target.stunImmune || (target.immunities || []).indexOf(applied.effectId)>=0)) return;
     var appliedEffect = applyEffect(target, applied, { source: effectRule.target || 'rule', skillId: skill.skillId, turn: battleState && battleState.turn });
     var effectType = String(appliedEffect && appliedEffect.category || applied.category || '').toLowerCase() === 'debuff' ? 'debuff' : 'buff';
     battleState.lastTurnEvents = battleState.lastTurnEvents || [];
@@ -1387,13 +1422,16 @@ function applySkillActionPointModify_(battleState, skill, apRule, context) {
 }
 
 function registerSkillTriggers_(battleState, skill, rule) {
-  var triggerKeys = ['onDamaged', 'onBlock', 'onTurnStart', 'onTurnEnd'];
+  var triggerKeys = ['onDamaged', 'onBlock', 'onTurnStart', 'onTurnEnd', 'onHit', 'onCritical', 'onMiss', 'onEvade', 'onKill', 'onEffectRemoved', 'onDamage', 'onBeforeMonsterTurn', 'onExplosion'];
   triggerKeys.forEach(function(key) {
     if (!rule[key]) {
       return;
     }
     validateSkillTriggerRule_(battleState, skill, key, rule[key]);
     battleState.activeTriggers = battleState.activeTriggers || [];
+    if (rule[key].maxActivations || rule[key].maxActivationsPerTurn || rule[key].oncePerAction || rule[key].oncePerTarget) {
+      battleState.activeTriggers = battleState.activeTriggers.filter(function(trigger) { return trigger.timing !== key || trigger.sourceSkillId !== skill.skillId; });
+    }
     battleState.activeTriggers.push({
       timing: key,
       rule: rule[key],
@@ -1424,7 +1462,7 @@ function validateSkillTriggerRule_(battleState, skill, key, triggerRule) {
     warnSkillRule_(battleState, skill, key + ' must be an object.', { value: triggerRule });
     return;
   }
-  var supported = ['durationType', 'durationTurns', 'selfTurnOnly', 'reflectBlockedDamage', 'damageFormula', 'applyEffects', 'actionPointModify', 'tagBonus'];
+  var supported = ['durationType', 'durationTurns', 'selfTurnOnly', 'reflectBlockedDamage', 'damageFormula', 'applyEffects', 'actionPointModify', 'tagBonus', 'actions', 'maxActivations', 'maxActivationsPerTurn', 'oncePerTarget', 'oncePerAction', 'damageKind', 'actor', 'targetId', 'requireTargetEffect'];
   Object.keys(triggerRule).forEach(function(ruleKey) {
     if (supported.indexOf(ruleKey) === -1) {
       warnSkillRule_(battleState, skill, 'Unsupported ' + key + ' key: ' + ruleKey, { key: ruleKey });
@@ -1436,7 +1474,8 @@ function processImmediateSkillRuleActions_(battleState, skill, actionRule, targe
   if (!actionRule) {
     return;
   }
-  if (actionRule.shieldFormula !== undefined && actionRule.shieldFormula !== null && actionRule.shieldFormula !== '') {
+  executeCombatActions_(battleState, skill, actionRule.actions, targets, context);
+  if (actionRule.shieldFormula !== undefined && actionRule.shieldFormula !== null && actionRule.shieldFormula !== '' && !combatShieldBlocked_(battleState.player)) {
     var shield = Math.max(0, Math.round(evaluateSkillFormula_(actionRule.shieldFormula, context, battleState, skill)));
     battleState.player.shield = Number(battleState.player.shield || 0) + shield;
     battleState.lastTurnEvents = battleState.lastTurnEvents || [];
@@ -1502,16 +1541,24 @@ function markBattleDefeatBySkillRule_(battleState, skill, reason) {
 }
 
 function processSkillTriggers_(battleState, timing, payload) {
-  if (!battleState || !battleState.activeTriggers || !battleState.activeTriggers.length) {
-    return;
+  if (!battleState || Number(battleState.combatDispatchDepth || 0) >= 8) return;
+  var event = getSharedRuleEngine_().recordCombatEvent(battleState, timing, payload);
+  processCombatStatusEvent_(battleState,timing,payload || {});
+  var triggers = (battleState.activeTriggers || []).slice();
+  battleState.combatDispatchDepth = Number(battleState.combatDispatchDepth || 0) + 1;
+  try {
+    triggers.forEach(function(trigger) {
+      if (trigger.timing !== timing && trigger.timing !== 'failPenalty') return;
+      if (trigger.rule && trigger.rule.selfTurnOnly && !(payload && payload.selfTurn)) return;
+      if (trigger.rule && trigger.rule.requireTargetEffect && !getSharedRuleEngine_().effectStacks(payload && payload.target,trigger.rule.requireTargetEffect)) return;
+      if (trigger.timing !== 'failPenalty' && !getSharedRuleEngine_().claimCombatTrigger(trigger, event)) return;
+      processSingleSkillTrigger_(battleState, trigger, timing, payload || {});
+    });
+  } finally {
+    battleState.combatDispatchDepth -= 1;
+    if (!battleState.combatDispatchDepth) delete battleState.combatDispatchDepth;
+    battleState.activeTriggers = (battleState.activeTriggers || []).filter(function(trigger) { return !trigger.exhausted; });
   }
-  var triggers = battleState.activeTriggers.slice();
-  triggers.forEach(function(trigger) {
-    if (trigger.timing !== timing && trigger.timing !== 'failPenalty') {
-      return;
-    }
-    processSingleSkillTrigger_(battleState, trigger, timing, payload || {});
-  });
 }
 
 function processSingleSkillTrigger_(battleState, trigger, timing, payload) {
@@ -1521,6 +1568,10 @@ function processSingleSkillTrigger_(battleState, trigger, timing, payload) {
   var context = buildSkillFormulaContext_(battleState, sourceSkill, payload.target || null, payload.efficiency !== undefined ? payload.efficiency : 1);
   context.blockedDamage = Number(payload.shieldDamage || 0);
   context.damageTaken = Number(payload.hpDamage || 0);
+  context.eventDamage = Number(payload.damage || 0);
+  context.targetStacks = payload.effectId ? getSharedRuleEngine_().effectStacks(payload.target, payload.effectId) : 0;
+  context.eventEffectId = payload.effectId || '';
+  context.defeatedEffects = payload.defeatedEffects || [];
 
   if (trigger.timing === 'failPenalty') {
     if (timing === 'onWrong' && rule.loseBattleOnWrongAnswer) {
@@ -1531,6 +1582,7 @@ function processSingleSkillTrigger_(battleState, trigger, timing, payload) {
     }
     return;
   }
+  executeCombatActions_(battleState, sourceSkill, rule.actions, [payload.target || getFirstAliveMonster_(battleState)], context);
   if (rule.reflectBlockedDamage && Number(payload.shieldDamage || 0) > 0) {
     var target = payload.target || getFirstAliveMonster_(battleState);
     if (target) {
@@ -1547,11 +1599,357 @@ function processSingleSkillTrigger_(battleState, trigger, timing, payload) {
     }
   }
   if (rule.applyEffects) {
-    applySkillRuleEffects_(battleState, sourceSkill, { applyEffects: rule.applyEffects }, [getFirstAliveMonster_(battleState)], context);
+    applySkillRuleEffects_(battleState, sourceSkill, { applyEffects: rule.applyEffects }, [payload.target || getFirstAliveMonster_(battleState)], context);
   }
   if (rule.actionPointModify) {
     applySkillActionPointModify_(battleState, sourceSkill, rule.actionPointModify, context);
   }
+}
+
+// Ordered, data-authored operations. All callers (including local browser rules)
+// use the same operations and the same EffectRules definitions.
+function executeCombatActions_(battleState, skill, actions, targets, context) {
+  if (!actions) return;
+  getSharedRuleEngine_().validateCombatActions(actions);
+  context = Object.assign({}, context || {});
+  var targetContexts = {};
+  actions.forEach(function(action) {
+    var selected = action.target === 'self' ? [battleState.player]
+      : action.target === 'allEnemies' ? getAliveMonsters_(battleState)
+      : action.target === 'secondary' ? [getSkillTarget_(battleState, skill, skill.secondaryTargetId || '')]
+      : (targets || []);
+    if (action.target === 'secondary' && !skill.secondaryTargetId) throw new Error('보조 대상을 선택해야 합니다.');
+    selected.filter(Boolean).forEach(function(target) {
+      var targetKey = target === battleState.player ? 'player' : String(target.instanceId || target.monsterId);
+      var targetContext = targetContexts[targetKey] || (targetContexts[targetKey] = {});
+      if (action.requireEffect && !getSharedRuleEngine_().effectStacks(target, action.requireEffect)) return;
+      if (action.excludeEffect && getSharedRuleEngine_().effectStacks(target, action.excludeEffect)) return;
+      if (action.requireStacks && getSharedRuleEngine_().effectStacks(target, action.requireStacks.effectId) < Number(action.requireStacks.min || 1)) return;
+      targetContext.targetStacks = getSharedRuleEngine_().effectStacks(target, action.effectId);
+      var operationContext = Object.assign({}, context, buildSkillFormulaContext_(battleState,skill,target,context.efficiency === undefined ? 1 : context.efficiency), targetContext);
+      var amount = evaluateSkillFormulaValue_(action.amountFormula !== undefined ? action.amountFormula : action.amount, operationContext, 0, battleState, skill);
+      amount = Math.max(0, Math.round(amount));
+      if (action.operation === 'consumeStacks') {
+        targetContext.consumedStacks = getSharedRuleEngine_().consumeEffectStacks(target, action.effectId, amount);
+        context.totalConsumedStacks = Number(context.totalConsumedStacks || 0) + targetContext.consumedStacks;
+      } else if (action.operation === 'moveStacks' || action.operation === 'copyStacks') {
+        var destination = getSkillTarget_(battleState, skill, skill.secondaryTargetId || '');
+        if (!skill.secondaryTargetId || !destination) throw new Error('보조 대상을 선택해야 합니다.');
+        targetContext.movedStacks = getSharedRuleEngine_().transferEffectStacks(target, destination, action.effectId, amount, action.operation === 'copyStacks');
+      } else if (action.operation === 'removeEffect') {
+        var removed = getSharedRuleEngine_().removeCombatEffect(target, action.effectId, 'skill');
+        targetContext.removedEffectCount = removed.length;
+        removed.forEach(function(effect) { processSkillTriggers_(battleState, 'onEffectRemoved', {target:target, effectId:effect.effectId, sourceSkillId:skill.skillId, reason:'skill'}); });
+      } else if (action.operation === 'applyEffect') {
+        var effectAction = {};
+        ['effectId','value','valueFormula','durationType','durationTurns','stacks','stacksFormula','chance'].forEach(function(key) { if (action[key] !== undefined) effectAction[key] = action[key]; });
+        effectAction.target = target === battleState.player ? 'self' : 'enemy';
+        applySkillEffectRule_(battleState, skill, effectAction, [target], operationContext);
+      } else if (action.operation === 'damage' && target.currentHp !== undefined) {
+        var result = dealDamageToMonster_(battleState, target, amount, {damageKind:action.damageKind || 'effect', sourceSkillId:skill.skillId});
+        if(action.damageKind==='explosion')processSkillTriggers_(battleState,'onExplosion',{target:target,damageKind:'explosion',sourceSkillId:skill.skillId});
+        battleState.lastTurnEvents.push({actor:'effect',type:'effectDamage',target:'monster',targetMonsterId:target.instanceId || target.monsterId,damage:result.damage,hpDamage:result.hpDamage,shieldDamage:result.shieldDamage,damageKind:action.damageKind || 'effect'});
+      } else if (action.operation === 'shield' && target.currentHp === undefined) {
+        if (combatShieldBlocked_(target)) return;
+        var retained = action.retainEffectId && (target.effects || []).filter(function(e) { return e.effectId === action.retainEffectId && e.behavior && e.behavior.retainShield; })[0];
+        if (action.retainEffectId && !retained) throw new Error('유지할 방어막 효과가 없습니다.');
+        target.shield = Number(target.shield || 0) + amount;
+        if (retained) retained.retainedShield = Number(retained.retainedShield || 0) + amount;
+        battleState.lastTurnEvents.push({actor:'player',type:'guard',shield:amount,skillId:skill.skillId});
+      } else if (action.operation === 'heal' && target.currentHp === undefined) {
+        var previousHp=Number(target.hp || 0);
+        target.hp = Math.min(Number(target.maxHp || target.stats.hp || 1), Number(target.hp || 0) + amount);
+        battleState.lastTurnEvents.push({actor:'effect',type:'heal',heal:target.hp-previousHp,skillId:skill.skillId});
+      } else {
+        executeExtendedCombatAction_(battleState,skill,action,target,operationContext,context);
+      }
+    });
+  });
+}
+
+function beginCombatActorTurn_(battleState, target) {
+  var hpBefore = Number(target.hp || 0);
+  var outcome = getSharedRuleEngine_().beginActorTurn(battleState, target);
+  outcome.removed.forEach(function(effect) {
+    processSkillTriggers_(battleState, 'onEffectRemoved', {target:target,effectId:effect.effectId,reason:'natural'});
+  });
+  if (target === battleState.player && Number(target.hp || 0) > hpBefore) {
+    battleState.lastTurnEvents.push({actor:'effect',type:'heal',heal:Number(target.hp)-hpBefore,message:'빙결 해제 효과로 체력을 회복했습니다.'});
+  }
+  outcome.blocked = getSharedRuleEngine_().hasActionBlock(target);
+  if (outcome.blocked && target === battleState.player) target.currentActionPoint = 0;
+  return outcome;
+}
+
+// Data-authored combat extensions. These functions never inspect a particular skill ID.
+function combatChain_(battle) {
+  var runtime=getSharedRuleEngine_().combatRuntime(battle);
+  if (!runtime.combo) runtime.combo={turn:battle.turn,count:0,total:0,distinct:[],stored:0,storedTurn:0};
+  var chain=runtime.combo;
+  if (chain.turn!==battle.turn) {chain.turn=battle.turn;chain.count=0;chain.distinct=[];}
+  return chain;
+}
+
+function combatFormulaContext_(battle,skill,target) {
+  var chain=combatChain_(battle),engine=getSharedRuleEngine_();
+  var stored=chain.storedTurn===Number(battle.turn)-1 ? chain.stored : 0;
+  var poison=getAliveMonsters_(battle).reduce(function(sum,m){return sum+engine.effectStacks(m,'effect_v2_poison');},0);
+  var prepared=engine.combatRuntime(battle).prepared || {};
+  return {comboCount:chain.count+stored,comboDistinct:chain.distinct.length,comboBattleBonus:Math.min(12,chain.total),
+    poisonShield:Math.min(30,poison),poisonWeakPercent:-Math.min(30,2*engine.effectStacks(target,'effect_v2_poison')),targetPoison:engine.effectStacks(target,'effect_v2_poison'),
+    targetCold:engine.effectStacks(target,'effect_v2_chill'),targetShock:engine.effectStacks(target,'effect_v2_shock'),
+    lowHpBonus:Math.min(1,Math.max(0,(1-getHpPercent_(battle.player)/100)/0.7)),
+    randomPower:Number(prepared.randomPower || 0),randomDoubles:prepared.doubles?1:0,
+    unhurtMultiplier:engine.combatRuntime(battle).playerWasDamaged?1:1.5};
+}
+
+function checkCombatSkillConditions_(battle,skill,rule,target) {
+  var c=rule.combat || {},chain=combatChain_(battle),e=getSharedRuleEngine_();
+  var candidates=skill.targetId ? [target].filter(Boolean) : getAliveMonsters_(battle);
+  if (c.minBattleAttacks && chain.total<c.minBattleAttacks) return '타격 공격 사용 '+c.minBattleAttacks+'회가 필요합니다.';
+  if (c.minTurnAttacks && chain.count<c.minTurnAttacks) return '이번 턴 타격 공격 '+c.minTurnAttacks+'회가 필요합니다.';
+  if (c.oncePerTurn && Number(battle.skillLastUsedTurn && battle.skillLastUsedTurn[skill.skillId])===Number(battle.turn)) return '이번 턴 이미 사용했습니다.';
+  if (c.hpCost && battle.player.hp<=c.hpCost) return '체력이 '+c.hpCost+'보다 많아야 합니다.';
+  if (c.hpCostPercent && battle.player.hp<2) return '체력이 2 이상 필요합니다.';
+  if (c.eitherHpBelow && getHpPercent_(battle.player)>c.eitherHpBelow && !candidates.some(function(m){return getHpPercent_(m)<=c.eitherHpBelow;})) return '자신 또는 대상이 저체력이어야 합니다.';
+  if (c.requireStacks && !candidates.some(function(m){return e.effectStacks(m,c.requireStacks.effectId)>=c.requireStacks.min;})) return '대상의 상태 스택이 부족합니다.';
+  if (c.requireAnyEffect && !getAliveMonsters_(battle).some(function(m){return e.effectStacks(m,c.requireAnyEffect)>0;})) return '해당 상태의 적이 필요합니다.';
+  if (c.requireOtherEnemy && getAliveMonsters_(battle).length<2) return '다른 생존 대상이 필요합니다.';
+  if (c.requireTargetShield && !candidates.some(function(m){return m.shield>0;})) return '방어막이 있는 대상을 선택하세요.';
+  if (c.requireCleanseable && !(battle.player.effects || []).some(function(e){return normalizeEffectCategory_(e)==='debuff'&&!e.uncleansable;})) return '해제 가능한 디버프가 없습니다.';
+  if (c.cooldownTag && !combatCooldownCandidates_(battle,skill,c.cooldownTag).length) return '쿨타임 중인 다른 해당 컨셉 스킬이 필요합니다.';
+  return '';
+}
+
+function combatEffectConfig_(effect) {return effect && effect.behavior && effect.behavior.combat || {};}
+function combatShieldBlocked_(target) {return (target.effects || []).some(function(e){return combatEffectConfig_(e).blockShield;});}
+function combatConsumeModifier_(battle,target,e,config) {
+  var actionId=getSharedRuleEngine_().combatRuntime(battle).actionId;
+  if (!config.uses || e.combatActionId===actionId) return;
+  e.combatUses=e.combatUses===undefined?Number(config.uses):e.combatUses;
+  e.combatUses-=1;e.combatActionId=actionId;
+}
+function combatModifierAvailable_(battle,e,config) {
+  return !config.uses || e.combatUses===undefined || e.combatUses>0 || e.combatActionId===getSharedRuleEngine_().combatRuntime(battle).actionId;
+}
+
+function prepareCombatSkill_(battle,skill,original) {
+  var rule=JSON.parse(JSON.stringify(original)),c=rule.combat || {},chain=combatChain_(battle),runtime=getSharedRuleEngine_().combatRuntime(battle);
+  var chosen=getSkillTarget_(battle,skill,skill.targetId || '');
+  runtime.prepared={sourceSkillId:skill.skillId,wasFrozen:!!(chosen && (chosen.effects || []).some(function(e){return e.behavior && e.behavior.control && e.behavior.control.breakOnDirectHit;}))};
+  if (c.combo) {
+    var stored=chain.storedTurn===Number(battle.turn)-1?chain.stored:0;
+    var count=chain.count+stored;
+    if (c.combo.extraHitIfPrior && count>0) rule.hitCount=Number(rule.hitCount || skill.hitCount)+c.combo.extraHitIfPrior;
+    if (c.combo.hitPerPrior) rule.hitCount=Math.min(c.combo.maxHits,Number(rule.hitCount || skill.hitCount)+count*c.combo.hitPerPrior);
+    if (c.combo.requiredDistinct && chain.distinct.length>=c.combo.requiredDistinct) rule.hitCount=c.combo.distinctHitCount;
+  }
+  if (c.hpCost || c.hpCostPercent) {
+    var cost=c.hpCost || Math.max(1,Math.ceil(battle.player.hp*c.hpCostPercent));
+    battle.player.hp=Math.max(1,battle.player.hp-cost);
+    runtime.playerWasDamaged=true;
+    battle.lastTurnEvents.push({actor:'player',type:'selfDamage',hpDamage:cost,damage:cost,skillId:skill.skillId});
+  }
+  if (c.clearShield) {battle.player.shield=0;(battle.player.effects || []).forEach(function(e){e.retainedShield=0;});}
+  if (c.random) {
+    var random=c.random,rolls=[],mods=(battle.player.effects || []).filter(function(e){return combatModifierAvailable_(battle,e,combatEffectConfig_(e).random || {});});
+    var minimum=1,reroll=false,floorRatio=0,rangeMin=1,rangeMax=1;
+    mods.forEach(function(e){var m=combatEffectConfig_(e).random;if(!m)return;
+      if(m.badLuck && e.badLuck>0){minimum=Math.min(random.sides,2);e.badLuck-=1;}
+      if(m.reroll){reroll=true;combatConsumeModifier_(battle,battle.player,e,m);}
+      floorRatio=Math.max(floorRatio,Number(m.floorRatio || 0));rangeMin*=Number(m.minMultiplier || 1);rangeMax*=Number(m.maxMultiplier || 1);
+    });
+    function draw(){var start=Number(random.dice || 1)>1?1:minimum;return start+Math.floor(Math.random()*(random.sides-start+1));}
+    for(var i=0;i<Number(random.dice || 1);i++)rolls.push(draw());
+    if(minimum>1 && rolls.length>1 && rolls.every(function(v){return v===1;}))rolls[0]=2;
+    var rollContext=buildSkillFormulaContext_(battle,skill,chosen,1);
+    function score(values){var sum=values.reduce(function(a,b){return a+b;},0),p=random.multipliers?random.multipliers[values[0]-1]:sum*random.attackPerPoint;
+      var lo=random.multipliers?Math.min.apply(null,random.multipliers):Number(random.dice || 1)*random.attackPerPoint;
+      var hi=random.multipliers?Math.max.apply(null,random.multipliers):random.sides*Number(random.dice || 1)*random.attackPerPoint;
+      function at(power){return evaluateSkillFormula_(original.damageFormula,Object.assign({},rollContext,{randomPower:power}),battle,skill);}
+      var min=at(lo),max=at(hi),t=(at(p)-min)/Math.max(0.0001,max-min);
+      return (min*rangeMin+(max*rangeMax-min*rangeMin)*t)*(random.doublesMultiplier && values.length===2 && values[0]===values[1]?random.doublesMultiplier:1);
+    }
+    if(reroll){var other=rolls.map(draw);if(minimum>1 && other.length>1 && other.every(function(v){return v===1;}))other[0]=2;if(score(other)>score(rolls))rolls=other;}
+    var sum=rolls.reduce(function(a,b){return a+b;},0),power=random.multipliers?random.multipliers[rolls[0]-1]:sum*Number(random.attackPerPoint || 0);
+    var maxPower=random.multipliers?Math.max.apply(null,random.multipliers):random.sides*Number(random.dice || 1)*random.attackPerPoint;
+    var lowResult=rolls.every(function(v){return v===1;});
+    if (random.multipliers) {if(rolls[0]===1)power*=rangeMin;else if(rolls[0]===random.sides)power*=rangeMax;}
+    else {var minPower=Number(random.dice || 1)*random.attackPerPoint;var t=(sum-Number(random.dice || 1))/Math.max(1,(random.sides-1)*Number(random.dice || 1));power=minPower*rangeMin+(maxPower*rangeMax-minPower*rangeMin)*t;}
+    var doubles=rolls.length===2&&rolls[0]===rolls[1];
+    runtime.prepared={sourceSkillId:skill.skillId,randomPower:power,rolls:rolls,doubles:doubles,lowResult:lowResult};
+    var randomContext=buildSkillFormulaContext_(battle,skill,chosen,1);
+    var naturalPower=random.multipliers?random.multipliers[rolls[0]-1]:sum*Number(random.attackPerPoint || 0);
+    var minPower=random.multipliers?Math.min.apply(null,random.multipliers):Number(random.dice || 1)*random.attackPerPoint;
+    function formulaAt(p){return evaluateSkillFormula_(original.damageFormula,Object.assign({},randomContext,{randomPower:p}),battle,skill);}
+    var minDamage=formulaAt(minPower),maxDamage=formulaAt(maxPower),naturalDamage=formulaAt(naturalPower);
+    var proportion=(naturalDamage-minDamage)/Math.max(0.0001,maxDamage-minDamage);
+    var randomDamage=minDamage*rangeMin+(maxDamage*rangeMax-minDamage*rangeMin)*proportion;
+    if(doubles)randomDamage*=Number(random.doublesMultiplier || 1);
+    randomDamage=Math.max(maxDamage*rangeMax*Number(random.doublesMultiplier || 1)*floorRatio,randomDamage);
+    rule.damageFormula=String(randomDamage);
+    mods.forEach(function(e){var m=combatEffectConfig_(e).random;if(m&&m.badLuck&&lowResult)e.badLuck=Math.min(m.badLuck,Number(e.badLuck || 0)+1);});
+    battle.lastTurnEvents.push({actor:'player',type:'randomRoll',skillId:skill.skillId,rolls:rolls,resultMultiplier:power,message:skill.name+' 결과: '+rolls.join(', ')});
+  }
+  return rule;
+}
+
+function prepareCombatHit_(battle,skill,stats) {
+  var result=Object.assign({},stats),c=skill && getSkillExecutionRule_(skill).combat || {};
+  result.criticalRate=Number(result.criticalRate || 0)+Number(c.criticalChanceAdd || 0);
+  (battle.player.effects || []).slice().forEach(function(e){var cfg=combatEffectConfig_(e),m=cfg.critical;
+    if(m){var charges=e.criticalCharges===undefined?Number(m.charges || 1):e.criticalCharges;
+      if(charges>0){result.criticalRate+=Number(m.add || 0);e.criticalCharges=charges-1;if(!e.criticalCharges)getSharedRuleEngine_().removeCombatEffect(battle.player,e.effectId,'consumed');}}
+    if(cfg.criticalBank)result.criticalRate+=Number(e.criticalBank || 0)*Number(cfg.criticalBank.perStack || 0);
+  });
+  result.criticalRate=Math.max(0,Math.min(100,result.criticalRate));return result;
+}
+
+function modifyCombatOutgoing_(battle,target,damage,context) {
+  if(context.damageKind!=='direct' && context.damageKind!=='explosion')return damage;
+  var skill=context.sourceSkillId?findCachedRowByKey_(DB_SHEETS.SKILLS,'skillId',context.sourceSkillId,600):null;
+  var c=skill && getSkillExecutionRule_(skill).combat || {};
+  if(c.unhurtBonus && !getSharedRuleEngine_().combatRuntime(battle).playerWasDamaged)damage*=1+c.unhurtBonus;
+  if(c.lowHpBonus)damage*=1+c.lowHpBonus*Math.min(1,Math.max(0,(1-getHpPercent_(battle.player)/100)/0.7));
+  if(c.bothLowBonus && getHpPercent_(battle.player)<=30 && getHpPercent_(target)<=30)damage*=1+c.bothLowBonus;
+  [battle.player,target].forEach(function(owner){(owner.effects || []).forEach(function(e){var m=combatEffectConfig_(e).outgoing;if(!m||!combatModifierAvailable_(battle,e,m))return;
+    if(m.kind && m.kind!==context.damageKind)return;
+    if(m.tag && (!skill||!hasSkillTag_(skill,m.tag)))return;
+    if(m.targetOnly && owner!==target)return;
+    damage=damage*Number(m.multiplier || 1)+(m.addValue?Number(e.value || 0):Number(m.add || 0));combatConsumeModifier_(battle,owner,e,m);
+  });});
+  return Math.max(0,Math.round(damage));
+}
+
+function finishCombatSkill_(battle,skill,rule,targets,context) {
+  var c=rule.combat || {},runtime=getSharedRuleEngine_().combatRuntime(battle),prepared=runtime.prepared || {};
+  if(c.random && c.random.criticalOnMax && prepared.rolls && prepared.rolls[0]===c.random.sides)executeCombatActions_(battle,skill,[{operation:'applyEffect',effectId:c.random.criticalOnMax,target:'self'}],[battle.player],context);
+  if(c.afterNotFrozenEffect && !prepared.wasFrozen && context.landedHits>0)executeCombatActions_(battle,skill,[{operation:'applyEffect',effectId:c.afterNotFrozenEffect,stacks:c.afterNotFrozenStacks || 1}],targets,context);
+  if(c.randomShield){var high=Math.random()>=0.5;var amount=evaluateSkillFormula_(high?c.randomShield.high:c.randomShield.low,context,battle,skill);if(!combatShieldBlocked_(battle.player))battle.player.shield+=Math.round(amount*context.efficiency);if(!high)runtime.delayedShield={turn:Number(battle.turn)+1,amount:6};}
+  if(c.recoilIfSurvives && targets[0] && targets[0].currentHp>0){var recoil=Math.round(battle.player.maxHp*c.recoilIfSurvives);battle.player.hp=Math.max(0,battle.player.hp-recoil);runtime.playerWasDamaged=true;}
+  if(battle.player.hp<=0)battle.status=STATUS.BATTLE_DEFEAT;
+  if(c.combo && c.combo.resetAfter){var chain=combatChain_(battle);chain.count=0;chain.distinct=[];chain.stored=0;}
+  if(c.oncePerTurn){battle.skillLastUsedTurn=battle.skillLastUsedTurn || {};battle.skillLastUsedTurn[skill.skillId]=battle.turn;}
+  [battle.player].concat(battle.monsters || []).forEach(function(target){(target.effects || []).slice().forEach(function(e){var cfg=combatEffectConfig_(e),simple=Object.keys(cfg).length===1 && !(e.rules || []).length;
+    if(simple && ((cfg.outgoing && cfg.outgoing.uses && e.combatUses<=0)||(cfg.random && cfg.random.uses && e.combatUses<=0)))getSharedRuleEngine_().removeCombatEffect(target,e.effectId,'consumed');
+  });});
+}
+
+function trackCombatAttack_(battle,skill,rule) {
+  if(!rule.damageFormula || !hasSkillTag_(skill,'strike'))return;
+  var chain=combatChain_(battle);
+  if(chain.storedTurn===Number(battle.turn)-1)chain.stored=0;
+  chain.total+=1;
+  if(rule.combat && rule.combat.combo && rule.combat.combo.resetAfter)return;
+  chain.count+=1;if(chain.distinct.indexOf(skill.skillId)<0)chain.distinct.push(skill.skillId);
+}
+
+function combatCooldownCandidates_(battle,skill,tag) {
+  return readTableCached_(DB_SHEETS.SKILLS,600).filter(function(s){return s.skillId!==skill.skillId&&hasSkillTag_(s,tag)&&Number(battle.skillCooldowns && battle.skillCooldowns[s.skillId])>0;});
+}
+
+function executeExtendedCombatAction_(battle,skill,a,target,ctx,aggregate) {
+  var engine=getSharedRuleEngine_(),runtime=engine.combatRuntime(battle),alive=getAliveMonsters_(battle),other=alive.filter(function(m){return m!==target;});
+  function amount(formula,fallback){return Math.max(0,Math.round(evaluateSkillFormulaValue_(formula,ctx,fallback,battle,skill)));}
+  if(a.operation==='storeCombo'){var chain=combatChain_(battle);chain.stored=Math.min(Number(a.max || 2),chain.count);chain.storedTurn=Number(battle.turn);}
+  if(a.operation==='resetCombo'){combatChain_(battle).count=0;combatChain_(battle).distinct=[];}
+  if(a.operation==='clearShield'){target.shield=0;(target.effects || []).forEach(function(e){e.retainedShield=0;});}
+  if(a.operation==='cooldownSelect'){
+    var candidates=combatCooldownCandidates_(battle,skill,a.tag);var selected=candidates.filter(function(s){return s.skillId===skill.cooldownTargetSkillId;})[0];
+    if(!selected)throw new Error('쿨타임을 줄일 스킬을 선택하세요.');
+    battle.skillCooldowns[selected.skillId]=Math.max(0,battle.skillCooldowns[selected.skillId]-Number(a.amount || 1));
+  }
+  if(a.operation==='cleanseLongest'){
+    var effects=(target.effects || []).filter(function(e){return normalizeEffectCategory_(e)==='debuff'&&!e.uncleansable;});
+    effects.sort(function(x,y){return (y.durationType==='stage'?Infinity:Number(y.remainingTurns || 0))-(x.durationType==='stage'?Infinity:Number(x.remainingTurns || 0))||Number(x.appliedAtTurn || 0)-Number(y.appliedAtTurn || 0);});
+    if(effects[0]){engine.removeCombatEffect(target,effects[0].effectId,'cleanse');processSkillTriggers_(battle,'onEffectRemoved',{target:target,effectId:effects[0].effectId,reason:'cleanse',sourceSkillId:skill.skillId});}
+  }
+  if(a.operation==='spreadStacks'){
+    var source=(target.effects || []).filter(function(e){return e.effectId===a.effectId;})[0];if(!source)return;
+    var count=Math.min(Number(a.max || 999),Math.floor(engine.effectStacks(target,a.effectId)*Number(a.fraction || 1)));
+    other.forEach(function(m){var payload=Object.assign({},source,{stacks:count});if(count)applyEffect(m,payload,{turn:battle.turn,skillId:skill.skillId});});
+  }
+  if(a.operation==='gatherStacks')other.forEach(function(m){engine.transferEffectStacks(m,target,a.effectId,Math.floor(engine.effectStacks(m,a.effectId)*Number(a.fraction || 0.5)),false);});
+  if(a.operation==='distributeStacks'){
+    var source=(target.effects || []).filter(function(e){return e.effectId===a.effectId;})[0];
+    if(!source && ctx.defeatedEffects)source=ctx.defeatedEffects.filter(function(e){return e.effectId===a.effectId;})[0];
+    if(!source||!other.length)return;
+    var remaining=Math.min(Number(a.max || 999),Number(source.stacks || 0));other.sort(function(x,y){return Number(x.currentHp)-Number(y.currentHp);});
+    while(remaining>0){var moved=0;other.forEach(function(m){if(!remaining)return;var before=engine.effectStacks(m,a.effectId);if(before>=Number(source.maxStacks || 1))return;engine.transferEffectStacks(target,m,a.effectId,1,false);var delta=engine.effectStacks(m,a.effectId)-before;remaining-=delta;moved+=delta;});if(!moved)break;}
+    if(a.copyOnKill)engine.removeCombatEffect(target,a.effectId,'deathTransfer');
+  }
+  if(a.operation==='counterAttack'){
+    for(var i=0;i<Number(a.hitCount || 1)&&target.currentHp>0;i++){var result=dealDamageToMonster_(battle,target,amount(a.amountFormula,0),{damageKind:'counter',sourceSkillId:skill.skillId});battle.lastTurnEvents.push(Object.assign({actor:'effect',type:'counter',targetMonsterId:target.instanceId,damageKind:'counter'},result));}
+  }
+  if(a.operation==='breakControl'){
+    var frozen=(target.effects || []).some(function(e){return e.behavior && e.behavior.control && e.behavior.control.breakOnDirectHit;});
+    if(frozen){var reactions=engine.directHitReactions(target);reactions.removed.forEach(function(e){processSkillTriggers_(battle,'onEffectRemoved',{target:target,effectId:e.effectId,reason:'remoteBreak',sourceSkillId:skill.skillId});});reactions.packets.filter(function(p){return p.damageKind==='shatter';}).forEach(function(p){var r=dealDamageToMonster_(battle,target,p.amount,{damageKind:'shatter',sourceSkillId:skill.skillId});pushCombatDamageEvent_(battle,target,r,'shatter',skill.skillId);});}
+    else if(a.otherwiseEffectId)executeCombatActions_(battle,skill,[{operation:'applyEffect',effectId:a.otherwiseEffectId,stacks:a.otherwiseStacks || 1}],[target],ctx);
+  }
+  if(a.operation==='explosion'){
+    var stacks=Math.min(Number(a.max || 999),Number(ctx.consumedStacks || 0));
+    var result=dealDamageToMonster_(battle,target,target.maxHp*stacks*Number(a.centerRate || 0)+amount(a.centerAddFormula,0),{damageKind:'explosion',sourceSkillId:skill.skillId});
+    pushCombatDamageEvent_(battle,target,result,'explosion',skill.skillId);
+    other.forEach(function(m){var r=dealDamageToMonster_(battle,m,m.maxHp*stacks*Number(a.otherRate || 0),{damageKind:'explosion',sourceSkillId:skill.skillId});pushCombatDamageEvent_(battle,m,r,'explosion',skill.skillId);});
+    processSkillTriggers_(battle,'onExplosion',{target:target,damage:result.damage,sourceSkillId:skill.skillId,damageKind:'explosion'});
+  }
+  if(a.operation==='rewardBonus'){
+    runtime.reward=runtime.reward || {};
+    if(a.currencyPercent)runtime.reward.currencyPercent=Number(runtime.reward.currencyPercent || 0)+Number(a.currencyPercent);
+    if(a.extraChoices)runtime.reward.extraChoices=Number(runtime.reward.extraChoices || 0)+Number(a.extraChoices);
+    if(a.jackpot)runtime.reward.jackpot={turn:Number(battle.turn),hits:0};
+  }
+}
+
+function processCombatStatusEvent_(battle,timing,payload) {
+  var runtime=getSharedRuleEngine_().combatRuntime(battle);
+  if(timing==='onDamage'&&payload.target===battle.player&&payload.hpDamage>0)runtime.playerWasDamaged=true;
+  if(timing==='onCritical'&&payload.actor==='player'&&runtime.reward&&runtime.reward.jackpot&&runtime.reward.jackpot.turn===Number(battle.turn))runtime.reward.jackpot.hits+=1;
+  if(timing==='onTurnStart'&&runtime.delayedShield&&runtime.delayedShield.turn<=battle.turn){if(!combatShieldBlocked_(battle.player))battle.player.shield+=runtime.delayedShield.amount;delete runtime.delayedShield;}
+  if(timing==='onHit'&&payload.actor==='player'){
+    (battle.player.effects || []).forEach(function(e){var bank=combatEffectConfig_(e).criticalBank;if(bank)e.criticalBank=payload.isCritical?0:Math.min(bank.max,Number(e.criticalBank || 0)+1);});
+  }
+}
+
+function modifyCombatAdditional_(battle,target,damage,context) {
+  if(context.damageKind!=='additional')return damage;
+  var bonus=0,shieldMultiplier=1;
+  (target.effects || []).slice().forEach(function(e){var c=combatEffectConfig_(e).additional;
+    if(!c || (c.effectId && c.effectId!==context.effectId))return;
+    if(c.uses && Number(e.additionalUses || 0)>=c.uses)return;
+    bonus+=Number(c.multiplier || 1)-1;
+    if(c.shieldMultiplier)shieldMultiplier*=c.shieldMultiplier;
+    e.additionalUses=Number(e.additionalUses || 0)+1;
+    if(c.uses && e.additionalUses>=c.uses)getSharedRuleEngine_().removeCombatEffect(target,e.effectId,'consumed');
+  });
+  damage=Math.round(damage*(1+bonus));
+  context.shieldOnlyDamage=damage*(shieldMultiplier-1);
+  return damage;
+}
+
+function relayCombatAdditional_(battle,target,damage,context) {
+  if(context.damageKind!=='additional')return;
+  (target.effects || []).forEach(function(e){var c=combatEffectConfig_(e).relay;if(!c || c.effectId!==context.effectId)return;
+    var other=getAliveMonsters_(battle).filter(function(m){return m!==target && getSharedRuleEngine_().effectStacks(m,c.effectId)>0;})[0];
+    if(other){var r=dealDamageToMonster_(battle,other,Number(context.baseAdditionalDamage || 0)*c.ratio,{damageKind:'effect',sourceSkillId:context.sourceSkillId});pushCombatDamageEvent_(battle,other,r,'effect',context.sourceSkillId);}
+  });
+}
+
+function pushCombatDamageEvent_(battle,target,result,kind,skillId) {
+  battle.lastTurnEvents.push(Object.assign({actor:'effect',type:'effectDamage',target:'monster',targetMonsterId:target.instanceId || target.monsterId,damageKind:kind,skillId:skillId || ''},result));
+}
+
+function combatDotModifiers_(battle,target,effect,base,damageRule) {
+  var result={damage:base,preserve:false,reapply:0},engine=getSharedRuleEngine_(),bonus=0,add=0;
+  (target.effects || []).slice().forEach(function(marker){var c=combatEffectConfig_(marker).dot;
+    if(!c || c.effectId!==effect.effectId)return;
+    if(c.onNaturalZero){if(Number(effect.stacks)>Number(effect.decayStacks || 1))return;result.reapply=Number(c.onNaturalZero);}
+    if(c.extraStacksFromValue && damageRule)result.damage+=engine.getEffectRuleValue(Object.assign({},effect,{stacks:Number(effect.stacks)+Number(marker.value || 0)}),damageRule,target)-engine.getEffectRuleValue(effect,damageRule,target);
+    bonus+=Number(c.multiplier || 1)-1;add+=c.addValue?Number(marker.value || 0):0;
+    if(c.preserveDecay)result.preserve=true;
+    if(c.uses){marker.dotUses=Number(marker.dotUses || 0)+1;if(marker.dotUses>=c.uses)engine.removeCombatEffect(target,marker.effectId,'consumed');}
+  });
+  result.damage=Math.max(0,Math.round(result.damage*Math.min(2,Math.max(0,1+bonus))+add));return result;
 }
 
 function applyCooldownModify_(battleState, skill, cooldownRule) {
@@ -1797,10 +2195,12 @@ function applyEffect(target, effect, source) {
 
 function tickEffectsAtTurnStart(battleState) {
   normalizeBattleStateEffects_(battleState);
+  beginCombatActorTurn_(battleState, battleState.player);
   processSkillTriggers_(battleState, 'onTurnStart', {});
   applyStackedDamageEffects_(battleState.player, 'turnStart', battleState, 'player');
   applyTimedEffectDamage_(battleState.player, TRIGGER_TIMINGS.TURN_START, battleState, 'player');
   getAliveMonsters_(battleState).forEach(function(monster) {
+    getSharedRuleEngine_().decayCombatStacks(monster, 'turnStart', battleState.turn);
     applyStackedDamageEffects_(monster, 'turnStart', battleState, 'monster');
     applyTimedEffectDamage_(monster, TRIGGER_TIMINGS.TURN_START, battleState, 'monster');
   });
@@ -2407,21 +2807,34 @@ function applyStackedDamageEffect_(target, effectId, battleState, actor, ruleOve
       ? stacks
       : Math.max(1, Math.round(maxHp * stacks * (effectId === 'debuff_burn' ? 0.01 : 0.007)));
   }
+  var dotModifiers=combatDotModifiers_(battleState,target,effect,rawDamage,damageRule);
+  effect=(target.effects || []).filter(function(e){return e.effectId===effectId;})[0] || effect;
+  rawDamage=dotModifiers.damage;
   var bypassesShield = damageRule ? damageRule.shieldPolicy === 'bypass' : effectId === 'debuff_poison' || effectId === 'debuff_bleed';
+  if (!isMonster && getSharedRuleEngine_().isCombatInvulnerable(target)) rawDamage = 0;
+  var previousShield = Number(target.shield || 0);
   var shieldDamage = bypassesShield ? 0 : Math.min(Math.max(0, Number(target.shield || 0)), rawDamage);
   var hpDamage = Math.min(currentHp, rawDamage - shieldDamage);
   if (!bypassesShield) target.shield = Math.max(0, Number(target.shield || 0) - shieldDamage);
+  getSharedRuleEngine_().spendRetainedShield(target, shieldDamage, previousShield);
   if (isMonster) target.currentHp = Math.max(0, currentHp - hpDamage);
   else target.hp = Math.max(0, currentHp - hpDamage);
 
   var decay = damageRule ? (effect.decayTiming === 'onTrigger' ? Number(effect.decayStacks || 0) : 0) : 1;
-  effect.stacks = stacks - (consumeStacks === false ? 0 : decay);
+  effect.stacks = stacks - (consumeStacks === false || dotModifiers.preserve ? 0 : decay);
+  if(effect.stacks<=0 && dotModifiers.reapply && Number(isMonster?target.currentHp:target.hp)>0)effect.stacks=dotModifiers.reapply;
   effect.remainingTurns = effect.stacks;
   if (effect.stacks <= 0) {
     target.effects = (target.effects || []).filter(function(candidate) { return candidate.effectId !== effectId; });
   }
+  target.buffs = []; target.debuffs = [];
   normalizeTargetStatusBuckets_(target);
   if (battleState) {
+    var combatPayload = {target:target,actor:'effect',damageKind:'dot',effectId:effectId,damage:shieldDamage+hpDamage,hpDamage:hpDamage,shieldDamage:shieldDamage};
+    processSkillTriggers_(battleState, 'onDamage', combatPayload);
+    if (!isMonster && hpDamage > 0) processSkillTriggers_(battleState, 'onDamaged', Object.assign({},combatPayload,{selfTurn:effectId === 'debuff_bleed' || !!(damageRule && ['onAction','beforeAction'].indexOf(damageRule.triggerTiming) >= 0)}));
+    if (effect.stacks <= 0) processSkillTriggers_(battleState, 'onEffectRemoved', Object.assign({},combatPayload,{reason:'decay'}));
+    if (isMonster && currentHp > 0 && target.currentHp <= 0) emitCombatKill_(battleState, target, combatPayload);
     normalizeBattleStateEffects_(battleState);
     syncPrimaryMonster_(battleState);
     battleState.lastTurnEvents = battleState.lastTurnEvents || [];
@@ -2441,7 +2854,14 @@ function applyStackedDamageEffect_(target, effectId, battleState, actor, ruleOve
 }
 
 function decrementTurnEffects_(target, battleState) {
-  return getSharedRuleEngine_().decrementTurnEffects(target, battleState && battleState.turn);
+  var previousEffects = (target.effects || []).slice();
+  var result = getSharedRuleEngine_().decrementTurnEffects(target, battleState && battleState.turn);
+  if (battleState) previousEffects.forEach(function(effect) {
+    if (!(target.effects || []).some(function(e) { return e.effectId === effect.effectId; })) {
+      processSkillTriggers_(battleState, 'onEffectRemoved', {target:target,effectId:effect.effectId,reason:'expired'});
+    }
+  });
+  return result;
   target.effects = (target.effects || []).map(function(effect) {
     if (effect.durationType === DURATION_TYPES.TURN) {
       effect.remainingTurns = Number(effect.remainingTurns || 0) - 1;
@@ -2500,7 +2920,7 @@ function getSkillEffectTotal_(target, effectId) {
 }
 
 function getHpPercent_(target) {
-  var current = Number(target.hp !== undefined ? target.hp : target.currentHp || 0);
+  var current = Number(target.currentHp !== undefined ? target.currentHp : target.hp || 0);
   var max = Math.max(1, Number(target.maxHp || target.stats && target.stats.hp || 1));
   return (current / max) * 100;
 }

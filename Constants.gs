@@ -41,10 +41,10 @@ var DB_COLUMNS = Object.freeze({
   STAGES: ['stageId', 'floor', 'stage', 'name', 'baseDifficulty', 'minDifficulty', 'maxDifficulty', 'questionDifficultyBonus', 'monsterGroupId', 'bossMonsterId', 'rewardGroupId', 'requiredOtherQuestionCount'],
   MONSTER_GROUPS: ['monsterGroupId', 'name', 'monsterIds', 'weights', 'monsterCount', 'fixedMonsterIds'],
   MONSTERS: ['monsterId', 'name', 'type', 'hp', 'attack', 'hpRegen', 'evasion', 'criticalRate', 'criticalDamage', 'defense', 'aiId', 'skillIds', 'description', 'attackEffect'],
-  MONSTER_AI: ['aiId', 'patternName', 'actionType', 'conditionJson', 'probability', 'skillId', 'intentIcon', 'intentTextTemplate', 'attackEffect', 'skillAttackEffect'],
+  MONSTER_AI: ['aiId', 'patternName', 'actionType', 'conditionJson', 'probability', 'skillId', 'intentIcon', 'intentTextTemplate'],
   SKILLS: ['skillId', 'name', 'type', 'target', 'baseValue', 'hitCount', 'cooldown', 'conditionJson', 'difficultyBonus', 'effectJson', 'upgradeJson', 'description', 'actionPointCost', 'rarity', 'tags', 'rewardEnabled', 'attackEffect'],
   // The trailing legacy fields keep older deployments and saved runs readable.
-  EFFECTS: ['effectId', 'name', 'category', 'baseValue', 'durationType', 'durationTurns', 'stackMode', 'maxStacks', 'reapplyDurationPolicy', 'durationClock', 'decayTiming', 'decayStacks', 'decrementOnApplyTurn', 'description', 'rulesVersion', 'statKey', 'effectType', 'value', 'stackable', 'triggerTiming', 'damageFormula'],
+  EFFECTS: ['effectId', 'name', 'category', 'baseValue', 'durationType', 'durationTurns', 'stackMode', 'maxStacks', 'reapplyDurationPolicy', 'durationClock', 'decayTiming', 'decayStacks', 'decrementOnApplyTurn', 'description', 'rulesVersion', 'statKey', 'effectType', 'value', 'stackable', 'triggerTiming', 'damageFormula', 'behaviorJson'],
   EFFECT_RULES: ['effectId', 'ruleOrder', 'triggerTiming', 'operation', 'statKey', 'valueMode', 'valueFormula', 'shieldPolicy', 'description'],
   ITEMS: ['itemId', 'name', 'type', 'target', 'effectJson', 'triggerTiming', 'description', 'rarity'],
   REWARDS: ['rewardId', 'type', 'targetId', 'value', 'weight', 'minFloor', 'maxFloor', 'description', 'detailDescription', 'rarity'],

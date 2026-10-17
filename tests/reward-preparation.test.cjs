@@ -135,6 +135,21 @@ test('reward UI displays the prefetched plan while victory finalization is still
   assert.equal(c.currentRewardView.preparedDuringBattle,undefined);
 });
 
+test('victory finalization sends current answers for reroll eligibility instead of dropping them', () => {
+  const html=fs.readFileSync('Battle.html','utf8');
+  let requested;
+  const view={runId:'run',battle:{battleId:'battle',status:'victory',stage:{stageId:'1-1'}}};
+  const c=vm.createContext({currentView:view,isDummyMode:false,workbookDeadlineExpired:false,
+    victoryRewardPreload:null,victoryRewardResultPayload:null,battleRewardPreparation:null,
+    runSessionToken:'token',localRunTransitions:[],getPendingQuestionUnderstanding:()=>[],getAuthToken:()=> 'auth',
+    buildStageResultPayload:(v,options)=>({runId:v.runId,battle:copy(v.battle),answerLogs:options && options.includeAnswerLogs===false ? [] : [{questionId:'recent'}]}),
+    google:{script:{run:{withSuccessHandler(){return this;},withFailureHandler(){return this;},previewRewardChoicesForStageResult(p){requested=p;}}}}});
+  for(const name of ['getVictoryRewardKey','preloadVictoryRewardChoices'])
+    vm.runInContext(html.match(new RegExp('    function '+name+'\\([^]*?\\n    \\}'))[0],c);
+  c.preloadVictoryRewardChoices(view);
+  assert.deepEqual(copy(requested.answerLogs),[{questionId:'recent'}]);
+});
+
 test('background preparation uses the existing RPC and falls back on an older server', async () => {
   const html=fs.readFileSync('Battle.html','utf8');
   const calls=[]; let failure;

@@ -40,12 +40,14 @@ test('server and local intents select monster basic effects and skill effects, i
 
 test('migration preserves configured cells and reports conflicting legacy values', () => {
   const tables = {
-    Monsters:[{monsterId:'m',aiId:'a'},{monsterId:'kept',aiId:'a',attackEffect:'none'}],
-    Skills:[{skillId:'s'},{skillId:'conflict'},{skillId:'kept',attackEffect:'fire'}],
+    Monsters:[{monsterId:'m',aiId:'a'},{monsterId:'kept',aiId:'a',attackEffect:'none'},{monsterId:'punch',aiId:'legacy'}],
+    Skills:[{skillId:'s'},{skillId:'conflict'},{skillId:'kept',attackEffect:'fire'},{skillId:'singleColumn'}],
     MonsterAI:[{aiId:'a',actionType:'attack',attackEffect:'blunt'},
       {actionType:'skill',skillId:'s',skillAttackEffect:'fire'},
       {actionType:'skill',skillId:'conflict',skillAttackEffect:'slash'},
-      {actionType:'skill',skillId:'conflict',skillAttackEffect:'thrust'}],
+      {actionType:'skill',skillId:'conflict',skillAttackEffect:'thrust'},
+      {aiId:'legacy',actionType:'attack',attackEffect:'punch'},
+      {actionType:'skill',skillId:'singleColumn',attackEffect:'thurst'}],
   };
   const writes=[];
   const c=vm.createContext({DB_SHEETS:{MONSTERS:'Monsters',SKILLS:'Skills',MONSTER_AI:'MonsterAI'},
@@ -56,9 +58,22 @@ test('migration preserves configured cells and reports conflicting legacy values
     clearMasterTableCaches_:()=>{},Logger:{log:()=>{}}});
   vm.runInContext(extract(fs.readFileSync('Database.gs','utf8'),'migrateMonsterAttackEffects'),c);
   const report=c.migrateMonsterAttackEffects();
-  assert.deepEqual(writes,['m','s']);
+  assert.deepEqual(writes,['m','punch','s','singleColumn']);
+  assert.equal(tables.Monsters.find(row=>row.monsterId==='punch').attackEffect,'blunt');
+  assert.equal(tables.Skills.find(row=>row.skillId==='singleColumn').attackEffect,'thrust');
   assert.equal(report.conflicts.length,1);
   assert.equal(report.conflicts[0].id,'conflict');
   c.migrateMonsterAttackEffects();
-  assert.deepEqual(writes,['m','s'],'repeated runs do not overwrite migrated values');
+  assert.deepEqual(writes,['m','punch','s','singleColumn'],'repeated runs do not overwrite migrated values');
+});
+
+test('database setup does not recreate retired MonsterAI effect columns',()=>{
+  const headersBySheet=new Map();
+  const c=vm.createContext({ensureSheet_:(sheet,headers)=>headersBySheet.set(sheet,Array.from(headers))});
+  vm.runInContext(fs.readFileSync('Constants.gs','utf8'),c);
+  vm.runInContext(extract(fs.readFileSync('Database.gs','utf8'),'setupDatabase'),c);
+  c.setupDatabase();
+  assert.deepEqual(headersBySheet.get('MonsterAI'),['aiId','patternName','actionType','conditionJson','probability','skillId','intentIcon','intentTextTemplate']);
+  assert.ok(headersBySheet.get('Monsters').includes('attackEffect'));
+  assert.ok(headersBySheet.get('Skills').includes('attackEffect'));
 });

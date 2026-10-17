@@ -66,6 +66,29 @@ for(const mode of ['server','browser']) {
       assert.equal(b.lastTurnEvents.find(e=>e.type==='skill').damage,damage);
     }
   });
+  test(mode+': bully displays its full bonus on finishing hits while HP loss stays capped',()=>{
+    const g=setup();
+    for(const [hp,shield,level,efficiency,criticalRate,displayDamage,hpDamage] of [
+      [15,0,1,1,0,15,15],
+      [14,0,1,1,0,20,14],
+      [14,0,3,1,0,30,14],
+      [14,0,3,.5,0,15,14],
+      [14,0,3,1,100,60,14],
+      [14,10,1,1,0,20,10],
+      [14,3,1,1,0,20,14],
+    ]) {
+      const b=copy(g.battle);b.monsters[1].maxHp=30;b.monsters[1].currentHp=hp;b.monsters[1].shield=shield;
+      b.player.stats.criticalRate=criticalRate;
+      g.perform(mode,b,'skill_bully',{level,efficiency,target:'b'});
+      const hit=b.lastTurnEvents.find(e=>e.type==='skill');
+      assert.equal(hit.targetMonsterId,'b');
+      assert.equal(hit.displayDamage,displayDamage,'floating damage includes conditional damage, efficiency and critical bonuses');
+      assert.equal(hit.hpDamage,hpDamage);
+      assert.equal(b.monsters[1].currentHp,hp-hpDamage);
+      assert.equal(b.monsters[0].currentHp,200,'the unselected monster is unchanged');
+      assert.match(hit.message,new RegExp(displayDamage+' 피해'));
+    }
+  });
   test(mode+': swift strike upgrades damage while keeping zero AP cost and lower difficulty',()=>{
     const g=setup();
     for(const level of [1,3]) {

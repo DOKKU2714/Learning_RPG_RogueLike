@@ -11,6 +11,7 @@ function setup() {
   const x = context();
   x.seed(x.c.DB_SHEETS.SKILLS, [...existing.skills, ...added.skills]);
   x.seed(x.c.DB_SHEETS.EFFECTS, [...existing.effects, ...added.effects]);
+  x.seed(x.c.DB_SHEETS.EFFECT_RULES, added.effectRules);
   const snapshot = start(x).gameDataSnapshot;
   const engine = vm.runInNewContext(x.c.getLocalRunEngineSource_(), {Date:x.c.Date, Math:x.c.Math});
   const battle = {battleId:'support',status:'active',turn:1,stage:{floor:1,stage:1},
@@ -48,6 +49,7 @@ for (const mode of ['server','browser']) {
     if(mode==='browser')g.engine.tick(g.snapshot,b,'turnEnd');else g.x.c.tickEffectsAtTurnEnd(b);
     g.use(mode,b,'skill_motivation');assert.equal(b.player.effects.length,1);assert.equal(b.player.effects[0].stacks,1);
     assert.equal(g.x.c.getSharedRuleEngine_().getQuestionMaxEfficiencyMultiplier(b.player.effects),1.5);
+    assert.equal(g.x.c.getSharedRuleEngine_().getQuestionMinEfficiencyBonusPercent(b.player.effects),50);
   });
 }
 test('motivation multiplies the entire cap, including item bonuses, and expires on the next resolved question even at AP cost zero',()=>{
@@ -59,6 +61,7 @@ test('motivation multiplies the entire cap, including item bonuses, and expires 
   g.x.c.consumeActionPoint_(b,0);
   assert.equal(b.player.effects.length,0);assert.equal(b.player.buffs.length,0);assert.equal(b.player.currentActionPoint,3);
   assert.equal(g.x.c.calculateMaxAnswerEfficiency_(g.x.c.getItemQuestionModifiers_(b,{}),1.25),1.25);
+  assert.equal(g.x.c.getItemQuestionModifiers_(b,{}).questionMinEfficiencyPercent,0);
   g.use('server',b,'skill_motivation');b.player.currentActionPoint=0;
   assert.throws(()=>g.x.c.consumeActionPoint_(b,1));assert.equal(b.player.effects.length,1);
 });
@@ -72,6 +75,47 @@ test('browser fresh and cached questions use the current motivation cap; resolvi
   assert.ok(build.indexOf('consumeQuestionEffects(battle.player)')<build.indexOf('if (questionView.giveUp)'));
   assert.ok(build.indexOf('consumeQuestionEffects(battle.player)')<build.indexOf('applyOptimisticSkillAction(battle, questionView, efficiency)'));
   assert.match(extract('takeCachedQuestionView'),/maxAnswerEfficiency = calculateClientMaxAnswerEfficiency/);
+});
+
+test('motivation raises minimum efficiency by 50 percentage points with identical server and browser results',()=>{
+  for(const mode of ['server','browser']) {
+    const g=setup(),b=copy(g.battle);g.use(mode,b,'skill_motivation');
+    const c=vm.createContext({currentView:{battle:b},currentQuestionView:null,
+      MIN_ANSWER_EFFICIENCY:.5,MAX_ANSWER_EFFICIENCY:1.25,EXTRA_WRONG_EFFICIENCY_PENALTY:.1,SHORT_ANSWER_TIME_MULTIPLIER:1.2});
+    vm.runInContext(g.x.c.getSharedRuleEngineSource_(),c);
+    for(const name of ['calculateClientMaxAnswerEfficiency','getClientLocalQuestionModifiers',
+      'calculateTimedEfficiency','getQuestionMinAnswerEfficiency','getQuestionMaxAnswerEfficiency','calculateWrongEfficiency'])
+      vm.runInContext(extract(name),c);
+    for(const itemBonus of [0,15]) {
+      b.player.itemModifiers=g.x.c.buildItemModifiers_(itemBonus ? [{itemId:'item_steady_bookmark',count:1}] : []);
+      for(const type of ['multipleChoice','shortAnswer']) {
+        const question={type},mods=g.x.c.getItemQuestionModifiers_(b,question);
+        assert.equal(mods.questionMinEfficiencyPercent,50+itemBonus);
+        assert.deepEqual(copy(c.getClientLocalQuestionModifiers(question)),copy(mods));
+        c.currentQuestionView={question,questionModifiers:c.getClientLocalQuestionModifiers(question),
+          maxAnswerEfficiency:c.calculateClientMaxAnswerEfficiency(mods)};
+        assert.equal(c.getQuestionMinAnswerEfficiency(),1);
+        assert.equal(c.calculateWrongEfficiency(1),1);
+        assert.equal(g.x.c.calculateEfficiency(false,0,1000,1,mods,question),1);
+        assert.equal(g.x.c.calculateEfficiency(false,0,1000,0,mods,question),1);
+        for(const remaining of [0,250,500,750,1000])
+          assert.ok(Math.abs(c.calculateTimedEfficiency(remaining,1000)-g.x.c.calculateEfficiency(true,remaining,1000,0,mods,question))<.001);
+      }
+    }
+    g.x.c.getSharedRuleEngine_().consumeQuestionEffects(b.player);
+    b.player.itemModifiers=g.x.c.buildItemModifiers_([]);c.currentQuestionView=null;
+    assert.equal(c.getQuestionMinAnswerEfficiency(),.5);
+    assert.equal(g.x.c.calculateEfficiency(false,0,1000,1,g.x.c.getItemQuestionModifiers_(b,{})),.5);
+  }
+});
+
+test('minimum efficiency rules are data-driven and do not alter player combat stats',()=>{
+  const g=setup(),engine=g.x.c.getSharedRuleEngine_();
+  const effect={effectId:'custom_minimum',value:10,stacks:2,rules:[{
+    operation:'modifyStat',triggerTiming:'passive',statKey:'questionMinEfficiencyPercent',valueMode:'flat',valueFormula:'value*stacks'}]};
+  assert.equal(engine.getQuestionMinEfficiencyBonusPercent([effect]),20);
+  assert.equal(engine.getQuestionMinEfficiencyBonusPercent([]),0);
+  assert.deepEqual(copy(engine.calculateEffectiveStats({attack:10},[effect])),{attack:10});
 });
 test('new skill restrictions, costs, rarity and formula rows are valid',()=>{
   const g=setup();
