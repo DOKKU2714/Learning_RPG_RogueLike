@@ -6525,7 +6525,36 @@
       ].forEach(function(token) {
         text = replaceSkillDescriptionTokens(text, token.keys, token.value, token.highlight);
       });
+      text = text.replace(/\{\{?\s*calc:([^{}]+?)\}\}?/gi, function(match, expression) {
+        var value = getSkillDescriptionFormulaValue(expression, values.formulaContext);
+        return '<strong class="skill-damage-number">' + escapeHtml(value) + '</strong>';
+      });
       return text;
+    }
+
+    function getSkillDescriptionFormulaValue(expression, context) {
+      var parts = String(expression).split('|');
+      var formula = parts.shift().trim();
+      // Unknown variables must remain visibly unavailable rather than silently become zero.
+      var variables = formula.replace(/\d+[dD]\d+/g, '0').match(/[A-Za-z_][A-Za-z_0-9]*/g) || [];
+      if (variables.some(function(key) { return !Object.prototype.hasOwnProperty.call(context || {}, key); }) ||
+          !/^[0-9A-Za-z_.+\-*/()%\s]+$/.test(formula)) return '?';
+      var value = evaluateSkillDisplayFormula(formula, context, 'max');
+      var digits = 0, round = 'round';
+      for (var i = 0; i < parts.length; i++) {
+        var option = parts[i].trim().split(':');
+        var key = option[0], raw = option[1];
+        if (key === 'round' && /^(round|ceil|floor)$/.test(raw)) round = raw;
+        else if (raw !== undefined && raw.trim() !== '' && isFinite(Number(raw))) {
+          if (key === 'digits') digits = Math.max(0, Math.min(4, Math.floor(Number(raw))));
+          else if (key === 'min') value = Math.max(Number(raw), value);
+          else if (key === 'max') value = Math.min(Number(raw), value);
+          else return '?';
+        } else return '?';
+      }
+      if (!isFinite(value)) return '?';
+      var scale = Math.pow(10, digits);
+      return String(Math[round](value * scale) / scale);
     }
 
     function getSkillDescriptionTemplateValues(skill) {
@@ -6558,6 +6587,7 @@
         level: skill && skill.level || 1,
         cooldown: getSkillCooldownDisplayText(skill) || '쿨타임 없음',
         useLimit: getSkillUseLimitText(skill) || '',
+        formulaContext: metrics.formulaContext,
       };
     }
 
@@ -6591,6 +6621,23 @@
         buffValueUpgrade: buffValueUpgrade,
         debuffChanceUpgrade: debuffChanceUpgrade,
       };
+      var player = battle.player || {};
+      var runtime = battle.combatRuntime || {};
+      var chain = runtime.combo || {};
+      var count = chain.turn === battle.turn ? Number(chain.count || 0) : 0;
+      var distinct = chain.turn === battle.turn ? (chain.distinct || []).length : 0;
+      var stored = chain.storedTurn === Number(battle.turn) - 1 ? Number(chain.stored || 0) : 0;
+      var poison = (battle.monsters || []).filter(function(monster) { return Number(monster.hp) > 0; }).reduce(function(total, monster) {
+        return total + (monster.effects || []).reduce(function(sum, effect) {
+          return sum + (effect.effectId === 'effect_v2_poison' ? Number(effect.stacks || 0) : 0);
+        }, 0);
+      }, 0);
+      Object.assign(context, {
+        hp: Number(player.hp || 0), maxHp: Number(player.maxHp || playerStats.maxHp || 0),
+        missingHp: Math.max(0, Number(player.maxHp || playerStats.maxHp || 0) - Number(player.hp || 0)),
+        efficiency: 1, comboCount: count + stored, comboDistinct: distinct,
+        comboBattleBonus: Math.min(12, Number(chain.total || 0)), poisonShield: Math.min(30, poison),
+      });
       var previewRange = getSkillPreviewDamageRange(skill);
       var formulaRange = getSkillFormulaDamageRange(rule, context);
       var effectMetrics = getSkillEffectDisplayMetrics(skill, rule, context);
@@ -6604,6 +6651,12 @@
       var displayHitCount = rule && rule.hitCount !== undefined
         ? Math.max(1, Math.round(evaluateSkillDisplayFormula(rule.hitCount, context, 'max')))
         : getSkillHitCount(skill);
+      var combo = rule.combat && rule.combat.combo;
+      if (combo) {
+        if (combo.extraHitIfPrior && context.comboCount > 0) displayHitCount += Number(combo.extraHitIfPrior);
+        if (combo.hitPerPrior) displayHitCount = Math.min(Number(combo.maxHits), displayHitCount + context.comboCount * Number(combo.hitPerPrior));
+        if (combo.requiredDistinct && distinct >= combo.requiredDistinct) displayHitCount = Number(combo.distinctHitCount);
+      }
       var displayDamageDealt = damage * displayHitCount;
       var healContext = Object.assign({}, context, {
         damageDealt: displayDamageDealt,
@@ -6630,6 +6683,7 @@
         tagDamageAdd: tagMetrics.add,
         attack: attack,
         defense: defense,
+        formulaContext: context,
       };
     }
 
@@ -6645,6 +6699,8 @@
       if (rule && rule.efficiencyBonus && Array.isArray(rule.efficiencyBonus.applyEffects)) {
         effects = effects.concat(rule.efficiencyBonus.applyEffects);
       }
+      effects = effects.concat((rule && rule.actions || []).filter(function(action) { return action.operation === 'applyEffect'; }));
+      effects = effects.concat((rule && rule.combat && rule.combat.onEachHit || []).filter(function(action) { return action.operation === 'applyEffect'; }));
       var first = effects[0] || {};
       if (!Object.keys(first).length && detail) {
         return {
@@ -6750,6 +6806,9 @@
       appendSkillRuleShieldFormula(formulas, rule);
       appendSkillRuleShieldFormula(formulas, rule && rule.onUse);
       appendSkillRuleShieldFormula(formulas, rule && rule.onCorrect);
+      (rule && rule.actions || []).forEach(function(action) {
+        if (action.operation === 'shield' && action.amountFormula !== undefined) formulas.push(action.amountFormula);
+      });
       if (!formulas.length) {
         appendSkillRuleShieldFormula(formulas, rule && rule.onWrong);
       }
