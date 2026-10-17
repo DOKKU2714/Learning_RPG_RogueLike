@@ -40,7 +40,7 @@ var DB_COLUMNS = Object.freeze({
   BATTLE_ANSWER_LOG_QUEUE: ['queueId', 'runId', 'battleId', 'playerId', 'floor', 'stage', 'answerLogCount', 'logsJson', 'createdAt', 'processed', 'processedAt', 'processError'],
   STAGES: ['stageId', 'floor', 'stage', 'name', 'baseDifficulty', 'minDifficulty', 'maxDifficulty', 'questionDifficultyBonus', 'monsterGroupId', 'bossMonsterId', 'rewardGroupId', 'requiredOtherQuestionCount'],
   MONSTER_GROUPS: ['monsterGroupId', 'name', 'monsterIds', 'weights', 'monsterCount', 'fixedMonsterIds'],
-  MONSTERS: ['monsterId', 'name', 'type', 'hp', 'attack', 'hpRegen', 'evasion', 'criticalRate', 'criticalDamage', 'defense', 'aiId', 'skillIds', 'description', 'attackEffect'],
+  MONSTERS: ['monsterId', 'name', 'type', 'hp', 'attack', 'hpRegen', 'evasion', 'criticalRate', 'criticalDamage', 'defense', 'aiId', 'skillIds', 'description', 'attackEffect', 'experience'],
   MONSTER_AI: ['aiId', 'patternName', 'actionType', 'conditionJson', 'probability', 'skillId', 'intentIcon', 'intentTextTemplate'],
   SKILLS: ['skillId', 'name', 'type', 'target', 'baseValue', 'hitCount', 'cooldown', 'conditionJson', 'difficultyBonus', 'effectJson', 'upgradeJson', 'description', 'actionPointCost', 'rarity', 'tags', 'rewardEnabled', 'attackEffect'],
   // The trailing legacy fields keep older deployments and saved runs readable.
@@ -267,10 +267,10 @@ var REWARD_CONFIG = Object.freeze({
   currencyMin: 5,
   currencyMax: 15,
   typeWeights: Object.freeze({
-    stat: 40,
+    stat: 0,
     skill: 30,
-    skillUpgrade: 25,
-    item: 20,
+    skillUpgrade: 0,
+    item: 0,
   }),
 });
 

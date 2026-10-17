@@ -244,3 +244,85 @@ test('rework integration: late luck skills update prepared rewards and settle id
  const replayed=x.c.withRunSession_(run.runId,server.runSessionToken,'auth',()=>{x.c.replayLocalRunTransitions_([{payload:copy(payload),rewardId:choice.rewardId,rewardToken:server.localTransitionToken,selectedAtMs}],'auth');return copy(x.c.requireRun_(run.runId));});
  assert.equal(result.localRunState.currency,replayed.currency);assert.equal(replayed.currency,Number(run.currency || 0)+server.currencyAmount);
 });
+
+for (const mode of ['server','browser']) {
+ test(mode + ': shock damage plays immediately after its original skill hit',()=>{
+  const g=setup(mode);g.apply('shock',3);g.battle.lastTurnEvents=[];
+  g.use('strike',1);
+  const events=g.battle.lastTurnEvents;
+  const hit=events.findIndex(e=>e.actor==='player' && e.damage>0);
+  const shock=events.findIndex(e=>e.effectId==='effect_v2_shock' && e.damageKind==='additional');
+  assert.ok(hit>=0);assert.equal(shock,hit+1);
+ });
+ test(mode + ': electronic barrier reacts after the blocked monster attack',()=>{
+  const g=setup(mode);g.use('shock',13);g.battle.lastTurnEvents=[];
+  const intent={actionType:'attack',type:'attack'};
+  if(mode==='server')g.x.c.applyMonsterAttackIntent_(g.battle,g.a,intent);
+  else {
+   const result=g.incoming(10);
+   g.battle.lastTurnEvents.splice(result.eventIndex,0,{actor:'monster',type:'attack',...result});
+  }
+  const events=g.battle.lastTurnEvents;
+  const hit=events.findIndex(e=>e.actor==='monster' && e.shieldDamage>0);
+  const reaction=events.findIndex(e=>e.skillId==='skill_v2_shock_13' && e.type==='debuff');
+  assert.ok(hit>=0);assert.ok(reaction>hit);
+ });
+}
+
+for (const mode of ['server','browser']) {
+ test(mode + ': onDamaged recovery plays immediately after incoming HP damage',()=>{
+  const g=setup(mode);
+  g.battle.activeTriggers=[{timing:'onDamaged',sourceSkillId:'test_damage_recovery',sourceSkillName:'피격 회복',rule:{actions:[{operation:'heal',target:'self',amount:3}]},durationType:'battle'}];
+  g.battle.lastTurnEvents=[];
+  if(mode==='server')g.x.c.applyMonsterAttackIntent_(g.battle,g.a,{actionType:'attack',type:'attack'});
+  else {
+   const result=g.incoming(10);
+   g.battle.lastTurnEvents.splice(result.eventIndex,0,{actor:'monster',type:'attack',...result});
+  }
+  const events=g.battle.lastTurnEvents;
+  const hit=events.findIndex(e=>e.actor==='monster' && e.hpDamage>0);
+  const reaction=events.findIndex(e=>e.type==='heal');
+  assert.ok(hit>=0);assert.equal(reaction,hit+1);
+  assert.equal(g.p.hp,53);
+ });
+ test(mode + ': fully blocked hits do not trigger onDamaged',()=>{
+  const g=setup(mode);g.p.shield=20;
+  g.battle.activeTriggers=[{timing:'onDamaged',sourceSkillId:'test_damage_recovery',rule:{actions:[{operation:'heal',target:'self',amount:3}]},durationType:'battle'}];
+  g.incoming(10);
+  assert.equal(g.p.hp,60);
+  assert.ok(!g.battle.lastTurnEvents.some(e=>e.type==='heal'));
+ });
+}
+
+for(const mode of ['server','browser'])for(const solo of [false,true])test(mode+': leakage relays full shock to all others or once to a lone target: '+solo,()=>{
+ const g=setup(mode);g.apply('shock',3);g.use('shock',9);
+ const leakage=g.a.effects.find(e=>e.effectId==='effect_v2_leakage');
+ leakage.behavior={combat:{relay:{effectId:'effect_v2_shock',ratio:1,requireOtherEffect:false,allOthers:true,sameTargetIfAlone:true,useAppliedDamage:true}}};
+ if(solo){g.b.currentHp=0;g.c.currentHp=0;}
+ g.direct(1);
+ assert.equal(g.a.currentHp,solo?993:996);
+ if(!solo){assert.equal(g.b.currentHp,997);assert.equal(g.c.currentHp,997);}
+});
+
+for(const mode of ['server','browser'])test(mode+': status and damage events carry elemental IDs for dedicated playback',()=>{
+ const g=setup(mode);
+ g.battle.activeTriggers=[{timing:'onHit',sourceSkillId:'element_test',sourceSkillName:'상태 연출',durationType:'battle',rule:{actions:[
+  {operation:'applyEffect',target:'enemy',effectId:'effect_v2_chill',stacks:2},
+  {operation:'applyEffect',target:'enemy',effectId:'effect_v2_freeze',stacks:1},
+  {operation:'damage',effectId:'effect_v2_poison',damageKind:'dot',amount:2}
+ ]}}];
+ g.event('onHit',{actor:'player',target:g.a,damageKind:'direct'});
+ const events=g.battle.lastTurnEvents;
+ for(const id of ['effect_v2_chill','effect_v2_freeze','effect_v2_poison'])assert.ok(events.some(e=>e.effectId===id),id);
+ assert.equal(events.find(e=>e.effectId==='effect_v2_poison').damageKind,'dot');
+});
+
+for(const mode of ['server','browser'])for(const kind of ['normal','critical','miss'])test(mode+': golden touch remake heals from its hit only: '+kind,()=>{
+ const g=setup(mode);g.p.hp=40;
+ if(kind==='critical')g.p.stats.criticalRate=100;
+ if(kind==='miss'){g.p.stats.accuracy=0;g.a.evasion=100;}
+ const skill={...g.s('luck',8),level:1,type:'damage',target:'enemy',cooldown:3,conditionJson:'{"notUpgradable":true}',effectJson:JSON.stringify({targetMode:'singleEnemy',damageFormula:'attack*0.8+2',combat:{criticalChanceAdd:20},healFromDamagePercentFormula:'50'}),targetId:'a'};
+ if(mode==='browser')g.local.skill({...g.snapshot,skills:g.snapshot.skills.map(s=>s.skillId===skill.skillId?skill:s)},g.battle,skill,'a',1,true);else g.x.c.applySkillEffect(g.battle,skill,1,true);
+ assert.equal(g.p.hp,kind==='normal'?49:kind==='critical'?54:40);
+ assert.equal(g.a.currentHp,kind==='normal'?982:kind==='critical'?973:1000);
+});

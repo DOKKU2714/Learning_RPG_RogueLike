@@ -159,7 +159,7 @@ test('big damage sound requires at least 100 percent question efficiency',()=>{
  assert.equal(sounds.length,0);
  for(const value of [1,1.2,2])c.playEfficientAttackSound(value);
  assert.deepEqual(sounds,['bigDamage','bigDamage','bigDamage']);
- const sequence=html.slice(html.indexOf('    async function playTurnSequence'),html.indexOf('    function collectSimultaneousEvents'));
+ const sequence=html.slice(html.indexOf('    async function playTurnPlayerEvent'),html.indexOf('    function collectSimultaneousEvents'));
  assert.match(sequence,/animateMonsterHit\(event.targetMonsterId, event.damage, event.hpDamage, event.shieldDamage, event.isCritical, currentDamageEfficiency, event.displayDamage\)/);
  const effect=sequence.slice(sequence.indexOf("if (event.actor === 'effect')"),sequence.indexOf("if (event.actor === 'player')"));
  assert.doesNotMatch(effect,/animateMonsterHit\([^\n]*currentDamageEfficiency/);

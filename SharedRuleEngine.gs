@@ -296,13 +296,52 @@ var RULE_ENGINE_SHARED = (function() {
     }, 0);
   }
 
+  function getQuestionCappedEfficiencyBonusPercent(effects) {
+    return (effects || []).reduce(function(total,effect){
+      return total + (effect.behavior && effect.behavior.combat && effect.behavior.combat.capEfficiency ? getRuleStatBonus(effect,'questionEfficiencyBonusPercent','flat') : 0);
+    },0);
+  }
+
+  function capQuestionEfficiencyBonus(value, maximum, cappedPercent) {
+    var bonus=Math.max(0,Number(cappedPercent || 0))/100;
+    var baseline=Number(value || 0)-bonus;
+    return baseline+Math.min(bonus,Math.max(0,Number(maximum)-baseline));
+  }
+
   function consumeQuestionEffects(player) {
     if (!player) return;
     syncStatusBuckets(player);
-    player.effects = player.effects.filter(function(effect) { return effect.durationType !== 'question'; });
+    player.effects = player.effects.filter(function(effect) { return effect.durationType !== 'question' && !(effect.behavior && effect.behavior.combat && effect.behavior.combat.consumeOnQuestion); });
     player.buffs = [];
     player.debuffs = [];
     syncStatusBuckets(player);
+  }
+
+  function isCooldownReductionSkill(skill) {
+    var rule = safeJsonParse(skill && skill.effectJson, {});
+    return !!(rule.cooldownModify && Number(rule.cooldownModify.amount) < 0) ||
+      (rule.actions || []).some(function(action) { return action.operation === 'cooldownSelect' || action.operation === 'cooldownAll'; });
+  }
+
+  function getDiscountedSkillCost(player, skill, baseCost) {
+    var cost = Math.max(0, Math.min(3, Number(baseCost)));
+    (player && player.effects || []).forEach(function(effect) {
+      var modifier = effect.behavior && effect.behavior.combat && effect.behavior.combat.skillCost;
+      if (!modifier || Number(effect.skillCostUses === undefined ? modifier.uses : effect.skillCostUses) <= 0) return;
+      if (effect.sourceSkillId === (skill && skill.skillId)) return;
+      if (cost > 0) cost = Math.max(Number(modifier.minimum || 1), cost - Number(modifier.amount || 0));
+    });
+    return cost;
+  }
+
+  function consumeSkillCostEffects(player, skill) {
+    if (!player || !skill) return;
+    (player.effects || []).slice().forEach(function(effect) {
+      var modifier = effect.behavior && effect.behavior.combat && effect.behavior.combat.skillCost;
+      if (!modifier || effect.sourceSkillId === skill.skillId) return;
+      effect.skillCostUses = Number(effect.skillCostUses === undefined ? modifier.uses : effect.skillCostUses) - 1;
+      if (effect.skillCostUses <= 0) removeCombatEffect(player, effect.effectId, 'consumed');
+    });
   }
 
   function getEffectiveStat(target, statKey) {
@@ -808,7 +847,7 @@ var RULE_ENGINE_SHARED = (function() {
     });
     if(behavior.combat){
       if(typeof behavior.combat!=='object'||Array.isArray(behavior.combat))throw new Error('Invalid combat behavior');
-      Object.keys(behavior.combat).forEach(function(key){if(['outgoing','incomingMultiplier','retaliationMultiplier','critical','criticalBank','random','fatalGuard','blockShield','dot','additional','relay','preserveDecayEffect'].indexOf(key)<0)throw new Error('Unsupported combat behavior: '+key);});
+      Object.keys(behavior.combat).forEach(function(key){if(['outgoing','incomingMultiplier','retaliationMultiplier','critical','criticalBank','random','fatalGuard','blockShield','dot','additional','relay','preserveDecayEffect','skillCost','consumeOnQuestion','capEfficiency'].indexOf(key)<0)throw new Error('Unsupported combat behavior: '+key);});
     }
     if (behavior.hitDamage) {
       if (typeof behavior.hitDamage !== 'object' || Array.isArray(behavior.hitDamage) || !Number.isFinite(Number(behavior.hitDamage.damagePerStack)) || Number(behavior.hitDamage.damagePerStack) < 0) throw new Error('Invalid hitDamage behavior');
@@ -1012,7 +1051,7 @@ var RULE_ENGINE_SHARED = (function() {
     if (actions === undefined) return;
     if (!Array.isArray(actions)) throw new Error('actions must be an array');
     actions.forEach(function(action) {
-      if (!action || ['damage','shield','heal','consumeStacks','moveStacks','copyStacks','removeEffect','applyEffect','storeCombo','resetCombo','cooldownSelect','spreadStacks','gatherStacks','distributeStacks','cleanseLongest','counterAttack','breakControl','explosion','rewardBonus','clearShield'].indexOf(action.operation) < 0) throw new Error('Unsupported combat action');
+      if (!action || ['damage','shield','heal','consumeStacks','moveStacks','copyStacks','removeEffect','applyEffect','storeCombo','resetCombo','cooldownSelect','cooldownAll','spreadStacks','gatherStacks','distributeStacks','cleanseLongest','counterAttack','breakControl','explosion','rewardBonus','clearShield'].indexOf(action.operation) < 0) throw new Error('Unsupported combat action');
       if (['consumeStacks','moveStacks','copyStacks','removeEffect','applyEffect'].indexOf(action.operation) >= 0 && !action.effectId) throw new Error('Combat action requires effectId');
       if (action.damageKind && ['direct','effect','dot','additional','shatter','explosion','reflect','counter'].indexOf(action.damageKind) < 0) throw new Error('Unsupported damageKind');
       if (action.target && ['self','allEnemies','secondary','enemy'].indexOf(action.target) < 0) throw new Error('Unsupported combat action target');
@@ -1357,7 +1396,9 @@ var RULE_ENGINE_SHARED = (function() {
     getQuestionMaxEfficiencyMultiplier: getQuestionMaxEfficiencyMultiplier,
     getQuestionMinEfficiencyBonusPercent: getQuestionMinEfficiencyBonusPercent,
     getQuestionEfficiencyBonusPercent: getQuestionEfficiencyBonusPercent,
+    getQuestionCappedEfficiencyBonusPercent:getQuestionCappedEfficiencyBonusPercent, capQuestionEfficiencyBonus:capQuestionEfficiencyBonus,
     consumeQuestionEffects: consumeQuestionEffects,
+    isCooldownReductionSkill:isCooldownReductionSkill, getDiscountedSkillCost:getDiscountedSkillCost, consumeSkillCostEffects:consumeSkillCostEffects,
     getQuestionAccuracyWeight: getQuestionAccuracyWeight,
     dealDamageToMonster: dealDamageToMonster,
     consumeWrongProtection: consumeWrongProtection,

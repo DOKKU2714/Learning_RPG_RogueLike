@@ -26,7 +26,7 @@ function getLocalRunEngineSource_() {
     applySkillEffect, processSkillTriggers_, processSkillFailPenaltyAfterAnswer_,
     tickEffectsAtTurnStart, tickEffectsAtTurnEnd, tickEffectsOnPlayerAction,
      getAvailableSkills, normalizePlayerActionPoints_, refreshPreparedRewardView_,
-     dealDamageToPlayer_, dealDamageToMonster_, beginCombatActorTurn_, clearPlayerTurnShield_, prepareCombatHit_, applyMonsterBurnDamage_].forEach(collect);
+     dealDamageToPlayer_, dealDamageToMonster_, beginCombatActorTurn_, clearPlayerTurnShield_, prepareCombatHit_, applyMonsterBurnDamage_, selectMonsterAction, executeMonsterKitIntent_, recordExperienceQuestion_, settleMonsterExperience_, allocateLevelStats_, getLevelStatOptions_, settleMonsterItemDrops_, decideMonsterItemDrop_].forEach(collect);
   var constants = { DB_SHEETS: DB_SHEETS, DB_COLUMNS: DB_COLUMNS, STATUS: STATUS, AVATAR_TYPES: AVATAR_TYPES,
     QUESTION_TYPES: QUESTION_TYPES, ACTION_TYPES: ACTION_TYPES, SKILL_TYPES: SKILL_TYPES, REWARD_TYPES: REWARD_TYPES,
     RARITIES: RARITIES, RARITY_LABELS: RARITY_LABELS, EFFECT_CATEGORIES: EFFECT_CATEGORIES, EFFECT_TYPES: EFFECT_TYPES,
@@ -38,7 +38,7 @@ function getLocalRunEngineSource_() {
     ALLOWED_REWARD_STAT_KEYS_: ALLOWED_REWARD_STAT_KEYS_, MASTER_ITEMS: MASTER_ITEMS,
     MASTER_EFFECTS: MASTER_EFFECTS, MASTER_MONSTERS: MASTER_MONSTERS, MASTER_SETTINGS: MASTER_SETTINGS };
   var declarations = Object.keys(constants).map(function(name) { return 'var ' + name + '=' + JSON.stringify(constants[name]) + ';'; }).join('\n');
-   var source = '(function(nativeDate,nativeMath){\n' + declarations + '\n' + adapters + '\n' + getSharedRuleEngineSource_() + '\n' + sources.join('\n') + '\nreturn {advance: advanceLocalRun, reward: refreshLocalReward, skill: applyLocalBattleSkill, trigger: processLocalBattleTrigger, tick: tickLocalBattleEffects, skills: getLocalBattleSkills, damage:applyLocalCombatDamage, playerDamage:applyLocalPlayerDamage, actorTurn:beginLocalActorTurn, hitStats:localCombatHitStats};\n})(Date,Math)';
+   var source = '(function(nativeDate,nativeMath){\n' + declarations + '\n' + adapters + '\n' + getSharedRuleEngineSource_() + '\n' + sources.join('\n') + '\nreturn {advance: advanceLocalRun, reward: refreshLocalReward, skill: applyLocalBattleSkill, trigger: processLocalBattleTrigger, tick: tickLocalBattleEffects, skills: getLocalBattleSkills, damage:applyLocalCombatDamage, playerDamage:applyLocalPlayerDamage, actorTurn:beginLocalActorTurn, hitStats:localCombatHitStats, monsterIntent:localMonsterIntent, monsterAction:localMonsterAction, experienceQuestion:recordExperienceQuestion_, settleExperience:settleMonsterExperience_, levelOptions:getLevelStatOptions_, levelRequired:levelExperienceRequired_, allocate:allocateLocalLevelStats, itemDrops:localMonsterItemDrops, decideDrop:localDecideMonsterItemDrop};\n})(Date,Math)';
   if (/\b(?:SpreadsheetApp|PropertiesService|CacheService|LockService|UrlFetchApp|ScriptApp)\b/.test(source)) throw new Error('클라이언트 전투 규칙에 서버 의존성이 남아 있습니다.');
   return source;
 }
@@ -74,6 +74,21 @@ function getLocalRunEngineAdapters_() {
       }
       return battle;
     });
+  }
+  function allocateLocalLevelStats(snapshot, battle, allocation) {
+    return withLocalBattleRules(snapshot,battle,function() { return allocateLevelStats_(battle,allocation); });
+  }
+  function localMonsterItemDrops(snapshot,battle) {
+    return withLocalBattleRules(snapshot,battle,function(){return settleMonsterItemDrops_(battle);});
+  }
+  function localDecideMonsterItemDrop(snapshot,battle,dropId,claim) {
+    return withLocalBattleRules(snapshot,battle,function(){return decideMonsterItemDrop_(battle,dropId,claim);});
+  }
+  function localMonsterIntent(snapshot, battle, monster) {
+    return withLocalBattleRules(snapshot, battle, function() { return selectMonsterAction(monster, readTable_(DB_SHEETS.MONSTER_AI).concat(getPlayerGhostAiRows_()), battle); });
+  }
+  function localMonsterAction(snapshot, battle, monster) {
+    return withLocalBattleRules(snapshot, battle, function() { return executeMonsterKitIntent_(battle, monster); });
   }
   function processLocalBattleTrigger(snapshot, battle, timing, payload) {
     return withLocalBattleRules(snapshot, battle, function() { processSkillTriggers_(battle, timing, payload || {}); });
@@ -220,17 +235,6 @@ function prepareLocalRewardTransitions_(view, stagePayload, authToken, deferGhos
   var nextStage = moved.status === STATUS.RUN_CLEARED ? null : loadStage(buildStageId_(moved.currentFloor, moved.currentStage));
   var permit = buildLocalTransitionPermit_(run, view.stageId, battle.battleId);
   view.localTransition = permit;
-  // Draw the extra drop with the normal item rules before signing the choices.
-  // Each branch excludes the item selected as the ordinary reward.
-  if (isBossVictoryReward_(view.stageId, battle) && !view.bossItemRewards) {
-    view.bossItemRewards = {};
-    view.choices.forEach(function(choice) {
-      var items = safeJsonParse_(run.itemsJson, []);
-      var selected = choice.claimReward || choice;
-      if (selected.type === REWARD_TYPES.ITEM) items = addItemToOwnedItems_(items, selected.targetId);
-      view.bossItemRewards[choice.rewardId] = pickAutoItemReward_(items);
-    });
-  }
   if (!deferGhost && nextStage && !isFloorRestStage_(nextStage)) {
     permit.ghostSelection = selectPlayerGhostForBattle_(moved, nextStage, getStageState_(moved), 'battle_local_' + permit.seed + '_1');
   }
@@ -281,9 +285,7 @@ function replayLocalRunTransitions_(transitions, authToken) {
       || payload.battle.stage.stageId !== expectedStageId
       || permit.battleId && permit.battleId !== payload.battle.battleId
       || state.battle && state.battle.battleId !== payload.battle.battleId) throw new Error('스테이지 진행 순서가 올바르지 않습니다.');
-    var expectedStats = safeJsonParse_(run.statsJson, {});
-    var receivedStats = payload.battle.player && payload.battle.player.baseStats || {};
-    if (Object.keys(expectedStats).some(function(key) { return Number(receivedStats[key]) !== Number(expectedStats[key]); })) throw new Error('플레이어 능력치가 게임 진행 기록과 다릅니다.');
+    validateLevelStatsForCommit_(run,state.battle || {},payload.battle);
     var selectedAt = Number(event.selectedAtMs || 0);
     var now = new Date().getTime();
     if (!isFinite(selectedAt) || selectedAt < permit.issuedAtMs || selectedAt > now + 1000) throw new Error('보상 선택 시간이 올바르지 않습니다.');

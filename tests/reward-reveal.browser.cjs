@@ -36,7 +36,23 @@ const modal = html.slice(html.indexOf('  <div id="rewardModal"'), html.indexOf('
       sheen:getComputedStyle(el,'::after').content,
     })));
     assert.deepEqual(timings.map(t => t.delay), [0,0,0], 'all lights start together');
-    assert.deepEqual(timings.map(t => t.duration), [300,2000,8000]);
+    assert.deepEqual(timings.map(t => t.duration), [300,1150,4150]);
+    const rhythm = await cards.evaluateAll(nodes => nodes.map(card => ({
+      charge:card.querySelector('.reward-charge-light').getAnimations().map(a=>({name:a.animationName,duration:a.effect.getTiming().duration,iterations:a.effect.getTiming().iterations})),
+      flicker:card.querySelector('.reward-charge-star').getAnimations()[0].effect.getTiming(),
+      spectrum:card.querySelector('.reward-charge-spectrum').getAnimations()[0].effect.getTiming(),
+    })));
+    rhythm.forEach(t => {
+      assert.equal(t.charge.find(a=>a.name==='reward-charge-grow').duration,300);
+      assert.deepEqual(t.charge.find(a=>a.name==='reward-charge-vibrate'),{name:'reward-charge-vibrate',duration:120,iterations:Infinity});
+      assert.equal(t.flicker.duration,240); assert.equal(t.flicker.iterations,Infinity);
+      assert.equal(t.spectrum.duration,800); assert.equal(t.spectrum.iterations,Infinity);
+    });
+    const allChargeTimes = await cards.nth(0).evaluate(el => ['common','uncommon','rare','epic','legendary','unique'].map(rarity=>{
+      const copy=el.cloneNode(true);copy.className='reward-choice-card rarity-'+rarity;el.parentElement.appendChild(copy);
+      const time=parseFloat(getComputedStyle(copy).getPropertyValue('--reward-charge-time'));copy.remove();return time;
+    }));
+    assert.deepEqual(allChargeTimes,[300,650,1150,1900,2900,4150]);
     assert.match(await cards.nth(2).locator('.reward-charge-star').evaluate(el => getComputedStyle(el,'::before').clipPath), /polygon\(50% 0%, 54% 44%/);
     assert.match(await cards.nth(2).locator('.reward-charge-spectrum').evaluate(el => getComputedStyle(el).backgroundImage), /conic-gradient/);
     assert.equal(await cards.nth(0).locator('.reward-dust-particle').count(), 0);
@@ -93,6 +109,12 @@ const modal = html.slice(html.indexOf('  <div id="rewardModal"'), html.indexOf('
     })));
     assert.deepEqual(dustColors.map(c => c.particle), ['rgb(223, 114, 255)','rgb(255, 141, 54)','rgb(255, 74, 74)']);
     await seek(-150);
+    const sustainedCharge = await cards.evaluateAll(nodes => nodes.map(card => ({
+      scale:Number(getComputedStyle(card.querySelector('.reward-charge-light')).scale),
+      target:Number(getComputedStyle(card).getPropertyValue('--reward-charge-scale')),
+      flicker:card.querySelector('.reward-charge-star').getAnimations()[0].playState,
+    })));
+    sustainedCharge.forEach(state=>assert.equal(state.scale,state.target,'growth finishes at the same speed and holds while the effects repeat'));
     if (process.env.REWARD_SPECTRUM_SCREENSHOT) await page.screenshot({path:process.env.REWARD_SPECTRUM_SCREENSHOT});
     await seek(85);
     const crossShape = await cards.nth(0).locator('.reward-light-card').evaluate(el => getComputedStyle(el).clipPath);
@@ -103,6 +125,12 @@ const modal = html.slice(html.indexOf('  <div id="rewardModal"'), html.indexOf('
     assert.notEqual(crossShape, lightCardState.shape);
     assert.match(lightCardState.shape, /polygon\(50% 0%, 100% 0%, 100% 0%/);
     assert.ok(lightCardState.scale > 1, 'light reaches the full card silhouette');
+    const rarityFlash = await cards.evaluateAll(nodes => nodes.map(card => ({
+      color:getComputedStyle(card.querySelector('.reward-light-card'),'::after').backgroundColor,
+      opacity:Number(getComputedStyle(card.querySelector('.reward-light-card'),'::after').opacity),
+    })));
+    assert.deepEqual(rarityFlash.map(s=>s.color),['rgb(223, 114, 255)','rgb(255, 141, 54)','rgb(255, 74, 74)']);
+    rarityFlash.forEach(state=>assert.equal(state.opacity,1,'the full card silhouette flashes in its rarity color'));
     assert.equal(await cards.nth(0).locator('.reward-choice-heading').evaluate(el => getComputedStyle(el).visibility), 'hidden');
     if (process.env.REWARD_MORPH_SCREENSHOT) await page.screenshot({path:process.env.REWARD_MORPH_SCREENSHOT});
     for (const offset of [85,200,370,450,520,850]) {
@@ -121,6 +149,7 @@ const modal = html.slice(html.indexOf('  <div id="rewardModal"'), html.indexOf('
       }
     }
     await seek(620);
+    assert.equal(await cards.nth(0).locator('.reward-light-card').evaluate(el=>Number(getComputedStyle(el,'::after').opacity)),0,'rarity flash ends after contraction');
     const contractedScale = await cards.nth(0).locator('.reward-light-card').evaluate(el => new DOMMatrixReadOnly(getComputedStyle(el).transform).a);
     assert.ok(contractedScale < lightCardState.scale * .2, 'card light rapidly contracts before disappearing');
     assert.equal(await cards.nth(0).locator('.reward-choice-heading').evaluate(el => getComputedStyle(el).visibility), 'visible');

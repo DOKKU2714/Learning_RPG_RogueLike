@@ -94,10 +94,11 @@ test('motivation raises minimum efficiency by 50 percentage points with identica
         assert.deepEqual(copy(c.getClientLocalQuestionModifiers(question)),copy(mods));
         c.currentQuestionView={question,questionModifiers:c.getClientLocalQuestionModifiers(question),
           maxAnswerEfficiency:c.calculateClientMaxAnswerEfficiency(mods)};
-        assert.equal(c.getQuestionMinAnswerEfficiency(),1);
-        assert.equal(c.calculateWrongEfficiency(1),1);
-        assert.equal(g.x.c.calculateEfficiency(false,0,1000,1,mods,question),1);
-        assert.equal(g.x.c.calculateEfficiency(false,0,1000,0,mods,question),1);
+        const minimum=1+itemBonus/100;
+        assert.equal(c.getQuestionMinAnswerEfficiency(),minimum);
+        assert.equal(c.calculateWrongEfficiency(1),minimum);
+        assert.equal(g.x.c.calculateEfficiency(false,0,1000,1,mods,question),minimum);
+        assert.equal(g.x.c.calculateEfficiency(false,0,1000,0,mods,question),minimum);
         for(const remaining of [0,250,500,750,1000])
           assert.ok(Math.abs(c.calculateTimedEfficiency(remaining,1000)-g.x.c.calculateEfficiency(true,remaining,1000,0,mods,question))<.001);
       }

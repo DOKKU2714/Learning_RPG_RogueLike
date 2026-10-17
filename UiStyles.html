@@ -3765,23 +3765,23 @@
     animation: reward-card-materialize 300ms var(--reward-reveal-time) ease-out backwards;
   }
   .stage-clear-reward-overlay .reward-choice-card.rarity-uncommon {
-    --reward-charge-time: 1000ms; --reward-charge-scale: 2.4; --reward-shake: .8px;
+    --reward-charge-time: 650ms; --reward-charge-scale: 2.4; --reward-shake: .8px;
     --reward-flash-scale: 1; --reward-halo: 12px; --reward-radiance: .25;
   }
   .stage-clear-reward-overlay .reward-choice-card.rarity-rare {
-    --reward-charge-time: 2000ms; --reward-charge-scale: 3; --reward-shake: 1.5px;
+    --reward-charge-time: 1150ms; --reward-charge-scale: 3; --reward-shake: 1.5px;
     --reward-flash-scale: 1.3; --reward-halo: 18px; --reward-radiance: .36;
   }
   .stage-clear-reward-overlay .reward-choice-card.rarity-epic {
-    --reward-charge-time: 3500ms; --reward-charge-scale: 3.8; --reward-shake: 2.5px;
+    --reward-charge-time: 1900ms; --reward-charge-scale: 3.8; --reward-shake: 2.5px;
     --reward-flash-scale: 1.6; --reward-halo: 25px; --reward-radiance: .48;
   }
   .stage-clear-reward-overlay .reward-choice-card.rarity-legendary {
-    --reward-charge-time: 5500ms; --reward-charge-scale: 4.6; --reward-shake: 3.8px;
+    --reward-charge-time: 2900ms; --reward-charge-scale: 4.6; --reward-shake: 3.8px;
     --reward-flash-scale: 2; --reward-halo: 34px; --reward-radiance: .62;
   }
   .stage-clear-reward-overlay .reward-choice-card.rarity-unique {
-    --reward-charge-time: 8000ms; --reward-charge-scale: 5.5; --reward-shake: 5.5px;
+    --reward-charge-time: 4150ms; --reward-charge-scale: 5.5; --reward-shake: 5.5px;
     --reward-flash-scale: 2.5; --reward-halo: 44px; --reward-radiance: .76;
   }
   .stage-clear-reward-overlay .reward-choice-card > :not(.reward-reveal-effect) {
@@ -3798,8 +3798,8 @@
     margin: -32px 0 0 -23px;
     background: radial-gradient(ellipse, #fff 0 2%, rgba(222,239,255,.5) 8%, rgba(190,207,255,.13) 30%, transparent 65%);
     filter: drop-shadow(0 0 3px rgba(232,243,255,.85));
-    animation: reward-charge-grow var(--reward-charge-time) ease-in forwards,
-      reward-charge-vibrate var(--reward-charge-time) linear forwards,
+    animation: reward-charge-grow 300ms ease-in forwards,
+      reward-charge-vibrate 120ms linear infinite,
       reward-charge-extinguish 150ms var(--reward-charge-time) ease-out forwards;
   }
   .reward-charge-star,
@@ -3810,7 +3810,7 @@
   }
   .reward-charge-star {
     filter: drop-shadow(-.65px 0 1px #83e5ff) drop-shadow(.65px 0 1px #ffb7e6);
-    animation: reward-star-flicker var(--reward-charge-time) linear both;
+    animation: reward-star-flicker 240ms linear infinite;
   }
   .reward-charge-star::before,
   .reward-charge-star::after {
@@ -3830,7 +3830,7 @@
     border-radius: 50%;
     background: conic-gradient(from 20deg, transparent, rgba(104,213,255,.3), transparent 25%, rgba(172,145,255,.25), transparent 50%, rgba(255,171,207,.24), transparent 75%, rgba(255,224,162,.2), transparent);
     mask-image: radial-gradient(ellipse, transparent 16%, #000 28%, transparent 65%);
-    animation: reward-spectrum-turn var(--reward-charge-time) ease-in both;
+    animation: reward-spectrum-turn 800ms linear infinite;
   }
   .reward-reveal-flash {
     inset: -2px;
@@ -3842,6 +3842,12 @@
     background: linear-gradient(115deg, #bbebff, #fff 22% 68%, #e2ceff 86%, #ffcae9);
     transform-origin: 50% 50%;
     animation: reward-light-card-morph 1100ms var(--reward-charge-time) cubic-bezier(.22,.8,.24,1) both;
+  }
+  .reward-light-card::after {
+    content: '';
+    position: absolute; inset: 0;
+    background: var(--reward-gem-color);
+    animation: reward-card-rarity-flash 1100ms var(--reward-charge-time) linear both;
   }
   .reward-reveal-flash::after {
     content: '';
@@ -3905,27 +3911,27 @@
     100% { scale: var(--reward-charge-scale); opacity: 1; }
   }
   @keyframes reward-charge-vibrate {
-    0%, 20%, 100% { translate: 0 0; }
-    30%, 40% { translate: calc(var(--reward-shake) * -.1) 0; }
-    35%, 45% { translate: calc(var(--reward-shake) * .1) 0; }
-    50%, 60% { translate: calc(var(--reward-shake) * -.25) calc(var(--reward-shake) * .1); }
-    55%, 65% { translate: calc(var(--reward-shake) * .25) calc(var(--reward-shake) * -.1); }
-    70%, 78% { translate: calc(var(--reward-shake) * -.5) calc(var(--reward-shake) * -.2); }
-    74%, 82% { translate: calc(var(--reward-shake) * .5) calc(var(--reward-shake) * .2); }
-    86%, 92%, 98% { translate: calc(0px - var(--reward-shake)) calc(var(--reward-shake) * .4); }
-    89%, 95% { translate: var(--reward-shake) calc(var(--reward-shake) * -.4); }
+    0%, 100% { translate: 0 0; }
+    25% { translate: calc(0px - var(--reward-shake)) calc(var(--reward-shake) * .4); }
+    50% { translate: var(--reward-shake) calc(var(--reward-shake) * -.4); }
+    75% { translate: calc(var(--reward-shake) * -.5) calc(var(--reward-shake) * -.2); }
   }
   @keyframes reward-charge-extinguish {
     0% { opacity: 1; }
     100% { opacity: 0; visibility: hidden; }
   }
   @keyframes reward-star-flicker {
-    0%, 24%, 46%, 64%, 78%, 89%, 96%, 100% { opacity: 1; transform: scale(1); }
-    20%, 42%, 60%, 74%, 85%, 93% { opacity: .62; transform: scale(.83); }
+    0%, 50%, 100% { opacity: 1; transform: scale(1); }
+    25%, 75% { opacity: .62; transform: scale(.83); }
   }
   @keyframes reward-spectrum-turn {
-    from { opacity: .1; transform: rotate(-35deg) scale(.65); }
-    to { opacity: .9; transform: rotate(145deg) scale(1.15); }
+    from { opacity: .9; transform: rotate(-35deg) scale(1.15); }
+    to { opacity: .9; transform: rotate(325deg) scale(1.15); }
+  }
+  @keyframes reward-card-rarity-flash {
+    0%, 24% { opacity: 0; }
+    29%, 36% { opacity: 1; }
+    46%, 100% { opacity: 0; }
   }
   @keyframes reward-flash-envelope {
     0% { opacity: 0; }
@@ -3983,6 +3989,7 @@
     .stage-clear-reward-overlay .reward-choice-card::after { animation: none; }
     .stage-clear-reward-overlay .reward-reveal-effect,
     .stage-clear-reward-overlay .reward-reveal-flash::after,
+    .stage-clear-reward-overlay .reward-light-card::after,
     .stage-clear-reward-overlay .reward-reveal-effect * { animation: none; }
     .reward-reveal-effect { display: none; }
   }
@@ -4941,9 +4948,12 @@
   .hp-hit-shake > .hp-current,.hp-hit-shake > .player-hp-fill { transition: width 320ms ease-out; }
   .hp-hit-shake > .monster-shield-fill,.hp-hit-shake > .player-shield-fill { transition: width 180ms ease-out,left 320ms ease-out; }
   .hp-damage-fragment { position: fixed; z-index: 90; pointer-events: none; background: #fff; box-shadow: 0 0 8px #fff9; transform-origin: right center; animation: hp-fragment-rise 720ms linear forwards; }
+  .hp-damage-fragment:not(.shield-damage-fragment) { position:absolute; z-index:2; }
+  .monster-hp-bar,.player-hp-track { overflow:visible; }
   @keyframes hp-fragment-rise {
     0% { transform: scaleX(0); opacity: 1; animation-timing-function: ease-out; }
     44.444% { transform: scaleX(1); opacity: 1; animation-timing-function: ease-in; }
+    72.222% { transform: scaleX(1); opacity: 1; animation-timing-function: ease-in; }
     100% { transform: translate(var(--hp-flight-x,0px),var(--hp-flight-y,-35px)) rotate(var(--hp-flight-spin,-5deg)); opacity: 0; }
   }
   .shield-effect.monster-guard-effect { width: 90px; height: 108px; z-index: 8; font-size: 25px; color: #fff; background: linear-gradient(135deg,#f5fcff,#5496e1 50%,#183f8c); animation: monster-guard-bounce 1500ms ease-out forwards; }
@@ -4982,7 +4992,7 @@
   .battle-hud > .battle-stage-hud { margin-bottom: 0; }
   .hp-hit-shake { animation: hp-hit-shake 360ms ease-out; }
   .hp-hit-shake.shield-impact-pulse,.hp-hit-shake.shielded-hp-track.shield-impact-pulse { animation: hp-hit-shake 360ms ease-out,shield-border-pulse 360ms ease-out; }
-  .hp-hit-flash::after { content: ''; position: absolute; inset: 0 auto 0 0; width: var(--hp-flash-width,100%); z-index: 6; pointer-events: none; background: #fff; animation: hp-hit-flash 120ms ease-out forwards; }
+  .hp-hit-flash::after { content: ''; position: absolute; inset: 0 auto 0 0; width: var(--hp-flash-width,100%); z-index: 2; pointer-events: none; background: #fff; animation: hp-hit-flash 120ms ease-out forwards; }
   @keyframes hp-hit-flash { 0% { opacity: .35; } 100% { opacity: 0; } }
   @keyframes hp-hit-shake {
     0%,100% { translate: 0 0; }
@@ -5079,7 +5089,7 @@
   @keyframes hp-heavy-fragment-flight {
     0% { opacity: 1; transform: scaleX(0); animation-timing-function: ease-out; }
     44.444% { opacity: 1; transform: scaleX(1); animation-timing-function: ease-in; }
-    58% { opacity: 1; transform: translate(0,8px) rotate(-8deg); }
+    72.222% { opacity: 1; transform: scaleX(1); animation-timing-function: ease-in; }
     100% { opacity: 0; transform: translate(var(--hp-flight-x),var(--hp-flight-y)) rotate(var(--hp-flight-spin)) scale(.65); }
   }
   @media (prefers-reduced-motion: reduce) {
@@ -5229,4 +5239,100 @@
     .battle-hud .compact-actions > .combat-icon-button { min-height: 54px; }
     .battle-hud > .battle-log-compact, .battle-hud.narration-mode > .battle-log-compact { min-height: 48px; }
   }
+  .battle-hud,
+  .battle-hud.cinematic-mode,
+  .battle-hud.enemy-turn-mode { grid-template-rows: auto auto auto auto; padding-bottom: 0; }
+  .battle-hud > .player-compact-panel { padding-bottom: 6px; }
+  .player-exp-row { position:fixed; left:0; right:0; bottom:0; height:6px; display:flex; margin:0; z-index:5; }
+  #playerLevelLabel, #playerExpText { display:none; }
+  .player-exp-track { position:relative; height:6px; flex:1; overflow:hidden; border:0; background:#102519; border-radius:0; }
+  #playerExpFill { display:block; height:100%; width:0; background:linear-gradient(90deg,#33aa58,#87f788); box-shadow:0 0 8px #65df7580; transition:width .35s ease; }
+  #playerExpText { min-width:62px; text-align:right; font-size:10px; }
+  @media (max-width:900px) and (orientation:portrait) {
+    .battle-hud, .battle-hud.cinematic-mode, .battle-hud.enemy-turn-mode { grid-template-rows:auto auto auto auto auto; }
+  }
+  .experience-orb { position:fixed; width:10px; height:10px; margin:-5px; border-radius:50%; background:#a5ffab; box-shadow:0 0 8px #66ff86,0 0 20px #2bb44b; pointer-events:none; z-index:9000; }
+  .experience-text { color:#91ff9c!important; text-shadow:0 2px 2px #102519,0 0 10px #238c3b; white-space:nowrap; }
+  .level-up-banner { display:none; position:fixed; inset:0; align-items:center; justify-content:center; z-index:9100; color:#bcff8f; font-size:clamp(40px,8vw,80px); font-weight:900; text-shadow:4px 4px #17482a,0 0 30px #6dfb86; pointer-events:none; }
+  .level-up-banner.active { display:flex; animation:level-up-pop .9s ease both; }
+  @keyframes level-up-pop { 0% { opacity:0; transform:scale(.7); } 25%,75% { opacity:1; transform:scale(1); } 100% { opacity:0; transform:scale(1.06); } }
+  .level-stat-overlay { display:none; position:fixed; inset:0; z-index:9200; align-items:center; justify-content:center; padding:16px; background:rgba(5,10,16,.82); backdrop-filter:blur(5px); }
+  .level-stat-overlay.active { display:flex; }
+  .level-stat-panel { width:min(640px,100%); max-height:92dvh; overflow:auto; padding:24px; border:3px solid #80ce93; background:#172128; box-shadow:0 0 0 4px #080e13,0 10px 40px #000a; color:#f0f7f1; }
+  .level-stat-panel h2 { margin:0 0 8px; color:#b4f9a4; }
+  .level-stat-choices { display:grid; gap:6px; margin:18px 0; }
+  .level-stat-row { display:grid; grid-template-columns:minmax(0,1fr) auto 34px 22px 34px; align-items:center; gap:8px; padding:8px; background:#24333b; }
+  .level-stat-row strong { display:block; font-size:14px; }
+  .level-stat-label { cursor:help; }
+  .level-stat-label:focus-visible { outline:2px solid #b4f9a4; outline-offset:3px; }
+  body:has(#levelStatModal.active) .hover-tooltip,
+  body:has(#levelStatModal.active) .touch-preview-panel { z-index:9400; }
+  .level-stat-row small { color:#a9c5b5; font-size:11px; }
+  .level-stat-row button { width:34px; height:34px; padding:0; font:inherit; font-size:20px; }
+  .level-stat-count { text-align:center; }
+  .level-stat-value { color:#b4f9a4; font-size:12px; }
+  #levelStatConfirm { width:100%; min-height:44px; }
+  #levelStatError { color:#ffb2a7; }
+  @media(max-width:500px) { .level-stat-panel { padding:14px; } .level-stat-row { gap:4px; padding:6px; grid-template-columns:minmax(0,1fr) auto 30px 18px 30px; } .level-stat-row strong {font-size:12px;} .level-stat-row button {width:30px;height:34px;} .level-stat-value {font-size:10px;} }
+  @media(prefers-reduced-motion:reduce) { #playerExpFill {transition:none;} .level-up-banner.active {animation:none;} }
+  .monster-drop-overlay { display:none; position:fixed; inset:0; z-index:9300; align-items:center; justify-content:center; padding:18px; background:rgba(5,10,16,.82); backdrop-filter:blur(5px); }
+  .monster-drop-overlay.active {display:flex;}
+  .monster-drop-panel {width:min(460px,100%);padding:28px;border:3px solid #d5bb75;background:#172128;color:#f6efd8;box-shadow:0 0 0 4px #080e13,0 10px 40px #000a;text-align:center;}
+  .monster-drop-panel h2 {margin:0 0 12px;color:#ffe39a;font-size:28px;}
+  #monsterDropSource {color:#aeb9bd;font-size:13px;}
+  #monsterDropCard {margin:24px auto 14px;max-width:300px;text-align:left;}
+  #monsterDropCard .item-card {width:100%;min-height:110px;}
+  .monster-drop-hint {color:#b9c4c5;font-size:12px;line-height:1.6;}
+  .monster-drop-actions {display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:22px;}
+  .monster-drop-actions button {min-height:46px;}
+  #monsterDropError {color:#ffb2a7;}
+  .monster-drop-open .hover-tooltip {z-index:9400;}
+  @media(max-width:500px){.monster-drop-panel {padding:22px 16px;}.monster-drop-panel h2 {font-size:24px;}}
+
+  /* Elemental feedback is anchored to the art, independent of weapon impact effects. */
+  .element-vfx { position:absolute; inset:0; z-index:22; pointer-events:none; overflow:visible; isolation:isolate; }
+  .element-vfx .element-particle { display:block; position:absolute; left:var(--x); top:var(--y); width:var(--size); height:var(--size); opacity:0; animation-delay:var(--delay); animation-fill-mode:both; }
+  .element-vfx-burn { filter:drop-shadow(0 0 6px #f66a1299); }
+  .element-vfx-burn .element-particle { width:calc(var(--size)*1.15); height:calc(var(--size)*2.3); border-radius:70% 20% 55% 50%; background:radial-gradient(ellipse at 50% 80%,#ffffcf 0%,#ffd66b 22%,#ff8a22 48%,#e83c0c55 75%,transparent 85%); transform-origin:50% 90%; animation-name:element-flame; animation-duration:850ms; mix-blend-mode:screen; }
+  .element-vfx-burn .element-particle::after { content:''; position:absolute; inset:40% 30% 8%; border-radius:70% 30% 50% 50%; background:#fff3ad; filter:blur(1px); }
+  @keyframes element-flame { 0%{opacity:0;transform:scale(.2) rotate(-18deg)} 18%{opacity:1;transform:scale(1) rotate(10deg)} 40%{transform:translate(3px,-4px) scale(.8,1.2) rotate(-12deg)} 68%{opacity:.9;transform:translate(-2px,-15px) scale(.65,1.1) rotate(14deg)} 100%{opacity:0;transform:translate(var(--drift),-46px) scale(.1,.6)} }
+  .element-vfx-explosion::before { content:''; position:absolute; inset:8%; border-radius:50%; background:radial-gradient(circle,#fffef3 0 9%,#fff6b9 15%,#ffbd46 27%,#ff5a14b0 43%,#bc2c1520 65%,transparent 72%); animation:element-detonate 850ms ease-out both; }
+  .element-vfx-explosion::after { content:''; position:absolute; inset:15%; border-radius:50%; border:3px solid #fff5c8; box-shadow:0 0 12px #ff8b28,inset 0 0 20px #ffb658; animation:element-shockwave 700ms ease-out both; }
+  .element-vfx-explosion .element-particle { left:50%;top:50%;width:calc(var(--size)*.4);height:calc(var(--size)*1.8);border-radius:60%; background:linear-gradient(#fffcce,#ffa235,transparent);box-shadow:0 0 7px #fa7b16;animation:element-explosion-spark 800ms cubic-bezier(.12,.7,.3,1) var(--delay) both; }
+  .element-blast-core {position:absolute;inset:5%;width:90%;height:90%;overflow:visible;filter:drop-shadow(0 0 10px #ffa232);animation:element-blast 650ms ease-out both;}
+  .element-vfx-explosion .element-particle.element-smoke {width:28%;height:28%;margin:-14%;background:radial-gradient(circle at 40% 35%,#ffc35c,#e66b2799 35%,#49383d66 65%,transparent 75%);box-shadow:none;filter:blur(4px);animation:element-smoke 950ms ease-out var(--delay) both;}
+  @keyframes element-blast {0%{opacity:0;transform:scale(.05) rotate(-12deg)} 15%{opacity:1;transform:scale(.8)} 35%{opacity:.95;transform:scale(1.15) rotate(8deg)} 100%{opacity:0;transform:scale(1.65) rotate(15deg);filter:blur(4px)}}
+  @keyframes element-smoke {0%{opacity:0;transform:rotate(var(--angle)) translateY(0) scale(.1)} 25%{opacity:.8} 100%{opacity:0;transform:rotate(var(--angle)) translateY(-65px) scale(1.6)}}
+  @keyframes element-detonate { 0%{opacity:0;transform:scale(.05)} 12%{opacity:1;transform:scale(.8)} 32%{opacity:.95;transform:scale(1.25)} 100%{opacity:0;transform:scale(1.8);filter:blur(14px)} }
+  @keyframes element-shockwave { 0%{opacity:0;transform:scale(.1)} 12%{opacity:1} 100%{opacity:0;transform:scale(2.3);border-width:1px;filter:blur(2px)} }
+  @keyframes element-explosion-spark { 0%{opacity:0;transform:rotate(var(--angle)) translateY(0) scale(.3)} 12%{opacity:1} 100%{opacity:0;transform:rotate(var(--angle)) translateY(calc(-1 * var(--travel))) scale(.2)} }
+  .element-vfx-chill::before {content:'';position:absolute;inset:0;background:radial-gradient(ellipse,#bdedff25,transparent 70%);animation:element-aura 1400ms ease-in-out both;}
+  .element-vfx-chill .element-particle { width:calc(var(--size)*1.8);height:calc(var(--size)*.6); border-radius:50%; background:radial-gradient(ellipse,#edffffe0,#a6e9ff70 45%,transparent 72%);filter:blur(2px); animation:element-cold-air 1050ms ease-in-out var(--delay) both; }
+  .element-vfx-chill .element-particle:nth-child(3n) {width:3px;height:3px;filter:drop-shadow(0 0 4px #bafaff);background:#efffff;}
+  .element-vfx-chill .element-particle::after {content:'';position:absolute;inset:-15% -20%;border-top:1px solid #d0faff99;border-radius:50%;transform:rotate(-12deg);filter:blur(.6px);}
+  @keyframes element-cold-air {0%{opacity:0;transform:translate(-20px,10px) scale(.4)} 30%{opacity:.85} 65%{opacity:.6} 100%{opacity:0;transform:translate(var(--drift),-32px) scale(1.7)}}
+  @keyframes element-aura {0%,100%{opacity:0} 30%,60%{opacity:1}}
+  .element-ice {position:absolute;left:0;top:-8%;width:100%;height:115%;overflow:visible;filter:drop-shadow(0 0 8px #91dcff);animation:element-ice-form 1500ms cubic-bezier(.2,.8,.2,1) both;}
+  .ice-silhouette {fill:#67c7e86b;stroke:#d8ffff;stroke-width:1.5;}
+  .element-vfx-freeze .element-particle {width:6px;height:12px;clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%);background:linear-gradient(135deg,#fff,#9be9ff80);animation:element-ice-dust 1400ms ease-out var(--delay) both;}
+  @keyframes element-ice-form {0%{opacity:0;transform:translateY(20px) scale(.6,.05)} 18%{opacity:1;transform:translateY(0) scale(1.04)} 30%,68%{opacity:.9;transform:scale(1)} 100%{opacity:0;transform:scale(1.07);filter:drop-shadow(0 0 12px #c3f9ff) blur(2px)}}
+  @keyframes element-ice-dust {0%{opacity:0;transform:translateY(10px) scale(0)} 25%,65%{opacity:1} 100%{opacity:0;transform:translate(var(--drift),-25px) rotate(100deg) scale(.3)}}
+  .monster-art.element-tint-freeze {animation:element-frost-tint 1550ms ease-in-out both;}
+  @keyframes element-frost-tint {0%,100%{filter:drop-shadow(0 18px 16px #000b)} 30%,65%{filter:sepia(.5) saturate(1.6) hue-rotate(145deg) brightness(1.25) drop-shadow(0 0 12px #b4f5ff)}}
+  .element-vfx-poison::before {content:'';position:absolute;inset:-4%;border-radius:50%;background:radial-gradient(ellipse,#b846eb35,transparent 68%);animation:element-aura 1800ms ease-in-out both;}
+  .element-vfx-poison .element-particle {width:var(--size);height:calc(var(--size)*1.4);border-radius:65% 35% 65% 65%;background:radial-gradient(circle at 32% 65%,#e7b6ff 0 8%,#be62f2 18%,#862ccc 55%,#52128aaa 78%);box-shadow:0 0 8px #a83ce766,inset -2px -2px 3px #470f79;animation:element-poison-drop 1350ms ease-in var(--delay) both;}
+  @keyframes element-poison-drop {0%{opacity:0;transform:translateY(-14px) scale(.1) rotate(45deg)} 24%{opacity:1;transform:translateY(-6px) scale(1) rotate(45deg)} 65%{opacity:.85} 100%{opacity:0;transform:translate(var(--drift),40px) scale(.4) rotate(45deg)}}
+  .monster-art.element-tint-poison {animation:element-poison-tint 1800ms ease-in-out both;}
+  @keyframes element-poison-tint {0%,48%,100%{filter:drop-shadow(0 18px 16px #000b)} 23%,74%{filter:sepia(1) saturate(4) hue-rotate(230deg) brightness(.85) drop-shadow(0 0 12px #ab4deacc)}}
+  .element-vfx-shock .element-particle {width:22%;height:38%;left:calc(var(--x) - 11%);top:calc(var(--y) - 15%);animation:element-electric 620ms steps(1,end) var(--delay) both;transform:rotate(var(--angle));}
+  .element-vfx-shock svg {width:100%;height:100%;overflow:visible;fill:none;stroke-linecap:round;stroke-linejoin:round;}
+  .bolt-corona {stroke:#00efdf;stroke-width:9;filter:blur(3px);}
+  .bolt-core {stroke:#d9fffb;stroke-width:2;filter:drop-shadow(0 0 3px #00fff2);}
+  @keyframes element-electric {0%{opacity:0} 10%{opacity:1} 22%{opacity:.2} 30%{opacity:1} 45%{opacity:0} 58%{opacity:1} 76%{opacity:.3} 85%{opacity:1} 100%{opacity:0}}
+  @media(prefers-reduced-motion:reduce) {
+    .element-vfx .element-particle,.element-vfx .element-particle.element-smoke,.element-vfx::before,.element-vfx::after,.element-vfx .element-ice,.element-vfx .element-blast-core {animation-name:element-reduced;animation-duration:350ms;animation-delay:0ms;}
+    .monster-art.element-tint-poison,.monster-art.element-tint-freeze {animation-duration:350ms;}
+    @keyframes element-reduced {0%,100%{opacity:0} 30%,65%{opacity:.55}}
+  }
+
 </style>

@@ -70,6 +70,38 @@ function browserContext(saved=new Map()) {
   return {c,status,submit,saved};
 }
 
+test('selection uses current-run accuracy instead of downloaded lifetime accuracy',()=>{
+  const {c}=browserContext();
+  c.currentView.runId='current-run';
+  c.isClientCorrectAnswer=(question,payload)=>!!payload.correct;
+  let probabilities;
+  c.console={log:(label,value)=>{probabilities=value;},warn(){}};
+  vm.runInContext(read('SharedRuleEngine.gs'),c);
+  c.RULE_ENGINE_SHARED=c.getSharedRuleEngine_();
+  vm.runInContext(['rollbackCurrentQuestionExposure','recordRunQuestionAttempt',
+    'assignCappedQuestionProbabilities','logQuestionSelectionProbabilities',
+    'pickWeightedLocalQuestion'].map(extract).join('\n'),c);
+  const question={questionId:'q',type:'shortAnswer',totalCount:100,correctCount:100};
+  const unseen={questionId:'unseen',type:'shortAnswer',totalCount:100,correctCount:0};
+  const third={questionId:'third',type:'shortAnswer'};
+  const draw=()=>{
+    c.pickWeightedLocalQuestion([question,unseen,third]);
+    return Object.fromEntries([...probabilities.맞춘문제,...probabilities.틀린문제,
+      ...probabilities.미출제문제].map(entry=>[entry.questionId,entry.selectionProbabilityPercent]));
+  };
+  const initial=draw();
+  assert.equal(initial.q,initial.unseen,'lifetime counts must not change this run\'s weights');
+  c.recordRunQuestionAttempt(question,{correct:true});
+  const correct=draw();
+  assert.ok(correct.q<correct.unseen,'a first correct answer lowers the next draw probability');
+  c.currentView.stageState={stageId:'next-stage'};
+  assert.equal(draw().q,correct.q,'stage changes preserve current-run weights');
+  c.recordRunQuestionAttempt(question,{correct:false});
+  assert.ok(draw().q>correct.q,'a wrong answer immediately raises the next draw probability');
+  c.currentView.runId='new-run';
+  assert.equal(draw().q,draw().unseen,'a new run resets answer-based weights');
+});
+
 test('rating selection is immediate without RPC, survives reload and is isolated by player and workbook',()=>{
   const x=browserContext();x.c.chooseQuestionUnderstanding(2);
   assert.equal(x.c.questionUnderstandingRatings.q,2);

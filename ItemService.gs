@@ -893,7 +893,9 @@ function normalizeAccuracy_(value) {
     ? value.trim().replace(/%$/, '')
     : value;
   var numeric = Number(normalized);
-  return isFinite(numeric) ? clampPercent_(numeric) : 100;
+  // Raw accuracy may exceed 100 to counter evasion. The final hit chance,
+  // after subtracting evasion, is still clamped to 0–100 by rollHit_.
+  return isFinite(numeric) ? Math.max(0,numeric) : 100;
 }
 
 function applyBattleStartItemEffects_(battleState) {
@@ -1017,9 +1019,10 @@ function getItemQuestionModifiers_(battleState, question) {
     questionDifficulty: Number(modifiers.questionDifficulty || 0),
     questionMaxEfficiencyMultiplier: getSharedRuleEngine_().getQuestionMaxEfficiencyMultiplier(battleState && battleState.player && battleState.player.effects),
     questionEfficiencyBonusPercent: getSharedRuleEngine_().getQuestionEfficiencyBonusPercent(battleState && battleState.player && battleState.player.effects),
+    questionCappedEfficiencyBonusPercent: getSharedRuleEngine_().getQuestionCappedEfficiencyBonusPercent(battleState && battleState.player && battleState.player.effects),
     questionMaxEfficiencyPercent: Number(modifiers.questionMaxEfficiencyPercent || 0),
-    questionMaxEfficiencyFlatPercent: Number(modifiers.questionMaxEfficiencyFlatPercent || 0),
-    questionMinEfficiencyPercent: Number(modifiers.questionMinEfficiencyPercent || 0) + getSharedRuleEngine_().getQuestionMinEfficiencyBonusPercent(battleState && battleState.player && battleState.player.effects),
+    questionMaxEfficiencyFlatPercent: Number(modifiers.questionMaxEfficiencyFlatPercent || 0) + Number(battleState && battleState.player && battleState.player.baseStats && battleState.player.baseStats.questionEfficiency || 0),
+    questionMinEfficiencyPercent: Number(modifiers.questionMinEfficiencyPercent || 0) + Number(battleState && battleState.player && battleState.player.baseStats && battleState.player.baseStats.questionEfficiency || 0) + getSharedRuleEngine_().getQuestionMinEfficiencyBonusPercent(battleState && battleState.player && battleState.player.effects),
     questionTimeSeconds: timeSeconds,
     questionChanceByType: Object.assign({}, modifiers.questionChanceByType || {}),
     answerCorrectEfficiencyPercent: Number(modifiers.answerCorrectEfficiencyPercent || 0),
@@ -1076,6 +1079,111 @@ function pickAutoItemReward_(ownedItems) {
     return null;
   }
   return buildAutoItemReward_(item);
+}
+
+// Stable per-kill rolls survive previews, browser/server replay and retries.
+function monsterDropRandom_(battleId, monsterId, salt) {
+  var key=String(battleId)+':'+String(monsterId)+':'+salt,seed=2166136261;
+  for(var i=0;i<key.length;i++)seed=Math.imul(seed^key.charCodeAt(i),16777619)>>>0;
+  seed=Math.imul(seed^(seed>>>16),2246822507)>>>0;
+  seed=Math.imul(seed^(seed>>>13),3266489909)>>>0;
+  return ((seed^(seed>>>16))>>>0)/4294967296;
+}
+
+function rollMonsterItemDrop_(battle, monster) {
+  if (!battle || !battle.player || !monster || Number(monster.currentHp || 0)>0) return null;
+  var id=String(monster.instanceId || monster.monsterId);
+  var drops=battle.monsterItemDrops=battle.monsterItemDrops || {};
+  if(drops[id])return drops[id];
+  if(!Array.isArray(battle.itemDropStartingItems))battle.itemDropStartingItems=normalizeOwnedItems_(battle.player.items || []);
+  var boss=['boss','finalboss'].indexOf(String(monster.type).toLowerCase())>=0 ||
+    !!(battle.stage && battle.stage.bossMonsterId && battle.stage.bossMonsterId===monster.monsterId);
+  var drop={dropId:String(battle.battleId)+':'+id,monsterId:id,monsterName:monster.name || '',boss:boss,status:'none',reward:null};
+  if(!boss && monsterDropRandom_(battle.battleId,id,'chance')>=0.1){drops[id]=drop;return drop;}
+  // Reserve all earlier drops, including ignored ones, so simultaneous drops
+  // and their identities do not change when a claim decision arrives later.
+  var reserved=normalizeOwnedItems_(battle.itemDropStartingItems);
+  Object.keys(drops).forEach(function(key){if(drops[key].reward)reserved=addItemToOwnedItems_(reserved,drops[key].reward.targetId);});
+  var pool=getAvailableItemRewardPool_('',reserved,ITEM_REWARD_CONFIG);
+  if(!pool.length)pool=getAvailableItemRewardPool_('',[],{excludeOwnedItems:false,preventDuplicateUniqueItems:false,allowDuplicateNonUniqueItems:true});
+  var ranks=[RARITIES.COMMON,RARITIES.UNCOMMON,RARITIES.RARE,RARITIES.EPIC,RARITIES.LEGENDARY,RARITIES.UNIQUE];
+  var weights=ranks.map(function(rarity){return Math.max(0,Number(ITEM_REWARD_CONFIG.rarityWeights[rarity] || 0));});
+  var roll=monsterDropRandom_(battle.battleId,id,'rarity')*weights.reduce(function(sum,value){return sum+value;},0),rank=0;
+  for(;rank<weights.length-1;rank++){roll-=weights[rank];if(roll<0)break;}
+  var candidates=[];
+  for(var r=rank;r>=0 && !candidates.length;r--)candidates=pool.filter(function(item){return normalizeRarity_(item.rarity)===ranks[r];});
+  if(!candidates.length)candidates=pool;
+  candidates.sort(function(a,b){var left=String(a.itemId || a.id),right=String(b.itemId || b.id);return left<right ? -1 : left>right ? 1 : 0;});
+  if(candidates.length){
+    var item=candidates[Math.floor(monsterDropRandom_(battle.battleId,id,'item')*candidates.length)];
+    drop.reward=buildAutoItemReward_(item);drop.status='pending';
+  }
+  drops[id]=drop;
+  return drop;
+}
+
+function settleMonsterItemDrops_(battle) {
+  (battle.monsters || []).forEach(function(monster){if(Number(monster.currentHp || 0)<=0)rollMonsterItemDrop_(battle,monster);});
+  return battle.monsterItemDrops || {};
+}
+
+function decideMonsterItemDrop_(battle, dropId, claim) {
+  var drops=battle.monsterItemDrops || {},drop=null;
+  Object.keys(drops).forEach(function(key){if(drops[key].dropId===dropId)drop=drops[key];});
+  if(!drop || !drop.reward)throw new Error('획득할 아이템을 찾을 수 없습니다.');
+  if(drop.status!=='pending')return drop;
+  if(!claim){drop.status='ignored';return drop;}
+  var player=battle.player,previousMax=Number(player.maxHp || player.stats && player.stats.hp || 1);
+  var items=normalizeOwnedItems_(player.items || []),existing=items.filter(function(item){return item.itemId===drop.reward.targetId;})[0];
+  if(existing)existing.count+=1;else items=addItemToOwnedItems_(items,drop.reward.targetId);
+  player.items=items;
+  player.itemDetails=buildOwnedItemClientDetails_(items);
+  player.itemModifiers=buildItemModifiers_(items);
+  player.stats=calculateStatsWithItemEffects_(player.baseStats || player.stats,items);
+  player.maxHp=Number(player.stats.hp || previousMax);
+  if(Number(player.hp || 0)>0)player.hp=Math.min(player.maxHp,Number(player.hp)+Math.max(0,player.maxHp-previousMax));
+  // baseMaxActionPoint already contains the old item modifier; use the fixed
+  // game base when recalculating, preserving temporary AP deltas.
+  var newMax=Math.max(0,GAME_RULES.DEFAULT_MAX_ACTION_POINT+Number(player.itemModifiers.actionPoint || 0));
+  var oldBase=Number(player.baseMaxActionPoint !== undefined ? player.baseMaxActionPoint : GAME_RULES.DEFAULT_MAX_ACTION_POINT);
+  var oldMax=Number(player.maxActionPoint !== undefined ? player.maxActionPoint : oldBase);
+  player.baseMaxActionPoint=newMax;
+  player.maxActionPoint=Math.max(0,oldMax+newMax-oldBase);
+  player.currentActionPoint=Math.min(player.maxActionPoint,Math.max(0,Number(player.currentActionPoint || 0)+Math.max(0,newMax-oldBase)));
+  drop.status='claimed';
+  return drop;
+}
+
+function validateMonsterDropsForCommit_(run, serverBattle, receivedBattle) {
+  var initial=serverBattle.monsterItemDrops || {},received=receivedBattle.monsterItemDrops || {};
+  var expectedItems=normalizeOwnedItems_(safeJsonParse_(run.itemsJson,[]));
+  var simulation={battleId:serverBattle.battleId || receivedBattle.battleId,stage:serverBattle.stage || receivedBattle.stage,
+    player:{items:expectedItems},itemDropStartingItems:normalizeOwnedItems_(serverBattle.itemDropStartingItems || expectedItems),
+    monsterItemDrops:JSON.parse(JSON.stringify(initial))};
+  Object.keys(received).forEach(function(id) {
+    var original=(serverBattle.monsters || []).filter(function(m){return String(m.instanceId || m.monsterId)===id;})[0];
+    var result=(receivedBattle.monsters || []).filter(function(m){return String(m.instanceId || m.monsterId)===id;})[0];
+    if(!original || !result || Number(result.currentHp)>0)throw new Error('아이템 처치 기록이 올바르지 않습니다.');
+    var canonical=rollMonsterItemDrop_(simulation,Object.assign({},original,{currentHp:0}));
+    var incoming=received[id],status=incoming && incoming.status;
+    if(!incoming || incoming.dropId!==canonical.dropId ||
+      String(incoming.reward && incoming.reward.targetId || '')!==String(canonical.reward && canonical.reward.targetId || '') ||
+      (canonical.status==='none' ? status!=='none' : ['pending','claimed','ignored'].indexOf(status)<0))throw new Error('아이템 드롭 기록이 올바르지 않습니다.');
+    var previous=initial[id] && initial[id].status;
+    if((previous==='claimed' || previous==='ignored') && previous!==status)throw new Error('이미 결정한 아이템입니다.');
+    if(status==='claimed' && previous!=='claimed'){
+      var existing=expectedItems.filter(function(item){return item.itemId===canonical.reward.targetId;})[0];
+      if(existing)existing.count+=1;else expectedItems=addItemToOwnedItems_(expectedItems,canonical.reward.targetId);
+    }
+    canonical.status=status;
+  });
+  function shape(items){return normalizeOwnedItems_(items).map(function(item){return item.itemId+':'+item.count;}).sort().join('|');}
+  var actualItems=receivedBattle.player.items;
+  if(Array.isArray(actualItems) && shape(actualItems)!==shape(expectedItems))throw new Error('보유 아이템이 드롭 획득 기록과 다릅니다.');
+  receivedBattle.player.items=normalizeOwnedItems_(Array.isArray(actualItems) ? actualItems : expectedItems);
+  receivedBattle.monsterItemDrops=simulation.monsterItemDrops;
+  receivedBattle.itemDropStartingItems=simulation.itemDropStartingItems;
+  return true;
 }
 
 function hasAvailableItemReward_(ownedItems) {

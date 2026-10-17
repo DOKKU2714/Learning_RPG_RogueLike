@@ -80,7 +80,13 @@ test('reroll success issues signed choices without extra currency or healing and
   assert.equal(result.rerollStatus, 'success');
   assert.equal(result.rewardView.rerollUsed, true);
   assert.notEqual(result.rewardView.localTransitionToken, g.original.localTransitionToken);
-  assert.equal(result.rewardView.choices.length,g.original.choices.length);
+  // The fixture has a small skill pool; excluding the first draw may leave
+  // fewer legal cards now that stat and item rewards cannot fill the gaps.
+  assert.ok(result.rewardView.choices.length > 0);
+  assert.ok(result.rewardView.choices.length <= g.original.choices.length);
+  for (const view of [g.original, result.rewardView]) {
+    assert.ok(view.choices.every(reward => ['skill', 'skillUpgrade'].includes(reward.type)));
+  }
   const identity = reward => [reward.type,reward.targetId,reward.value].join(':');
   const previous = g.original.choices.map(identity);
   assert.ok(result.rewardView.choices.every(reward => !previous.includes(identity(reward))), 'reroll excludes all previous choices even with fixed randomness');

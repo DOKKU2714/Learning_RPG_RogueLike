@@ -9,8 +9,8 @@ const html = `<!doctype html><html><head><meta name="viewport" content="width=de
 ${fs.readFileSync('UiStyles.html', 'utf8')}
 <style>body{background:#202a38}.fixture{position:absolute;left:80px;top:320px;width:220px}.fixture-player{top:620px}</style>
 </head><body><div id="floatingLayer"></div>
-<div class="fixture monster-slot"><div class="monster-hp-bar"><div class="hp-current" style="width:50%"></div></div><span id="monsterText">50 / 100</span></div>
-<div class="fixture fixture-player"><div class="player-hp-track"><div class="player-hp-fill" style="width:50%"></div></div><span id="playerHpText">50 / 100</span></div>
+<div class="fixture monster-slot"><div class="monster-hp-bar"><div class="hp-current" style="width:50%"></div><span class="monster-hp-text" id="monsterText">50 / 100</span></div></div>
+<div class="fixture fixture-player"><div class="player-hp-track" style="height:32px"><div class="player-hp-fill" style="width:50%"></div><span class="player-hp-caption"><strong id="playerHpText">50 / 100</strong></span></div></div>
 <script>var currentDamageEfficiency=1;
 ${['spawnFloatingDamage','spawnFloatingText','spawnHpDamageFragment','populateShieldDamageShards','getHpGaugeRect','flashHpBar'].map(extract).join('\n')}
 function showDamage(player,ratio,critical){
@@ -41,9 +41,16 @@ function showDamage(player,ratio,critical){
      const innerWidth=track.clientWidth;
      const result={duration:getComputedStyle(fill).transitionDuration,flightDuration:flight.effect.getTiming().duration,translate:getComputedStyle(track).translate,
        hpWidth:fill.getBoundingClientRect().width,missingWidth:innerWidth-fill.getBoundingClientRect().width,whiteWidth:fragment.getBoundingClientRect().width,innerWidth};
+     const caption=track.querySelector('.monster-hp-text,.player-hp-caption');
+     result.behindText=fragment.parentNode===track && Number(getComputedStyle(fragment).zIndex)<Number(getComputedStyle(caption).zIndex);
+     flight.currentTime=420;result.holdTransform=getComputedStyle(fragment).transform;
+     flight.currentTime=620;result.flightTransform=getComputedStyle(fragment).transform;
      track.getAnimations().forEach(a=>a.finish());fill.getAnimations().forEach(a=>a.finish());fragment.remove();return result;
     },player);
     assert.equal(feedback.duration,'0.32s');assert.equal(feedback.flightDuration,720);assert.notEqual(feedback.translate,'0px');assert.notEqual(feedback.translate,'0px 0px');
+    assert.equal(feedback.behindText,true);
+    assert.equal(feedback.holdTransform,'matrix(1, 0, 0, 1, 0, 0)');
+    assert.notEqual(feedback.flightTransform,feedback.holdTransform);
     assert.ok(feedback.hpWidth>feedback.innerWidth*.75 && feedback.hpWidth<feedback.innerWidth);
     assert.ok(Math.abs(feedback.missingWidth-feedback.whiteWidth)<2,'white bar matches the HP already lost');
     await page.locator('.floating-damage').evaluateAll(elements=>elements.forEach(e=>e.remove()));

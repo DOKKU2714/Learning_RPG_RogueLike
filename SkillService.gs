@@ -26,6 +26,7 @@ function getAvailableSkills(runState, battleState) {
       useLimitText: buildSkillUseLimitText_(hydrated, battleState),
       difficultyBonus: Number(hydrated.difficultyBonus || 0),
       actionPointCost: actionPointCost,
+      baseActionPointCost: hydrated.actionPointCost,
       rarity: hydrated.rarity,
       rarityLabel: getRarityLabel_(hydrated.rarity),
       tags: hydrated.tags,
@@ -339,7 +340,9 @@ function useSkill(runId, skillId, targetId, answerPayload) {
   var efficiency = gaveUp ? 0 : calculateEfficiency(isCorrect, remainingMs, maxMs, Math.max(0, Number(payload.wrongCountAfterTimeout || 0) - getSharedRuleEngine_().consumeWrongProtection(battleState, payload.wrongCountAfterTimeout)), getItemQuestionModifiers_(battleState, question), question);
 
   battleState.lastTurnEvents = [];
+  recordExperienceQuestion_(battleState,{question:question,efficiency:efficiency,isCorrect:isCorrect,wrongCount:Number(payload.wrongCountAfterTimeout || 0)});
   consumeActionPoint_(battleState, Number(pendingAction.actionPointCost !== undefined && pendingAction.actionPointCost !== '' ? pendingAction.actionPointCost : getActionPointCostForAction_(ACTION_TYPES.SKILL, skill)));
+  getSharedRuleEngine_().consumeSkillCostEffects(battleState.player, skill);
   if (gaveUp) {
     battleState.lastPlayerAction = { type: ACTION_TYPES.SKILL, skillId: skill.skillId, value: 0, efficiency: 0, gaveUp: true };
     battleState.lastMessage = '문제를 포기했습니다. 행동력만 소모했습니다.';
@@ -449,7 +452,7 @@ function applySkillEffect(battleState, skill, efficiency, isCorrect) {
         damage = applyOutgoingItemDamageModifiers_(battleState, damage, { actionType: ACTION_TYPES.SKILL, skill: skill });
         var damageResult = dealDamageToMonster_(battleState, damageTarget, damage, {damageKind:'direct',sourceSkillId:skill.skillId,isCritical:critical.isCritical});
         getSharedRuleEngine_().applyCriticalItemHealing(battleState, critical.isCritical, damageResult.damage);
-        events.push({
+        events.splice(Number.isInteger(damageResult.eventIndex) ? damageResult.eventIndex : events.length, 0, {
           actor: 'player',
           type: ACTION_TYPES.SKILL,
           skillId: skill.skillId,
@@ -507,7 +510,7 @@ function applySkillEffect(battleState, skill, efficiency, isCorrect) {
       damage = applyOutgoingItemDamageModifiers_(battleState, damage, { actionType: ACTION_TYPES.SKILL, skill: skill });
       var damageResult = dealDamageToMonster_(battleState, target, damage, {damageKind:'direct',sourceSkillId:skill.skillId,isCritical:critical.isCritical});
       getSharedRuleEngine_().applyCriticalItemHealing(battleState, critical.isCritical, damageResult.damage);
-      events.push({
+      events.splice(Number.isInteger(damageResult.eventIndex) ? damageResult.eventIndex : events.length, 0, {
         actor: 'player',
         type: ACTION_TYPES.SKILL,
         skillId: skill.skillId,
@@ -631,7 +634,7 @@ function executeSkillByRule_(battleState, skill, rule, efficiency, isCorrect) {
   var combatTarget=getSkillTarget_(battleState,skill,skill.targetId || '');
   var combatReason=checkCombatSkillConditions_(battleState,skill,rule,combatTarget);
   if(combatReason)throw new Error(combatReason);
-  (rule.actions || []).forEach(function(a){if(a.operation!=='cooldownSelect')return;var choices=combatCooldownCandidates_(battleState,skill,a.tag);if(!skill.cooldownTargetSkillId && choices.length===1)skill.cooldownTargetSkillId=choices[0].skillId;if(!choices.some(function(s){return s.skillId===skill.cooldownTargetSkillId;}))throw new Error('쿨타임을 줄일 스킬을 선택하세요.');});
+  (rule.actions || []).forEach(function(a){if(a.operation!=='cooldownSelect')return;var choices=combatCooldownCandidates_(battleState,skill,a.tag,a.excludeCooldownSkills);if(!skill.cooldownTargetSkillId && choices.length===1)skill.cooldownTargetSkillId=choices[0].skillId;if(!choices.some(function(s){return s.skillId===skill.cooldownTargetSkillId;}))throw new Error('쿨타임을 줄일 스킬을 선택하세요.');});
   if ((rule.actions || []).some(function(action) { return action.target === 'secondary' || action.operation === 'moveStacks' || action.operation === 'copyStacks'; })) {
     var secondary = (battleState.monsters || []).filter(function(monster) { return Number(monster.currentHp) > 0 && (monster.instanceId || monster.monsterId) === skill.secondaryTargetId; })[0];
     if (!secondary) throw new Error('살아 있는 보조 대상을 선택해야 합니다.');
@@ -754,7 +757,7 @@ function executeSkillByRule_(battleState, skill, rule, efficiency, isCorrect) {
       if (critical.isCritical && criticalRule && Array.isArray(criticalRule.applyEffects)) {
         applySkillRuleEffects_(battleState, skill, {applyEffects:criticalRule.applyEffects}, [damageTarget], targetContext);
       }
-      battleState.lastTurnEvents.push({
+      battleState.lastTurnEvents.splice(Number.isInteger(damageResult.eventIndex) ? damageResult.eventIndex : battleState.lastTurnEvents.length, 0, {
         actor: 'player',
         type: ACTION_TYPES.SKILL,
         skillId: skill.skillId,
@@ -1345,6 +1348,7 @@ function applySkillEffectRule_(battleState, skill, effectRule, targets, context)
     return;
   }
   var applied = Object.assign({}, effect);
+  if (applied.behavior && applied.behavior.combat && applied.behavior.combat.skillCost) applied.sourceSkillId = skill.skillId;
   if (effectRule.value !== undefined) {
     applied.value = Number(effectRule.value || 0);
   }
@@ -1369,6 +1373,7 @@ function applySkillEffectRule_(battleState, skill, effectRule, targets, context)
         actor: 'player',
         type: effectType,
         skillId: skill.skillId,
+        effectId: effectRule.effectId,
         targetMonsterId: target.instanceId || target.monsterId,
         message: (target.name || '적') + '에게 ' + (skill.name || '스킬') + ' 효과!',
       });
@@ -1378,6 +1383,7 @@ function applySkillEffectRule_(battleState, skill, effectRule, targets, context)
       actor: 'player',
       type: effectType,
       skillId: skill.skillId,
+        effectId: effectRule.effectId,
       message: (skill.name || '스킬') + ' 효과를 얻었습니다.',
     });
   });
@@ -1491,7 +1497,7 @@ function processImmediateSkillRuleActions_(battleState, skill, actionRule, targe
       if (damage > 0) {
         var result = dealDamageToMonster_(battleState, target, damage);
         battleState.lastTurnEvents = battleState.lastTurnEvents || [];
-        battleState.lastTurnEvents.push({ actor: 'effect', type: 'ruleDamage', target: 'monster', attackEffect: skill.attackEffect || (skill.skillId === 'skill_ignite' ? 'fire' : ''), targetMonsterId: target.instanceId || target.monsterId, damage: result.damage, shieldDamage: result.shieldDamage, hpDamage: result.hpDamage, message: skill.name + ' 효과로 ' + result.damage + ' 피해를 주었습니다.' });
+        battleState.lastTurnEvents.splice(Number.isInteger(result.eventIndex) ? result.eventIndex : battleState.lastTurnEvents.length, 0, { actor: 'effect', type: 'ruleDamage', target: 'monster', attackEffect: skill.attackEffect || (skill.skillId === 'skill_ignite' ? 'fire' : ''), targetMonsterId: target.instanceId || target.monsterId, damage: result.damage, shieldDamage: result.shieldDamage, hpDamage: result.hpDamage, message: skill.name + ' 효과로 ' + result.damage + ' 피해를 주었습니다.' });
       }
     }
   }
@@ -1547,6 +1553,9 @@ function processSkillTriggers_(battleState, timing, payload) {
   var triggers = (battleState.activeTriggers || []).slice();
   battleState.combatDispatchDepth = Number(battleState.combatDispatchDepth || 0) + 1;
   try {
+    if (timing === 'onMiss' && payload && payload.actor === 'player' && payload.target && payload.target.currentHp > 0) {
+      dispatchMonsterKitTrigger_(battleState, payload.target, 'onEvade', payload);
+    }
     triggers.forEach(function(trigger) {
       if (trigger.timing !== timing && trigger.timing !== 'failPenalty') return;
       if (trigger.rule && trigger.rule.selfTurnOnly && !(payload && payload.selfTurn)) return;
@@ -1588,7 +1597,7 @@ function processSingleSkillTrigger_(battleState, trigger, timing, payload) {
     if (target) {
       var result = dealDamageToMonster_(battleState, target, Number(payload.shieldDamage || 0));
       battleState.lastTurnEvents = battleState.lastTurnEvents || [];
-      battleState.lastTurnEvents.push({ actor: 'effect', type: 'reflect', target: 'monster', targetMonsterId: target.instanceId || target.monsterId, damage: result.damage, hpDamage: result.hpDamage, shieldDamage: result.shieldDamage, message: sourceSkill.name + ' 효과로 ' + result.damage + ' 피해를 반사했습니다.' });
+      battleState.lastTurnEvents.splice(Number.isInteger(result.eventIndex) ? result.eventIndex : battleState.lastTurnEvents.length, 0, { actor: 'effect', type: 'reflect', target: 'monster', targetMonsterId: target.instanceId || target.monsterId, damage: result.damage, hpDamage: result.hpDamage, shieldDamage: result.shieldDamage, message: sourceSkill.name + ' 효과로 ' + result.damage + ' 피해를 반사했습니다.' });
     }
   }
   if (rule.damageFormula) {
@@ -1648,7 +1657,7 @@ function executeCombatActions_(battleState, skill, actions, targets, context) {
       } else if (action.operation === 'damage' && target.currentHp !== undefined) {
         var result = dealDamageToMonster_(battleState, target, amount, {damageKind:action.damageKind || 'effect', sourceSkillId:skill.skillId});
         if(action.damageKind==='explosion')processSkillTriggers_(battleState,'onExplosion',{target:target,damageKind:'explosion',sourceSkillId:skill.skillId});
-        battleState.lastTurnEvents.push({actor:'effect',type:'effectDamage',target:'monster',targetMonsterId:target.instanceId || target.monsterId,damage:result.damage,hpDamage:result.hpDamage,shieldDamage:result.shieldDamage,damageKind:action.damageKind || 'effect'});
+        battleState.lastTurnEvents.splice(Number.isInteger(result.eventIndex) ? result.eventIndex : battleState.lastTurnEvents.length, 0, {actor:'effect',type:'effectDamage',target:'monster',targetMonsterId:target.instanceId || target.monsterId,damage:result.damage,hpDamage:result.hpDamage,shieldDamage:result.shieldDamage,damageKind:action.damageKind || 'effect',effectId:action.effectId || ''});
       } else if (action.operation === 'shield' && target.currentHp === undefined) {
         if (combatShieldBlocked_(target)) return;
         var retained = action.retainEffectId && (target.effects || []).filter(function(e) { return e.effectId === action.retainEffectId && e.behavior && e.behavior.retainShield; })[0];
@@ -1673,6 +1682,7 @@ function beginCombatActorTurn_(battleState, target) {
   outcome.removed.forEach(function(effect) {
     processSkillTriggers_(battleState, 'onEffectRemoved', {target:target,effectId:effect.effectId,reason:'natural'});
   });
+  if (target !== battleState.player) prepareMonsterKit_(battleState, target, 'ownerTurnStart');
   if (target === battleState.player && Number(target.hp || 0) > hpBefore) {
     battleState.lastTurnEvents.push({actor:'effect',type:'heal',heal:Number(target.hp)-hpBefore,message:'빙결 해제 효과로 체력을 회복했습니다.'});
   }
@@ -1711,6 +1721,7 @@ function checkCombatSkillConditions_(battle,skill,rule,target) {
   if (c.oncePerTurn && Number(battle.skillLastUsedTurn && battle.skillLastUsedTurn[skill.skillId])===Number(battle.turn)) return '이번 턴 이미 사용했습니다.';
   if (c.hpCost && battle.player.hp<=c.hpCost) return '체력이 '+c.hpCost+'보다 많아야 합니다.';
   if (c.hpCostPercent && battle.player.hp<2) return '체력이 2 이상 필요합니다.';
+  if (c.maxHpCostPercent && battle.player.hp<=Math.ceil(battle.player.maxHp*c.maxHpCostPercent)) return '체력 소모 후 1 이상 남아야 합니다.';
   if (c.eitherHpBelow && getHpPercent_(battle.player)>c.eitherHpBelow && !candidates.some(function(m){return getHpPercent_(m)<=c.eitherHpBelow;})) return '자신 또는 대상이 저체력이어야 합니다.';
   if (c.requireStacks && !candidates.some(function(m){return e.effectStacks(m,c.requireStacks.effectId)>=c.requireStacks.min;})) return '대상의 상태 스택이 부족합니다.';
   if (c.requireAnyEffect && !getAliveMonsters_(battle).some(function(m){return e.effectStacks(m,c.requireAnyEffect)>0;})) return '해당 상태의 적이 필요합니다.';
@@ -1744,8 +1755,8 @@ function prepareCombatSkill_(battle,skill,original) {
     if (c.combo.hitPerPrior) rule.hitCount=Math.min(c.combo.maxHits,Number(rule.hitCount || skill.hitCount)+count*c.combo.hitPerPrior);
     if (c.combo.requiredDistinct && chain.distinct.length>=c.combo.requiredDistinct) rule.hitCount=c.combo.distinctHitCount;
   }
-  if (c.hpCost || c.hpCostPercent) {
-    var cost=c.hpCost || Math.max(1,Math.ceil(battle.player.hp*c.hpCostPercent));
+  if (c.hpCost || c.hpCostPercent || c.maxHpCostPercent) {
+    var cost=c.hpCost || Math.max(1,Math.ceil(c.maxHpCostPercent ? battle.player.maxHp*c.maxHpCostPercent : battle.player.hp*c.hpCostPercent));
     battle.player.hp=Math.max(1,battle.player.hp-cost);
     runtime.playerWasDamaged=true;
     battle.lastTurnEvents.push({actor:'player',type:'selfDamage',hpDamage:cost,damage:cost,skillId:skill.skillId});
@@ -1796,6 +1807,7 @@ function prepareCombatSkill_(battle,skill,original) {
 
 function prepareCombatHit_(battle,skill,stats) {
   var result=Object.assign({},stats),c=skill && getSkillExecutionRule_(skill).combat || {};
+  result.accuracy=Number(result.accuracy || 0)+Number(c.accuracyAdd || 0);
   result.criticalRate=Number(result.criticalRate || 0)+Number(c.criticalChanceAdd || 0);
   (battle.player.effects || []).slice().forEach(function(e){var cfg=combatEffectConfig_(e),m=cfg.critical;
     if(m){var charges=e.criticalCharges===undefined?Number(m.charges || 1):e.criticalCharges;
@@ -1814,8 +1826,10 @@ function modifyCombatOutgoing_(battle,target,damage,context) {
   if(c.bothLowBonus && getHpPercent_(battle.player)<=30 && getHpPercent_(target)<=30)damage*=1+c.bothLowBonus;
   [battle.player,target].forEach(function(owner){(owner.effects || []).forEach(function(e){var m=combatEffectConfig_(e).outgoing;if(!m||!combatModifierAvailable_(battle,e,m))return;
     if(m.kind && m.kind!==context.damageKind)return;
+    if(m.skillOnly && !skill)return;
     if(m.tag && (!skill||!hasSkillTag_(skill,m.tag)))return;
     if(m.targetOnly && owner!==target)return;
+    if(m.requireTargetEffect && !getSharedRuleEngine_().effectStacks(target,m.requireTargetEffect))return;
     damage=damage*Number(m.multiplier || 1)+(m.addValue?Number(e.value || 0):Number(m.add || 0));combatConsumeModifier_(battle,owner,e,m);
   });});
   return Math.max(0,Math.round(damage));
@@ -1844,8 +1858,8 @@ function trackCombatAttack_(battle,skill,rule) {
   chain.count+=1;if(chain.distinct.indexOf(skill.skillId)<0)chain.distinct.push(skill.skillId);
 }
 
-function combatCooldownCandidates_(battle,skill,tag) {
-  return readTableCached_(DB_SHEETS.SKILLS,600).filter(function(s){return s.skillId!==skill.skillId&&hasSkillTag_(s,tag)&&Number(battle.skillCooldowns && battle.skillCooldowns[s.skillId])>0;});
+function combatCooldownCandidates_(battle,skill,tag,excludeCooldownSkills) {
+  return readTableCached_(DB_SHEETS.SKILLS,600).filter(function(s){return s.skillId!==skill.skillId&&(!tag || hasSkillTag_(s,tag))&&(!excludeCooldownSkills || !getSharedRuleEngine_().isCooldownReductionSkill(s))&&Number(battle.skillCooldowns && battle.skillCooldowns[s.skillId])>0;});
 }
 
 function executeExtendedCombatAction_(battle,skill,a,target,ctx,aggregate) {
@@ -1855,10 +1869,11 @@ function executeExtendedCombatAction_(battle,skill,a,target,ctx,aggregate) {
   if(a.operation==='resetCombo'){combatChain_(battle).count=0;combatChain_(battle).distinct=[];}
   if(a.operation==='clearShield'){target.shield=0;(target.effects || []).forEach(function(e){e.retainedShield=0;});}
   if(a.operation==='cooldownSelect'){
-    var candidates=combatCooldownCandidates_(battle,skill,a.tag);var selected=candidates.filter(function(s){return s.skillId===skill.cooldownTargetSkillId;})[0];
+    var candidates=combatCooldownCandidates_(battle,skill,a.tag,a.excludeCooldownSkills);var selected=candidates.filter(function(s){return s.skillId===skill.cooldownTargetSkillId;})[0];
     if(!selected)throw new Error('쿨타임을 줄일 스킬을 선택하세요.');
     battle.skillCooldowns[selected.skillId]=Math.max(0,battle.skillCooldowns[selected.skillId]-Number(a.amount || 1));
   }
+  if(a.operation==='cooldownAll')combatCooldownCandidates_(battle,skill,a.tag,a.excludeCooldownSkills).forEach(function(s){battle.skillCooldowns[s.skillId]=Math.max(0,battle.skillCooldowns[s.skillId]-Number(a.amount || 1));});
   if(a.operation==='cleanseLongest'){
     var effects=(target.effects || []).filter(function(e){return normalizeEffectCategory_(e)==='debuff'&&!e.uncleansable;});
     effects.sort(function(x,y){return (y.durationType==='stage'?Infinity:Number(y.remainingTurns || 0))-(x.durationType==='stage'?Infinity:Number(x.remainingTurns || 0))||Number(x.appliedAtTurn || 0)-Number(y.appliedAtTurn || 0);});
@@ -1930,13 +1945,22 @@ function modifyCombatAdditional_(battle,target,damage,context) {
 function relayCombatAdditional_(battle,target,damage,context) {
   if(context.damageKind!=='additional')return;
   (target.effects || []).forEach(function(e){var c=combatEffectConfig_(e).relay;if(!c || c.effectId!==context.effectId)return;
-    var other=getAliveMonsters_(battle).filter(function(m){return m!==target && getSharedRuleEngine_().effectStacks(m,c.effectId)>0;})[0];
-    if(other){var r=dealDamageToMonster_(battle,other,Number(context.baseAdditionalDamage || 0)*c.ratio,{damageKind:'effect',sourceSkillId:context.sourceSkillId});pushCombatDamageEvent_(battle,other,r,'effect',context.sourceSkillId);}
+    var alive=getAliveMonsters_(battle);
+    var others=alive.filter(function(m){return m!==target && (c.requireOtherEffect===false || getSharedRuleEngine_().effectStacks(m,c.effectId)>0);});
+    var recipients=c.allOthers ? others : others.slice(0,1);
+    if(c.sameTargetIfAlone && alive.length===1 && alive[0]===target)recipients=[target];
+    recipients.forEach(function(other){
+      var amount=Number(c.useAppliedDamage ? damage : context.baseAdditionalDamage || 0)*Number(c.ratio === undefined ? 1 : c.ratio);
+      // Relay is effect damage internally so it cannot recursively trigger shock.
+      var r=dealDamageToMonster_(battle,other,amount,{damageKind:'effect',sourceSkillId:context.sourceSkillId});
+      r.effectId=context.effectId;
+      pushCombatDamageEvent_(battle,other,r,'additional',context.sourceSkillId);
+    });
   });
 }
 
 function pushCombatDamageEvent_(battle,target,result,kind,skillId) {
-  battle.lastTurnEvents.push(Object.assign({actor:'effect',type:'effectDamage',target:'monster',targetMonsterId:target.instanceId || target.monsterId,damageKind:kind,skillId:skillId || ''},result));
+  battle.lastTurnEvents.splice(Number.isInteger(result.eventIndex) ? result.eventIndex : battle.lastTurnEvents.length,0,Object.assign({actor:'effect',type:'effectDamage',target:'monster',targetMonsterId:target.instanceId || target.monsterId,damageKind:kind,skillId:skillId || ''},result));
 }
 
 function combatDotModifiers_(battle,target,effect,base,damageRule) {
@@ -2194,6 +2218,7 @@ function applyEffect(target, effect, source) {
 }
 
 function tickEffectsAtTurnStart(battleState) {
+  var firstTurnStartEvent = (battleState.lastTurnEvents || []).length;
   normalizeBattleStateEffects_(battleState);
   beginCombatActorTurn_(battleState, battleState.player);
   processSkillTriggers_(battleState, 'onTurnStart', {});
@@ -2203,6 +2228,9 @@ function tickEffectsAtTurnStart(battleState) {
     getSharedRuleEngine_().decayCombatStacks(monster, 'turnStart', battleState.turn);
     applyStackedDamageEffects_(monster, 'turnStart', battleState, 'monster');
     applyTimedEffectDamage_(monster, TRIGGER_TIMINGS.TURN_START, battleState, 'monster');
+  });
+  (battleState.lastTurnEvents || []).slice(firstTurnStartEvent).forEach(function(event) {
+    event.turnPhase = 'playerTurnStart';
   });
   return battleState;
 }

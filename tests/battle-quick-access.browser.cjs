@@ -17,7 +17,7 @@ var normalizeRewardRarity=r=>r||'common',getRewardRarityLabel=()=> '일반';`;
 const startingStats = `var localGameDataSnapshot={basePlayerStats:{hp:25,attack:5,defense:4,hpRegen:3,accuracy:100,evasion:0,criticalRate:5,criticalDamage:150}};`;
 const funcs = ['getBattleQuickStatSignature','getBattleQuickItemCounts','saveBattleQuickAccessState','updateBattleQuickAccess',
   'markBattleQuickAccessRead','renderBattleQuickAccessIcons','toggleBattleStats','closeBattleStats','toggleBattleInventory',
-  'toggleBattleMenu','closeBattleMenu','showBattleStats','getBattleStatStartingStats','formatEffectiveStat','buildBattleStatTooltipContent','showBattleItems','closeItemModal',
+  'toggleBattleMenu','closeBattleMenu','showBattleStats','getStatDescription','getBattleStatStartingStats','formatEffectiveStat','buildBattleStatTooltipContent','showBattleItems','closeItemModal',
   'getOwnedItemDetailsForModal','renderOwnedItemCard','buildItemEffectDescription','buildItemFlavorDescription','bindHoverTooltips','positionHoverTooltip','hideActiveHoverTooltips'];
 const html = '<!doctype html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">'+styles+touch+
   '</head><body>'+body.replaceAll('<?= getAssetBaseUrl_() ?>','https://assets.test')+'<script>'+script+

@@ -129,6 +129,11 @@
             <span class="player-hp-caption">HP <strong id="playerHpText">30 / 30</strong></span>
           </div>
         </div>
+        <div class="player-exp-row">
+          <span id="playerLevelLabel">Lv.1</span>
+          <div id="playerExpTrack" class="player-exp-track" role="progressbar" aria-label="경험치" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="playerExpFill"></span></div>
+          <span id="playerExpText">0 / 100</span>
+        </div>
         <div id="playerDamageAnchor" class="player-damage-anchor"></div>
       </div>
     </section>
@@ -148,6 +153,17 @@
       <div class="defeat-action-row">
         <button id="defeatHomeButton" class="secondary hidden" onclick="goHome()">메인으로</button>
       </div>
+    </section>
+  </div>
+
+  <div id="levelUpBanner" class="level-up-banner" aria-hidden="true">Level UP!</div>
+  <div id="levelStatModal" class="level-stat-overlay" aria-hidden="true">
+    <section class="level-stat-panel" role="dialog" aria-modal="true" aria-labelledby="levelStatTitle">
+      <h2 id="levelStatTitle">레벨 업!</h2>
+      <p>스탯 포인트 <strong id="levelStatPoints">3</strong>개를 배분하세요.</p>
+      <div id="levelStatChoices" class="level-stat-choices"></div>
+      <p id="levelStatError" role="alert"></p>
+      <button id="levelStatConfirm" type="button" disabled>투자 확정</button>
     </section>
   </div>
 
@@ -258,6 +274,17 @@
     </section>
   </div>
 
+  <div id="monsterDropModal" class="monster-drop-overlay" aria-hidden="true">
+    <section class="monster-drop-panel" role="dialog" aria-modal="true" aria-labelledby="monsterDropTitle">
+      <h2 id="monsterDropTitle">아이템 획득!</h2>
+      <p id="monsterDropSource"></p>
+      <div id="monsterDropCard"></div>
+      <p class="monster-drop-hint">아이템에 마우스를 올리거나 터치하면 설명을 볼 수 있습니다.</p>
+      <p id="monsterDropError" role="alert"></p>
+      <div class="monster-drop-actions"><button id="monsterDropIgnore" class="secondary" type="button">무시</button><button id="monsterDropClaim" type="button">획득</button></div>
+    </section>
+  </div>
+
   <div id="itemModal" class="question-modal-overlay" aria-hidden="true">
     <section class="question-modal item-modal" role="dialog" aria-modal="true" aria-labelledby="itemModalTitle">
       <div class="modal-topline">
@@ -292,6 +319,7 @@
       debuff: 'Resources/Sounds/Debuff',
       escape: 'Resources/Sounds/Escape',
       gameover: 'Resources/Sounds/Gameover',
+      kill: 'Resources/Sounds/Kill.mp3',
       bigDamage: 'Resources/Sounds/Hit/BigDamage.mp3',
       hitDefault: 'Resources/Sounds/Hit/Default',
       hitDefault2: 'Resources/Sounds/Hit/Default2',
@@ -625,15 +653,17 @@
     function expireWorkbookPlay() {
       if (workbookDeadlineExpired || !currentView || !currentView.battle) return;
       workbookDeadlineExpired = true;
+      if (levelAllocationCancel) levelAllocationCancel();
+      if (monsterDropCancel) monsterDropCancel();
       window.clearInterval(workbookDeadlinePoll);
       forceWorkbookDeadlineDefeat(currentView);
       setBattleInputLocked(true);
       setPlayerTurn(false);
       finishBattleStartFade();
       hideLoadingModal(true);
-      ['rewardModal', 'scoreModal'].forEach(function(id) {
+      ['rewardModal', 'scoreModal', 'levelStatModal', 'levelUpBanner', 'monsterDropModal'].forEach(function(id) {
         var modal = document.getElementById(id);
-        if (modal) modal.classList.remove('active');
+        if (modal) { modal.classList.remove('active'); modal.setAttribute('aria-hidden','true'); }
       });
       showDefeatSequence({ skipCommit: true });
       saveWorkbookDeadlineResult();
@@ -777,16 +807,16 @@
       if (response.localRunState && !localRunTransitions.length) localRunState = response.localRunState;
     }
 
-    function applyInitialBattleView(view) {
+    async function applyInitialBattleView(view) {
       try {
         validateInitialBattleView(view);
-        initializeBattleView(view);
+        await initializeBattleView(view);
       } catch (error) {
         showBattleEntryFailure(error && error.message || '전투 화면을 표시하지 못했습니다.');
       }
     }
 
-    function initializeBattleView(view) {
+    async function initializeBattleView(view) {
       isDummyMode = false;
       currentView = normalizeBattleView(view);
       resetStageCommitState();
@@ -796,6 +826,11 @@
       startWorkbookDeadlineMonitor();
       renderBattle(currentView);
       if (workbookDeadlineExpired) return;
+      await presentLevelStatAllocation(currentView);
+      if (workbookDeadlineExpired) return;
+      await presentMonsterItemDrops(currentView);
+      if (workbookDeadlineExpired) return;
+      setBattleInputLocked(false);
       preloadFollowingStageStatic();
       if (isFloorIntermissionView(currentView)) {
         startFloorIntermissionEntrance();
@@ -2154,8 +2189,23 @@
       return ASSET_BASE_URL + '/Resources/Actions/' + fileName;
     }
 
-    function getRewardIconUrl(type) {
+    function getRewardIconUrl(type, reward) {
       if (!ASSET_BASE_URL) return '';
+      if ((type === 'skill' || type === 'skillUpgrade') && reward) {
+        var conceptFiles = {
+          '타격': 'Strike', '암살': 'Assassin', '중독': 'Poison',
+          '빙결': 'Frost', '발화': 'Burn', '감전': 'Shock', '행운': 'Luck',
+          '일반': 'Normal', '공용': 'Normal', '': 'Normal'
+        };
+        var concept = String(getRewardSkillConcept(reward)).trim();
+        var file = conceptFiles[concept] || {
+          strike: 'Strike', assassin: 'Assassin', poison: 'Poison',
+          frost: 'Frost', freeze: 'Frost', chill: 'Frost', burn: 'Burn', fire: 'Burn',
+          shock: 'Shock', electric: 'Shock', lightning: 'Shock', luck: 'Luck',
+          normal: 'Normal', none: 'Normal'
+        }[concept.toLowerCase()];
+        if (file) return ASSET_BASE_URL + '/Resources/Skills/Skill_' + file + '.png';
+      }
       var files = {
         stat: 'Reward_Stat.png',
         skill: 'Reward_Skill.png',
@@ -2223,6 +2273,7 @@
         && String(view.skillType || '').toLowerCase() === 'damage'
         && hitCount > 1;
       var badgeText = numericValue === '' ? '' : String(numericValue) + (isMultiHitDamage ? 'x' + hitCount : '');
+      if (view.monsterKit && (view.phase === 'charge' || view.phase === 'rest')) badgeText = view.phase === 'charge' ? '준비' : '휴식';
       var valueBadge = badgeText ? '<em class="monster-intent-value">' + escapeHtml(badgeText) + '</em>' : '';
       var iconUrl = getActionIntentIconUrl(view);
       var iconHtml = iconUrl ? '<img class="monster-intent-icon" src="' + escapeHtml(iconUrl) + '" alt="" onerror="this.remove();">' : '<span class="monster-intent-icon-fallback">' + escapeHtml(intentIconLabel(view.intentIcon || view.actionType || 'sword')) + '</span>';
@@ -2233,7 +2284,7 @@
     }
 
     function intentIconLabel(icon) {
-      var labels = { sword: 'ATK', shield: 'DEF', drop: 'DBF', skill: 'SKL', heal: 'HEAL' };
+      var labels = { sword: 'ATK', shield: 'DEF', drop: 'DBF', skill: 'SKL', heal: 'HEAL', warning: '준비', rest: '휴식' };
       return labels[icon] || icon || 'ACT';
     }
 
@@ -2479,8 +2530,165 @@
 
     var pendingActionPointVisualCost = null;
     var actionPointAnimationValue = null;
+    var levelAllocationActive = false;
+    var levelAllocationCancel = null;
+    function getPlayerLevelProgress(player) {
+      return player && player.baseStats && player.baseStats.levelProgress || {level:1,xp:0,points:0};
+    }
+
+    function renderPlayerExperience(player, progressOverride) {
+      // HP-only animation previews must preserve the displayed experience.
+      if (!progressOverride && !(player && player.baseStats && player.baseStats.levelProgress)) return;
+      var progress = progressOverride || getPlayerLevelProgress(player);
+      var required = 100 + 25 * (Math.max(1,Number(progress.level || 1))-1);
+      var xp = Math.max(0,Number(progress.xp || 0));
+      var fill = document.getElementById('playerExpFill');
+      if (!fill) return;
+      fill.style.width = Math.min(100,xp/required*100) + '%';
+      document.getElementById('playerLevelLabel').textContent = 'Lv.' + Number(progress.level || 1);
+      document.getElementById('playerExpText').textContent = xp + ' / ' + required;
+      var track = document.getElementById('playerExpTrack');
+      track.setAttribute('aria-valuemax',String(required));
+      track.setAttribute('aria-valuenow',String(xp));
+    }
+
+    async function animateExperienceRewards(events) {
+      var rewards = events.filter(function(event) { return event.type === 'experience'; });
+      for (var i=0;i<rewards.length;i++) {
+        var reward = rewards[i];
+        var track = document.getElementById('playerExpTrack');
+        if (!track) continue;
+        renderPlayerExperience(null,reward.before);
+        var source = document.querySelector('[data-monster-id="' + cssEscape(reward.monsterId) + '"]');
+        var targetRect = track.getBoundingClientRect();
+        var sourceRect = source ? source.getBoundingClientRect() : {left:window.innerWidth/2,top:window.innerHeight/3,width:0,height:0};
+        var reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        var duration = reduced ? 80 : 620;
+        var flights = [];
+        for (var orbIndex=0;orbIndex<5;orbIndex++) {
+          var orb = document.createElement('span');
+          orb.className = 'experience-orb';
+          orb.setAttribute('aria-hidden','true');
+          var x = sourceRect.left+sourceRect.width/2 + (orbIndex-2)*10;
+          var y = sourceRect.top+sourceRect.height/2;
+          orb.style.left = x + 'px'; orb.style.top = y + 'px';
+          document.body.appendChild(orb);
+          var dx = targetRect.left+targetRect.width/2-x, dy = targetRect.top+targetRect.height/2-y;
+          if (orb.animate) {
+            var flight = orb.animate([{transform:'translate(0,0) scale(1)',opacity:1},
+              {transform:'translate(' + (dx*0.45) + 'px,' + (dy*0.25-65) + 'px) scale(1.3)',opacity:1,offset:0.45},
+              {transform:'translate(' + dx + 'px,' + dy + 'px) scale(0.3)',opacity:0}],
+              {duration:duration,delay:reduced ? 0 : orbIndex*45,easing:'ease-in-out',fill:'forwards'});
+            flights.push(flight.finished.catch(function(){}).then((function(node){return function(){node.remove();};})(orb)));
+          } else { orb.remove(); }
+        }
+        await Promise.all(flights);
+        spawnFloatingText(track,'+' + reward.amount + ' EXP','experience-text');
+        var level = Number(reward.before.level || 1);
+        var fill = document.getElementById('playerExpFill');
+        while (level < Number(reward.after.level)) {
+          renderPlayerExperience(null,{level:level,xp:100+25*(level-1)});
+          await new Promise(function(resolve){window.setTimeout(resolve,reduced ? 30 : 360);});
+          fill.style.transition = 'none';
+          renderPlayerExperience(null,{level:level+1,xp:0});
+          void fill.offsetWidth;
+          fill.style.transition = '';
+          level++;
+        }
+        renderPlayerExperience(null,reward.after);
+        await new Promise(function(resolve){window.setTimeout(resolve,reduced ? 30 : 360);});
+      }
+    }
+
+    async function presentLevelStatAllocation(view) {
+      var battle = view && view.battle;
+      if (!battle || !battle.player || Number(battle.player.hp || 0)<=0 || levelAllocationActive) return;
+      var progress = getPlayerLevelProgress(battle.player);
+      if (!Number(progress.points || 0)) return;
+      var engine = window.LearningRpgLocalRunEngine;
+      if (!engine || !engine.allocate) return;
+      levelAllocationActive = true;
+      setBattleInputLocked(true);
+      var banner = document.getElementById('levelUpBanner');
+      banner.classList.add('active'); banner.setAttribute('aria-hidden','false');
+      await new Promise(function(resolve){window.setTimeout(resolve,1000);});
+      banner.classList.remove('active'); banner.setAttribute('aria-hidden','true');
+      if (workbookDeadlineExpired) { levelAllocationActive=false; return; }
+      var modal = document.getElementById('levelStatModal');
+      var confirm = document.getElementById('levelStatConfirm');
+      var options = engine.levelOptions(), allocation = {}, available = Number(progress.points);
+      var previousFocus = document.activeElement;
+      modal.classList.add('active'); modal.setAttribute('aria-hidden','false');
+      document.getElementById('levelStatTitle').textContent = 'Lv.' + progress.level + ' · 스탯 투자';
+      document.getElementById('levelStatError').textContent = '';
+      function renderChoices() {
+        var used = Object.keys(allocation).reduce(function(sum,key){return sum+allocation[key];},0);
+        var remaining = available-used;
+        document.getElementById('levelStatPoints').textContent = remaining;
+        document.getElementById('levelStatChoices').innerHTML = options.map(function(option) {
+          var count = Number(allocation[option.key] || 0);
+          var value = Number(battle.player.baseStats && battle.player.baseStats[option.key] || 0);
+          return '<div class="level-stat-row"><span class="level-stat-label" tabindex="0" data-tooltip="' + escapeHtml(getStatDescription(option.key)) + '"><strong>' + escapeHtml(option.label) + '</strong><small>포인트당 +' + option.amount + (option.percent ? '%p' : '') + '</small></span>' +
+            '<span class="level-stat-value">' + value + ' → ' + Math.round((value+option.amount*count)*100)/100 + (option.percent ? '%' : '') + '</span>' +
+            '<button type="button" data-level-key="' + option.key + '" data-level-delta="-1" aria-label="' + escapeHtml(option.label) + ' 감소"' + (count ? '' : ' disabled') + '>−</button>' +
+            '<span class="level-stat-count">' + count + '</span><button type="button" data-level-key="' + option.key + '" data-level-delta="1" aria-label="' + escapeHtml(option.label) + ' 증가"' + (remaining ? '' : ' disabled') + '>+</button></div>';
+        }).join('');
+        confirm.disabled = remaining!==0;
+      }
+      renderChoices();
+      document.getElementById('levelStatChoices').onclick = function(event) {
+        var button = event.target.closest('[data-level-key]');
+        if (!button || button.disabled) return;
+        var key = button.dataset.levelKey;
+        allocation[key] = Number(allocation[key] || 0)+Number(button.dataset.levelDelta);
+        renderChoices();
+        var replacement = document.querySelector('[data-level-key="' + key + '"][data-level-delta="' + button.dataset.levelDelta + '"]:not(:disabled)');
+        if (replacement) replacement.focus(); else confirm.focus();
+      };
+      var trap = function(event) {
+        if (event.key==='Tab') {
+          var buttons = Array.prototype.slice.call(modal.querySelectorAll('button:not(:disabled)'));
+          if (!buttons.length) return;
+          var index = buttons.indexOf(document.activeElement);
+          var next = (index+(event.shiftKey ? -1 : 1)+buttons.length)%buttons.length;
+          event.preventDefault(); buttons[next].focus();
+        }
+        if (event.key==='Escape') event.preventDefault();
+        event.stopImmediatePropagation();
+      };
+      document.addEventListener('keydown',trap,true);
+      modal.querySelector('button:not(:disabled)').focus();
+      var invested = await new Promise(function(resolve) {
+        levelAllocationCancel = function(){resolve(false);};
+        confirm.onclick = function() {
+          if (confirm.disabled) return;
+          try {
+            engine.allocate(localGameDataSnapshot,battle,allocation);
+            view.availableSkills = engine.skills(localGameDataSnapshot,battle,view.availableSkills || []);
+            view.questionCache = [];
+            // The victory receipt stays server-cached; rebuild the preview with
+            // the invested HP/regen instead of the pre-allocation snapshot.
+            if (battle.status === 'victory') {
+              victoryRewardPreload = null;
+              victoryRewardResultPayload = null;
+            }
+            resolve(true);
+          } catch (error) { document.getElementById('levelStatError').textContent = error.message || String(error); }
+        };
+      });
+      document.removeEventListener('keydown',trap,true);
+      levelAllocationCancel = null;
+      confirm.onclick = null;
+      document.getElementById('levelStatChoices').onclick = null;
+      modal.classList.remove('active'); modal.setAttribute('aria-hidden','true');
+      levelAllocationActive = false;
+      if (invested) renderBattle(view);
+      if (previousFocus && previousFocus.isConnected) previousFocus.focus();
+    }
+
     function renderPlayerHud(player) {
       normalizeClientActionPoints(player);
+      renderPlayerExperience(player);
       var oldHpText = document.getElementById('playerHpText');
       var oldHpMatch = getHpTextMatch(oldHpText);
       var hp = Math.max(0, Number(player.hp || 0));
@@ -2586,7 +2794,8 @@
       if (skill && skill.skillId === 'skill_all_in' && currentView && currentView.battle) {
         return Math.max(1, Number(currentView.battle.player.currentActionPoint || 0));
       }
-      return Math.max(0, Math.min(3, Number(skill && skill.actionPointCost !== undefined && skill.actionPointCost !== '' ? skill.actionPointCost : 1)));
+      var baseCost = Number(skill && skill.baseActionPointCost !== undefined ? skill.baseActionPointCost : skill && skill.actionPointCost !== undefined ? skill.actionPointCost : 1);
+      return RULE_ENGINE_SHARED.getDiscountedSkillCost(currentView && currentView.battle && currentView.battle.player, skill, baseCost);
     }
 
     function getSkillDifficultyBonusText(skill) {
@@ -2841,6 +3050,70 @@
       '</article>';
     }
 
+    var monsterDropActive = false;
+    var monsterDropCancel = null;
+    async function presentMonsterItemDrops(view) {
+      var battle=view && view.battle,engine=window.LearningRpgLocalRunEngine;
+      if(monsterDropActive || !battle || !battle.player || Number(battle.player.hp || 0)<=0 || !engine || !engine.itemDrops) return;
+      var drops=engine.itemDrops(localGameDataSnapshot,battle);
+      var queue=Object.keys(drops).map(function(id){return drops[id];}).filter(function(drop){return drop.status==='pending' && drop.reward;});
+      if(!queue.length)return;
+      monsterDropActive=true;setBattleInputLocked(true);
+      var modal=document.getElementById('monsterDropModal'),claim=document.getElementById('monsterDropClaim'),ignore=document.getElementById('monsterDropIgnore');
+      var previousFocus=document.activeElement;
+      var trap=function(event){
+        if(event.key==='Tab'){
+          var targets=Array.prototype.slice.call(modal.querySelectorAll('button:not(:disabled),[tabindex="0"]'));
+          var index=targets.indexOf(document.activeElement),next=(index+(event.shiftKey ? -1 : 1)+targets.length)%targets.length;
+          event.preventDefault();targets[next].focus();
+        }
+        if(event.key==='Escape')event.preventDefault();
+        event.stopImmediatePropagation();
+      };
+      document.addEventListener('keydown',trap,true);
+      document.body.classList.add('monster-drop-open');
+      modal.classList.add('active');modal.setAttribute('aria-hidden','false');
+      try {
+        for(var i=0;i<queue.length;i++){
+          if(workbookDeadlineExpired)break;
+          var drop=queue[i];
+          document.getElementById('monsterDropSource').textContent=drop.monsterName+' 처치'+(queue.length>1 ? ' · '+(i+1)+' / '+queue.length : '');
+          document.getElementById('monsterDropCard').innerHTML=renderOwnedItemCard(drop.reward.itemDetail);
+          document.getElementById('monsterDropError').textContent='';
+          claim.disabled=false;ignore.disabled=false;claim.focus();
+          var accepted=await new Promise(function(resolve){
+            monsterDropCancel=function(){resolve(null);};
+            function decide(wantsItem){
+              if(workbookDeadlineExpired){resolve(null);return;}
+              claim.disabled=true;ignore.disabled=true;
+              try {
+                engine.decideDrop(localGameDataSnapshot,battle,drop.dropId,wantsItem);
+                view.availableSkills=engine.skills(localGameDataSnapshot,battle,view.availableSkills || []);
+                view.questionCache=[];
+                resolve(wantsItem);
+              } catch(error){
+                document.getElementById('monsterDropError').textContent=error.message || String(error);
+                claim.disabled=false;ignore.disabled=false;
+              }
+            }
+            claim.onclick=function(){decide(true);};ignore.onclick=function(){decide(false);};
+          });
+          hideActiveHoverTooltips();
+          if(accepted===null)break;
+          if(battle.status==='victory'){victoryRewardPreload=null;victoryRewardResultPayload=null;}
+          renderBattle(view);
+        }
+      } finally {
+        monsterDropCancel=null;monsterDropActive=false;
+        claim.onclick=null;ignore.onclick=null;
+        document.removeEventListener('keydown',trap,true);
+        hideActiveHoverTooltips();
+        document.body.classList.remove('monster-drop-open');
+        modal.classList.remove('active');modal.setAttribute('aria-hidden','true');
+        if(previousFocus && previousFocus.isConnected)previousFocus.focus();
+      }
+    }
+
     function buildItemFlavorDescription(item) {
       var description = String(item && item.description || '').trim();
       return description ? '<br><br><span class="item-flavor-text">&quot;' + escapeHtml(description) + '&quot;</span>' : '';
@@ -2856,6 +3129,21 @@
       }).filter(Boolean).map(function(line) {
         return '- ' + escapeHtml(line);
       }).join('<br>');
+    }
+
+    function getStatDescription(key) {
+      var descriptions = {
+        attack: '기본공격이나 스킬의 피해량을 높여주는 수치 입니다.',
+        defense: '방어막 획득량이 증가하는 수치입니다.',
+        hp: '체력이 0 이하로 감소하면 게임에 패배합니다.',
+        hpRegen: '스테이지 종료 후 회복하는 체력의 양 입니다.',
+        evasion: '상대의 공격을 무시 할 확률 입니다.',
+        accuracy: '상대에게 공격이 적중 할 확률 입니다. 100% 이상의 수치는 상대의 회피율을 같은 양 만큼 상쇄 시킵니다.',
+        criticalRate: '공격 시 적에게 추가 피해를 입힐 확률 입니다.',
+        criticalDamage: '치명타 발생 시 추가로 입히는 피해 배율 입니다.',
+        questionEfficiency: '문제 풀이 시의 효율이 증가합니다.'
+      };
+      return descriptions[key] || '';
     }
 
     function getBattleStatStartingStats(player) {
@@ -2880,16 +3168,17 @@
       var itemApDelta = Number(player.itemModifiers && player.itemModifiers.actionPoint || 0);
       var startingStats = getBattleStatStartingStats(player);
       var descriptions = {
-        '체력': ['hp', '현재 / 최대 체력. 0이 되면 쓰러집니다.'],
+        '체력': ['hp', getStatDescription('hp')],
         '방어막': ['', '체력 대신 먼저 소모됩니다.'],
         '행동력': ['ap', '현재 / 최대 행동력. 행동할 때 소모됩니다.'],
-        '공격력': ['attack', '공격 피해에 반영됩니다.'],
-        '방어력': ['defense', '수비·방어 스킬의 방어막이 증가합니다.'],
-        '체력 회복': ['hpRegen', '스테이지 클리어 시 회복하는 체력입니다.'],
-        '명중률': ['accuracy', '공격이 적중할 확률입니다.'],
-        '회피율': ['evasion', '상대 공격을 피할 확률입니다.'],
-        '치명타 확률': ['criticalRate', '치명타가 발생할 확률입니다.'],
-        '치명타 피해': ['criticalDamage', '치명타 피해 배율입니다.'],
+        '공격력': ['attack', getStatDescription('attack')],
+        '방어력': ['defense', getStatDescription('defense')],
+        '체력 회복': ['hpRegen', getStatDescription('hpRegen')],
+        '명중률': ['accuracy', getStatDescription('accuracy')],
+        '회피율': ['evasion', getStatDescription('evasion')],
+        '치명타 확률': ['criticalRate', getStatDescription('criticalRate')],
+        '치명타 피해': ['criticalDamage', getStatDescription('criticalDamage')],
+        '문제 풀이 효율': ['questionEfficiency', getStatDescription('questionEfficiency')],
         '화폐': ['', '이번 게임에서 모은 화폐입니다.'],
         '점수': ['', '이번 게임에서 얻은 점수입니다.']
       };
@@ -2904,6 +3193,7 @@
         ['회피율', formatEffectiveStat(startingStats, effectiveStats, 'evasion', '%', stats), true],
         ['치명타 확률', formatEffectiveStat(startingStats, effectiveStats, 'criticalRate', '%', stats), true],
         ['치명타 피해', formatEffectiveStat(startingStats, effectiveStats, 'criticalDamage', '%', stats), true],
+        ['문제 풀이 효율', formatEffectiveStat(startingStats, effectiveStats, 'questionEfficiency', '%p', stats), true],
         ['화폐', currentView ? Number(currentView.currency || 0) : 0],
         ['점수', formatScore(currentView ? Number(currentView.score || 0) : 0)],
       ];
@@ -2915,7 +3205,7 @@
         var finalValue = key === 'hp' ? Number(player.maxHp || stats.hp || 0) : Number((key === 'hpRegen' ? stats : effectiveStats)[key] || 0);
         var buffDelta = key === 'ap' ? Number(player.maxActionPoint || baseAp) - baseAp : key ? finalValue - Number(stats[key] || 0) : 0;
         var changed = [rewardDelta, itemDelta, buffDelta].some(function(value) { return Math.abs(value) >= 0.05; });
-        var breakdown = key ? ' data-stat-reward="' + rewardDelta + '" data-stat-item="' + itemDelta + '" data-stat-buff="' + buffDelta + '" data-stat-unit="' + (/^(accuracy|evasion|criticalRate|criticalDamage)$/.test(key) ? '%p' : '') + '"' : '';
+        var breakdown = key ? ' data-stat-reward="' + rewardDelta + '" data-stat-item="' + itemDelta + '" data-stat-buff="' + buffDelta + '" data-stat-unit="' + (/^(accuracy|evasion|criticalRate|criticalDamage|questionEfficiency)$/.test(key) ? '%p' : '') + '"' : '';
         return '<div class="battle-stat-row" tabindex="0" data-tooltip="' + escapeHtml(definition[1]) + '"' + breakdown + '><span>' + escapeHtml(row[0]) + '</span><b' + (changed ? ' class="battle-stat-value-changed"' : '') + '>' + (row[2] ? row[1] : escapeHtml(row[1])) + '</b></div>';
       }).join('');
       panel.classList.remove('hidden');
@@ -3165,7 +3455,7 @@
       }
       var cooldownAction=(targetRule.actions || []).filter(function(a){return a.operation==='cooldownSelect';})[0];
       if(cooldownAction && !choice.cooldownTargetSkillId){
-        var candidates=(currentView.availableSkills || []).filter(function(s){return s.skillId!==skillId && normalizeSkillTags(s.tags).indexOf(cooldownAction.tag)>=0 && Number(currentView.battle.skillCooldowns && currentView.battle.skillCooldowns[s.skillId])>0;});
+        var candidates=(currentView.availableSkills || []).filter(function(s){return s.skillId!==skillId && (!cooldownAction.tag || normalizeSkillTags(s.tags).indexOf(cooldownAction.tag)>=0) && (!cooldownAction.excludeCooldownSkills || !RULE_ENGINE_SHARED.isCooldownReductionSkill(s)) && Number(currentView.battle.skillCooldowns && currentView.battle.skillCooldowns[s.skillId])>0;});
         if(!candidates.length){pushLog('쿨타임 중인 해당 컨셉 스킬이 없습니다.');return;}
         if(candidates.length===1)choice.cooldownTargetSkillId=candidates[0].skillId;
         else {openCombatCooldownChoice(candidates,function(id){choice.cooldownTargetSkillId=id;startSkillQuestion(skillId,targetId);});return;}
@@ -3456,8 +3746,9 @@
         var runStats = getRunQuestionStats(question && question.questionId);
         var selectionStats = getQuestionSelectionStats(question);
         var baseStats = Object.assign({}, selectionStats, {
-          correctCount: Number(runStats.baselineCorrectCount || 0),
-          totalCount: Number(runStats.baselineTotalCount || 0),
+          // Selection uses this run's answers; lifetime totals are display-only.
+          correctCount: Number(runStats.correctCount || 0),
+          totalCount: Number(runStats.totalCount || 0),
           selectionWeightOffset: 0,
         });
         return {
@@ -3662,6 +3953,7 @@
 
     function getClientLocalQuestionModifiers(question) {
       var itemModifiers = currentView && currentView.battle && currentView.battle.player && currentView.battle.player.itemModifiers || {};
+      var levelEfficiency = Number(currentView && currentView.battle && currentView.battle.player && currentView.battle.player.baseStats && currentView.battle.player.baseStats.questionEfficiency || 0);
       var type = String(question && question.type || '');
       var timeByType = itemModifiers.questionTimeByType || {};
       var timeSeconds = Number(timeByType.all || 0);
@@ -3674,9 +3966,10 @@
         questionDifficulty: Number(itemModifiers.questionDifficulty || 0),
         questionMaxEfficiencyMultiplier: RULE_ENGINE_SHARED.getQuestionMaxEfficiencyMultiplier(currentView && currentView.battle && currentView.battle.player && currentView.battle.player.effects),
         questionEfficiencyBonusPercent: RULE_ENGINE_SHARED.getQuestionEfficiencyBonusPercent(currentView && currentView.battle && currentView.battle.player && currentView.battle.player.effects),
+        questionCappedEfficiencyBonusPercent: RULE_ENGINE_SHARED.getQuestionCappedEfficiencyBonusPercent(currentView && currentView.battle && currentView.battle.player && currentView.battle.player.effects),
         questionMaxEfficiencyPercent: Number(itemModifiers.questionMaxEfficiencyPercent || 0),
-        questionMaxEfficiencyFlatPercent: Number(itemModifiers.questionMaxEfficiencyFlatPercent || 0),
-        questionMinEfficiencyPercent: Number(itemModifiers.questionMinEfficiencyPercent || 0) + RULE_ENGINE_SHARED.getQuestionMinEfficiencyBonusPercent(currentView && currentView.battle && currentView.battle.player && currentView.battle.player.effects),
+        questionMaxEfficiencyFlatPercent: Number(itemModifiers.questionMaxEfficiencyFlatPercent || 0) + levelEfficiency,
+        questionMinEfficiencyPercent: Number(itemModifiers.questionMinEfficiencyPercent || 0) + levelEfficiency + RULE_ENGINE_SHARED.getQuestionMinEfficiencyBonusPercent(currentView && currentView.battle && currentView.battle.player && currentView.battle.player.effects),
         questionTimeSeconds: timeSeconds,
         questionChanceByType: Object.assign({}, itemModifiers.questionChanceByType || {}),
         answerCorrectEfficiencyPercent: Number(itemModifiers.answerCorrectEfficiencyPercent || 0),
@@ -4400,18 +4693,24 @@
       var maxEfficiency = getQuestionMaxAnswerEfficiency();
       var ratio = Math.max(0, Math.min(1, Number(remainingMs || 0) / Math.max(1, Number(maxMs || 1))));
       var minEfficiency = getQuestionMinAnswerEfficiency();
+      // Keep the base curve's shape when the min/max endpoints are raised.
+      var baseMin = Number(MIN_ANSWER_EFFICIENCY);
+      var baseMax = Number(MAX_ANSWER_EFFICIENCY);
+      var basePivot = baseMax <= 1 ? (baseMin + baseMax) / 2 : Math.max(baseMin, Math.min(baseMax, 1));
+      var pivotRatio = baseMax > baseMin ? (basePivot - baseMin) / (baseMax - baseMin) : 0.5;
+      var pivotEfficiency = minEfficiency + (maxEfficiency - minEfficiency) * pivotRatio;
       if (maxEfficiency <= 1) {
         return minEfficiency + ((maxEfficiency - minEfficiency) * ratio);
       }
       if (ratio >= 0.5) {
-        return 1 + ((ratio - 0.5) * ((maxEfficiency - 1) / 0.5));
+        return pivotEfficiency + ((ratio - 0.5) * ((maxEfficiency - pivotEfficiency) / 0.5));
       }
-      return minEfficiency + (ratio * ((1 - minEfficiency) / 0.5));
+      return minEfficiency + (ratio * ((pivotEfficiency - minEfficiency) / 0.5));
     }
 
     function getQuestionMinAnswerEfficiency() {
       var modifiers = currentQuestionView && currentQuestionView.questionModifiers || getClientLocalQuestionModifiers(null);
-      return Math.max(0, Math.min(1, MIN_ANSWER_EFFICIENCY + Number(modifiers.questionMinEfficiencyPercent || 0) / 100));
+      return Math.max(0, Math.min(getQuestionMaxAnswerEfficiency(), MIN_ANSWER_EFFICIENCY + Number(modifiers.questionMinEfficiencyPercent || 0) / 100));
     }
 
     function getQuestionMaxAnswerEfficiency() {
@@ -4424,7 +4723,10 @@
         ? Number(currentQuestionView.questionModifiers && currentQuestionView.questionModifiers.questionEfficiencyBonusPercent || 0)
         : 0;
       var bonusEfficiency = Math.max(0, bonusPercent / 100);
-      var totalEfficiency = baseEfficiency + bonusEfficiency;
+      var cappedBonus = Number(currentQuestionView && currentQuestionView.questionModifiers && currentQuestionView.questionModifiers.questionCappedEfficiencyBonusPercent || 0);
+      var totalEfficiency = RULE_ENGINE_SHARED.capQuestionEfficiencyBonus(baseEfficiency + bonusEfficiency, getQuestionMaxAnswerEfficiency(), cappedBonus);
+      bonusEfficiency = Math.max(0,totalEfficiency-baseEfficiency);
+      bonusPercent = bonusEfficiency*100;
       var maxEfficiency = getQuestionMaxAnswerEfficiency();
       var displayMaxEfficiency = Math.max(0.01, maxEfficiency + bonusEfficiency);
       var percent = Math.round(baseEfficiency * 100);
@@ -4599,8 +4901,10 @@
       var finalEfficiency = currentQuestionView.efficiencyLocked
         ? (currentQuestionView.failedBySkillPenalty ? 0 : Number(currentQuestionView.lockedEfficiency || 0) + caffeineBonus)
         : applyClientQuestionCorrectEfficiencyModifiers(calculateTimedEfficiency(Math.max(0, Number(currentQuestionView.maxMs || 10000) - elapsedMs), currentQuestionView.maxMs), currentQuestionView) + caffeineBonus;
+      var displayedBaseEfficiency = finalEfficiency - (currentQuestionView.failedBySkillPenalty ? 0 : caffeineBonus);
+      if (!currentQuestionView.failedBySkillPenalty) finalEfficiency = RULE_ENGINE_SHARED.capQuestionEfficiencyBonus(finalEfficiency, getQuestionMaxAnswerEfficiency(), currentQuestionView.questionModifiers && currentQuestionView.questionModifiers.questionCappedEfficiencyBonusPercent);
       currentDamageEfficiency = finalEfficiency;
-      updateQuestionEfficiencyMeter(finalEfficiency - (currentQuestionView.failedBySkillPenalty ? 0 : caffeineBonus));
+      updateQuestionEfficiencyMeter(displayedBaseEfficiency);
       animateQuestionEfficiencyCorrect();
       document.getElementById('questionSubmitButton').disabled = true;
       hideQuestionGiveUpButton();
@@ -5165,6 +5469,72 @@
       slot.insertAdjacentHTML('beforeend', renderStatusIcons(statusTarget));
     }
 
+    async function playTurnEffectEvent(event) {
+      if (event.actor === 'effect') {
+        var effectEventMessage = event.message || '';
+        if (event.target === 'monster') {
+          event.targetMonsterId = event.targetMonsterId || getFirstAliveMonsterId(currentView && currentView.battle);
+          var elementalHit = playDamageTypeEffect(getDamageVisualType(event.damageKind) || event.effectId, 'monster', event.targetMonsterId);
+          if (!elementalHit && !event.effectId && event.attackEffect) {
+            await animatePlayerAttack(event.targetMonsterId, event.attackEffect);
+            await skippableAutoDelay(ATTACK_EFFECT_DELAY_MS);
+          }
+          pushLog(effectEventMessage);
+          await animateMonsterHit(event.targetMonsterId, event.damage, event.hpDamage, event.shieldDamage, event.isCritical, undefined, event.displayDamage, elementalHit);
+          await finishActionDescription();
+        } else if (event.target === 'player') {
+          var elementalPlayerHit = playDamageTypeEffect(getDamageVisualType(event.damageKind) || event.effectId, 'player');
+          pushLog(effectEventMessage);
+          animatePlayerHit(event.damage, event.hpDamage, event.shieldDamage, event.isCritical, undefined, elementalPlayerHit);
+          await finishActionDescription();
+        } else {
+          pushLog(effectEventMessage);
+          await finishActionDescription();
+        }
+      }
+    }
+
+    async function playTurnPlayerEvent(event, events, index, consumedSimultaneousEvents, nextView) {
+      if (event.actor === 'player') {
+        if (event.simultaneousGroupId && (event.type === 'attack' || event.type === 'skill')) {
+          var simultaneousEvents = collectSimultaneousEvents(events, index, consumedSimultaneousEvents);
+          if (simultaneousEvents.length > 1) {
+            await playSimultaneousMonsterHits(simultaneousEvents);
+            await finishActionDescription();
+            return;
+          }
+        }
+        var playerEventMessage = event.message || 'Player action!';
+        if (event.type === 'attack' || event.type === 'skill') {
+          event.targetMonsterId = event.targetMonsterId || getFirstAliveMonsterId(currentView && currentView.battle);
+          await animatePlayerAttack(event.targetMonsterId, event.attackEffect);
+          pushLog(playerEventMessage);
+          if (event.missed) {
+            await animateMonsterMiss(event.targetMonsterId);
+          } else {
+            await animateMonsterHit(event.targetMonsterId, event.damage, event.hpDamage, event.shieldDamage, event.isCritical, currentDamageEfficiency, event.displayDamage);
+          }
+        } else if (event.type === 'guard') {
+          pushLog(playerEventMessage);
+          animatePlayerShield(event.shield);
+        } else if (event.type === 'heal') {
+          pushLog(playerEventMessage);
+          animatePlayerHeal(event.heal);
+        } else if ((event.type === 'debuff' || event.type === 'buff') && event.targetMonsterId) {
+          pushLog(playerEventMessage);
+          if (!playDamageTypeEffect(event.effectId, 'monster', event.targetMonsterId)) animateMonsterStatusEffect(event.targetMonsterId, event.type);
+          refreshEventStatuses(event, nextView);
+        } else if (event.type === 'buff' || event.type === 'debuff') {
+          pushLog(playerEventMessage);
+          if (!playDamageTypeEffect(event.effectId, 'player')) animatePlayerStatusEffect(event.type);
+          refreshEventStatuses(event, nextView);
+        } else {
+          pushLog(playerEventMessage);
+        }
+        await finishActionDescription();
+      }
+    }
+
     async function playTurnSequence(nextView) {
       if (workbookDeadlineExpired) return;
       cancelTargetSelection();
@@ -5184,10 +5554,18 @@
       }
       setBattleInputLocked(true);
       setPlayerTurn(false);
+      if (window.LearningRpgLocalRunEngine && window.LearningRpgLocalRunEngine.settleExperience) {
+        window.LearningRpgLocalRunEngine.settleExperience(nextView.battle);
+      }
+      if (window.LearningRpgLocalRunEngine && window.LearningRpgLocalRunEngine.itemDrops) {
+        window.LearningRpgLocalRunEngine.itemDrops(localGameDataSnapshot,nextView.battle);
+      }
       if (nextView && nextView.battle && nextView.battle.status === 'victory') {
         preloadVictoryRewardChoices(nextView);
       }
       var events = (nextView.battle.lastTurnEvents || []).slice();
+      var firstMonsterEventIndex = events.findIndex(function(event) { return event.actor === 'monster'; });
+      var monsterTurnAdvanced = Number(nextView.battle.turn || 1) > Number(currentView.battle.turn || 1);
       var consumedSimultaneousEvents = {};
 
       for (var i = 0; i < events.length; i += 1) {
@@ -5196,77 +5574,43 @@
           continue;
         }
         var event = events[i];
-        if (event.actor === 'effect') {
-          var effectEventMessage = event.message || '';
-          if (event.target === 'monster') {
-            event.targetMonsterId = event.targetMonsterId || getFirstAliveMonsterId(currentView && currentView.battle);
-            if (event.effectId) {
-              playDamageTypeEffect(event.effectId, 'monster', event.targetMonsterId);
-            } else if (event.attackEffect) {
-              await animatePlayerAttack(event.targetMonsterId, event.attackEffect);
-              await skippableAutoDelay(ATTACK_EFFECT_DELAY_MS);
-            }
-            pushLog(effectEventMessage);
-            await animateMonsterHit(event.targetMonsterId, event.damage, event.hpDamage, event.shieldDamage, event.isCritical, undefined, event.displayDamage);
-            await finishActionDescription();
-          } else if (event.target === 'player') {
-            if (event.effectId) playDamageTypeEffect(event.effectId, 'player');
-            pushLog(effectEventMessage);
-            animatePlayerHit(event.damage, event.hpDamage, event.shieldDamage, event.isCritical);
-            await finishActionDescription();
-          } else {
-            pushLog(effectEventMessage);
-            await finishActionDescription();
-          }
-        }
-        if (event.actor === 'player') {
-          if (event.simultaneousGroupId && (event.type === 'attack' || event.type === 'skill')) {
-            var simultaneousEvents = collectSimultaneousEvents(events, i, consumedSimultaneousEvents);
-            if (simultaneousEvents.length > 1) {
-              await playSimultaneousMonsterHits(simultaneousEvents);
-              await finishActionDescription();
-              continue;
-            }
-          }
-          var playerEventMessage = event.message || 'Player action!';
-          if (event.type === 'attack' || event.type === 'skill') {
-            event.targetMonsterId = event.targetMonsterId || getFirstAliveMonsterId(currentView && currentView.battle);
-            await animatePlayerAttack(event.targetMonsterId, event.attackEffect);
-            pushLog(playerEventMessage);
-            if (event.missed) {
-              await animateMonsterMiss(event.targetMonsterId);
-            } else {
-              await animateMonsterHit(event.targetMonsterId, event.damage, event.hpDamage, event.shieldDamage, event.isCritical, currentDamageEfficiency, event.displayDamage);
-            }
-          } else if (event.type === 'guard') {
-            pushLog(playerEventMessage);
-            animatePlayerShield(event.shield);
-          } else if (event.type === 'heal') {
-            pushLog(playerEventMessage);
-            animatePlayerHeal(event.heal);
-          } else if ((event.type === 'debuff' || event.type === 'buff') && event.targetMonsterId) {
-            pushLog(playerEventMessage);
-            animateMonsterStatusEffect(event.targetMonsterId, event.type);
-            refreshEventStatuses(event, nextView);
-          } else if (event.type === 'buff' || event.type === 'debuff') {
-            pushLog(playerEventMessage);
-            animatePlayerStatusEffect(event.type);
-            refreshEventStatuses(event, nextView);
-          } else {
-            pushLog(playerEventMessage);
-          }
-          await finishActionDescription();
-        }
+        if (event.type === 'experience') continue;
+        // Effects after a monster action belong to that point in the turn.
+        if (firstMonsterEventIndex >= 0 && i >= firstMonsterEventIndex && (event.actor === 'effect' || event.turnPhase === 'playerTurnStart')) continue;
+        if (event.actor === 'effect') await playTurnEffectEvent(event);
+        if (event.actor === 'player') await playTurnPlayerEvent(event, events, i, consumedSimultaneousEvents, nextView);
       }
 
-      var monsterEvents = events.filter(function(event) { return event.actor === 'monster'; });
+      var monsterEvents = events.filter(function(event, index) {
+        return event.actor === 'monster' || (firstMonsterEventIndex >= 0 && index >= firstMonsterEventIndex && (event.actor === 'effect' || event.turnPhase === 'playerTurnStart'));
+      });
+      var playerTurnAnnounced = false;
       if (monsterEvents.length) {
-        showTurnBanner('상대 턴');
-        pushLog('몬스터 턴 시작');
-        await holdBattleMessage();
-        await skippableAutoDelay(MONSTER_TURN_START_DELAY_MS);
+        if (monsterTurnAdvanced) {
+          showTurnBanner('상대 턴');
+          pushLog('몬스터 턴 시작');
+          await holdBattleMessage();
+          await skippableAutoDelay(MONSTER_TURN_START_DELAY_MS);
+        }
         for (var j = 0; j < monsterEvents.length; j += 1) {
           var monsterEvent = monsterEvents[j];
+          var originalEventIndex = events.indexOf(monsterEvent);
+          if (consumedSimultaneousEvents[originalEventIndex]) continue;
+          if (monsterEvent.turnPhase === 'playerTurnStart' && monsterTurnAdvanced && !playerTurnAnnounced) {
+            pushLog('몬스터 턴 종료');
+            await holdBattleMessage();
+            await skippableAutoDelay(MONSTER_TURN_END_DELAY_MS);
+            showTurnBanner('내 턴');
+            playerTurnAnnounced = true;
+          }
+          if (monsterEvent.actor === 'player') {
+            await playTurnPlayerEvent(monsterEvent, events, originalEventIndex, consumedSimultaneousEvents, nextView);
+            continue;
+          }
+          if (monsterEvent.actor === 'effect') {
+            await playTurnEffectEvent(monsterEvent);
+            continue;
+          }
           var monsterEventMessage = monsterEvent.message || '몬스터의 행동!';
           var monsterMultiHitEvents = collectMonsterMultiHitEvents(monsterEvents, j);
           if (monsterMultiHitEvents.length > 1) {
@@ -5335,11 +5679,14 @@
           }
           await skippableAutoDelay(BATTLE_STEP_DELAY_MS);
         }
-        pushLog('몬스터 턴 종료');
-        await holdBattleMessage();
-        await skippableAutoDelay(MONSTER_TURN_END_DELAY_MS);
+        if (monsterTurnAdvanced && !playerTurnAnnounced) {
+          pushLog('몬스터 턴 종료');
+          await holdBattleMessage();
+          await skippableAutoDelay(MONSTER_TURN_END_DELAY_MS);
+        }
       }
 
+      await animateExperienceRewards(events);
       actionPointAnimationValue = null;
       currentView = normalizeBattleView(nextView);
       resetBattleQuestionCacheFromView(currentView, battleQuestionCache);
@@ -5347,6 +5694,10 @@
       if (pendingServerTurnView && applyPendingServerTurnSync()) {
         renderBattle(currentView);
       }
+      await presentLevelStatAllocation(currentView);
+      if (workbookDeadlineExpired) { isAnimatingTurn=false; return; }
+      await presentMonsterItemDrops(currentView);
+      if (workbookDeadlineExpired) { isAnimatingTurn=false; return; }
       if (pendingTurnResolutionActive && pendingQuestionTurnIsOptimistic && !pendingServerTurnView) {
         showTurnSyncSpinner();
         isAnimatingTurn = false;
@@ -5374,7 +5725,7 @@
         showDefeatSequence();
         return;
       }
-      if (monsterEvents.length) {
+      if (monsterEvents.length && monsterTurnAdvanced && !playerTurnAnnounced) {
         showTurnBanner('내 턴');
       }
       setPlayerTurn(true);
@@ -5553,7 +5904,7 @@
       battle.player.currentActionPoint = 0;
 
       (battle.monsters || []).forEach(function(monster) {
-        monster.shield = 0;
+        RULE_ENGINE_SHARED.clearCombatTurnShield(monster);
       });
 
       if (!getFirstAliveMonster(battle)) {
@@ -5567,6 +5918,7 @@
         if (Number(monster.currentHp || 0) <= 0 || Number(battle.player.hp || 0) <= 0) return;
         var commonTurn = hasLocalBattleSkillEngine() && window.LearningRpgLocalRunEngine.actorTurn
           ? window.LearningRpgLocalRunEngine.actorTurn(localGameDataSnapshot,battle,monster) : null;
+        if (Number(monster.currentHp || 0) <= 0 || Number(battle.player.hp || 0) <= 0) return;
         if (commonTurn ? commonTurn.blocked : RULE_ENGINE_SHARED.hasActionBlock(monster)) {
           battle.lastTurnEvents.push({
             actor: 'monster',
@@ -5579,6 +5931,8 @@
         }
         applyClientTimedEffectDamage(monster, 'onAction', battle, 'monster');
         if (Number(monster.currentHp || 0) <= 0) return;
+        if (hasLocalBattleSkillEngine() && window.LearningRpgLocalRunEngine.monsterAction &&
+          window.LearningRpgLocalRunEngine.monsterAction(localGameDataSnapshot, battle, monster)) return;
         var intent = monster.intent || {};
         RULE_ENGINE_SHARED.beginCombatAction(battle, {skillId:intent.skillId || ''});
         monster.intent = null;
@@ -5682,7 +6036,7 @@
           }
           var critical = rollClientMonsterCriticalDamage(monster, damage);
           var result = applyOptimisticPlayerDamage(battle, critical.damage, monster);
-          battle.lastTurnEvents.push({
+          battle.lastTurnEvents.splice(Number.isInteger(result.eventIndex) ? result.eventIndex : battle.lastTurnEvents.length, 0, {
             actor: 'monster',
             type: actionType === 'skill' ? 'skill' : 'attack',
             skillId: intent.skillId || '',
@@ -5795,6 +6149,9 @@
     }
 
     function buildClientMonsterIntent(monster, battle, rules) {
+      if (typeof hasLocalBattleSkillEngine === 'function' && hasLocalBattleSkillEngine() && window.LearningRpgLocalRunEngine.monsterIntent) {
+        return window.LearningRpgLocalRunEngine.monsterIntent(localGameDataSnapshot, battle, monster);
+      }
       var candidates = (rules || []).filter(function(rule) {
         return isClientMonsterAiRuleAllowed(monster, battle, rule);
       });
@@ -6099,12 +6456,19 @@
       if (!questionView.failedBySkillPenalty && !questionView.giveUp) {
         efficiency += Number(questionView.questionModifiers && questionView.questionModifiers.questionEfficiencyBonusPercent || 0) / 100;
       }
+      if (!questionView.failedBySkillPenalty && !questionView.giveUp) efficiency = RULE_ENGINE_SHARED.capQuestionEfficiencyBonus(efficiency, questionView.maxAnswerEfficiency || MAX_ANSWER_EFFICIENCY, questionView.questionModifiers && questionView.questionModifiers.questionCappedEfficiencyBonusPercent);
       currentDamageEfficiency = efficiency;
       battle.lastTurnEvents = [];
+      if (window.LearningRpgLocalRunEngine && window.LearningRpgLocalRunEngine.experienceQuestion) {
+        window.LearningRpgLocalRunEngine.experienceQuestion(battle,{question:questionView.question || questionView,
+          efficiency:questionView.giveUp ? 0 : efficiency,isCorrect:!questionView.giveUp && !questionView.failedBySkillPenalty,
+          wrongCount:wrongCountAfterTimeout});
+      }
       battle.pendingAction = null;
       normalizeClientActionPoints(battle.player);
       var actionCost = Number(questionView.actionPointCost !== undefined && questionView.actionPointCost !== '' ? questionView.actionPointCost : (questionView.actionType === 'skill' ? getSkillActionPointCost(findAvailableSkill(questionView.skillId)) : 1));
       battle.player.currentActionPoint = Math.max(0, Number(battle.player.currentActionPoint || 0) - actionCost);
+      if (questionView.actionType === 'skill') RULE_ENGINE_SHARED.consumeSkillCostEffects(battle.player, {skillId:questionView.skillId});
       RULE_ENGINE_SHARED.consumeQuestionEffects(battle.player);
       if (questionView.giveUp) {
         battle.lastPlayerAction = { type: questionView.actionType, value: 0, efficiency: 0, gaveUp: true };
@@ -6502,6 +6866,7 @@
         { keys: ['minDamage', 'minimumDamage', '최소피해'], value: values.minDamage, highlight: true },
         { keys: ['maxDamage', 'maximumDamage', '최대피해'], value: values.maxDamage, highlight: true },
         { keys: ['shield', 'shieldAmount', '방어막'], value: values.shield, highlight: true },
+        { keys: ['shieldRange', '방어막범위'], value: values.shieldRange, highlight: true },
         { keys: ['heal', 'healAmount', '회복량'], value: values.heal, highlight: true },
         { keys: ['healPercent', 'damageHealPercent', '회복비율', '흡혈률'], value: values.healPercent, highlight: true },
         { keys: ['effectValue', 'buffValue', 'debuffValue', '효과값', '버프수치'], value: values.effectValue, highlight: true },
@@ -6569,6 +6934,7 @@
         maxDamage: metrics.maxDamage,
         damageRange: metrics.damageRange,
         shield: metrics.shield,
+        shieldRange: metrics.shieldRange,
         heal: metrics.heal,
         healPercent: metrics.healPercent,
         effectName: metrics.effectName,
@@ -6637,9 +7003,11 @@
         missingHp: Math.max(0, Number(player.maxHp || playerStats.maxHp || 0) - Number(player.hp || 0)),
         efficiency: 1, comboCount: count + stored, comboDistinct: distinct,
         comboBattleBonus: Math.min(12, Number(chain.total || 0)), poisonShield: Math.min(30, poison),
+        lowHpBonus: Math.min(1, Math.max(0, (1 - Number(player.hp || 0) / Math.max(1, Number(player.maxHp || playerStats.maxHp || player.hp || 1))) / 0.7)),
       });
       var previewRange = getSkillPreviewDamageRange(skill);
       var formulaRange = getSkillFormulaDamageRange(rule, context);
+      var formulaShieldRange = getSkillFormulaShieldRange(rule, context);
       var effectMetrics = getSkillEffectDisplayMetrics(skill, rule, context);
       var tagMetrics = getSkillTagBonusDisplayMetrics(rule);
       var type = String(skill && skill.type || '').toLowerCase();
@@ -6647,7 +7015,7 @@
       var minDamage = formulaRange ? formulaRange.min : (fallbackDamage || (previewRange ? previewRange.min : 0));
       var maxDamage = formulaRange ? formulaRange.max : (fallbackDamage || (previewRange ? previewRange.max : 0));
       var damage = maxDamage;
-      var shield = getSkillDisplayShield(skill, rule, context);
+      var shield = formulaShieldRange ? formulaShieldRange.max : getSkillDisplayShield(skill, rule, context);
       var displayHitCount = rule && rule.hitCount !== undefined
         ? Math.max(1, Math.round(evaluateSkillDisplayFormula(rule.hitCount, context, 'max')))
         : getSkillHitCount(skill);
@@ -6670,6 +7038,8 @@
         maxDamage: maxDamage,
         damageRange: minDamage === maxDamage ? String(maxDamage) : (minDamage + '-' + maxDamage),
         shield: shield,
+        shieldRange: formulaShieldRange && formulaShieldRange.min !== formulaShieldRange.max
+          ? formulaShieldRange.min + '-' + formulaShieldRange.max : String(shield),
         heal: heal,
         healPercent: healPercent,
         hitCount: displayHitCount,
@@ -6799,6 +7169,14 @@
       return Math.max(0, Math.round(formulas.reduce(function(total, formula) {
         return total + Number(evaluateSkillDisplayFormula(formula, context, 'max') || 0);
       }, 0)));
+    }
+
+    function getSkillFormulaShieldRange(rule, context) {
+      var random = rule && rule.combat && rule.combat.randomShield;
+      if (!random || random.low === undefined || random.high === undefined) return null;
+      var low = Math.max(0, Math.round(evaluateSkillDisplayFormula(random.low, context, 'max')));
+      var high = Math.max(0, Math.round(evaluateSkillDisplayFormula(random.high, context, 'max')));
+      return { min: Math.min(low, high), max: Math.max(low, high) };
     }
 
     function collectSkillRuleShieldFormulas(rule) {
@@ -7011,7 +7389,7 @@
       var displayDamage = damageResult.displayDamage;
       totalDamage = damageResult.damage;
       RULE_ENGINE_SHARED.applyCriticalItemHealing(battle, critical.isCritical, totalDamage);
-      battle.lastTurnEvents.push({
+      battle.lastTurnEvents.splice(Number.isInteger(damageResult.eventIndex) ? damageResult.eventIndex : battle.lastTurnEvents.length, 0, {
         actor: 'player',
         type: actionType || 'attack',
         skillId: skill && skill.skillId || '',
@@ -7410,6 +7788,7 @@
           startingStatsVersion: 1,
           stats: copyStageResultValue(player.stats, {}),
           itemModifiers: copyStageResultValue(player.itemModifiers, {}),
+          items: copyStageResultValue(player.items, []),
         },
         monsters: (battle.monsters || []).map(function(monster, index) {
           monster = monster || {};
@@ -7423,9 +7802,12 @@
             currentHp: Number(monster.currentHp || 0),
             maxHp: Number(monster.maxHp || 1),
             shield: Number(monster.shield || 0),
+            experienceQuestions: copyStageResultValue(monster.experienceQuestions, {count:0,attemptTotal:0,correctTotal:0,efficiencyTotal:0}),
           };
         }),
         playerGhost: copyStageResultValue(battle.playerGhost, null),
+        experienceAwarded: copyStageResultValue(battle.experienceAwarded, {}),
+        monsterItemDrops: copyStageResultValue(battle.monsterItemDrops, {}),
         forcedQuestionCreatorId: battle.forcedQuestionCreatorId || '',
         monsterScoreState: copyStageResultValue(battle.monsterScoreState, null),
         questionReactionScoreState: copyStageResultValue(battle.questionReactionScoreState, null),
@@ -7702,11 +8084,11 @@
         rewardTitle.textContent = rewardView.intermissionRewardOnly ? '보상' : (rewardView.floorRestChoice ? '층 정비' : '스테이지 클리어');
       }
       if (rewardSubtitle) {
-        rewardSubtitle.textContent = rewardView.intermissionRewardOnly ? '보상을 확인하세요' : (rewardView.floorRestChoice ? '휴식하거나 보상을 하나 고르세요' : (rewardView.bossItemRewards ? '보상을 고른 뒤 보스 처치 아이템의 획득 버튼을 누르세요' : '보상을 고르세요'));
+        rewardSubtitle.textContent = rewardView.intermissionRewardOnly ? '보상을 확인하세요' : (rewardView.floorRestChoice ? '휴식하거나 보상을 하나 고르세요' : '보상을 고르세요');
       }
       rewardContainer.classList.remove('has-selection');
       rewardContainer.innerHTML = rewardView.choices.map(function(reward, index) {
-        var iconUrl = getRewardIconUrl(reward.type);
+        var iconUrl = getRewardIconUrl(reward.type, reward);
         var rarity = normalizeRewardRarity(reward.rarity);
         var title = reward.displayTitle || getRewardDisplayTitle(reward.type);
         var name = reward.description || reward.rewardId;
@@ -7717,7 +8099,8 @@
         } else if (reward.type === 'skill' || reward.type === 'skillUpgrade' || reward.type === 'item') {
           title = reward.skillDetail && reward.skillDetail.name || reward.itemDetail && reward.itemDetail.name
             || name.replace(/^(스킬 획득|스킬 강화|아이템 획득)\s*:\s*/, '');
-          name = getRewardDisplayTitle(reward.type);
+          name = reward.type === 'skill' || reward.type === 'skillUpgrade'
+            ? getRewardSkillConcept(reward) : getRewardDisplayTitle(reward.type);
         }
         var rarityBadge = reward.type === 'rest' ? '회복' : (reward.rarityLabel || getRewardRarityLabel(rarity));
         // A bounded, deterministic burst follows the light-card as it contracts.
@@ -7940,7 +8323,7 @@
       }
       floorIntermissionActionPending = true;
       var clickedAtMs = Date.now();
-      var sourceView = currentView;
+      var sourceKey = getVictoryRewardKey(currentView);
       setBattleInputLocked(true);
       setPlayerTurn(false);
       loadFloorIntermissionRewardView(function(rewardView) {
@@ -7957,7 +8340,7 @@
           currentRewardView = rewardView;
           window.setTimeout(function() {
             floorIntermissionActionPending = false;
-            if (workbookDeadlineExpired || currentView !== sourceView || !isFloorIntermissionView(currentView)) return;
+            if (workbookDeadlineExpired || getVictoryRewardKey(currentView) !== sourceKey || !isFloorIntermissionView(currentView)) return;
             selectRewardChoice(restChoice.rewardId);
           }, Math.max(0, FLOOR_REST_TRANSITION_DELAY_MS - (Date.now() - clickedAtMs)));
           return;
@@ -8277,6 +8660,24 @@
       return typeLabel;
     }
 
+    function getRewardSkillConcept(reward) {
+      var skill = reward.skillDetail || {};
+      if (skill.concept) return skill.concept;
+      var tags = skill.tags || [];
+      if (typeof tags === 'string') {
+        try { tags = JSON.parse(tags); } catch (error) { tags = tags.split(','); }
+      }
+      var labels = { strike: '타격', assassin: '암살', burn: '발화', fire: '발화',
+        freeze: '빙결', frost: '빙결', chill: '빙결', poison: '중독', luck: '행운',
+        shock: '감전', electric: '감전', lightning: '감전' };
+      for (var i = 0; i < tags.length; i += 1) {
+        var tag = String(tags[i]).trim();
+        if (labels[tag]) return labels[tag];
+        if (['타격','암살','발화','빙결','중독','행운','감전'].indexOf(tag) !== -1) return tag;
+      }
+      return '공용';
+    }
+
     function getRewardDisplayTitle(type) {
       var labels = {
         stat: '스탯 증가',
@@ -8468,7 +8869,6 @@
         document.getElementById('rewardMessage').textContent = '선택한 보상을 적용하는 중...';
         return;
       }
-      if (offerBossItemBeforeReward(rewardId)) return;
       if (localRunState && window.LearningRpgLocalRunEngine && currentRewardView && currentRewardView.localTransitionToken) {
         selectRewardChoiceLocally(rewardId);
         return;
@@ -9657,7 +10057,7 @@
       return ['slash', 'blunt', 'thrust', 'fire'].indexOf(effect) !== -1 ? effect : '';
     }
 
-    function animateMonsterHit(monsterId, damage, hpDamage, shieldDamage, isCritical, attackEfficiency, displayDamage) {
+    function animateMonsterHit(monsterId, damage, hpDamage, shieldDamage, isCritical, attackEfficiency, displayDamage, elementalHit) {
       var target = document.querySelector('[data-monster-id="' + cssEscape(monsterId) + '"] .compact-monster');
       if (!target) return Promise.resolve();
       var visibleHpDamage = hpDamage === undefined || hpDamage === null ? Number(damage || 0) : Number(hpDamage || 0);
@@ -9665,6 +10065,13 @@
       var attackDamage = displayDamage === undefined || displayDamage === null ? Number(damage || 0) : Number(displayDamage || 0);
       applyMonsterDamageDelta(monsterId, visibleHpDamage, shieldDamage || 0);
       if (visibleHpDamage <= 0 && visibleShieldDamage <= 0) return Promise.resolve();
+      if (elementalHit) {
+        var elementalAnchor = target.closest('.monster-slot');
+        spawnFloatingDamage(elementalAnchor && elementalAnchor.querySelector('.monster-hp-text') || target, attackDamage, 'damage-white', false);
+        return skippableAutoDelay(ATTACK_EFFECT_DELAY_MS).then(function(){
+          if (isMonsterDefeatedInDom(monsterId)) { animateMonsterDeath(monsterId); return skippableAutoDelay(DEATH_STATE_HOLD_MS); }
+        });
+      }
       playEfficientAttackSound(attackEfficiency);
       var hpAnchor = target.closest('.monster-slot');
       if (visibleShieldDamage > 0 && visibleHpDamage <= 0) {
@@ -9730,6 +10137,7 @@
     function animateMonsterDeath(monsterId) {
       var slot = document.querySelector('[data-monster-id="' + cssEscape(monsterId) + '"]');
       if (!slot || slot.classList.contains('monster-defeated')) return;
+      playBattleSound('kill');
       var target = slot.querySelector('.compact-monster');
       if (target) {
         setMonsterSpriteState(target, 'death');
@@ -9830,10 +10238,14 @@
       }, 980);
     }
 
-    function animatePlayerHit(damage, hpDamage, shieldDamage, isCritical, attackEffect) {
+    function animatePlayerHit(damage, hpDamage, shieldDamage, isCritical, attackEffect, elementalHit) {
       var shell = document.getElementById('battleShell');
       var visibleHpDamage = hpDamage === undefined || hpDamage === null ? Number(damage || 0) : Number(hpDamage || 0);
       applyPlayerDamageDelta(visibleHpDamage, shieldDamage || 0);
+      if (elementalHit) {
+        spawnFloatingDamage(document.getElementById('playerHpText') || document.getElementById('playerDamageAnchor'), Number(damage || 0), 'damage-red', false);
+        return;
+      }
       if (visibleHpDamage <= 0) {
         if (Number(shieldDamage || 0) > 0) {
           animatePlayerShieldBlock(attackEffect);
@@ -9852,7 +10264,86 @@
       spawnFloatingDamage(document.getElementById('playerHpText') || document.getElementById('playerDamageAnchor'), Number(damage || 0), 'damage-red', isCritical);
     }
 
+    function getDamageVisualType(value) {
+      var types = {
+        debuff_burn:'burn', effect_v2_burn:'burn', burn:'burn', fire:'burn',
+        explosion:'explosion', effect_v2_explosion:'explosion',
+        effect_v2_chill:'chill', chill:'chill', cold:'chill',
+        effect_v2_freeze:'freeze', freeze:'freeze', frozen:'freeze', shatter:'freeze',
+        debuff_poison:'poison', effect_v2_poison:'poison', poison:'poison',
+        effect_v2_shock:'shock', shock:'shock'
+      };
+      return types[String(value || '').trim().toLowerCase()] || '';
+    }
+
     function playDamageTypeEffect(effectId, targetType, monsterId) {
+      var type = getDamageVisualType(effectId);
+      if (!type) {
+        if (effectId === 'debuff_bleed') { playLegacyDamageTypeEffect(effectId,targetType,monsterId); return true; }
+        return false;
+      }
+      var scope = targetType === 'player'
+        ? document.querySelector('.player-compact-panel') || document.getElementById('playerDamageAnchor')
+        : document.querySelector('[data-monster-id="' + cssEscape(monsterId) + '"] .compact-monster');
+      if (!scope) return false;
+      var art = scope.querySelector('.monster-art');
+      var overlay = document.createElement('div');
+      overlay.className = 'element-vfx element-vfx-' + type;
+      overlay.setAttribute('aria-hidden','true');
+      // Match the visible sprite box so effects scale with bosses and mobile art.
+      if (art) {
+        var box = scope.getBoundingClientRect(), imageBox = art.getBoundingClientRect();
+        overlay.style.left = (imageBox.left-box.left) + 'px';
+        overlay.style.top = (imageBox.top-box.top) + 'px';
+        overlay.style.width = imageBox.width + 'px'; overlay.style.height = imageBox.height + 'px';
+      }
+      var count = {burn:16,explosion:24,chill:14,freeze:12,poison:13,shock:10}[type];
+      var duration = {burn:1350,explosion:1000,chill:1500,freeze:1600,poison:1900,shock:1100}[type];
+      var random = function(min,max) { return min+Math.random()*(max-min); };
+      if (type === 'freeze') {
+        overlay.innerHTML = '<svg class="element-ice" viewBox="0 0 100 120" preserveAspectRatio="none"><path class="ice-silhouette" d="M10 107 4 62 22 24 38 10 54 3 78 22 96 61 88 107 53 117Z"/><g stroke="#dcffff" stroke-opacity=".7" stroke-width=".6"><path fill="#b6faff99" d="M4 62 38 10 32 63 10 107Z"/><path fill="#519cdda0" d="M38 10 54 3 69 59 32 63Z"/><path fill="#e4ffffb0" d="M54 3 78 22 96 61 69 59Z"/><path fill="#3782c788" d="M32 63 69 59 53 117 10 107Z"/><path fill="#7bdcff99" d="M69 59 96 61 88 107 53 117Z"/></g><path d="M25 38 34 29M20 49 42 20M71 77 79 58M75 89 86 65" stroke="#fff" stroke-width="2" opacity=".85"/><path d="m50 35-6 19 14 13-8 20 13 11" fill="none" stroke="#efffff" stroke-width="1.2"/></svg>';
+      }
+      if (type === 'explosion') {
+        overlay.innerHTML = '<svg class="element-blast-core" viewBox="0 0 100 100"><path fill="#ff7a23" d="m50 0 8 25 19-16-7 27 30-1-23 18 20 21-29-4-6 30-15-24-19 21 4-29-30 2 24-18L6 33l29 5-7-28 17 17Z"/><path fill="#fff2a4" d="m50 17 8 21 21-8-14 20 17 15-25-4-9 24-8-25-24 3 20-15-8-22 17 13Z"/><circle cx="49" cy="49" r="13" fill="#fffef0"/></svg>';
+      }
+      for (var i=0;i<count;i++) {
+        var p=document.createElement('i'); p.className='element-particle';
+        if(type==='explosion' && i%4===0)p.classList.add('element-smoke');
+        p.style.setProperty('--x',random(12,88).toFixed(1)+'%');
+        p.style.setProperty('--y',random(14,87).toFixed(1)+'%');
+        p.style.setProperty('--size',random(type==='chill'?18:5,type==='chill'?42:13).toFixed(1)+'px');
+        p.style.setProperty('--delay',random(0,type==='explosion'?90:400).toFixed(0)+'ms');
+        p.style.setProperty('--drift',random(-28,28).toFixed(1)+'px');
+        p.style.setProperty('--angle',(i/count*360+random(-8,8)).toFixed(1)+'deg');
+        p.style.setProperty('--travel',random(45,105).toFixed(0)+'px');
+        if(type==='shock') {
+          // Two strokes: a soft cyan corona around a sharp white electric core.
+          var points=''; for(var j=0;j<8;j++) points+=(j? ' ':'')+(j%2?random(20,77):random(35,60)).toFixed(1)+','+(j*14);
+          p.innerHTML='<svg viewBox="0 0 100 100" preserveAspectRatio="none"><polyline class="bolt-corona" points="'+points+'"/><polyline class="bolt-core" points="'+points+'"/></svg>';
+        }
+        overlay.appendChild(p);
+      }
+      // Bound concurrent overlays on rapid multi-hit attacks without leaking timers.
+      var previous=scope.querySelectorAll('.element-vfx-'+type);
+      if(previous.length>=3)previous[0].remove();
+      scope.appendChild(overlay);
+      var tintTarget=art || scope;
+      var tintClass='element-tint-'+type;
+      var tintKey='elementTint'+type;
+      if(type==='poison' || type==='freeze') {
+        tintTarget.classList.remove(tintClass); void tintTarget.offsetWidth;
+        tintTarget.classList.add(tintClass);
+        var token=String(Number(tintTarget.dataset[tintKey] || 0)+1);
+        tintTarget.dataset[tintKey]=token;
+      }
+      window.setTimeout(function(){
+        overlay.remove();
+        if(token && tintTarget.dataset[tintKey]===token)tintTarget.classList.remove(tintClass);
+      },duration);
+      return true;
+    }
+
+    function playLegacyDamageTypeEffect(effectId, targetType, monsterId) {
       var effectNames = {
         debuff_bleed: 'bleed',
         debuff_burn: 'burn',
@@ -10151,18 +10642,18 @@
       fragment.style.width = (rect.width * hpLost / visualMax) + 'px';
       fragment.style.height = rect.height + 'px';
       if (isShield) populateShieldDamageShards(fragment, rect.width * hpLost / visualMax);
-      fragment.style['--hp-flight-x'] = ((Math.random() - .5) * 32) + 'px';
+      fragment.style.setProperty('--hp-flight-x', ((Math.random() - .5) * 32) + 'px');
       var monsterTrack = track.classList.contains && track.classList.contains('monster-hp-bar');
-      fragment.style['--hp-flight-y'] = ((monsterTrack ? 1 : -1) * (24 + Math.random() * 18)) + 'px';
-      fragment.style['--hp-flight-spin'] = ((Math.random() - .5) * 20) + 'deg';
+      fragment.style.setProperty('--hp-flight-y', ((monsterTrack ? 1 : -1) * (24 + Math.random() * 18)) + 'px');
+      fragment.style.setProperty('--hp-flight-spin', ((Math.random() - .5) * 20) + 'deg');
       if (!isShield && Number(track.damageHpRatio || 0) >= .5) {
         fragment.className += ' hp-damage-heavy';
-        fragment.style['--hp-flight-x'] = ((Math.random() < .5 ? -1 : 1) * (48 + Math.random() * 32)) + 'px';
-        fragment.style['--hp-flight-y'] = ((monsterTrack ? 1 : -1) * (68 + Math.random() * 28)) + 'px';
-        fragment.style['--hp-flight-spin'] = ((Math.random() < .5 ? -1 : 1) * 32) + 'deg';
+        fragment.style.setProperty('--hp-flight-x', ((Math.random() < .5 ? -1 : 1) * (48 + Math.random() * 32)) + 'px');
+        fragment.style.setProperty('--hp-flight-y', ((monsterTrack ? 1 : -1) * (68 + Math.random() * 28)) + 'px');
+        fragment.style.setProperty('--hp-flight-spin', ((Math.random() < .5 ? -1 : 1) * 32) + 'deg');
       }
       var damageRatio = isShield ? Math.max(Number(track.damageHpRatio || 0), hpLost / visualMax) : Number(track.damageHpRatio || hpLost / visualMax);
-      track.style['--hp-shake-distance'] = (2 + 14 * Math.max(0, Math.min(1, damageRatio))) + 'px';
+      track.style.setProperty('--hp-shake-distance', (2 + 14 * Math.max(0, Math.min(1, damageRatio))) + 'px');
       var shakeToken = Number(track.hpShakeToken || 0) + 1;
       track.hpShakeToken = shakeToken;
       track.classList.remove('hp-hit-shake');
@@ -10171,7 +10662,16 @@
       window.setTimeout(function() {
         if (track.hpShakeToken === shakeToken) track.classList.remove('hp-hit-shake');
       }, 380);
-      document.body.appendChild(fragment);
+      if (isShield) {
+        document.body.appendChild(fragment);
+      } else {
+        // Share the HP caption's stacking context so the lost-HP bar stays behind its text.
+        fragment.style.left = (track.clientWidth * Math.max(0, hpBefore - hpLost) / visualMax) + 'px';
+        fragment.style.top = '0px';
+        fragment.style.width = (track.clientWidth * hpLost / visualMax) + 'px';
+        fragment.style.height = track.clientHeight + 'px';
+        track.appendChild(fragment);
+      }
       window.setTimeout(function() { if (fragment.parentNode) fragment.parentNode.removeChild(fragment); }, isShield ? 1100 : 800);
     }
 

@@ -2,7 +2,7 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
 const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
 const source=fs.readFileSync('Battle.html','utf8');
 const extract=name=>source.match(new RegExp('    function '+name+'\\([^]*?\\n    \\}'))[0];
-const funcs=['showBattleStats','getBattleStatStartingStats','formatEffectiveStat','buildBattleStatTooltipContent','bindHoverTooltips','positionHoverTooltip'];
+const funcs=['showBattleStats','getStatDescription','getBattleStatStartingStats','formatEffectiveStat','buildBattleStatTooltipContent','bindHoverTooltips','positionHoverTooltip'];
 const output=path.resolve('.codex-temp/stat-breakdown');fs.mkdirSync(output,{recursive:true});
 const html='<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">'+fs.readFileSync('UiStyles.html','utf8')+fs.readFileSync('UiTouchInteractions.html','utf8')+'</head><body style="background:#182230;min-height:100vh"><div id="battleStatsPanel" class="battle-stats-panel battle-quick-panel hidden"></div><script>'+`
 var localGameDataSnapshot=null;
@@ -30,7 +30,7 @@ var markBattleQuickAccessRead=()=>{},renderBattleQuickAccessIcons=()=>{},formatS
    assert.equal(await row('공격력').getAttribute('data-stat-buff'),'4');
    if(mobile)await row('공격력').tap();else await row('공격력').hover();
    const tooltip=page.locator(mobile?'.touch-preview-panel':'#hoverTooltip');
-   assert.match(await tooltip.innerText(),/공격 피해에 반영됩니다.*보상.*\+5.*아이템.*\+2.*버프·디버프.*\+4/s);
+   assert.match(await tooltip.innerText(),/기본공격이나 스킬의 피해량을 높여주는 수치 입니다.*보상.*\+5.*아이템.*\+2.*버프·디버프.*\+4/s);
    for(const [key,color]of [['reward','rgb(255, 224, 138)'],['item','rgb(120, 201, 255)'],['buff','rgb(153, 227, 164)']]){
     assert.equal(await tooltip.locator('.stat-source-'+key).evaluate(e=>getComputedStyle(e).color),color);
    }

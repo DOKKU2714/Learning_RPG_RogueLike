@@ -493,6 +493,78 @@ function setupDatabase() {
 }
 
 // Run before removing legacy AI columns; never overwrite configured destination values.
+// Read-only check after manually importing the monster workbook. Clear cached
+// definitions so the next new run captures the freshly pasted sheet values.
+function validateMonsterSkillSheets() {
+  clearMasterTableCaches_();
+  var monsters = readTable_(DB_SHEETS.MONSTERS), skills = readTable_(DB_SHEETS.SKILLS);
+  var report = {ok:true, monsters:0, skills:0, errors:[]}, byId = {}, seenMonsters = {};
+  var triggers = ['action','battleStart','hpBelow','onDamaged','onEvade','onBasicHit','onCritical','afterSkill'];
+  var operations = ['damage','stat','dot','reduction','heal','shield','overrideSkill'];
+  skills.forEach(function(skill) {
+    if (byId[skill.skillId]) report.errors.push('중복 skillId: ' + skill.skillId);
+    byId[skill.skillId] = skill;
+    var config;
+    try { config = typeof skill.effectJson === 'object' ? skill.effectJson : JSON.parse(skill.effectJson || '{}'); }
+    catch (error) {
+      if (String(skill.tags || '').indexOf('monsterOnly') >= 0) report.errors.push(skill.skillId + ': effectJson이 올바른 JSON이 아닙니다.');
+      return;
+    }
+    if (!config || !config.monsterSkill) return;
+    report.skills++;
+    var r = config.monsterSkill;
+    if (triggers.indexOf(r.trigger) < 0) report.errors.push(skill.skillId + ': 지원하지 않는 trigger');
+    if (!Array.isArray(r.actions) || !r.actions.length) report.errors.push(skill.skillId + ': actions가 비어 있습니다.');
+    if (r.trigger === 'action' && !(Number(r.every) >= 1 && Number.isInteger(Number(r.every)))) report.errors.push(skill.skillId + ': every는 1 이상의 정수여야 합니다.');
+    if (!(Number(skill.hitCount) >= 1 && Number.isInteger(Number(skill.hitCount)))) report.errors.push(skill.skillId + ': hitCount는 1 이상의 정수여야 합니다.');
+    if (isSkillRewardEnabled_(skill)) report.errors.push(skill.skillId + ': 몬스터 전용 스킬의 rewardEnabled를 FALSE로 설정하세요.');
+    (Array.isArray(r.actions) ? r.actions : []).forEach(function(a) {
+      if (operations.indexOf(a.op) < 0) report.errors.push(skill.skillId + ': 지원하지 않는 op ' + a.op);
+      ['value','multiplier','durationTurns','hitCount','maxStacks','shieldPiercePercent'].forEach(function(key) {
+        if (a[key] !== undefined && !isFinite(Number(a[key]))) report.errors.push(skill.skillId + ': 숫자가 아닌 ' + key);
+      });
+      if (a.op === 'stat' && ['attack','defense','evasion','criticalRate','criticalDamage','accuracy'].indexOf(a.stat) < 0) report.errors.push(skill.skillId + ': 지원하지 않는 stat ' + a.stat);
+      if (a.op === 'dot' && !(Number(a.durationTurns) >= 1)) report.errors.push(skill.skillId + ': dot.durationTurns는 1 이상이어야 합니다.');
+    });
+  });
+  monsters.forEach(function(monster) {
+    if (seenMonsters[monster.monsterId]) report.errors.push('중복 monsterId: ' + monster.monsterId);
+    seenMonsters[monster.monsterId] = true;
+    var ids;
+    try { ids = Array.isArray(monster.skillIds) ? monster.skillIds : JSON.parse(monster.skillIds || '[]'); }
+    catch (error) { report.errors.push(monster.monsterId + ': skillIds는 JSON 배열이어야 합니다.'); return; }
+    if (!Array.isArray(ids)) { report.errors.push(monster.monsterId + ': skillIds는 배열이어야 합니다.'); return; }
+    var kit = ids.some(function(id) { return byId[id] && safeJsonParse_(byId[id].effectJson, {}).monsterSkill; });
+    if (monster.aiId !== 'ai_monster_kit' && !kit) return;
+    report.monsters++;
+    if (ids.length !== (monster.type === 'normal' ? 2 : 3)) report.errors.push(monster.monsterId + ': 일반 2개, 보스 3개의 skillIds가 필요합니다.');
+    ids.forEach(function(id) {
+      if (!byId[id]) report.errors.push(monster.monsterId + ': Skills에서 찾을 수 없는 ' + id);
+      else if (!safeJsonParse_(byId[id].effectJson, {}).monsterSkill) report.errors.push(id + ': monsterSkill 설정 누락');
+    });
+    ['hp','attack','hpRegen','defense','evasion','criticalRate','criticalDamage'].forEach(function(key) {
+      if (monster[key] === '' || monster[key] === undefined || !isFinite(Number(monster[key])) || Number(monster[key]) < 0) report.errors.push(monster.monsterId + ': 올바르지 않은 ' + key);
+    });
+    if (!(Number(monster.hp) > 0)) report.errors.push(monster.monsterId + ': hp는 0보다 커야 합니다.');
+  });
+  skills.forEach(function(skill) {
+    var r = safeJsonParse_(skill.effectJson, {}).monsterSkill;
+    if (!r) return;
+    if (r.afterSkillId && !byId[r.afterSkillId]) report.errors.push(skill.skillId + ': afterSkillId 누락 ' + r.afterSkillId);
+    (Array.isArray(r.actions) ? r.actions : []).forEach(function(a) { if (a.op === 'overrideSkill' && !byId[a.skillId]) report.errors.push(skill.skillId + ': 변경할 스킬 누락 ' + a.skillId); });
+  });
+  report.ok = report.errors.length === 0;
+  Logger.log(JSON.stringify(report));
+  return report;
+}
+
+// Optional: existing sheets work with defaults even before adding this column.
+function migrateMonsterExperience() {
+  requireAdmin_();
+  ensureTableColumns_(DB_SHEETS.MONSTERS, DB_COLUMNS.MONSTERS);
+  return {ok:true,column:'experience',normalDefault:30,bossDefault:90};
+}
+
 function migrateMonsterAttackEffects() {
   ensureTableColumns_(DB_SHEETS.MONSTERS, DB_COLUMNS.MONSTERS);
   ensureTableColumns_(DB_SHEETS.SKILLS, DB_COLUMNS.SKILLS);

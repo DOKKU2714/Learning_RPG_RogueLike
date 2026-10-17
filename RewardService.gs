@@ -154,6 +154,7 @@ function finalizePreparedRewardTransitions_(view, run) {
 
 // Keep random choices and permits intact; only refresh values that depend on the result.
 function refreshPreparedRewardView_(run, payload, view) {
+  delete view.bossItemRewards;
   var battle = payload.battle || {};
   var regen = view.floorRestChoice
     ? {amount:0,nextHp:Number(run.currentHp || 0),maxHp:Number(battle.player && (battle.player.maxHp || battle.player.stats && battle.player.stats.hp) || 1)}
@@ -191,8 +192,10 @@ function previewRewardChoicesForStageResult(stagePayload, authToken) {
       var cached = stagePayload.localAdvanceEnabled ? getChunkedRunCache_(cacheKey) : null;
       if (cached) {
         var cachedView = JSON.parse(cached);
-        cachedView.localRunState = cloneGameDataRows_(requireRun_(stagePayload.runId));
-        prepareRewardRerollQuestion_(cachedView, requireRun_(stagePayload.runId), stagePayload);
+        var cachedRun = requireRun_(stagePayload.runId);
+        cachedView = refreshPreparedRewardView_(cachedRun, stagePayload, cachedView);
+        cachedView.localRunState = cloneGameDataRows_(cachedRun);
+        prepareRewardRerollQuestion_(cachedView, cachedRun, stagePayload);
         signLocalRewardView_(cachedView);
         return cachedView;
       }
@@ -461,7 +464,7 @@ function getRewardConfig_() {
       ensureItemRewardChoice: false,
       currencyMin: 5,
       currencyMax: 15,
-      typeWeights: { stat: 40, skill: 30, skillUpgrade: 25, item: 20 },
+      typeWeights: { stat: 0, skill: 30, skillUpgrade: 0, item: 0 },
     };
 }
 
@@ -477,6 +480,11 @@ function shouldRegenerateRewardChoices_(rewardState, ownedItems) {
   var choices = rewardState.choices || [];
   if (rewardState.floorRestChoice && choices.some(function(choice) { return choice && choice.type === 'rewardClaim'; })) {
     return true;
+  }
+  if (!rewardState.floorRestChoice) {
+    return choices.some(function(choice) {
+      return choice.type !== REWARD_TYPES.SKILL;
+    });
   }
   if (!config.ensureItemRewardChoice) {
     return false;
@@ -761,12 +769,6 @@ function selectRewardUnlocked_(runId, rewardId, authToken, rewardView) {
     applyRestReward_(runState, appliedReward);
   }
   var bonusItemReward = null;
-  if (!rewardState.floorRestChoice && isBossVictoryReward_(rewardState.stageId, stageState.battle)) {
-    var preparedDrops = rewardView && rewardView.bossItemRewards;
-    bonusItemReward = preparedDrops && Object.prototype.hasOwnProperty.call(preparedDrops, reward.rewardId)
-      ? preparedDrops[reward.rewardId] : pickAutoItemReward_(runState.items);
-    if (bonusItemReward) applyItemReward_(runState, bonusItemReward);
-  }
   markTiming('rewardApplied');
 
   rewardState.selectedRewardId = reward.rewardId;
@@ -1557,23 +1559,13 @@ function pickRewardChoices_(rewardGroupId, floor, ownedSkills, ownedItems, exclu
   }
   var excluded = (excludedChoices || []).map(identity);
   function isExcluded(reward) { return reward && excluded.indexOf(identity(reward)) !== -1; }
-  var rewards = getStatRewardRows_().filter(function(reward) {
-    var typeAllowed = reward.type === REWARD_TYPES.STAT;
-    var statAllowed = reward.type !== REWARD_TYPES.STAT || ALLOWED_REWARD_STAT_KEYS_.indexOf(reward.targetId) !== -1;
-    return typeAllowed && statAllowed && !isExcluded(reward);
-  });
+  var rewards = [];
 
   var candidates = rewards.slice();
   var choices = [];
   var attemptCount = 0;
   var config = getRewardConfig_();
   var choicesCount = Math.max(1, Number(config.choicesCount || 3));
-  if (config.ensureItemRewardChoice) {
-    var requiredItemReward = pickAutoItemReward_(ownedItems);
-    if (requiredItemReward && !isExcluded(requiredItemReward)) {
-      choices.push(requiredItemReward);
-    }
-  }
   while (choices.length < choicesCount && attemptCount < choicesCount * 8) {
     attemptCount += 1;
     var rewardType = pickRewardType_();
@@ -1602,15 +1594,11 @@ function pickRewardChoices_(rewardGroupId, floor, ownedSkills, ownedItems, exclu
     });
   }
 
-  // A rarity roll can repeatedly hit an excluded skill. Fill from the remaining
-  // legal pool rather than silently returning fewer cards after a reroll.
-  if (excluded.length && choices.length < choicesCount) {
-    var upgradeConfig = typeof SKILL_UPGRADE_REWARD_CONFIG !== 'undefined' ? SKILL_UPGRADE_REWARD_CONFIG
-      : Object.assign({}, SKILL_REWARD_CONFIG, { onlyOwnedSkills: true, excludeOwnedSkills: false });
+  // Repeated rarity rolls can hit the same skill. Fill from the remaining
+  // legal skill pool for both the initial draw and rerolls.
+  if (choices.length < choicesCount) {
     var alternatives = candidates.concat(
-      getAvailableSkillRewardPool_('', ownedSkills, SKILL_REWARD_CONFIG).map(buildAutoSkillReward_),
-      getAvailableSkillRewardPool_('', ownedSkills, upgradeConfig).map(buildAutoSkillUpgradeReward_),
-      getAvailableItemRewardPool_('', ownedItems, ITEM_REWARD_CONFIG).map(buildAutoItemReward_)
+      getAvailableSkillRewardPool_('', ownedSkills, SKILL_REWARD_CONFIG).map(buildAutoSkillReward_)
     );
     while (choices.length < choicesCount) {
       alternatives = alternatives.filter(function(candidate) {
@@ -1618,7 +1606,7 @@ function pickRewardChoices_(rewardGroupId, floor, ownedSkills, ownedItems, exclu
           && !choices.some(function(choice) { return choice.rewardId === candidate.rewardId || identity(choice) === identity(candidate); });
       });
       if (!alternatives.length) break;
-      choices.push(pickRandom_(alternatives));
+      choices.push(pickWeighted_(alternatives,getSkillAffinityWeights_(alternatives,ownedSkills)));
     }
   }
 
@@ -1648,7 +1636,7 @@ function getStatRewardRows_() {
 
 function pickRewardType_() {
   var weights = getRewardConfig_().typeWeights || {};
-  var types = [REWARD_TYPES.STAT, REWARD_TYPES.SKILL, REWARD_TYPES.SKILL_UPGRADE, REWARD_TYPES.ITEM];
+  var types = [REWARD_TYPES.SKILL];
   var values = types.map(function(type) {
     return Math.max(0, Number(weights[type] || 0));
   });
@@ -1662,16 +1650,6 @@ function pickFallbackRewardChoice_(candidates, ownedSkills, ownedItems, choices)
   }
 
   picked = pickAutoSkillReward_(ownedSkills);
-  if (picked && !choices.some(function(choice) { return choice.rewardId === picked.rewardId; })) {
-    return picked;
-  }
-
-  picked = pickAutoSkillUpgradeReward_(ownedSkills);
-  if (picked && !choices.some(function(choice) { return choice.rewardId === picked.rewardId; })) {
-    return picked;
-  }
-
-  picked = hasItemRewardChoice_(choices) ? null : pickAutoItemReward_(ownedItems);
   if (picked && !choices.some(function(choice) { return choice.rewardId === picked.rewardId; })) {
     return picked;
   }
@@ -1723,10 +1701,30 @@ function pickSkillByRarityWithFallback_(rarity, ownedSkills, config) {
 
 function pickSkillWithAffinity_(pool,ownedSkills,config) {
   if(config && config.onlyOwnedSkills)return pickRandom_(pool);
-  var rows=getSkillRowsForRewards_(),counts={};
-  normalizeOwnedSkills_(ownedSkills || []).forEach(function(owned){var row=rows.filter(function(s){return s.skillId===owned.skillId;})[0];var tag=row&&normalizeSkillTags_(row.tags)[0];if(tag)counts[tag]=Number(counts[tag] || 0)+1;});
-  var weights=pool.map(function(s){var tag=normalizeSkillTags_(s.tags)[0];return 1+Math.min(2,Number(counts[tag] || 0)*0.5);});
-  return pickWeighted_(pool,weights);
+  return pickWeighted_(pool,getSkillAffinityWeights_(pool,ownedSkills));
+}
+
+function getSkillAffinityWeights_(pool,ownedSkills) {
+  var rows=getSkillRowsForRewards_(),byId={},counts={},seen={};
+  rows.forEach(function(skill){byId[skill.skillId]=skill;});
+  function concept(skill){
+    if(!skill)return '';
+    var aliases={strike:'strike','타격':'strike',assassin:'assassin','암살':'assassin',burn:'burn','발화':'burn',
+      frost:'frost','빙결':'frost',poison:'poison','중독':'poison',luck:'luck','행운':'luck',shock:'shock','감전':'shock'};
+    var tags=[skill.concept || ''].concat(normalizeSkillTags_(skill.tags));
+    for(var i=0;i<tags.length;i++){var key=String(tags[i]).trim().toLowerCase();if(aliases[key])return aliases[key];}
+    return '';
+  }
+  normalizeOwnedSkills_(ownedSkills || []).forEach(function(owned){
+    if(seen[owned.skillId])return;
+    seen[owned.skillId]=true;
+    var tag=concept(byId[owned.skillId]);
+    if(tag)counts[tag]=Number(counts[tag] || 0)+1;
+  });
+  return pool.map(function(skill){
+    var tag=concept(byId[skill.skillId || skill.targetId] || skill);
+    return 1+Number(counts[tag] || 0)*0.5;
+  });
 }
 
 function combatCurrencyReward_(battle,base) {
@@ -1742,10 +1740,16 @@ function applyCombatRewardBonuses_(view,battle,ownedSkills,ownedItems) {
   if(!bonus || view.floorRestChoice || battle.status!==STATUS.BATTLE_VICTORY)return view;
   view.currencyAmount=combatCurrencyReward_(battle,Number(view.currencyAmount || 0));
   var target=Math.max(1,Number(getRewardConfig_().choicesCount || 3))+Number(bonus.extraChoices || 0);
-  var pool=getAvailableSkillRewardPool_('',ownedSkills,SKILL_REWARD_CONFIG).map(buildAutoSkillReward_)
-    .concat(getAvailableItemRewardPool_('',ownedItems,ITEM_REWARD_CONFIG).map(buildAutoItemReward_),getStatRewardRows_());
+  var pool=getAvailableSkillRewardPool_('',ownedSkills,SKILL_REWARD_CONFIG).map(buildAutoSkillReward_);
   function identity(r){return String(r.type)+':'+String(r.targetId);}
-  function stablePick(rows,salt){var seed=2166136261;var key=String(battle.battleId || '')+':'+salt;for(var i=0;i<key.length;i++)seed=Math.imul(seed^key.charCodeAt(i),16777619)>>>0;return rows[seed%rows.length];}
+  function stablePick(rows,salt){
+    var seed=2166136261,key=String(battle.battleId || '')+':'+salt;
+    for(var i=0;i<key.length;i++)seed=Math.imul(seed^key.charCodeAt(i),16777619)>>>0;
+    var weights=getSkillAffinityWeights_(rows,ownedSkills),total=weights.reduce(function(sum,value){return sum+value;},0);
+    var roll=(seed/4294967296)*total;
+    for(var index=0;index<rows.length;index++){roll-=weights[index];if(roll<0)return rows[index];}
+    return rows[rows.length-1];
+  }
   function available(r){return !view.choices.some(function(c){return identity(c)===identity(r);}) && !(r.type===REWARD_TYPES.ITEM && hasItemRewardChoice_(view.choices));}
   while(view.choices.length<target){var candidates=pool.filter(available);if(!candidates.length)break;view.choices.push(sanitizeRewardForClient_(attachRewardRarity_(adaptRewardForChoice_(stablePick(candidates,'extra:'+view.choices.length),ownedSkills)),battle));}
   if(bonus.jackpot && bonus.jackpot.hits>=2 && !view.combatJackpotApplied){
@@ -2063,16 +2067,6 @@ function buildRewardChoiceView_(runId, stageId, rewardGroupId, rewardState, owne
     return sanitizeRewardForClient_(adapted, battleState);
   });
   var bossItemRewards = null;
-  if (isBossVictoryReward_(stageId, battleState)) {
-    bossItemRewards = {};
-    var ownedItems = safeJsonParse_(requireRun_(runId).itemsJson, []);
-    choices.forEach(function(choice) {
-      var items = ownedItems;
-      var selected = choice.claimReward || choice;
-      if (selected.type === REWARD_TYPES.ITEM) items = addItemToOwnedItems_(items, selected.targetId);
-      bossItemRewards[choice.rewardId] = pickAutoItemReward_(items);
-    });
-  }
   return {
     runId: runId,
     stageId: stageId,

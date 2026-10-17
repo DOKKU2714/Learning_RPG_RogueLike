@@ -457,8 +457,9 @@ function normalizePlayerActionPoints_(battleState, resetForTurn) {
   }
   var player = battleState.player;
   player.baseMaxActionPoint = Math.max(0, Number(player.baseMaxActionPoint || GAME_RULES.DEFAULT_MAX_ACTION_POINT));
+  if (resetForTurn) player.turnActionPointBonus = Math.max(0, Number(player.nextTurnActionPointDelta || 0));
   var maxDelta = Number(player.actionPointMaxDelta || 0);
-  var maxActionPoint = Math.max(0, player.baseMaxActionPoint + maxDelta);
+  var maxActionPoint = Math.max(0, player.baseMaxActionPoint + maxDelta + Number(player.turnActionPointBonus || 0));
   player.maxActionPoint = maxActionPoint;
   if (resetForTurn || player.currentActionPoint === undefined || player.currentActionPoint === null || player.currentActionPoint === '') {
     var nextDelta = Number(player.nextTurnActionPointDelta || 0);
@@ -475,7 +476,8 @@ function getActionPointCostForAction_(actionType, skill, battleState) {
     if (skill && skill.skillId === 'skill_all_in' && battleState && battleState.player) {
       return Math.max(1, Number(battleState.player.currentActionPoint || 0));
     }
-    return Math.max(0, Math.min(3, Number(skill && skill.actionPointCost !== undefined && skill.actionPointCost !== '' ? skill.actionPointCost : 1)));
+    var baseCost = Math.max(0, Math.min(3, Number(skill && skill.actionPointCost !== undefined && skill.actionPointCost !== '' ? skill.actionPointCost : 1)));
+    return getSharedRuleEngine_().getDiscountedSkillCost(battleState && battleState.player, skill, baseCost);
   }
   return 1;
 }
@@ -524,7 +526,7 @@ function normalizePlayerActionPointFields_(player) {
   player.baseMaxActionPoint = Math.max(0, Number(player.baseMaxActionPoint || GAME_RULES.DEFAULT_MAX_ACTION_POINT));
   player.actionPointMaxDelta = Number(player.actionPointMaxDelta || 0);
   player.nextTurnActionPointDelta = Number(player.nextTurnActionPointDelta || 0);
-  player.maxActionPoint = Math.max(0, player.baseMaxActionPoint + player.actionPointMaxDelta);
+  player.maxActionPoint = Math.max(0, player.baseMaxActionPoint + player.actionPointMaxDelta + Number(player.turnActionPointBonus || 0));
   player.currentActionPoint = Math.max(0, Math.min(player.maxActionPoint, Number(player.currentActionPoint !== undefined && player.currentActionPoint !== '' ? player.currentActionPoint : player.maxActionPoint)));
   return player;
 }
@@ -593,6 +595,8 @@ function startBattle(runId) {
       effects: [],
     },
     monsters: monsters,
+    itemDropStartingItems: normalizeOwnedItems_(items),
+    monsterItemDrops: {},
     monster: monsters[0],
     playerGhost: playerGhostSelection.context,
     forcedQuestionCreatorId: playerGhostSelection.questionCreatorId || '',
@@ -615,6 +619,7 @@ function startBattle(runId) {
     usedSkillCountByTagThisTurn: {},
     activeTriggers: [],
   };
+  ensureLevelProgress_(battleState.player);
   applyBattleStartItemEffects_(battleState);
   decideMonsterIntents(battleState);
 
@@ -857,6 +862,7 @@ function submitActionAnswer(answerPayload) {
   var efficiency = gaveUp ? 0 : calculateEfficiency(isCorrect, remainingMs, maxMs, wrongCountAfterTimeout, getItemQuestionModifiers_(battleState, question), question);
 
   battleState.lastTurnEvents = [];
+  recordExperienceQuestion_(battleState,{question:question,efficiency:efficiency,isCorrect:isCorrect,wrongCount:Number(payload.wrongCountAfterTimeout || 0)});
   consumeActionPoint_(battleState, Number(pendingAction.actionPointCost !== undefined && pendingAction.actionPointCost !== '' ? pendingAction.actionPointCost : getActionPointCostForAction_(pendingAction.actionType, null)));
   if (gaveUp) {
     battleState.lastPlayerAction = { type: pendingAction.actionType, value: 0, efficiency: 0, gaveUp: true };
@@ -941,33 +947,43 @@ function clampDifficultyToStageRange_(difficulty, stage) {
 
 function calculateEfficiency(isCorrect, remainingMs, maxMs, wrongCountAfterTimeout, questionModifiers, question) {
   var efficiencyRules = getAnswerEfficiencyRules_();
-  var minEfficiency = Math.max(0, Math.min(1, efficiencyRules.minAnswerEfficiency + Number(questionModifiers && questionModifiers.questionMinEfficiencyPercent || 0) / 100));
   var maxEfficiency = calculateMaxAnswerEfficiency_(questionModifiers, efficiencyRules.maxAnswerEfficiency);
+  var minEfficiency = Math.max(0, Math.min(maxEfficiency, efficiencyRules.minAnswerEfficiency + Number(questionModifiers && questionModifiers.questionMinEfficiencyPercent || 0) / 100));
   var caffeineBonus = Number(questionModifiers && questionModifiers.questionEfficiencyBonusPercent || 0) / 100;
+  function finish(value) {
+    value = Math.max(0,value);
+    var capped = Number(questionModifiers && questionModifiers.questionCappedEfficiencyBonusPercent || 0);
+    return roundTo_(capped > 0 ? getSharedRuleEngine_().capQuestionEfficiencyBonus(value,maxEfficiency,capped) : value,3);
+  }
   var extraPenalty = efficiencyRules.extraWrongEfficiencyPenalty;
   var penaltyCount = Math.max(0, Number(wrongCountAfterTimeout || 0));
   if (penaltyCount > 0) {
-    return roundTo_(Math.max(0, minEfficiency - (extraPenalty * (penaltyCount - 1)) + caffeineBonus), 3);
+    return finish(minEfficiency - (extraPenalty * (penaltyCount - 1)) + caffeineBonus);
   }
 
   if (isCorrect) {
     var correctEfficiencyBonus = getQuestionCorrectEfficiencyBonusPercent_(questionModifiers, question) / 100;
     var ratio = Math.max(0, Math.min(1, Number(remainingMs || 0) / Math.max(1, Number(maxMs || 1))));
+    var baseMin = efficiencyRules.minAnswerEfficiency;
+    var baseMax = efficiencyRules.maxAnswerEfficiency;
+    var basePivot = baseMax <= 1 ? (baseMin + baseMax) / 2 : Math.max(baseMin, Math.min(baseMax, 1));
+    var pivotRatio = baseMax > baseMin ? (basePivot - baseMin) / (baseMax - baseMin) : 0.5;
+    var pivotEfficiency = minEfficiency + (maxEfficiency - minEfficiency) * pivotRatio;
     if (maxEfficiency <= 1) {
       var timedEfficiency = minEfficiency + ((maxEfficiency - minEfficiency) * ratio);
-      return roundTo_(Math.max(0, timedEfficiency + correctEfficiencyBonus + caffeineBonus), 3);
+      return finish(timedEfficiency + correctEfficiencyBonus + caffeineBonus);
     }
     if (ratio >= 0.5) {
-      var highEfficiency = 1 + ((ratio - 0.5) * ((maxEfficiency - 1) / 0.5));
+      var highEfficiency = pivotEfficiency + ((ratio - 0.5) * ((maxEfficiency - pivotEfficiency) / 0.5));
       highEfficiency += correctEfficiencyBonus + caffeineBonus;
-      return roundTo_(Math.max(0, highEfficiency), 3);
+      return finish(highEfficiency);
     }
-    var lowEfficiency = minEfficiency + (ratio * ((1 - minEfficiency) / 0.5));
+    var lowEfficiency = minEfficiency + (ratio * ((pivotEfficiency - minEfficiency) / 0.5));
     lowEfficiency += correctEfficiencyBonus + caffeineBonus;
-    return roundTo_(Math.max(0, lowEfficiency), 3);
+    return finish(lowEfficiency);
   }
 
-  return roundTo_(Math.max(0, minEfficiency + caffeineBonus), 3);
+  return finish(minEfficiency + caffeineBonus);
 }
 
 function calculateMaxAnswerEfficiency_(questionModifiers, baseMaxEfficiency) {
@@ -1061,7 +1077,7 @@ function applyAttack(battleState, efficiency, targetId) {
     : target.name + '에게 ' + damageResult.displayDamage + ' 피해를 주었습니다.';
   battleState.lastPlayerAction = { type: ACTION_TYPES.ATTACK, value: damageResult.damage, efficiency: efficiency, targetMonsterId: target.instanceId || target.monsterId, isCritical: critical.isCritical, criticalMultiplier: critical.multiplier };
   battleState.lastTurnEvents = battleState.lastTurnEvents || [];
-  battleState.lastTurnEvents.push({
+  battleState.lastTurnEvents.splice(Number.isInteger(damageResult.eventIndex) ? damageResult.eventIndex : battleState.lastTurnEvents.length, 0, {
     actor: 'player',
     type: ACTION_TYPES.ATTACK,
     attackEffect: '',
@@ -1213,7 +1229,270 @@ function decideMonsterIntents(battleState) {
   return battleState;
 }
 
+// Monster-only kits are data in Skills.effectJson.monsterSkill. No monster IDs,
+// damage values or schedules are embedded in the executor. Old snapshots without
+// this configuration continue to use MonsterAI and the legacy skill executor.
+function getMonsterKitSkills_(monster) {
+  return getMonsterSkillIds_(monster).map(function(id) {
+    var skill = findCachedRowByKey_(DB_SHEETS.SKILLS, 'skillId', id, 1800);
+    var rule = skill && safeJsonParse_(skill.effectJson, {}).monsterSkill;
+    return rule && rule.enabled !== false ? {skill:skill, rule:rule} : null;
+  }).filter(function(entry) { return !!entry; });
+}
+
+function monsterKitState_(monster) {
+  if (!monster.monsterKit) monster.monsterKit = {actions:0, used:{}, nextDue:{}, overrides:{}};
+  return monster.monsterKit;
+}
+
+function monsterKitStats_(monster) {
+  var stats = calculateEffectiveStats({attack:monster.attack, defense:monster.defense,
+    hp:monster.maxHp, evasion:monster.evasion, criticalRate:monster.criticalRate,
+    criticalDamage:monster.criticalDamage, accuracy:100}, monster.effects || []);
+  stats.attack = Math.max(0, Number(stats.attack || 0));
+  stats.defense = Math.max(0, Number(stats.defense || 0));
+  return stats;
+}
+
+function monsterKitEvent_(battle, monster, entry, detail) {
+  var event = Object.assign({actor:'monster', type:'buff', damage:0,
+    monsterId:monster.instanceId || monster.monsterId, monsterName:monster.name,
+    skillId:entry && entry.skill.skillId || '', skillName:entry && entry.skill.name || '',
+    attackEffect:entry && entry.skill.attackEffect || 'none',
+    message:monster.name + '의 ' + (entry && entry.skill.name || '특성') + '!'}, detail || {});
+  battle.lastTurnEvents = battle.lastTurnEvents || [];
+  battle.lastTurnEvents.splice(Number.isInteger(event.eventIndex) ? event.eventIndex : battle.lastTurnEvents.length, 0, event);
+  return event;
+}
+
+function prepareMonsterKit_(battle, monster, timing) {
+  if (!monster || Number(monster.currentHp || 0) <= 0) return;
+  var skills = getMonsterKitSkills_(monster);
+  if (!skills.length) return;
+  var state = monsterKitState_(monster);
+  skills.forEach(function(entry) {
+    var rule = entry.rule, id = entry.skill.skillId;
+    var ready = rule.trigger === 'battleStart' || (timing === 'ownerTurnStart' && rule.trigger === 'hpBelow' &&
+      Number(monster.currentHp) / Math.max(1, Number(monster.maxHp)) * 100 <= Number(rule.hpBelowPercent));
+    if (!ready || state.used[id]) return;
+    state.used[id] = 1; // Claim before dispatch; heal and damage can re-enter.
+    applyMonsterKitActions_(battle, monster, entry, rule.actions || [], {});
+  });
+}
+
+function selectMonsterKitIntent_(battle, monster) {
+  if (!getMonsterKitSkills_(monster).length) return null;
+  prepareMonsterKit_(battle, monster);
+  var state = monsterKitState_(monster), entry = null, phase = 'basic';
+  var actionNumber = Number(state.actions || 0) + 1;
+  var skills = getMonsterKitSkills_(monster);
+  if (state.charging) {
+    entry = skills.filter(function(e) { return e.skill.skillId === state.charging.skillId; })[0];
+    if (entry) phase = Number(state.charging.remaining || 0) > 0 ? 'charge' : 'release';
+    else delete state.charging;
+  }
+  if (!entry && Number(state.rest || 0) > 0) phase = 'rest';
+  else if (!entry) {
+    entry = skills.filter(function(e) {
+      var r = e.rule, id = e.skill.skillId;
+      if (r.trigger !== 'action' || (r.once && state.used[id])) return false;
+      var due = state.nextDue[id] === undefined ? Number(r.firstAction !== undefined ? r.firstAction : r.every || 1) : Number(state.nextDue[id]);
+      return actionNumber >= due;
+    }).sort(function(a,b) { return Number(b.rule.priority || 0) - Number(a.rule.priority || 0); })[0];
+    if (entry) phase = Number(entry.rule.chargeTurns || 0) > 0 ? 'charge' : 'skill';
+  }
+  var attack = monsterKitStats_(monster).attack;
+  var actions = entry ? monsterKitResolvedActions_(monster, entry) : [{op:'damage',multiplier:1}];
+  var hitAction = actions.filter(function(a) { return a.op === 'damage'; })[0];
+  var value = hitAction ? Math.round(attack * Number(hitAction.multiplier === undefined ? 1 : hitAction.multiplier)) : 0;
+  var hitCount = hitAction ? Math.max(1, Number(hitAction.hitCount || entry && entry.skill.hitCount || 1)) : 1;
+  var label = entry ? entry.skill.name : '공격';
+  var text = phase === 'charge' ? label + ' 준비 → ' + value + ' 피해' + (hitCount > 1 ? ' × ' + hitCount : '') :
+    phase === 'rest' ? '과열로 휴식 (공격하지 않음)' :
+    '다음턴 ' + label + (hitAction ? ' (' + value + ' 피해' + (hitCount > 1 ? ' × ' + hitCount : '') + ')' : '');
+  return {monsterKit:true, phase:phase, actionType:phase === 'charge' || phase === 'rest' ? 'prepare' : entry ? 'skill' : 'attack',
+    skillId:entry ? entry.skill.skillId : '', skillName:entry ? entry.skill.name : '', skillType:entry ? entry.skill.type : '',
+    attackEffect:entry ? entry.skill.attackEffect || 'slash' : monster.attackEffect || 'slash',
+    value:phase === 'charge' || phase === 'rest' ? 0 : value, hitCount:hitCount,
+    intentIcon:phase === 'charge' ? 'warning' : phase === 'rest' ? 'rest' : 'sword', intentText:text};
+}
+
+function monsterKitResolvedActions_(monster, entry) {
+  var override = monsterKitState_(monster).overrides[entry.skill.skillId];
+  return (entry.rule.actions || []).map(function(action) {
+    return action.op === 'damage' && override ? Object.assign({}, action, override) : action;
+  });
+}
+
+function executeMonsterKitIntent_(battle, monster) {
+  if (!monster || Number(monster.currentHp || 0) <= 0 || Number(battle.player.hp || 0) <= 0) return false;
+  if (!getMonsterKitSkills_(monster).length) return false;
+  prepareMonsterKit_(battle, monster, 'ownerTurnStart');
+  var state = monsterKitState_(monster);
+  var intent = monster.intent && monster.intent.monsterKit ? monster.intent : selectMonsterKitIntent_(battle, monster);
+  var entry = getMonsterKitSkills_(monster).filter(function(e) { return e.skill.skillId === intent.skillId; })[0];
+  state.actions = Number(state.actions || 0) + 1;
+  getSharedRuleEngine_().beginCombatAction(battle, {skillId:intent.skillId || ''});
+  if (Number(monster.hpRegen || 0) > 0) {
+    var before = monster.currentHp;
+    monster.currentHp = Math.min(monster.maxHp, monster.currentHp + Number(monster.hpRegen));
+    if (monster.currentHp > before) monsterKitEvent_(battle, monster, null, {type:'heal',heal:monster.currentHp-before,message:monster.name + '의 체력 재생'});
+  }
+  if (intent.phase === 'rest') {
+    state.rest = Math.max(0, Number(state.rest || 0) - 1);
+    monsterKitEvent_(battle, monster, entry, {type:'skip',message:monster.name + '이 과열로 쉬고 있습니다.'});
+  } else if (intent.phase === 'charge' && entry) {
+    if (!state.charging) state.charging = {skillId:entry.skill.skillId, remaining:Math.max(1,Number(entry.rule.chargeTurns || 1))};
+    state.charging.remaining = Math.max(0, state.charging.remaining - 1);
+    monsterKitEvent_(battle, monster, entry, {type:'prepare',message:monster.name + '이 ' + entry.skill.name + ' 준비 중!'});
+  } else {
+    if (entry) {
+      delete state.charging;
+      state.used[entry.skill.skillId] = Number(state.used[entry.skill.skillId] || 0) + 1;
+      var every = Math.max(1, Number(entry.rule.every || 1));
+      var due = state.nextDue[entry.skill.skillId] === undefined ? Number(entry.rule.firstAction !== undefined ? entry.rule.firstAction : every) : Number(state.nextDue[entry.skill.skillId]);
+      do { due += every; } while (due <= state.actions);
+      state.nextDue[entry.skill.skillId] = due;
+      applyMonsterKitActions_(battle, monster, entry, monsterKitResolvedActions_(monster, entry), {});
+      state.rest = Math.max(0, Number(entry.rule.restTurns || 0));
+      dispatchMonsterKitTrigger_(battle, monster, 'afterSkill', {skillId:entry.skill.skillId});
+    } else {
+      applyMonsterKitActions_(battle, monster, null, [{op:'damage',multiplier:1}], {basic:true});
+    }
+  }
+  monster.intent = null;
+  syncPrimaryMonster_(battle);
+  return true;
+}
+
+function dispatchMonsterKitTrigger_(battle, monster, trigger, payload) {
+  if (!monster || Number(monster.currentHp || 0) <= 0 || Number(battle.player.hp || 0) <= 0) return;
+  var state = monsterKitState_(monster);
+  getMonsterKitSkills_(monster).forEach(function(entry) {
+    var r = entry.rule, id = entry.skill.skillId;
+    if (r.trigger !== trigger || (r.once && state.used[id])) return;
+    if (r.hpBelowPercent !== undefined && monster.currentHp / Math.max(1,monster.maxHp)*100 > Number(r.hpBelowPercent)) return;
+    if (r.afterSkillId && r.afterSkillId !== payload.skillId) return;
+    if (r.meleeOnly && !isMonsterKitMeleeHit_(payload)) return;
+    if (r.oncePerTurn && state['turn_' + id] === Number(battle.turn || 1)) return;
+    state['turn_' + id] = Number(battle.turn || 1);
+    state.used[id] = Number(state.used[id] || 0) + 1;
+    applyMonsterKitActions_(battle, monster, entry, r.actions || [], payload);
+  });
+}
+
+function isMonsterKitMeleeHit_(context) {
+  if (!context.sourceSkillId) return true;
+  var skill = findCachedRowByKey_(DB_SHEETS.SKILLS, 'skillId', context.sourceSkillId, 1800);
+  var tags = skill && safeJsonParse_(skill.tags, []) || [];
+  return tags.indexOf('ranged') < 0 && tags.indexOf('spell') < 0 && (!skill || skill.attackEffect !== 'fire');
+}
+
+function applyMonsterKitActions_(battle, monster, entry, actions, payload) {
+  var hitLanded = false;
+  (actions || []).forEach(function(action, index) {
+    if (action.requiresHit && !hitLanded) return;
+    var target = action.target === 'player' ? battle.player : monster;
+    var id = 'mk_' + (entry ? entry.skill.skillId : 'basic') + '_' + index;
+    var effect = {effectId:id, name:entry ? entry.skill.name : '몬스터 특성',
+      description:entry ? entry.skill.description : '', category:action.target === 'player' ? 'debuff' : 'buff',
+      durationType:action.durationTurns ? 'turn' : 'stage', durationTurns:Number(action.durationTurns || 0),
+      stackable:false, maxStacks:1, monsterKitEffect:true};
+    if (action.op === 'damage') {
+      hitLanded = monsterKitDamage_(battle, monster, entry, action, payload) || hitLanded;
+      return;
+    }
+    if (action.op === 'stat') {
+      effect.statKey = action.stat;
+      effect.effectType = action.mode || 'flat';
+      var amount = Number(action.value || 0);
+      if (action.perUse) amount *= Math.min(Number(monsterKitState_(monster).used[entry.skill.skillId] || 1), Number(action.maxStacks || 1));
+      effect.value = amount;
+    } else if (action.op === 'dot') {
+      effect.statKey = 'hp'; effect.effectType = 'flat'; effect.value = -Math.abs(Number(action.value || 0));
+      effect.triggerTiming = 'turnStart';
+    } else if (action.op === 'reduction') {
+      effect.kitReduction = {percent:Number(action.value || 0), nextHit:!!action.nextHit, hpAbovePercent:action.hpAbovePercent};
+    } else if (action.op === 'heal') {
+      var previous = Number(monster.currentHp || 0);
+      monster.currentHp = Math.min(Number(monster.maxHp), previous + Math.max(0,Number(action.value || 0)));
+      monsterKitEvent_(battle, monster, entry, {type:'heal',heal:monster.currentHp-previous});
+      return;
+    } else if (action.op === 'shield') {
+      var shield = Math.max(0, Number(action.value || 0));
+      monster.shield = Number(monster.shield || 0) + shield;
+      effect.behavior = {retainShield:true}; effect.retainedShield = shield;
+      monsterKitEvent_(battle, monster, entry, {type:'guard',shield:shield});
+    } else if (action.op === 'overrideSkill') {
+      monsterKitState_(monster).overrides[action.skillId] = {multiplier:Number(action.multiplier), hitCount:Number(action.hitCount || 1)};
+      monsterKitEvent_(battle, monster, entry);
+      return;
+    } else {
+      throw new Error('지원하지 않는 몬스터 스킬 동작: ' + action.op);
+    }
+    applyEffect(target, effect, {source:monster.instanceId || monster.monsterId, skillId:entry && entry.skill.skillId || '',turn:battle.turn});
+    if (action.op !== 'shield') monsterKitEvent_(battle, monster, entry, {type:action.target === 'player' ? 'debuff' : 'buff',
+      statusSnapshot:{effects:JSON.parse(JSON.stringify(target.effects || []))}});
+  });
+}
+
+function monsterKitDamage_(battle, monster, entry, action, payload) {
+  var landed = false;
+  var count = Math.max(1, Math.min(50, Math.round(Number(action.hitCount || entry && entry.skill.hitCount || 1))));
+  for (var i=0; i<count && battle.player.hp>0 && monster.currentHp>0; i++) {
+    var stats = monsterKitStats_(monster);
+    var targetStats = calculateEffectiveStats(battle.player.stats || {}, battle.player.effects || []);
+    var hit = action.unavoidable ? {hit:true,chance:100} : rollHit_(stats,targetStats);
+    var event = {type:entry ? 'skill' : 'attack',attackEffect:entry ? entry.skill.attackEffect || 'slash' : monster.attackEffect || 'slash',
+      hitIndex:i+1,hitCount:count,hitChance:hit.chance};
+    // Reflected damage happens inside the player's action, not a monster turn.
+    if (action.damageKind === 'reflection') {
+      event.actor = 'effect';
+      event.target = 'player';
+      event.type = 'reflection';
+      event.damageKind = 'reflection';
+    }
+    if (!hit.hit) {
+      processSkillTriggers_(battle,'onMiss',{actor:'monster',target:battle.player,damageKind:'direct'});
+      processSkillTriggers_(battle,'onEvade',{actor:'player',target:monster,damageKind:'direct'});
+      monsterKitEvent_(battle,monster,entry,Object.assign(event,{missed:true,message:monster.name + '의 공격이 빗나갔습니다.'}));
+      continue;
+    }
+    var amount = action.value !== undefined ? Number(action.value) : stats.attack * Number(action.multiplier === undefined ? 1 : action.multiplier);
+    var critical = action.canCritical === false ? {damage:Math.round(amount),isCritical:false,multiplier:1} : rollCriticalDamage_(amount,stats);
+    var result = dealDamageToPlayer_(battle,critical.damage,monster,{damageKind:action.damageKind || 'direct',
+      sourceSkillId:entry && entry.skill.skillId || '',isCritical:critical.isCritical,shieldPiercePercent:Number(action.shieldPiercePercent || 0)});
+    landed = true;
+    var attackName = entry && entry.skill && entry.skill.name;
+    var attackMessage = event.actor === 'effect'
+      ? monster.name + '의 반사 피해!'
+      : attackName
+        ? monster.name + '의 ' + attackName + (critical.isCritical ? ' 치명타!' : '!')
+        : monster.name + (critical.isCritical ? '의 치명타 공격!' : '의 공격!');
+    var ev = monsterKitEvent_(battle,monster,entry,Object.assign(event,result,{isCritical:critical.isCritical,criticalMultiplier:critical.multiplier,message:attackMessage}));
+    if (event.actor !== 'effect') battle.lastMonsterAction = Object.assign({},ev);
+    if (result.damage > 0 && payload.basic) dispatchMonsterKitTrigger_(battle,monster,'onBasicHit',{});
+    if (result.damage > 0 && critical.isCritical) dispatchMonsterKitTrigger_(battle,monster,'onCritical',{});
+  }
+  return landed;
+}
+
+function reduceMonsterKitDamage_(battle, monster, damage, context) {
+  if (context.damageKind !== 'direct' || Number(damage || 0) <= 0) return damage;
+  var consumed = [];
+  (monster.effects || []).forEach(function(effect) {
+    var rule = effect.kitReduction;
+    if (!rule || (rule.hpAbovePercent !== undefined && monster.currentHp/Math.max(1,monster.maxHp)*100 <= Number(rule.hpAbovePercent))) return;
+    damage *= 1-Math.max(0,Math.min(100,Number(rule.percent || 0)))/100;
+    if (rule.nextHit) consumed.push(effect.effectId);
+  });
+  consumed.forEach(function(id) { getSharedRuleEngine_().removeCombatEffect(monster,id,'consumed'); });
+  return damage;
+}
+
 function selectMonsterAction(monster, aiRows, battleState) {
+  var kitIntent = typeof selectMonsterKitIntent_ === 'function' ? selectMonsterKitIntent_(battleState, monster) : null;
+  if (kitIntent) return kitIntent;
   var candidates = (aiRows || []).filter(function(row) {
     var conditions = safeJsonParse_(row.conditionJson, {});
     var actionType = normalizeMonsterAiActionType_(row.actionType, row.skillId);
@@ -1542,6 +1821,7 @@ function executeMonsterIntent(battleState, monsterId) {
   if (!monster || Number(monster.currentHp || 0) <= 0 || battleState.player.hp <= 0) {
     return battleState;
   }
+  if (executeMonsterKitIntent_(battleState, monster)) return battleState;
 
   var intent = monster.intent || { actionType: ACTION_TYPES.ATTACK };
   getSharedRuleEngine_().beginCombatAction(battleState, {skillId:intent.skillId || ''});
@@ -1603,7 +1883,7 @@ function applyMonsterAttackIntent_(battleState, monster, intent) {
     isCritical: critical.isCritical,
     criticalMultiplier: critical.multiplier,
   };
-  battleState.lastTurnEvents.push({
+  battleState.lastTurnEvents.splice(Number.isInteger(result.eventIndex) ? result.eventIndex : battleState.lastTurnEvents.length, 0, {
     actor: 'monster',
     type: ACTION_TYPES.ATTACK,
     attackEffect: intent.attackEffect || '',
@@ -1677,7 +1957,7 @@ function applyMonsterSkillIntent_(battleState, monster, intent) {
       var perHitDamage = calculateMonsterSkillDamage_(battleState, monster, skill, monsterStats);
       var critical = rollCriticalDamage_(perHitDamage, monsterStats);
       var result = dealDamageToPlayer_(battleState, critical.damage, monster);
-      battleState.lastTurnEvents.push({
+      battleState.lastTurnEvents.splice(Number.isInteger(result.eventIndex) ? result.eventIndex : battleState.lastTurnEvents.length, 0, {
         actor: 'monster',
         type: ACTION_TYPES.SKILL,
         skillId: skill.skillId,
@@ -1755,6 +2035,9 @@ function applyMonsterSkillEffect_(target, skill, source, battleState) {
 }
 
 function dealDamageToPlayer_(battleState, damage, attacker, damageContext) {
+  battleState.lastTurnEvents = battleState.lastTurnEvents || [];
+  // The caller inserts the attack here, ahead of reactions emitted during damage resolution.
+  var eventIndex = battleState.lastTurnEvents.length;
   var context = Object.assign({damageKind:'direct',actor:'monster'}, damageContext || {});
   if(context.damageKind==='direct') {
     (battleState.player.effects || []).forEach(function(e){damage*=Number(combatEffectConfig_(e).incomingMultiplier || 1);});
@@ -1765,7 +2048,8 @@ function dealDamageToPlayer_(battleState, damage, attacker, damageContext) {
   // Defense increases generated shields; only the current shield absorbs damage.
   var totalDamage = Math.max(0, Math.round(Number(modifiedDamage || 0)));
   var shieldBefore = Number(battleState.player.shield || 0);
-  var shieldDamage = Math.min(shieldBefore, totalDamage);
+  var piercedDamage = Math.round(totalDamage * Math.max(0, Math.min(100, Number(context.shieldPiercePercent || 0))) / 100);
+  var shieldDamage = Math.min(shieldBefore, totalDamage - piercedDamage);
   var hpDamage = totalDamage - shieldDamage;
   if(context.damageKind==='direct' && hpDamage>=battleState.player.hp && battleState.player.hp>0) {
     var guard=(battleState.player.effects || []).filter(function(e){return combatEffectConfig_(e).fatalGuard;})[0];
@@ -1781,17 +2065,27 @@ function dealDamageToPlayer_(battleState, damage, attacker, damageContext) {
     processSkillTriggers_(battleState, 'onDamaged', { damage: totalDamage, shieldDamage: shieldDamage, hpDamage: hpDamage, target:attacker, actor:'monster' });
   }
   processSkillTriggers_(battleState, 'onDamage', Object.assign({}, context, {target:battleState.player,damage:totalDamage,hpDamage:hpDamage,shieldDamage:shieldDamage}));
-  return { damage: totalDamage, shieldDamage: shieldDamage, hpDamage: hpDamage };
+  return { damage: totalDamage, shieldDamage: shieldDamage, hpDamage: hpDamage, eventIndex: eventIndex };
 }
 
 function dealDamageToMonster_(battleState, monster, damage, damageContext) {
+  battleState.lastTurnEvents = battleState.lastTurnEvents || [];
+  // Keep the original hit before shock, shatter, and other reactive damage events.
+  var eventIndex = battleState.lastTurnEvents.length;
   var context = Object.assign({damageKind:'effect',actor:'player'}, damageContext || {});
+  prepareMonsterKit_(battleState, monster);
   damage=modifyCombatOutgoing_(battleState,monster,damage,context);
+  damage=reduceMonsterKitDamage_(battleState,monster,damage,context);
   var reactions = context.damageKind === 'direct' ? getSharedRuleEngine_().directHitReactions(monster) : {packets:[],removed:[]};
   var totalDamage = Math.max(0, Math.round(Number(damage || 0)));
   var shieldBefore = Number(monster.shield || 0);
   var hpBefore = Number(monster.currentHp || 0);
   var result = getSharedRuleEngine_().dealDamageToMonster(monster, totalDamage, battleState);
+  prepareMonsterKit_(battleState, monster);
+  if (monster.intent && monster.intent.monsterKit && monster.currentHp > 0) monster.intent = selectMonsterKitIntent_(battleState, monster);
+  if (context.damageKind === 'direct' && result.damage > 0 && monster.currentHp > 0) {
+    dispatchMonsterKitTrigger_(battleState, monster, 'onDamaged', context);
+  }
   if(context.shieldOnlyDamage>0) {
     var shieldOnly=Math.min(Number(monster.shield || 0),Math.max(0,Math.round(context.shieldOnlyDamage)));
     monster.shield-=shieldOnly;result.shieldDamage+=shieldOnly;result.damage+=shieldOnly;
@@ -1814,9 +2108,9 @@ function dealDamageToMonster_(battleState, monster, damage, damageContext) {
     packetAmount=modifyCombatAdditional_(battleState,monster,packetAmount,packetContext);
     var extra = dealDamageToMonster_(battleState, monster, packetAmount, packetContext);
     relayCombatAdditional_(battleState,monster,extra.damage,packetContext);
-    battleState.lastTurnEvents.push({actor:'effect',type:'effectDamage',target:'monster',targetMonsterId:monster.instanceId || monster.monsterId,effectId:packet.effectId,damageKind:packet.damageKind,damage:extra.damage,hpDamage:extra.hpDamage,shieldDamage:extra.shieldDamage});
+    battleState.lastTurnEvents.splice(Number.isInteger(extra.eventIndex) ? extra.eventIndex : battleState.lastTurnEvents.length, 0, {actor:'effect',type:'effectDamage',target:'monster',targetMonsterId:monster.instanceId || monster.monsterId,effectId:packet.effectId,damageKind:packet.damageKind,damage:extra.damage,hpDamage:extra.hpDamage,shieldDamage:extra.shieldDamage});
   });
-  return Object.assign({}, result, { killScore: killScore });
+  return Object.assign({}, result, { killScore: killScore, eventIndex: eventIndex });
 }
 
 function emitCombatKill_(battleState, monster, payload) {
@@ -1824,7 +2118,160 @@ function emitCombatKill_(battleState, monster, payload) {
   var id = String(monster.instanceId || monster.monsterId);
   if (runtime.killedTargets[id]) return;
   runtime.killedTargets[id] = true;
+  awardMonsterExperience_(battleState, monster);
+  rollMonsterItemDrop_(battleState, monster);
   processSkillTriggers_(battleState, 'onKill', Object.assign({},payload,{target:monster,defeatedEffects:JSON.parse(JSON.stringify(monster.effects || []))}));
+}
+
+// Run-local progression lives in statsJson so checkpoints, rewards and new
+// battles carry it through the same persistence path as permanent stat gains.
+function getLevelStatOptions_() {
+  return [
+    {key:'attack',label:'공격력',amount:1}, {key:'defense',label:'방어력',amount:1},
+    {key:'hp',label:'최대 체력',amount:1}, {key:'hpRegen',label:'체력 회복',amount:1},
+    {key:'accuracy',label:'명중률',amount:3,percent:true}, {key:'evasion',label:'회피율',amount:2,percent:true},
+    {key:'criticalRate',label:'치명타 확률',amount:1.5,percent:true},
+    {key:'criticalDamage',label:'치명타 피해',amount:5,percent:true},
+    {key:'questionEfficiency',label:'문제 풀이 효율 (최소·최대)',amount:2,percent:true}
+  ];
+}
+
+function ensureLevelProgress_(player) {
+  player.baseStats = player.baseStats || Object.assign({}, player.stats || {});
+  var progress = player.baseStats.levelProgress;
+  if (!progress || typeof progress !== 'object') progress = {level:1,xp:0,points:0,spent:{}};
+  progress.level = Math.max(1, Math.floor(Number(progress.level) || 1));
+  progress.xp = Math.max(0, Math.floor(Number(progress.xp) || 0));
+  progress.points = Math.max(0, Math.floor(Number(progress.points) || 0));
+  progress.spent = progress.spent || {};
+  player.baseStats.levelProgress = progress;
+  return progress;
+}
+
+function levelExperienceRequired_(level) {
+  return 100 + 25 * (Math.max(1, Math.floor(Number(level) || 1)) - 1);
+}
+
+function recordExperienceQuestion_(battle, sample) {
+  if (!battle || !battle.player) return;
+  sample = sample || {};
+  var efficiency = Math.max(0,Number(sample.efficiency) || 0);
+  (battle.monsters || []).forEach(function(monster) {
+    if (Number(monster.currentHp || 0) <= 0) return;
+    var record = monster.experienceQuestions || {count:0,attemptTotal:0,correctTotal:0,efficiencyTotal:0};
+    record.count += 1;
+    record.attemptTotal = Number(record.attemptTotal || 0)+1+Math.max(0,Number(sample.wrongCount || 0));
+    record.correctTotal = Number(record.correctTotal || 0)+(sample.isCorrect ? 1 : 0);
+    record.efficiencyTotal += efficiency;
+    monster.experienceQuestions = record;
+  });
+}
+
+function awardMonsterExperience_(battle, monster) {
+  if (!battle || !battle.player || !monster || Number(monster.currentHp || 0) > 0) return null;
+  battle.experienceAwarded = battle.experienceAwarded || {};
+  var id = String(monster.instanceId || monster.monsterId);
+  if (battle.experienceAwarded[id]) return null;
+  battle.experienceAwarded[id] = true;
+  var progress = ensureLevelProgress_(battle.player);
+  var before = JSON.parse(JSON.stringify(progress));
+  var record = monster.experienceQuestions || {};
+  var count = Number(record.count || 0);
+  var averageRate = Number(record.attemptTotal || 0)>0 ? Number(record.correctTotal || 0)/Number(record.attemptTotal) : 1;
+  var averageEfficiency = count ? Number(record.efficiencyTotal || 0)/count : 1;
+  var multiplier = Math.max(0.25,Math.min(2,(0.5+0.5*averageRate)*averageEfficiency));
+  var boss = ['boss','finalboss'].indexOf(String(monster.type).toLowerCase())>=0 || String(battle.stage && battle.stage.bossMonsterId || '') === String(monster.monsterId);
+  var base = monster.experience !== undefined && monster.experience !== '' && isFinite(Number(monster.experience))
+    ? Math.max(1,Number(monster.experience)) : boss ? 90 : 30;
+  var floorMultiplier = 1 + 0.2*(Math.max(1,Number(battle.stage && battle.stage.floor || 1))-1);
+  var amount = Math.max(1,Math.round(base*floorMultiplier*multiplier));
+  if (boss) amount = Math.max(amount,levelExperienceRequired_(progress.level)-progress.xp);
+  progress.xp += amount;
+  while (progress.xp >= levelExperienceRequired_(progress.level)) {
+    progress.xp -= levelExperienceRequired_(progress.level);
+    progress.level += 1;
+    progress.points += 3;
+  }
+  var event = {actor:'effect',type:'experience',target:'player',monsterId:id,amount:amount,
+    before:before,after:JSON.parse(JSON.stringify(progress)),levelsGained:progress.level-before.level,
+    averageCorrectRate:averageRate,averageEfficiency:averageEfficiency};
+  battle.lastTurnEvents = battle.lastTurnEvents || [];
+  battle.lastTurnEvents.push(event);
+  return event;
+}
+
+function settleMonsterExperience_(battle) {
+  (battle.monsters || []).forEach(function(monster) {
+    if (Number(monster.currentHp || 0) <= 0) awardMonsterExperience_(battle,monster);
+  });
+  return ensureLevelProgress_(battle.player);
+}
+
+function allocateLevelStats_(battle, allocation) {
+  var progress = ensureLevelProgress_(battle.player);
+  var options = getLevelStatOptions_();
+  var allowed = options.map(function(option) { return option.key; });
+  var spent = 0;
+  Object.keys(allocation || {}).forEach(function(key) {
+    var count = Number(allocation[key]);
+    if (allowed.indexOf(key)<0 || !isFinite(count) || count<0 || count!==Math.floor(count)) throw new Error('스탯 포인트 배분이 올바르지 않습니다.');
+    spent += count;
+  });
+  if (spent !== progress.points || spent <= 0) throw new Error('보유한 스탯 포인트를 모두 배분하세요.');
+  var player = battle.player;
+  var previousMaxHp = Number(player.maxHp || player.stats && player.stats.hp || 1);
+  options.forEach(function(option) {
+    var count = Number(allocation[option.key] || 0);
+    progress.spent[option.key] = Number(progress.spent[option.key] || 0)+count;
+    player.baseStats[option.key] = Math.round((Number(player.baseStats[option.key] || 0)+option.amount*count)*100)/100;
+  });
+  progress.points -= spent;
+  player.stats = calculateStatsWithItemEffects_(player.baseStats,player.items || []);
+  player.maxHp = Number(player.stats.hp || previousMaxHp);
+  if (Number(player.hp || 0)>0) player.hp = Math.min(player.maxHp,Number(player.hp)+Math.max(0,player.maxHp-previousMaxHp));
+  return progress;
+}
+
+function validateLevelStatsForCommit_(run, serverBattle, receivedBattle) {
+  var expected = safeJsonParse_(run.statsJson, {});
+  var received = receivedBattle.player && receivedBattle.player.baseStats || {};
+  var simulation = {stage:serverBattle.stage || receivedBattle.stage || {},
+    player:{baseStats:JSON.parse(JSON.stringify(expected))},lastTurnEvents:[],
+    experienceAwarded:Object.assign({},serverBattle.experienceAwarded || {})};
+  var starting = ensureLevelProgress_(simulation.player);
+  var previousSpent = Object.assign({},starting.spent);
+  // The server supplies monster definitions and XP values. The client supplies
+  // per-monster solve aggregates, just as it supplies damage/kill outcomes.
+  Object.keys(receivedBattle.experienceAwarded || {}).forEach(function(id) {
+    if (simulation.experienceAwarded[id]) return;
+    var original = (serverBattle.monsters || []).filter(function(m){return String(m.instanceId || m.monsterId)===id;})[0];
+    var result = (receivedBattle.monsters || []).filter(function(m){return String(m.instanceId || m.monsterId)===id;})[0];
+    if (!original || !result || Number(result.currentHp)>0) throw new Error('경험치 처치 기록이 올바르지 않습니다.');
+    var record = result.experienceQuestions || {count:0,attemptTotal:0,correctTotal:0,efficiencyTotal:0};
+    var count=Number(record.count),attempts=Number(record.attemptTotal || 0),correct=Number(record.correctTotal || 0),efficiency=Number(record.efficiencyTotal);
+    if (!isFinite(count)||count<0||count!==Math.floor(count)||!isFinite(attempts)||attempts<count||attempts!==Math.floor(attempts)||!isFinite(correct)||correct<0||correct>count||correct!==Math.floor(correct)||!isFinite(efficiency)||efficiency<0) throw new Error('경험치 문제 기록이 올바르지 않습니다.');
+    var definition = findCachedRowByKey_(DB_SHEETS.MONSTERS,'monsterId',original.monsterId,600) || original;
+    var monster = Object.assign({},original,{currentHp:0,experience:definition.experience !== undefined ? definition.experience : '',experienceQuestions:record});
+    awardMonsterExperience_(simulation,monster);
+  });
+  var actual = received.levelProgress || {level:1,xp:0,points:0,spent:{}};
+  var calculated = ensureLevelProgress_(simulation.player);
+  if (Number(actual.level)!==calculated.level || Number(actual.xp)!==calculated.xp) throw new Error('레벨 또는 경험치가 처치 기록과 다릅니다.');
+  var spent = actual.spent || {}, options = getLevelStatOptions_(), deltas={},used=0;
+  if (Object.keys(spent).some(function(key){return !options.some(function(o){return o.key===key;});})) throw new Error('스탯 투자 항목이 올바르지 않습니다.');
+  options.forEach(function(option) {
+    var count = Number(spent[option.key] || 0)-Number(previousSpent[option.key] || 0);
+    if (!isFinite(count)||count<0||count!==Math.floor(count)) throw new Error('스탯 투자 기록이 올바르지 않습니다.');
+    used+=count;deltas[option.key]=count*option.amount;
+  });
+  if (used>calculated.points || Number(actual.points)!==calculated.points-used) throw new Error('스탯 포인트가 레벨 기록과 다릅니다.');
+  var keys=Object.keys(expected).concat(Object.keys(received));
+  keys.forEach(function(key) {
+    if(key==='levelProgress')return;
+    var wanted=Number(expected[key] || 0)+Number(deltas[key] || 0);
+    if (!isFinite(Number(received[key] || 0)) || Math.abs(Number(received[key] || 0)-wanted)>0.000001) throw new Error('플레이어 능력치가 게임 진행 기록과 다릅니다.');
+  });
+  return true;
 }
 
 function setActiveMonsterScoreContext_(battleState, questionId, efficiency) {
@@ -1915,7 +2362,7 @@ function clearPlayerTurnShield_(battleState) {
 function clearMonsterTurnShields_(battleState) {
   normalizeBattleMonsters_(battleState);
   (battleState.monsters || []).forEach(function(monster) {
-    monster.shield = 0;
+    getSharedRuleEngine_().clearCombatTurnShield(monster);
   });
   syncPrimaryMonster_(battleState);
   return battleState;
@@ -1997,6 +2444,8 @@ function commitStageResultUnlocked_(stagePayload, authToken) {
   if (deadlineWindow.expired) payload = sanitizeWorkbookDeadlinePayload_(payload, run, stageState);
   var clientStageState = payload.stageState || {};
   var battleState = hydrateStageResultBattleForCommit_(payload.battle || {}, serverBattleState);
+  validateLevelStatsForCommit_(run,serverBattleState,battleState);
+  validateMonsterDropsForCommit_(run,serverBattleState,battleState);
   battleState.runId = battleState.runId || run.runId;
   if (deadlineWindow.expired) {
     battleState.player = battleState.player || {};
@@ -3532,6 +3981,9 @@ function buildPersistedBattleResult_(battleState) {
       maxHp: Number(player.maxHp || player.stats && player.stats.hp || 1),
       shield: Number(player.shield || 0),
       stats: Object.assign({}, player.stats || {}),
+      baseStats: Object.assign({}, player.baseStats || player.stats || {}),
+      items: (player.items || []).slice(),
+      itemModifiers: Object.assign({}, player.itemModifiers || {}),
     },
     monsters: (battleState.monsters || []).map(function(monster, index) {
       monster = monster || {};
@@ -3547,6 +3999,10 @@ function buildPersistedBattleResult_(battleState) {
         shield: Number(monster.shield || 0),
       };
     }),
+    experienceAwarded: Object.assign({},battleState.experienceAwarded || {}),
+    monsterItemDrops: JSON.parse(JSON.stringify(battleState.monsterItemDrops || {})),
+    itemDropStartingItems: normalizeOwnedItems_(battleState.itemDropStartingItems || []),
+    lastTurnEvents: (battleState.lastTurnEvents || []).slice(),
     monsterScoreState: normalizeMonsterScoreStateForMerge_(battleState.monsterScoreState, battleId),
     questionReactionScoreState: normalizeQuestionReactionScoreStateForMerge_(battleState.questionReactionScoreState, battleId),
     skillUseCounts: Object.assign({}, battleState.skillUseCounts || {}),
@@ -3595,6 +4051,8 @@ function saveStageState_(runId, stageState, battleState) {
     stageStateJson: safeJsonStringify_(stageState),
     updatedAt: new Date(),
   };
+
+  if (Array.isArray(battleState.player.items)) patch.itemsJson=safeJsonStringify_(normalizeOwnedItems_(battleState.player.items));
 
   if (battleState.status === STATUS.BATTLE_DEFEAT) {
     patch.status = STATUS.RUN_FAILED;
@@ -4060,9 +4518,11 @@ function buildBattleMonster_(monster, index) {
     monsterId: monster.monsterId,
     name: monster.name,
     type: monster.type,
+    experience: monster.experience !== undefined ? monster.experience : '',
     currentHp: Number(monster.hp),
     maxHp: Number(monster.hp),
     attack: Number(monster.attack),
+    hpRegen: Number(monster.hpRegen || 0),
     defense: Number(monster.defense || 0),
     evasion: clampPercent_(monster.evasion),
     criticalRate: Number(monster.criticalRate !== undefined && monster.criticalRate !== '' ? monster.criticalRate : baseStats.criticalRate),
@@ -4092,6 +4552,7 @@ function normalizeBattleMonsters_(battleState) {
     monster.shield = Number(monster.shield || 0);
     var monsterDefinition = monster.monsterId ? findMonsterRowById_(monster.monsterId) : null;
     monster.attackEffect = String(monsterDefinition && monsterDefinition.attackEffect || monster.attackEffect || 'slash');
+    if (monster.experience === undefined) monster.experience = monsterDefinition && monsterDefinition.experience !== undefined ? monsterDefinition.experience : '';
     var baseStats = getConfiguredBasePlayerStats_();
     if (monster.evasion === undefined || monster.evasion === '') {
       monster.evasion = clampPercent_(monsterDefinition && monsterDefinition.evasion);
