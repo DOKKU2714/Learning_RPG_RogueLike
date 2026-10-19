@@ -234,6 +234,7 @@ function advanceRunStage(stagePayload, rewardId, authToken, rewardView) {
       if (currentBattle && currentBattle.battleId !== stagePayload.battle.battleId && !getWorkbookPlayWindow_(getRunWorkbookContext_(run).workbookId).expired) return buildBattleStateView_(run, getStageState_(run));
       var committed = commitStageResultUnlocked_(stagePayload, authToken);
       if (committed.battle && committed.battle.status === STATUS.BATTLE_DEFEAT) return committed;
+      if(rewardView && stagePayload.floorExperienceAnswer)rewardView=Object.assign({},rewardView,{floorExperienceAnswer:stagePayload.floorExperienceAnswer});
       var response = selectRewardUnlocked_(stagePayload.runId, rewardId, authToken, rewardView);
       if (!response.nextBattlePending) return response;
       startBattle(stagePayload.runId);

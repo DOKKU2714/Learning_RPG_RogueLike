@@ -108,6 +108,22 @@ const modal = html.slice(html.indexOf('  <div id="rewardModal"'), html.indexOf('
       rarity:getComputedStyle(el).getPropertyValue('--reward-gem-color').trim(),
     })));
     assert.deepEqual(dustColors.map(c => c.particle), ['rgb(223, 114, 255)','rgb(255, 141, 54)','rgb(255, 74, 74)']);
+    await seek(-700);
+    const chargeTint = () => cards.evaluateAll(nodes => nodes.map(card => ({
+      color:getComputedStyle(card.querySelector('.reward-charge-star'),'::before').backgroundColor,
+      aura:Number(getComputedStyle(card.querySelector('.reward-charge-light'),'::after').opacity),
+    })));
+    const initialTint = await chargeTint();
+    initialTint.forEach(state => { assert.equal(state.color,'rgb(255, 255, 255)'); assert.equal(state.aura,0); });
+    await seek(-350);
+    const halfwayTint = await chargeTint();
+    halfwayTint.forEach((state,i) => {
+      assert.notEqual(state.color,initialTint[i].color,'rarity tint begins before the card morph');
+      assert.notEqual(state.color,dustColors[i].particle,'tint blends gradually');
+      assert.ok(state.aura > 0 && state.aura < .65);
+    });
+    await seek(0);
+    assert.deepEqual((await chargeTint()).map(state => state.color),dustColors.map(state => state.particle));
     await seek(-150);
     const sustainedCharge = await cards.evaluateAll(nodes => nodes.map(card => ({
       scale:Number(getComputedStyle(card.querySelector('.reward-charge-light')).scale),
@@ -160,6 +176,16 @@ const modal = html.slice(html.indexOf('  <div id="rewardModal"'), html.indexOf('
     assert.ok(lingering.opacity>0 && lingering.opacity<1 && lingering.glow>0,'bright afterglow fades after the fast collapse');
     if (process.env.REWARD_DUST_SCREENSHOT) await page.screenshot({path:process.env.REWARD_DUST_SCREENSHOT});
     await seek(2800);
+    const halos = await cards.evaluateAll(nodes => nodes.map(card => {
+      const style=getComputedStyle(card,'::before');
+      return {shadow:style.boxShadow,opacity:Number(style.opacity),layer:style.zIndex,blur:style.filter};
+    }));
+    halos.forEach((state,i) => {
+      assert.ok(state.shadow.includes(dustColors[i].particle),'persistent halo uses the card rarity color');
+      assert.ok(state.opacity > 0 && state.opacity < .6,'halo stays subtle after the reveal');
+      assert.equal(state.layer,'-1','halo sits behind the card content');
+      assert.equal(state.blur,'blur(8px)');
+    });
     assert.ok((await page.locator('.reward-dust-particle').evaluateAll(nodes => nodes.map(el => getComputedStyle(el).opacity))).every(v => Number(v) === 0), 'burst finishes instead of running indefinitely');
     assert.equal(await cards.nth(0).locator('.reward-reveal-flash').evaluate(el => getComputedStyle(el).visibility), 'hidden');
     await page.setViewportSize({width:390,height:844});

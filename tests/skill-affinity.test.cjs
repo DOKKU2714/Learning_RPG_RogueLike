@@ -11,7 +11,7 @@ function setup(rows=definitions){
     normalizeOwnedSkills_:skills=>skills.map(s=>typeof s==='string'?{skillId:s}:s),
     normalizeSkillTags_:tags=>Array.isArray(tags)?tags:JSON.parse(tags || '[]'),
     pickRandom_:pool=>pool[0],pickWeighted_:(pool,weights)=>{captured=[...weights];return pool[0];}});
-  for(const name of ['getSkillAffinityWeights_','pickSkillWithAffinity_'])vm.runInContext(extract(name),c);
+  for(const name of ['getSkillRewardConcept_','getSkillAffinityWeights_','pickSkillWithAffinity_'])vm.runInContext(extract(name),c);
   return {c,weights:()=>captured};
 }
 
@@ -23,6 +23,12 @@ test('skill affinity: each owned concept skill adds 50% without a cap',()=>{
     const weights=c.getSkillAffinityWeights_(candidates,owned.slice(0,count).map(s=>s.skillId));
     assert.deepEqual([...weights],[1+count*0.5,1]);
   }
+});
+
+test('first selected concept adds another 100% to the per-skill bonus',()=>{
+  const {c}=setup();const burn=definitions.filter(s=>s.concept==='발화'),frost=definitions.find(s=>s.concept==='빙결');
+  assert.deepEqual([...c.getSkillAffinityWeights_([burn[3],frost],[burn[0].skillId],'burn')],[2.5,1]);
+  assert.deepEqual([...c.getSkillAffinityWeights_([burn[3],frost],[burn[0].skillId,burn[1].skillId],'burn')],[3,1]);
 });
 
 test('skill affinity: concepts are independent, levels and duplicate IDs do not inflate counts',()=>{

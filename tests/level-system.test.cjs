@@ -5,7 +5,9 @@ const fs = require('node:fs');
 const {context,start,copy} = require('./run-session.test.cjs');
 
 function game() {
-  const x=context(), view=start(x), c=x.c;
+  const x=context(),c=x.c;
+  x.seed(c.DB_SHEETS.SKILLS,[...c.MASTER_SKILLS,...require('./fixtures/skill-rework-2026-10-17.json').skills]);
+  const view=start(x);
   const snapshot=view.gameDataSnapshot;
   const battle=copy(view.battle);
   const engine=vm.runInNewContext(c.getLocalRunEngineSource_(),{Date:c.Date,Math:c.Math});
@@ -43,7 +45,8 @@ test('level system: server and browser kill awards are identical and never dupli
   g.c.dealDamageToMonster_(server,server.monsters[0],1000,{damageKind:'direct'});
   g.engine.damage(g.snapshot,browser,browser.monsters[0].instanceId,1000,{damageKind:'direct'});
   assert.deepEqual(copy(server.player.baseStats.levelProgress),copy(browser.player.baseStats.levelProgress));
-  assert.equal(browser.player.baseStats.levelProgress.xp,30);
+  assert.equal(browser.player.baseStats.levelProgress.level,2);
+  assert.equal(browser.player.baseStats.levelProgress.xp,22);
   g.engine.settleExperience(browser);g.engine.settleExperience(browser);
   assert.equal(browser.lastTurnEvents.filter(e=>e.type==='experience').length,1);
 });
@@ -53,11 +56,13 @@ test('level system: boss grants exactly 100 XP without forcing a level, excess c
   battle.player.baseStats.levelProgress={level:4,xp:0,points:0,spent:{}};
   const m={instanceId:'boss',monsterId:'boss',type:'boss',currentHp:0,experience:1};
   const event=c.awardMonsterExperience_(battle,m);
-  assert.equal(event.amount,100);assert.equal(event.after.level,4);assert.equal(event.after.points,0);
+  assert.equal(event.amount,100);assert.equal(event.after.level,5);assert.equal(event.after.points,3);
   m.instanceId='next';m.experience=600;
   const next=c.awardMonsterExperience_(battle,m);
-  assert.equal(next.amount,100);assert.equal(next.levelsGained,1);assert.equal(next.after.points,3);
-  assert.equal(next.after.xp,25);
+  assert.equal(next.amount,100);assert.equal(next.levelsGained,1);
+  assert.equal(next.after.xp,55);
+  assert.equal(next.after.level,6);
+  assert.equal(next.after.points,6);
 });
 
 test('level system: level skill upgrade is limited, validated, saved once and restored',()=>{
@@ -89,7 +94,8 @@ test('level system: sixth stage offers rest and owned upgradable skills',()=>{
   g.c.clearTableCache_(g.c.DB_SHEETS.SKILLS);
   const choices=g.c.buildFloorRestChoices_(g.c.requireRun_(g.view.runId),g.battle,'',1,[{skillId:'upgradable',level:2},{skillId:'fixed',level:1}],[]);
   assert.equal(choices[0].type,'rest');
-  assert.deepEqual(copy(choices.slice(1).map(r=>[r.type,r.targetId])),[['skillUpgrade','upgradable']]);
+  assert.equal(choices[1].type,'experience');
+  assert.deepEqual(copy(choices.slice(2).map(r=>[r.type,r.targetId])),[['skillUpgrade','upgradable']]);
 });
 
 test('level system: allocations validate atomically and preserve fractional stat increments',()=>{
@@ -175,7 +181,9 @@ test('level system: investments and skill upgrades survive prefetched rewards, n
   const points=g.battle.player.baseStats.levelProgress.points;
   assert.ok(points>=3);
   g.engine.allocate(g.snapshot,g.battle,{hpRegen:points});
-  g.engine.upgrade(g.snapshot,g.battle,g.view.availableSkills,'skill_basic_slash');
+  const earned=g.engine.rewardChoices(g.snapshot,g.battle,g.view.availableSkills);
+  const acquired=g.engine.claimLevelReward(g.snapshot,g.battle,g.view.availableSkills,earned[0].rewardId);
+  g.engine.upgrade(g.snapshot,g.battle,acquired,'skill_basic_slash');
   p.battle=serializer.buildStageResultBattlePayload(g.battle);
   const reward=g.c.previewRewardChoicesForStageResult(copy(p),'auth');
   assert.equal(reward.regenAmount,prepared.regenAmount+points);
@@ -191,6 +199,7 @@ test('level system: investments and skill upgrades survive prefetched rewards, n
   assert.equal(next.localRunState.statsJson,checked.localRunState.statsJson);
   assert.equal(next.localRunState.skillsJson,checked.localRunState.skillsJson);
   assert.equal(JSON.parse(next.localRunState.skillsJson).find(s=>s.skillId==='skill_basic_slash').level,2);
+  assert.ok(JSON.parse(next.localRunState.skillsJson).some(s=>s.skillId===earned[0].targetId));
 });
 
 test('level system: malformed or inflated progression cannot bypass run stat validation',()=>{
@@ -204,4 +213,94 @@ test('level system: malformed or inflated progression cannot bypass run stat val
   tampered.player.baseStats.levelProgress.level=1;
   tampered.player.baseStats.levelProgress.points=3;
   assert.throws(()=>g.c.validateLevelStatsForCommit_(run,g.battle,tampered),/포인트/);
+});
+
+test('level system: first kill always levels up, and 25 baseline stages give 15 skill rewards',()=>{
+  const {c}=game();
+  const first={stage:{floor:1,stage:1},player:{stats:{hp:30}},lastTurnEvents:[]};
+  c.awardMonsterExperience_(first,{instanceId:'first',type:'normal',currentHp:0,experience:1,experienceQuestions:{count:1,attemptTotal:1,correctTotal:0,efficiencyTotal:0}});
+  assert.equal(first.player.baseStats.levelProgress.level,2);
+  const battle={player:{stats:{hp:30}},lastTurnEvents:[]};
+  for(let floor=1;floor<=5;floor++)for(let stage=1;stage<=5;stage++){
+    battle.stage={floor,stage};
+    c.awardMonsterExperience_(battle,{instanceId:`${floor}-${stage}`,type:stage===5?'boss':'normal',currentHp:0});
+  }
+  assert.equal(battle.player.baseStats.levelProgress.level-1,15);
+  assert.equal(battle.player.baseStats.levelProgress.points,45);
+});
+
+test('level system: skill reward candidates match on server/browser and survive repeated saving',()=>{
+  const g=game(),battle=g.battle;
+  battle.player.baseStats.levelProgress={level:3,xp:0,points:0,spent:{}};
+  let owned=copy(g.view.availableSkills);
+  for(let level=2;level<=3;level++){
+    const choices=g.engine.rewardChoices(g.snapshot,battle,owned);
+    assert.equal(choices.length,3);
+    assert.deepEqual(copy(choices.map(r=>r.rewardId)),copy(g.c.getLevelRewardChoices_(g.view.runId,level,owned,battle).map(r=>r.rewardId)));
+    assert.deepEqual(copy(g.engine.rewardChoices(g.snapshot,battle,owned)),copy(choices),'reopening cannot reroll rewards');
+    assert.throws(()=>g.engine.claimLevelReward(g.snapshot,battle,owned,'invalid'));
+    owned=g.engine.claimLevelReward(g.snapshot,battle,owned,choices[0].rewardId);
+  }
+  assert.equal(battle.player.baseStats.levelProgress.skillRewards.length,2);
+  assert.throws(()=>g.engine.claimLevelReward(g.snapshot,battle,owned,'invalid'));
+  const state=JSON.parse(g.view.localRunState.stageStateJson);state.battle=battle;
+  g.c.saveStageState_(g.view.runId,state,battle);
+  const once=g.c.requireRun_(g.view.runId).skillsJson;
+  g.c.saveStageState_(g.view.runId,state,battle);
+  assert.equal(g.c.requireRun_(g.view.runId).skillsJson,once);
+  assert.deepEqual(copy(JSON.parse(once).map(s=>s.skillId)),copy(owned.map(s=>s.skillId)));
+  const forged=copy(battle.player.baseStats.levelProgress);forged.skillRewards[0]='forged';
+  assert.throws(()=>g.c.validateLevelSkillUpgrades_(g.c.requireRun_(g.view.runId),forged));
+});
+
+test('level system: intermission questions stay at next-stage difficulty and prioritize unseen or lowest accuracy',()=>{
+  const {c}=game();
+  const questions=[{questionId:'outside',difficulty:1,totalCount:0},{questionId:'unseen',difficulty:2,totalCount:0},
+    {questionId:'weak',difficulty:2,totalCount:10,correctCount:1},{questionId:'strong',difficulty:2,totalCount:10,correctCount:9}].map(q=>({...q,status:'approved'}));
+  assert.equal(c.pickFloorExperienceQuestion_(questions,2).questionId,'unseen');
+  assert.equal(c.pickFloorExperienceQuestion_(questions.filter(q=>q.questionId!=='unseen'),2).questionId,'weak');
+  assert.equal(c.pickFloorExperienceQuestion_(questions,9),null);
+});
+
+test('level system: intermission experience uses exact efficiency percent and preserves overflow',()=>{
+  const {c}=game();
+  const reward={questionView:{question:{type:'multipleChoice',answer:'1'},maxMs:10000,questionModifiers:{}}};
+  const state={stats:{levelProgress:{level:2,xp:50,points:0,spent:{}}}};
+  const answer={selectedAnswer:'1',selectedChoiceIndex:'1',elapsedMs:6500,wrongCountAfterTimeout:0};
+  const amount=c.applyFloorExperienceReward_(state,reward,answer);
+  assert.equal(amount,85);
+  assert.equal(state.stats.levelProgress.level,4);
+  assert.equal(state.stats.levelProgress.xp,10);
+  assert.equal(c.applyFloorExperienceReward_(state,reward,{...answer,giveUp:true}),0);
+  assert.throws(()=>c.applyFloorExperienceReward_(state,reward,{...answer,selectedAnswer:'2',selectedChoiceIndex:'2'}));
+});
+
+test('level system: first reward is always common and themed, including a successful reroll',()=>{
+  const g=game();g.battle.player.baseStats.levelProgress={level:2,xp:0,points:3,spent:{}};
+  for(let i=0;i<80;i++) {
+    const choices=g.c.getLevelRewardChoices_('run-'+i,2,[],g.battle);
+    assert.equal(choices.length,3);
+    choices.forEach(r=>{assert.equal(r.rarity,'common');assert.ok(g.c.getSkillRewardConcept_(g.snapshot.skills.find(s=>s.skillId===r.targetId)));});
+  }
+  const before=g.engine.rewardChoices(g.snapshot,g.battle,[]);
+  const question={workbookId:'w',questionId:'reroll-q',type:'multipleChoice',answer:'1',difficulty:1,totalCount:5,correctCount:2};
+  const record={question,signature:g.c.signLocalQuestionSnapshot_(question),answer:{selectedAnswer:'1',selectedChoiceIndex:'1'}};
+  assert.equal(g.engine.rerollLevelReward(g.snapshot,g.battle,record),true);
+  const after=g.engine.rewardChoices(g.snapshot,g.battle,[]);
+  after.forEach(r=>{assert.equal(r.rarity,'common');assert.ok(!before.some(old=>old.targetId===r.targetId));});
+  assert.throws(()=>g.engine.rerollLevelReward(g.snapshot,g.battle,record));
+  const owned=g.engine.claimLevelReward(g.snapshot,g.battle,[],after[0].rewardId);
+  assert.deepEqual(copy(g.c.validateLevelSkillUpgrades_(g.view.localRunState,g.battle.player.baseStats.levelProgress).map(s=>s.skillId)),copy(owned.map(s=>s.skillId)));
+  const forged=copy(g.battle.player.baseStats.levelProgress);forged.skillRewardRerolls[2].answer.selectedAnswer='2';forged.skillRewardRerolls[2].answer.selectedChoiceIndex='2';
+  assert.throws(()=>g.c.validateLevelSkillUpgrades_(g.view.localRunState,forged));
+});
+
+test('level system: failed reroll preserves the original candidates and consumes the attempt',()=>{
+  const g=game();g.battle.player.baseStats.levelProgress={level:2,xp:0,points:3,spent:{}};
+  const before=g.engine.rewardChoices(g.snapshot,g.battle,[]);
+  const question={workbookId:'w',questionId:'reroll-q',type:'multipleChoice',answer:'1',difficulty:1,totalCount:5};
+  const record={question,signature:g.c.signLocalQuestionSnapshot_(question),answer:{selectedAnswer:'2',selectedChoiceIndex:'2'}};
+  assert.equal(g.engine.rerollLevelReward(g.snapshot,g.battle,record),false);
+  assert.deepEqual(copy(g.engine.rewardChoices(g.snapshot,g.battle,[])),copy(before));
+  assert.throws(()=>g.engine.rerollLevelReward(g.snapshot,g.battle,record));
 });

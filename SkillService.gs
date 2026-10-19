@@ -1664,7 +1664,7 @@ function executeCombatActions_(battleState, skill, actions, targets, context) {
         if (action.retainEffectId && !retained) throw new Error('유지할 방어막 효과가 없습니다.');
         target.shield = Number(target.shield || 0) + amount;
         if (retained) retained.retainedShield = Number(retained.retainedShield || 0) + amount;
-        battleState.lastTurnEvents.push({actor:'player',type:'guard',shield:amount,skillId:skill.skillId});
+        battleState.lastTurnEvents.push({actor:'player',type:'guard',shield:amount,skillId:skill.skillId,message:skill.name+'으로 방어막 '+amount+'을 만들었습니다.'});
       } else if (action.operation === 'heal' && target.currentHp === undefined) {
         var previousHp=Number(target.hp || 0);
         target.hp = Math.min(Number(target.maxHp || target.stats.hp || 1), Number(target.hp || 0) + amount);

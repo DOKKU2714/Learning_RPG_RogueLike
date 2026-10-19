@@ -54,7 +54,7 @@ function generateRewardChoices(runId, stageId, authToken) {
 
   var choices = isFloorRestChoice
     ? buildFloorRestChoices_(run, stageState.battle, rewardGroupId, Number(stage.floor || run.currentFloor), ownedSkills, ownedItems)
-    : pickRewardChoices_(rewardGroupId, Number(stage.floor || run.currentFloor), ownedSkills, ownedItems);
+    : [buildStageContinueChoice_()];
   var currencyAmount = isFloorRestChoice
     ? previewCurrencyReward_(rewardGroupId)
     : grantCurrencyForRun_(run, stageState, rewardGroupId).amount;
@@ -124,11 +124,11 @@ function prepareRewardChoicesDuringBattle(stagePayload, authToken) {
       putChunkedRunCache_(key, safeJsonStringify_(view));
       return view;
     });
-    return syncQuestionUnderstandingForRun_(stagePayload.runId, stagePayload.questionUnderstanding, authToken, response);
+    return encodeRewardRpcResponse_(syncQuestionUnderstandingForRun_(stagePayload.runId, stagePayload.questionUnderstanding, authToken, response), stagePayload);
   } finally { RUN_SESSION_LOCK_HELD_ = previousLockHeld; lock.releaseLock(); }
 }
 
-function finalizePreparedRewardTransitions_(view, run) {
+function finalizePreparedRewardTransitions_(view, run, payload) {
   var moved = buildNextStageMoveForRun_(run, getStageState_(run)).run;
   if (moved.status === STATUS.RUN_CLEARED) return view;
   var stage = loadStage(buildStageId_(moved.currentFloor, moved.currentStage));
@@ -142,6 +142,15 @@ function finalizePreparedRewardTransitions_(view, run) {
       var child = first.localTransition;
       var ghost = selectPlayerGhostForBattle_(nextRun, nextStage, getStageState_(nextRun), 'battle_local_' + child.seed + '_1');
       Object.keys(restViews).forEach(function(id) {
+        var battle=payload && payload.battle;
+        if(battle && battle.player) {
+          var skills=validateLevelSkillUpgrades_(run,ensureLevelProgress_(battle.player));
+          restViews[id].choices=(restViews[id].choices || []).filter(function(r){return r.type!=='skillUpgrade';}).concat(
+            getLevelSkillUpgradeOptions_(battle,skills).map(function(owned){
+              var row=findCachedRowByKey_(DB_SHEETS.SKILLS,'skillId',owned.skillId,600);
+              return sanitizeRewardForClient_(adaptRewardForChoice_(buildAutoSkillUpgradeReward_(row),skills),battle);
+            }));
+        }
         restViews[id].localTransition.ghostSelection = ghost;
         signLocalRewardView_(restViews[id]);
       });
@@ -225,7 +234,7 @@ function previewRewardChoicesForStageResult(stagePayload, authToken) {
           || plan.stageId !== buildStageId_(planRun.currentFloor, planRun.currentStage)) throw new Error('보상 준비 정보가 현재 전투와 다릅니다.');
         view = refreshPreparedRewardView_(planRun, stagePayload, plan);
         prepareRewardRerollQuestion_(view, planRun, stagePayload);
-        finalizePreparedRewardTransitions_(view, planRun);
+        finalizePreparedRewardTransitions_(view, planRun, stagePayload);
       } else {
         view = previewRewardChoicesForStageResult_(stagePayload, authToken);
       }
@@ -241,7 +250,7 @@ function previewRewardChoicesForStageResult(stagePayload, authToken) {
       }
       return view;
     }, !stagePayload.localAdvanceEnabled && !stagePayload.rewardRerollAction);
-    return syncQuestionUnderstandingForRun_(stagePayload.runId, stagePayload.questionUnderstanding, authToken, response);
+    return encodeRewardRpcResponse_(syncQuestionUnderstandingForRun_(stagePayload.runId, stagePayload.questionUnderstanding, authToken, response), stagePayload);
   } finally { RUN_SESSION_LOCK_HELD_ = previousLockHeld; lock.releaseLock(); }
 }
 
@@ -315,6 +324,16 @@ function handleRewardReroll_(payload, authToken, cacheKey) {
 }
 
 function prepareRewardRerollQuestion_(view, run, payload) {
+  if(view.floorRestChoice) {
+    var experience=(view.choices || []).filter(function(r){return r.type==='experience';})[0];
+    if(experience && !experience.questionView) {
+      try { experience.questionView=buildFloorExperienceQuestion_(run,payload); }
+      catch(error) { experience.questionView=null; }
+    }
+    view.rerollUnavailable=true;view.rerollUnavailableReason='';
+    return view;
+  }
+  if((view.choices || []).some(function(r){return r.type==='stageContinue';}))return view;
   if (!view.rerollUsed && (!view.rerollQuestion || !(Number(view.rerollQuestion.totalCount) > 0))) {
     var question;
     // Optional preloading must not prevent claiming normal rewards when the question sheet is unavailable.
@@ -412,7 +431,7 @@ function previewRewardChoicesForStageResult_(stagePayload, authToken, excludedCh
     });
     var choices = isFloorRestChoice
       ? buildFloorRestChoices_(run, battleAfterPreviewRegen, rewardGroupId, Number(stage.floor || run.currentFloor), ownedSkills, ownedItems, excludedChoices)
-      : pickRewardChoices_(rewardGroupId, Number(stage.floor || run.currentFloor), ownedSkills, ownedItems, excludedChoices);
+      : [buildStageContinueChoice_()];
     rewardState = {
       stageId: currentStageId,
       rewardGroupId: rewardGroupId,
@@ -481,9 +500,10 @@ function shouldRegenerateRewardChoices_(rewardState, ownedItems) {
   if (rewardState.floorRestChoice && choices.some(function(choice) { return choice && (choice.type === 'rewardClaim' || choice.type === REWARD_TYPES.SKILL); })) {
     return true;
   }
+  if(rewardState.floorRestChoice && !choices.some(function(choice){return choice.type==='experience';}))return true;
   if (!rewardState.floorRestChoice) {
     return choices.some(function(choice) {
-      return choice.type !== REWARD_TYPES.SKILL;
+      return choice.type !== 'stageContinue';
     });
   }
   if (!config.ensureItemRewardChoice) {
@@ -493,6 +513,10 @@ function shouldRegenerateRewardChoices_(rewardState, ownedItems) {
     return false;
   }
   return typeof hasAvailableItemReward_ === 'function' && hasAvailableItemReward_(ownedItems);
+}
+
+function buildStageContinueChoice_() {
+  return {rewardId:'stage_continue',type:'stageContinue',description:'다음 스테이지',rarity:RARITIES.COMMON,value:0};
 }
 
 function isFloorRestStage_(stage) {
@@ -535,11 +559,54 @@ function buildFloorRestRewardChoice_(run, battle) {
 }
 
 function buildFloorRestChoices_(run, battle, rewardGroupId, floor, ownedSkills, ownedItems, excludedChoices) {
+  var questionView=null;
+  try { questionView=buildFloorExperienceQuestion_(Object.assign({},run,{currentFloor:floor}),{battle:battle}); } catch(error) { /* Other rest actions remain available without a matching question. */ }
   var upgrades = normalizeOwnedSkills_(ownedSkills).map(function(owned) {
     var row = findCachedRowByKey_(DB_SHEETS.SKILLS,'skillId',owned.skillId,600);
     return row && isSkillUpgradable_(row) ? adaptRewardForChoice_(buildAutoSkillUpgradeReward_(row),ownedSkills) : null;
   }).filter(Boolean);
-  return [buildFloorRestRewardChoice_(run, battle)].concat(upgrades);
+  return [buildFloorRestRewardChoice_(run, battle),{
+    rewardId:'floor_rest_experience',type:'experience',description:'경험치 획득',rarity:RARITIES.COMMON,value:0,questionView:questionView,
+    detailDescription:'다음 스테이지 수준의 미출제·낮은 정답률 문제를 풉니다. 문제풀이 효율 %만큼 경험치를 획득합니다.'
+  }].concat(upgrades);
+}
+
+function pickFloorExperienceQuestion_(questions, difficulty) {
+  var pool=(questions || []).filter(function(q){return q.status===STATUS.QUESTION_APPROVED && Number(q.difficulty)===Number(difficulty);});
+  var unseen=pool.filter(function(q){return !(Number(q.totalCount)>0);});
+  if(unseen.length)return pickRandom_(unseen);
+  var lowest=Infinity, candidates=[];
+  pool.forEach(function(q){var rate=Number(q.correctCount || 0)/Number(q.totalCount);if(rate<lowest){lowest=rate;candidates=[];}if(rate===lowest)candidates.push(q);});
+  return candidates.length ? pickRandom_(candidates) : null;
+}
+
+function buildFloorExperienceQuestion_(run,payload) {
+  var next=loadStage(buildStageId_(Number(run.currentFloor)+1,1));
+  var difficulty=calculateRequiredQuestionDifficulty_(next,0,[],{});
+  var question=pickFloorExperienceQuestion_(getRewardRerollQuestions_(run,payload),difficulty);
+  if(!question)return null;
+  var sourceBattle=payload && payload.battle || getStageState_(run).battle || {};
+  var battle=Object.assign({},sourceBattle,{player:Object.assign({baseStats:safeJsonParse_(run.statsJson,{})},sourceBattle.player || {},
+    {itemModifiers:buildItemModifiers_(safeJsonParse_(run.itemsJson,[]))})});
+  var modifiers=getItemQuestionModifiers_(battle,question);
+  var localQuestion=sanitizeQuestionForBattleCache_(question,run.playerId);
+  localQuestion.snapshotSignature=signLocalQuestionSnapshot_(localQuestion);
+  return {question:localQuestion,finalDifficulty:difficulty,
+    questionModifiers:modifiers,maxAnswerEfficiency:calculateMaxAnswerEfficiency_(modifiers),
+    maxMs:calculateFinalQuestionTimeLimitForQuestion_(difficulty,[],question,modifiers)};
+}
+
+function applyFloorExperienceReward_(runState,reward,answer) {
+  var view=reward.questionView;
+  if(!view || !answer)throw new Error('경험치 문제를 먼저 풀어 주세요.');
+  var elapsed=Number(answer.elapsedMs),wrong=Number(answer.wrongCountAfterTimeout || 0);
+  if(!isFinite(elapsed)||elapsed<0||!isFinite(wrong)||wrong<0||wrong!==Math.floor(wrong))throw new Error('경험치 문제 풀이 기록이 올바르지 않습니다.');
+  var correct=!answer.giveUp && isCorrectAnswer_(view.question,answer.selectedAnswer,answer.selectedChoiceIndex,answer.selectedAnswerText);
+  if(!correct && !answer.giveUp)throw new Error('경험치 문제를 완료해 주세요.');
+  var efficiency=answer.giveUp ? 0 : calculateEfficiency(correct,Math.max(0,view.maxMs-elapsed),view.maxMs,wrong,view.questionModifiers,view.question);
+  var amount=Math.max(0,Math.round(efficiency*100));
+  grantLevelExperience_({baseStats:runState.stats},amount);
+  return amount;
 }
 
 function buildFloorRestRewardViewForRun_(run, stageState) {
@@ -715,6 +782,10 @@ function selectRewardUnlocked_(runId, rewardId, authToken, rewardView) {
   var reward = rewardState.choices.filter(function(choice) {
     return choice.rewardId === rewardId;
   })[0];
+  if(reward && reward.type==='experience' && rewardView) {
+    var issued=(rewardView.choices || []).filter(function(r){return r.rewardId===rewardId;})[0];
+    if(issued && issued.questionView)reward=issued;
+  }
   if (!reward && rewardState.floorRestChoice && rewardView && rewardView.choices && rewardView.choices.length) {
     rewardState.choices = rewardView.choices;
     rewardState.floorRestChoice = !!rewardView.floorRestChoice;
@@ -769,6 +840,8 @@ function selectRewardUnlocked_(runId, rewardId, authToken, rewardView) {
     applyItemReward_(runState, appliedReward);
   } else if (appliedReward.type === REWARD_TYPES.REST) {
     applyRestReward_(runState, appliedReward);
+  } else if (appliedReward.type === 'experience') {
+    appliedReward=Object.assign({},appliedReward,{experienceAmount:applyFloorExperienceReward_(runState,appliedReward,rewardView && rewardView.floorExperienceAnswer)});
   }
   var bonusItemReward = null;
   markTiming('rewardApplied');
@@ -1706,26 +1779,27 @@ function pickSkillWithAffinity_(pool,ownedSkills,config) {
   return pickWeighted_(pool,getSkillAffinityWeights_(pool,ownedSkills));
 }
 
-function getSkillAffinityWeights_(pool,ownedSkills) {
+function getSkillRewardConcept_(skill) {
+  if(!skill)return '';
+  var aliases={strike:'strike','타격':'strike',assassin:'assassin','암살':'assassin',burn:'burn','발화':'burn',
+    frost:'frost','빙결':'frost',poison:'poison','중독':'poison',luck:'luck','행운':'luck',shock:'shock','감전':'shock'};
+  var tags=[skill.concept || ''].concat(normalizeSkillTags_(skill.tags));
+  for(var i=0;i<tags.length;i++){var key=String(tags[i]).trim().toLowerCase();if(aliases[key])return aliases[key];}
+  return '';
+}
+
+function getSkillAffinityWeights_(pool,ownedSkills,firstConcept) {
   var rows=getSkillRowsForRewards_(),byId={},counts={},seen={};
   rows.forEach(function(skill){byId[skill.skillId]=skill;});
-  function concept(skill){
-    if(!skill)return '';
-    var aliases={strike:'strike','타격':'strike',assassin:'assassin','암살':'assassin',burn:'burn','발화':'burn',
-      frost:'frost','빙결':'frost',poison:'poison','중독':'poison',luck:'luck','행운':'luck',shock:'shock','감전':'shock'};
-    var tags=[skill.concept || ''].concat(normalizeSkillTags_(skill.tags));
-    for(var i=0;i<tags.length;i++){var key=String(tags[i]).trim().toLowerCase();if(aliases[key])return aliases[key];}
-    return '';
-  }
   normalizeOwnedSkills_(ownedSkills || []).forEach(function(owned){
     if(seen[owned.skillId])return;
     seen[owned.skillId]=true;
-    var tag=concept(byId[owned.skillId]);
+    var tag=getSkillRewardConcept_(byId[owned.skillId]);
     if(tag)counts[tag]=Number(counts[tag] || 0)+1;
   });
   return pool.map(function(skill){
-    var tag=concept(byId[skill.skillId || skill.targetId] || skill);
-    return 1+Number(counts[tag] || 0)*0.5;
+    var tag=getSkillRewardConcept_(byId[skill.skillId || skill.targetId] || skill);
+    return 1+Number(counts[tag] || 0)*0.5+(tag && tag===firstConcept ? 1 : 0);
   });
 }
 
@@ -1741,6 +1815,7 @@ function applyCombatRewardBonuses_(view,battle,ownedSkills,ownedItems) {
   var bonus=battle && battle.combatRuntime && battle.combatRuntime.reward;
   if(!bonus || view.floorRestChoice || battle.status!==STATUS.BATTLE_VICTORY)return view;
   view.currencyAmount=combatCurrencyReward_(battle,Number(view.currencyAmount || 0));
+  if(view.choices.some(function(r){return r.type==='stageContinue';}))return view;
   var target=Math.max(1,Number(getRewardConfig_().choicesCount || 3))+Number(bonus.extraChoices || 0);
   var pool=getAvailableSkillRewardPool_('',ownedSkills,SKILL_REWARD_CONFIG).map(buildAutoSkillReward_);
   function identity(r){return String(r.type)+':'+String(r.targetId);}
@@ -1948,6 +2023,7 @@ function sanitizeRewardForClient_(reward, battleState) {
     skillDetail: buildRewardSkillDetail_(reward, battleState),
     itemDetail: itemDetail,
     claimReward: reward.claimReward || null,
+    questionView: reward.questionView || null,
     healAmount: Number(reward.healAmount || 0),
     currentHpAfterRest: Number(reward.currentHpAfterRest || 0),
     maxHpAfterRest: Number(reward.maxHpAfterRest || 0),
@@ -2174,4 +2250,13 @@ function requireRewardRunOwner_(run, authToken) {
   if (run.playerId !== player.playerId) {
     throw new Error('현재 플레이어의 런이 아닙니다.');
   }
+}
+
+// Opt in on the existing RPC so older open pages still receive objects.
+// Strings bypass Apps Script's nested-object return marshalling.
+function encodeRewardRpcResponse_(response, payload) {
+  if (!payload || payload.rewardResponseFormat !== 'json') return response;
+  var json = JSON.stringify(response);
+  if (!json) throw new Error('보상 응답을 직렬화하지 못했습니다.');
+  return json;
 }

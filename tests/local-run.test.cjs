@@ -58,7 +58,7 @@ function localGame() {
   game.choose=(type)=>{
     if(!prepared)game.prepare();
     const {payload,reward}=prepared;
-    const choice=reward.choices.find(c=>c.type===type)||reward.choices.find(c=>c.type!=='rest')||reward.choices[0];
+    const choice=reward.choices.find(c=>c.type===type)||reward.choices.find(c=>c.type==='stageContinue')||reward.choices.find(c=>c.type==='rest')||reward.choices[0];
     const selectedAtMs=x.c.Date.now();
     view=engine.advance(run,initial.gameDataSnapshot,payload,choice.rewardId,reward,{selectedAtMs});
     run=view.localRunState;
@@ -81,7 +81,42 @@ test('reward selection and next battle creation complete without any server oper
   const response=g.choose();
   assert.equal(response.battle.stage.stage,2);assert.equal(response.battle.status,'active');
   assert.equal(g.x.reads.length,0);assert.equal(g.x.writes.length,0);
-  assert.equal(g.journal.length,1);assert.ok(response.availableSkills.length);
+  assert.equal(g.journal.length,1);assert.equal(response.availableSkills.length,JSON.parse(g.run.skillsJson).length,'stage clears do not grant skills');
+});
+
+test('intermission experience replays once with the same levels and XP as the browser',()=>{
+  const g=localGame();
+  g.x.c.readRunQuestionsForBattle_=()=>[{questionId:'rest-q',workbookId:'w',creatorId:'p',type:'multipleChoice',status:'approved',
+    prompt:'One?',choice1:'1',choice2:'2',choice3:'3',choice4:'4',answer:'1',difficulty:2,totalCount:0,correctCount:0}];
+  for(let i=0;i<5;i++){g.prepare();g.choose();}
+  assert.equal(g.run.currentStage,6);
+  const {payload,reward}=g.prepare();
+  const xp=reward.choices.find(c=>c.type==='experience');
+  assert.equal(xp.questionView.finalDifficulty,2);
+  assert.equal(xp.questionView.question.questionId,'rest-q');
+  payload.floorExperienceAnswer={selectedAnswer:'1',selectedChoiceIndex:'1',elapsedMs:Math.round(xp.questionView.maxMs*.65),wrongCountAfterTimeout:0};
+  payload.answerLogs=[{...payload.floorExperienceAnswer,actionType:'floorExperience',questionId:'rest-q',
+    questionSnapshot:copy(xp.questionView.question),questionSignature:xp.questionView.question.snapshotSignature,
+    finalDifficulty:xp.questionView.finalDifficulty,maxTimeMs:xp.questionView.maxMs}];
+  const client=fs.readFileSync('Battle.html','utf8');
+  const ui=vm.createContext({currentView:g.view,currentQuestionView:xp.questionView,
+    getBattleStatStartingStats:p=>p.startingStats || {},copyStageResultValue:(value,fallback)=>copy(value===undefined ? fallback : value)});
+  for(const name of ['buildStageResultBattlePayload','buildStageResultAnswerLogPayload','buildSignedQuestionResultSnapshot'])
+    vm.runInContext(client.match(new RegExp('    function '+name+'\\([^]*?\\n    \\}'))[0],ui);
+  payload.battle=copy(ui.buildStageResultBattlePayload(payload.battle));
+  payload.answerLogs=payload.answerLogs.map(log=>copy(ui.buildStageResultAnswerLogPayload(log)));
+  const result=g.choose('experience');
+  assert.equal(result.selectedReward.experienceAmount,85);
+  assert.equal(result.battle.player.baseStats.levelProgress.level,3);
+  assert.equal(result.battle.player.baseStats.levelProgress.xp,17);
+  const checked=g.x.c.withRunSession_(g.run.runId,g.token,'auth',()=>{
+    g.x.c.replayLocalRunTransitions_(g.journal,'auth');return {run:copy(g.x.c.requireRun_(g.run.runId))};
+  });
+  assert.equal(checked.run.statsJson,g.run.statsJson);
+  const replayed=g.x.c.withRunSession_(g.run.runId,checked.runSessionToken,'auth',()=>{
+    g.x.c.replayLocalRunTransitions_(g.journal,'auth');return {run:copy(g.x.c.requireRun_(g.run.runId))};
+  });
+  assert.equal(replayed.run.statsJson,g.run.statsJson);
 });
 
 test('AP tradeoff items apply to the next battle and refill consistently with server rules',()=>{

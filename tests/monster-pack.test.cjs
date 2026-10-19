@@ -212,7 +212,7 @@ test('monster pack: edited sheet stats, multiplier, period and duration drive se
 
 test('monster pack: browser executes the common monster action after the shared control gate',()=>{
   const html=fs.readFileSync('Battle.html','utf8');
-  const start=html.indexOf('function buildClientPassTurnView()'),end=html.indexOf('function decrementClientSkillCooldowns',start);
+  const start=html.indexOf('function buildClientPassTurnView('),end=html.indexOf('function decrementClientSkillCooldowns',start);
   const section=html.slice(start,end);
   assert.ok(section.indexOf('commonTurn.blocked')<section.indexOf('LearningRpgLocalRunEngine.monsterAction('));
   assert.ok(section.includes('RULE_ENGINE_SHARED.clearCombatTurnShield(monster)'));

@@ -129,8 +129,10 @@ test('reward UI displays the prefetched plan while victory finalization is still
   const choice=plan.choices[0].rewardId;
   c.selectRewardChoice(choice); c.selectRewardChoice(choice);
   assert.equal(selected,0); assert.equal(c.rewardSelectionApplying,true);
-  const finalized=g.x.c.previewRewardChoicesForStageResult(requested,'auth');
-  callback(finalized);
+  const finalizedResponse=g.x.c.previewRewardChoicesForStageResult(requested,'auth');
+  assert.equal(typeof finalizedResponse,'string');
+  const finalized=JSON.parse(finalizedResponse);
+  callback(finalizedResponse);
   assert.equal(selected,1); assert.equal(c.currentRewardView.localTransitionToken,finalized.localTransitionToken);
   assert.equal(c.currentRewardView.preparedDuringBattle,undefined);
 });

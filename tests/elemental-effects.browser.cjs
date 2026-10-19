@@ -14,13 +14,14 @@ const html=`<!doctype html><html><head><meta name="viewport" content="width=devi
 </head><body><h1>상태 효과 · Elemental VFX</h1><p>발화 / 폭발 / 냉기 / 빙결 / 중독 / 감전</p><div class="gallery">
 ${types.map((type,i)=>`<section class="tile"><h2>${labels[i]}</h2><div class="monster-slot" data-monster-id="${type}"><div class="compact-monster monster-image-sprite"><img class="monster-art" src="${art}"></div><div class="monster-hp-text"></div></div></section>`).join('')}
 </div><div class="player-compact-panel"><div id="playerHpText"></div></div><script>
-${['getDamageVisualType','playDamageTypeEffect','playLegacyDamageTypeEffect','playTurnEffectEvent','animateMonsterHit','animatePlayerHit'].map(extract).join('\n')}
+${['getDamageVisualType','playDamageTypeEffect','playLegacyDamageTypeEffect','playTurnEffectEvent','animateMonsterHit','animatePlayerHit','setMonsterSpriteState','resetMonsterSpriteState'].map(extract).join('\n')}
 var currentView={battle:{}};var ATTACK_EFFECT_DELAY_MS=0,DEATH_STATE_HOLD_MS=0;
 function cssEscape(v){return CSS.escape(v)}
 function pushLog(){} function finishActionDescription(){return Promise.resolve()}
 function skippableAutoDelay(){return Promise.resolve()}
 function applyMonsterDamageDelta(){} function applyPlayerDamageDelta(){} function spawnFloatingDamage(){}
 function isMonsterDefeatedInDom(){return false}
+function playBattleHitSound(){}
 function animatePlayerAttack(){throw Error('Generic weapon effect must not play for elemental damage')}
 function playEfficientAttackSound(){throw Error('Generic hit effect must not play for elemental damage')}
 </script></body></html>`;
@@ -42,6 +43,8 @@ function playEfficientAttackSound(){throw Error('Generic hit effect must not pla
    assert.equal(await page.locator('.element-vfx').count(),6);
    assert.equal(await page.locator('.element-ice').count(),1);
    assert.equal(await page.locator('.bolt-core').count(),10);
+   assert.equal(await page.locator('.element-vfx-burn .element-particle svg').count(),24,'fire uses animated flame silhouettes');
+   assert.equal(await page.locator('.element-vfx-burn .element-particle').first().evaluate(e=>getComputedStyle(e).backgroundImage),'none','fire has no orange circle background');
    assert.equal(await page.locator('.monster-art.element-tint-poison').count(),1);
    assert.equal(await page.locator('.incoming-slash,.incoming-fire,.monster-hit-red').count(),0);
    await page.evaluate(()=>document.getAnimations().forEach(a=>{a.pause();a.currentTime=a.effect.target.closest('.element-vfx-chill')?650:390;}));
@@ -51,6 +54,7 @@ function playEfficientAttackSound(){throw Error('Generic hit effect must not pla
     for(const type of ['burn','explosion','chill','freeze','poison','shock'])await playTurnEffectEvent({actor:'effect',target:'monster',targetMonsterId:type,effectId:type==='explosion'?'':'effect_v2_'+type,damageKind:type==='explosion'?'explosion':'dot',damage:3,hpDamage:3,attackEffect:'slash'});
     await playTurnEffectEvent({actor:'effect',target:'player',effectId:'effect_v2_poison',damage:2,hpDamage:2});
    });
+   assert.equal(await page.locator('.monster-dot-hit').count(),6,'elemental damage keeps a red hit reaction');
    await page.waitForFunction(()=>!document.querySelector('.element-vfx'));
    await page.evaluate(()=>{for(let i=0;i<12;i++)playDamageTypeEffect('effect_v2_shock','monster','shock')});
    assert.equal(await page.locator('.element-vfx-shock').count(),3);

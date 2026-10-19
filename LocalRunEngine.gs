@@ -25,7 +25,7 @@ function getLocalRunEngineSource_() {
   [commitStageResultUnlocked_, selectRewardUnlocked_, startBattle, buildBattleStateView_,
     applySkillEffect, processSkillTriggers_, processSkillFailPenaltyAfterAnswer_,
     tickEffectsAtTurnStart, tickEffectsAtTurnEnd, tickEffectsOnPlayerAction,
-     getAvailableSkills, normalizePlayerActionPoints_, refreshPreparedRewardView_,
+     getAvailableSkills, normalizePlayerActionPoints_, refreshPreparedRewardView_, getLevelRewardChoices_, applyLevelSkillReward_, applyLevelRewardReroll_,
      dealDamageToPlayer_, dealDamageToMonster_, beginCombatActorTurn_, clearPlayerTurnShield_, prepareCombatHit_, applyMonsterBurnDamage_, selectMonsterAction, executeMonsterKitIntent_, recordExperienceQuestion_, settleMonsterExperience_, allocateLevelStats_, getLevelStatOptions_, getLevelSkillUpgradeOptions_, applyLevelSkillUpgrade_, settleMonsterItemDrops_, decideMonsterItemDrop_].forEach(collect);
   var constants = { DB_SHEETS: DB_SHEETS, DB_COLUMNS: DB_COLUMNS, STATUS: STATUS, AVATAR_TYPES: AVATAR_TYPES,
     QUESTION_TYPES: QUESTION_TYPES, ACTION_TYPES: ACTION_TYPES, SKILL_TYPES: SKILL_TYPES, REWARD_TYPES: REWARD_TYPES,
@@ -36,9 +36,9 @@ function getLocalRunEngineSource_() {
     SKILL_UPGRADE_REWARD_CONFIG: SKILL_UPGRADE_REWARD_CONFIG, REWARD_CONFIG: REWARD_CONFIG,
     GAME_RULES: GAME_RULES, PLAYER_GHOST_FLOOR_CONFIGS: PLAYER_GHOST_FLOOR_CONFIGS,
     ALLOWED_REWARD_STAT_KEYS_: ALLOWED_REWARD_STAT_KEYS_, MASTER_ITEMS: MASTER_ITEMS,
-    MASTER_EFFECTS: MASTER_EFFECTS, MASTER_MONSTERS: MASTER_MONSTERS, MASTER_SETTINGS: MASTER_SETTINGS };
+    MASTER_EFFECTS: MASTER_EFFECTS, MASTER_MONSTERS: MASTER_MONSTERS, MASTER_SETTINGS: MASTER_SETTINGS, MASTER_SKILLS: MASTER_SKILLS };
   var declarations = Object.keys(constants).map(function(name) { return 'var ' + name + '=' + JSON.stringify(constants[name]) + ';'; }).join('\n');
-   var source = '(function(nativeDate,nativeMath){\n' + declarations + '\n' + adapters + '\n' + getSharedRuleEngineSource_() + '\n' + sources.join('\n') + '\nreturn {advance: advanceLocalRun, reward: refreshLocalReward, skill: applyLocalBattleSkill, trigger: processLocalBattleTrigger, tick: tickLocalBattleEffects, skills: getLocalBattleSkills, damage:applyLocalCombatDamage, playerDamage:applyLocalPlayerDamage, actorTurn:beginLocalActorTurn, hitStats:localCombatHitStats, monsterIntent:localMonsterIntent, monsterAction:localMonsterAction, experienceQuestion:recordExperienceQuestion_, settleExperience:settleMonsterExperience_, levelOptions:getLevelStatOptions_, levelRequired:levelExperienceRequired_, allocate:allocateLocalLevelStats, upgradeOptions:localLevelUpgradeOptions, upgrade:localLevelUpgrade, itemDrops:localMonsterItemDrops, decideDrop:localDecideMonsterItemDrop};\n})(Date,Math)';
+   var source = '(function(nativeDate,nativeMath){\n' + declarations + '\n' + adapters + '\n' + getSharedRuleEngineSource_() + '\n' + sources.join('\n') + '\nreturn {advance: advanceLocalRun, reward: refreshLocalReward, skill: applyLocalBattleSkill, trigger: processLocalBattleTrigger, tick: tickLocalBattleEffects, skills: getLocalBattleSkills, damage:applyLocalCombatDamage, playerDamage:applyLocalPlayerDamage, actorTurn:beginLocalActorTurn, hitStats:localCombatHitStats, monsterIntent:localMonsterIntent, monsterAction:localMonsterAction, experienceQuestion:recordExperienceQuestion_, settleExperience:settleMonsterExperience_, levelOptions:getLevelStatOptions_, levelRequired:levelExperienceRequired_, allocate:allocateLocalLevelStats, rewardChoices:localLevelRewardChoices, claimLevelReward:localLevelReward, rerollLevelReward:localLevelRewardReroll, upgradeOptions:localLevelUpgradeOptions, upgrade:localLevelUpgrade, itemDrops:localMonsterItemDrops, decideDrop:localDecideMonsterItemDrop};\n})(Date,Math)';
   if (/\b(?:SpreadsheetApp|PropertiesService|CacheService|LockService|UrlFetchApp|ScriptApp)\b/.test(source)) throw new Error('클라이언트 전투 규칙에 서버 의존성이 남아 있습니다.');
   return source;
 }
@@ -80,6 +80,15 @@ function getLocalRunEngineAdapters_() {
   }
   function localLevelUpgradeOptions(snapshot, battle, skills) {
     return withLocalBattleRules(snapshot,battle,function(){return getLevelSkillUpgradeOptions_(battle,skills);});
+  }
+  function localLevelRewardChoices(snapshot,battle,skills) {
+    return withLocalBattleRules(snapshot,battle,function(){var p=ensureLevelProgress_(battle.player);return getLevelRewardChoices_(battle.runId,(p.skillRewards || []).length+2,skills,battle);});
+  }
+  function localLevelReward(snapshot,battle,skills,rewardId) {
+    return withLocalBattleRules(snapshot,battle,function(){return applyLevelSkillReward_(battle,skills,rewardId);});
+  }
+  function localLevelRewardReroll(snapshot,battle,record) {
+    return withLocalBattleRules(snapshot,battle,function(){return applyLevelRewardReroll_(battle,record);});
   }
   function localLevelUpgrade(snapshot, battle, skills, skillId) {
     return withLocalBattleRules(snapshot,battle,function(){return applyLevelSkillUpgrade_(battle,skills,skillId);});
@@ -140,6 +149,8 @@ function getLocalRunEngineAdapters_() {
         var resultPayload = cloneLocal(payload); resultPayload.answerLogs = [];
         commitStageResultUnlocked_(resultPayload, 'local');
       }
+      rewardView=cloneLocal(rewardView);
+      rewardView.floorExperienceAnswer=payload.floorExperienceAnswer;
       var response = selectRewardUnlocked_(localRun.runId, rewardId, 'local', rewardView);
       if (response.nextBattlePending) {
         startBattle(localRun.runId);
@@ -177,6 +188,7 @@ function getLocalRunEngineAdapters_() {
   function getWorkbookPlayWindow_() { return localPlayWindow; }
   function requireRunBeforeWorkbookDeadline_() { if (localPlayWindow.endsAtMs && Date.now() >= localPlayWindow.endsAtMs) throw new Error('문제집 플레이 가능 시간이 종료되었습니다.'); }
   function getBattleClientConfig_() { return localSnapshot.clientConfig || {}; }
+  function getAppSettings() { return localSnapshot.clientConfig || {}; }
   function getConfiguredBasePlayerStats_() { return cloneLocal(localSnapshot.basePlayerStats || DEFAULT_BASE_PLAYER_STATS); }
   function getBattleStartingStats_() { return getConfiguredBasePlayerStats_(); }
   function getSharedRuleEngine_() { return RULE_ENGINE_SHARED; }

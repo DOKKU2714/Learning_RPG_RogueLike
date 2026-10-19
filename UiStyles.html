@@ -2064,7 +2064,7 @@
   }
 
   .floor-intermission-actions {
-    grid-template-columns: repeat(2, minmax(96px, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     align-content: center;
   }
 
@@ -3384,12 +3384,14 @@
     pointer-events: none;
     left: 50%;
     top: 50%;
-    z-index: 60;
-    width: clamp(92px,18vmin,132px);
-    height: clamp(110px,22vmin,158px);
-    font-size: 15px;
+    z-index: 9050;
+    width: clamp(190px,32vmin,300px);
+    height: clamp(230px,39vmin,360px);
+    font-size: 22px;
     animation: player-guard-appear 1150ms ease-out forwards;
   }
+  .player-shield-label { position:absolute; top:25%; font-size:clamp(17px,3vmin,25px); color:#eaf7ff; }
+  .player-shield-amount { position:absolute; top:44%; font-size:clamp(46px,7vmin,76px); color:#fff; text-shadow:0 3px 0 #205493,0 0 16px #70caff; line-height:1; }
   @keyframes player-guard-appear {
     0% { opacity: 0; transform: translate(-50%,calc(-50% + 14px)) scale(.72); }
     20% { opacity: 1; transform: translate(-50%,-50%) scale(1.04); }
@@ -3762,6 +3764,9 @@
     --reward-halo: 8px;
     --reward-radiance: .16;
     --reward-reveal-time: calc(var(--reward-charge-time) + 520ms);
+    --reward-tint-time: min(700ms, var(--reward-charge-time));
+    --reward-tint-delay: max(0ms, calc(var(--reward-charge-time) - 700ms));
+    isolation: isolate;
     animation: reward-card-materialize 300ms var(--reward-reveal-time) ease-out backwards;
   }
   .stage-clear-reward-overlay .reward-choice-card.rarity-uncommon {
@@ -3812,13 +3817,21 @@
     filter: drop-shadow(-.65px 0 1px #83e5ff) drop-shadow(.65px 0 1px #ffb7e6);
     animation: reward-star-flicker 240ms linear infinite;
   }
+  .reward-charge-light::after {
+    content: '';
+    position: absolute; inset: -35%;
+    background: radial-gradient(ellipse, var(--reward-gem-color), transparent 65%);
+    mix-blend-mode: screen;
+    animation: reward-charge-tint var(--reward-tint-time) var(--reward-tint-delay) ease-in-out both;
+  }
   .reward-charge-star::before,
   .reward-charge-star::after {
     content: '';
     clip-path: polygon(50% 0%, 54% 44%, 100% 50%, 54% 56%, 50% 100%, 46% 56%, 0% 50%, 46% 44%);
   }
   .reward-charge-star::before {
-    background: linear-gradient(0deg, #d5e8ff, #fff 35% 65%, #e6ddff);
+    background: #fff;
+    animation: reward-star-tint var(--reward-tint-time) var(--reward-tint-delay) ease-in-out both;
   }
   .reward-charge-star::after {
     background: linear-gradient(35deg, #78dcff, #fff 45% 55%, #ffb4e9);
@@ -3882,8 +3895,11 @@
   }
   .stage-clear-reward-overlay .reward-choice-card::before {
     content: '';
-    box-shadow: 0 0 var(--reward-halo) #fff, inset 0 0 var(--reward-halo) #fff;
-    opacity: calc(var(--reward-radiance) * .45);
+    z-index: -1;
+    box-shadow: 0 0 var(--reward-halo) var(--reward-gem-color),
+      0 0 calc(var(--reward-halo) * 2) 8px var(--reward-gem-glow);
+    filter: blur(8px);
+    opacity: calc(.3 + var(--reward-radiance) * .3);
     animation: reward-halo-appear 400ms calc(var(--reward-reveal-time) + 100ms) ease-out backwards;
   }
   .stage-clear-reward-overlay .reward-choice-card::after { content: none; }
@@ -3929,9 +3945,16 @@
     to { opacity: .9; transform: rotate(325deg) scale(1.15); }
   }
   @keyframes reward-card-rarity-flash {
-    0%, 24% { opacity: 0; }
-    29%, 36% { opacity: 1; }
+    0%, 36% { opacity: 1; }
     46%, 100% { opacity: 0; }
+  }
+  @keyframes reward-charge-tint {
+    from { opacity: 0; }
+    to { opacity: .65; }
+  }
+  @keyframes reward-star-tint {
+    from { background-color: #fff; }
+    to { background-color: var(--reward-gem-color); }
   }
   @keyframes reward-flash-envelope {
     0% { opacity: 0; }
@@ -3989,6 +4012,8 @@
     .stage-clear-reward-overlay .reward-choice-card::after { animation: none; }
     .stage-clear-reward-overlay .reward-reveal-effect,
     .stage-clear-reward-overlay .reward-reveal-flash::after,
+    .stage-clear-reward-overlay .reward-charge-light::after,
+    .stage-clear-reward-overlay .reward-charge-star::before,
     .stage-clear-reward-overlay .reward-light-card::after,
     .stage-clear-reward-overlay .reward-reveal-effect * { animation: none; }
     .reward-reveal-effect { display: none; }
@@ -4809,6 +4834,29 @@
   .ap-icons { gap: 5px; flex-wrap: wrap; }
   .ap-pip { width: 22px; height: 18px; border: 1px solid #6e7763; transform: skewX(-12deg); background: #141915; }
   .ap-pip.filled { border-color: #f5da87; background: linear-gradient(180deg,#fff0aa,#c4a648); box-shadow: 0 0 6px #e9c65c55,inset 0 2px 0 #fff8; }
+  .skill-ap-gauge {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: flex-end;
+    flex: 0 0 auto;
+    gap: 5px;
+    max-width: 112px;
+    padding: 7px 9px;
+    border: 1px solid #bfa458;
+    border-radius: 4px;
+    background: #141915;
+    box-shadow: 0 0 10px #e9c65c22;
+    color: #ffe08a;
+    line-height: 1;
+  }
+  .skill-ap-label { font-size: 11px; font-weight: 900; white-space: nowrap; }
+  .skill-ap-gauge .ap-icons { display: flex; justify-content: flex-end; gap: 4px; }
+  .skill-ap-gauge .ap-pip { display: block; flex: 0 0 18px; width: 18px; height: 18px; }
+  .skill-detail-header > .skill-ap-gauge { margin-left: auto; }
+  .skill-detail-header:has(> .skill-ap-gauge) { flex-wrap: wrap; }
+  .skill-detail-header:has(> .skill-ap-gauge) > .skill-detail-name { flex: 1 1 100px; white-space: normal; overflow-wrap: anywhere; }
+  .reward-choice-card:has(> .reward-choice-ap) { padding-top: 72px; }
+  .reward-choice-ap { position: absolute; top: 12px; right: 12px; pointer-events: none; }
   .ap-cost-preview { min-width: 45px; color: #ffdb7f; font-size: 11px; }
   .ap-will-spend { animation: ap-spend-preview 650ms ease-in-out infinite; }
   .disabled-actions .ap-will-spend { animation: none; }
@@ -4846,7 +4894,7 @@
     padding: 6px; max-height: none; overflow: visible;
     grid-template-columns: repeat(4,minmax(0,1fr));
   }
-  .battle-hud > .floor-intermission-actions { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .battle-hud > .floor-intermission-actions { grid-template-columns: repeat(3,minmax(0,1fr)); }
   .battle-hud > .compact-actions.skill-select-mode { width: min(100%,600px); }
   .battle-hud > .battle-log-compact,
   .battle-hud.narration-mode > .battle-log-compact {
@@ -5253,10 +5301,10 @@
   }
   .experience-orb { position:fixed; width:10px; height:10px; margin:-5px; border-radius:50%; background:#a5ffab; box-shadow:0 0 8px #66ff86,0 0 20px #2bb44b; pointer-events:none; z-index:9000; }
   .experience-text { color:#91ff9c!important; text-shadow:0 2px 2px #102519,0 0 10px #238c3b; white-space:nowrap; }
-  .level-up-banner { display:none; position:fixed; inset:0; align-items:center; justify-content:center; z-index:9100; color:#bcff8f; font-size:clamp(40px,8vw,80px); font-weight:900; text-shadow:4px 4px #17482a,0 0 30px #6dfb86; pointer-events:none; }
+  .level-up-banner { display:none; position:fixed; inset:0; align-items:center; justify-content:center; z-index:9100; color:#bcff8f; font-size:clamp(70px,15vw,160px); font-weight:900; text-shadow:4px 4px #17482a,0 0 30px #6dfb86; pointer-events:none; }
   .level-up-banner.active { display:flex; }
-  .level-up-banner::before { content:''; position:absolute; inset:0; background:#efffe9; animation:level-up-flash .9s ease-out both; }
-  .level-up-banner span { position:relative; z-index:1; animation:level-up-pop .9s ease both; }
+  .level-up-banner::before { content:''; position:absolute; inset:0; background:#efffe9; animation:level-up-flash 1.5s ease-out both; }
+  .level-up-banner span { position:relative; z-index:1; animation:level-up-pop 1.5s ease both; }
   @keyframes level-up-flash { 0% {opacity:0;} 12% {opacity:.95;} 45% {opacity:.2;} 100% {opacity:0;} }
   .experience-gain-text { position:fixed; bottom:24px; left:50%; transform:translateX(-50%); color:#b5ffab; font-weight:900; font-size:24px; text-shadow:0 2px 3px #102519,0 0 14px #4fdb70; z-index:9050; pointer-events:none; }
   @keyframes level-up-pop { 0% { opacity:0; transform:scale(.7); } 25%,75% { opacity:1; transform:scale(1); } 100% { opacity:0; transform:scale(1.06); } }
@@ -5303,8 +5351,17 @@
   .element-vfx { position:absolute; inset:0; z-index:22; pointer-events:none; overflow:visible; isolation:isolate; }
   .element-vfx .element-particle { display:block; position:absolute; left:var(--x); top:var(--y); width:var(--size); height:var(--size); opacity:0; animation-delay:var(--delay); animation-fill-mode:both; }
   .element-vfx-burn { filter:drop-shadow(0 0 6px #f66a1299); }
-  .element-vfx-burn .element-particle { width:calc(var(--size)*1.15); height:calc(var(--size)*2.3); border-radius:70% 20% 55% 50%; background:radial-gradient(ellipse at 50% 80%,#ffffcf 0%,#ffd66b 22%,#ff8a22 48%,#e83c0c55 75%,transparent 85%); transform-origin:50% 90%; animation-name:element-flame; animation-duration:850ms; mix-blend-mode:screen; }
-  .element-vfx-burn .element-particle::after { content:''; position:absolute; inset:40% 30% 8%; border-radius:70% 30% 50% 50%; background:#fff3ad; filter:blur(1px); }
+  .element-vfx-burn .element-particle { width:var(--size); height:calc(var(--size)*2.5); background:none; transform-origin:50% 95%; animation:element-flame 1100ms ease-in-out var(--delay) infinite both; mix-blend-mode:screen; }
+  .element-vfx-burn .element-particle svg {width:100%;height:100%;overflow:visible;filter:drop-shadow(0 0 3px #ff4f15);}
+  .element-vfx-burn .element-particle::after { content:none; }
+  .element-vfx:not(.ice-persistent):not(.chill-persistent) {animation:element-vfx-linger var(--element-duration,2600ms) ease-out both;}
+  @keyframes element-vfx-linger {0%{opacity:0} 8%,78%{opacity:1} 100%{opacity:0}}
+  .monster-dot-hit .monster-art {animation:monster-dot-impact 700ms ease-out both !important;}
+  @keyframes monster-dot-impact {0%,100%{transform:translateX(0)} 12%,40%,65%{filter:sepia(1) saturate(9) hue-rotate(320deg) brightness(1.3) drop-shadow(0 0 12px #ff342c);transform:translateX(-4px)} 25%,52%{filter:sepia(1) saturate(7) hue-rotate(320deg);transform:translateX(4px)}}
+  .monster-art.element-tint-burn {animation:element-burn-tint 3200ms ease-out both;}
+  .monster-art.element-tint-shock {animation:element-shock-tint 2400ms steps(1,end) both;}
+  @keyframes element-burn-tint {0%,100%{filter:drop-shadow(0 18px 16px #000b)} 15%,45%,75%{filter:sepia(1) saturate(5) hue-rotate(325deg) brightness(1.1) drop-shadow(0 0 10px #ff4b25)}}
+  @keyframes element-shock-tint {0%,100%{filter:drop-shadow(0 18px 16px #000b)} 12%,28%,46%,68%,84%{filter:sepia(1) saturate(3) hue-rotate(110deg) brightness(1.6) drop-shadow(0 0 12px #64fff2)}}
   @keyframes element-flame { 0%{opacity:0;transform:scale(.2) rotate(-18deg)} 18%{opacity:1;transform:scale(1) rotate(10deg)} 40%{transform:translate(3px,-4px) scale(.8,1.2) rotate(-12deg)} 68%{opacity:.9;transform:translate(-2px,-15px) scale(.65,1.1) rotate(14deg)} 100%{opacity:0;transform:translate(var(--drift),-46px) scale(.1,.6)} }
   .element-vfx-explosion::before { content:''; position:absolute; inset:8%; border-radius:50%; background:radial-gradient(circle,#fffef3 0 9%,#fff6b9 15%,#ffbd46 27%,#ff5a14b0 43%,#bc2c1520 65%,transparent 72%); animation:element-detonate 850ms ease-out both; }
   .element-vfx-explosion::after { content:''; position:absolute; inset:15%; border-radius:50%; border:3px solid #fff5c8; box-shadow:0 0 12px #ff8b28,inset 0 0 20px #ffb658; animation:element-shockwave 700ms ease-out both; }
@@ -5339,7 +5396,10 @@
   .bolt-corona {stroke:#00efdf;stroke-width:9;filter:blur(3px);}
   .bolt-core {stroke:#d9fffb;stroke-width:2;filter:drop-shadow(0 0 3px #00fff2);}
   @keyframes element-electric {0%{opacity:0} 10%{opacity:1} 22%{opacity:.2} 30%{opacity:1} 45%{opacity:0} 58%{opacity:1} 76%{opacity:.3} 85%{opacity:1} 100%{opacity:0}}
+  .element-vfx-poison .element-particle,.element-vfx-chill:not(.chill-persistent) .element-particle {animation-iteration-count:2;}
+  .element-vfx-shock .element-particle {animation-iteration-count:3;}
   @media(prefers-reduced-motion:reduce) {
+    .element-vfx .element-particle {animation-iteration-count:1 !important;}
     .element-vfx .element-particle,.element-vfx .element-particle.element-smoke,.element-vfx::before,.element-vfx::after,.element-vfx .element-ice,.element-vfx .element-blast-core {animation-name:element-reduced;animation-duration:350ms;animation-delay:0ms;}
     .monster-art.element-tint-poison,.monster-art.element-tint-freeze {animation-duration:350ms;}
     @keyframes element-reduced {0%,100%{opacity:0} 30%,65%{opacity:.55}}

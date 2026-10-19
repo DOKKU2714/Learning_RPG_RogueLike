@@ -2150,7 +2150,87 @@ function ensureLevelProgress_(player) {
 }
 
 function levelExperienceRequired_(level) {
-  return 100 + 25 * (Math.max(1, Math.floor(Number(level) || 1)) - 1);
+  level = Math.max(1, Math.floor(Number(level) || 1));
+  // 20 normal kills + 5 bosses at 100% efficiency yield about 15 rewards.
+  return level === 1 ? 8 : 60 + 5 * (level - 2);
+}
+
+function grantLevelExperience_(player, amount) {
+  var progress = ensureLevelProgress_(player);
+  progress.xp += Math.max(0, Math.round(Number(amount) || 0));
+  while (progress.xp >= levelExperienceRequired_(progress.level)) {
+    progress.xp -= levelExperienceRequired_(progress.level);
+    progress.level += 1;
+    progress.points += 3;
+  }
+  return progress;
+}
+
+function getLevelRewardChoices_(runId, level, ownedSkills, battle, options) {
+  options=options || {};
+  var progress=battle && battle.player && battle.player.baseStats && battle.player.baseStats.levelProgress || {};
+  var reroll=options.reroll || (progress.skillRewardRerolls || {})[level];
+  var firstSkillId=options.firstSkillId || (progress.skillRewards || [])[0];
+  var firstConcept=level>2 ? getSkillRewardConcept_(findCachedRowByKey_(DB_SHEETS.SKILLS,'skillId',firstSkillId,600)) : '';
+  var rerolled=reroll && isLevelRewardRerollCorrect_(reroll);
+  var excluded=rerolled ? getLevelRewardChoices_(runId,level,ownedSkills,null,{firstSkillId:firstSkillId}).map(function(r){return r.targetId;}) : [];
+  var seed = 2166136261, key = String(runId) + ':level-skill:' + level + (rerolled ? ':reroll' : '');
+  for (var i=0;i<key.length;i++) seed=Math.imul(seed^key.charCodeAt(i),16777619)>>>0;
+  function pick(rows, weights) {
+    seed=(Math.imul(seed,1664525)+1013904223)>>>0;
+    var total=weights.reduce(function(sum,n){return sum+n;},0), roll=seed/4294967296*total;
+    for(var j=0;j<rows.length;j++){roll-=weights[j];if(roll<0)return rows[j];}
+    return rows[rows.length-1];
+  }
+  var rarities=[RARITIES.COMMON,RARITIES.UNCOMMON,RARITIES.RARE,RARITIES.EPIC,RARITIES.LEGENDARY,RARITIES.UNIQUE];
+  var pool=getAvailableSkillRewardPool_('',ownedSkills,SKILL_REWARD_CONFIG).slice().sort(function(a,b){return String(a.skillId).localeCompare(String(b.skillId));});
+  if(level===2)pool=pool.filter(function(s){return (normalizeRarity_(s.rarity) || RARITIES.COMMON)===RARITIES.COMMON && !!getSkillRewardConcept_(s);});
+  if(excluded.length) {
+    var fresh=pool.filter(function(s){return excluded.indexOf(s.skillId)<0;});
+    if(fresh.length>=Math.min(3,pool.length))pool=fresh;
+  }
+  var choices=[];
+  while(pool.length && choices.length<3) {
+    var rarity=level===2 ? RARITIES.COMMON : pick(rarities,rarities.map(function(r){return Number(SKILL_REWARD_CONFIG.rarityWeights[r] || 0);}));
+    var candidates=[];
+    for(var rank=rarities.indexOf(rarity);rank>=0 && !candidates.length;rank--) candidates=pool.filter(function(s){return normalizeRarity_(s.rarity)===rarities[rank];});
+    if(!candidates.length)candidates=pool;
+    var row=pick(candidates,getSkillAffinityWeights_(candidates,ownedSkills,firstConcept));
+    var reward=attachRewardRarity_(buildAutoSkillReward_(row));
+    choices.push(battle ? sanitizeRewardForClient_(reward,battle) : reward);
+    pool=pool.filter(function(s){return s.skillId!==row.skillId;});
+  }
+  return choices;
+}
+
+function isLevelRewardRerollCorrect_(record,workbookId) {
+  var question=record && record.question;
+  if(!question || !record.answer)throw new Error('새로고침 풀이 기록이 없습니다.');
+  var verified=verifyLocalQuestionSnapshot_(question,record.signature,workbookId || question.workbookId);
+  if(!verified)throw new Error('새로고침 문제를 검증할 수 없습니다.');
+  var answer=record.answer;
+  return !answer.giveUp && isCorrectAnswer_(question,answer.selectedAnswer,answer.selectedChoiceIndex,answer.selectedAnswerText);
+}
+
+function applyLevelRewardReroll_(battle,record) {
+  var progress=ensureLevelProgress_(battle.player),level=(progress.skillRewards || []).length+2;
+  if(level>progress.level)throw new Error('레벨업 보상이 없습니다.');
+  var records=progress.skillRewardRerolls || {};
+  if(records[level])throw new Error('새로고침은 한 번만 가능합니다.');
+  var correct=isLevelRewardRerollCorrect_(record);
+  progress.skillRewardRerolls=Object.assign({},records);progress.skillRewardRerolls[level]=JSON.parse(JSON.stringify(record));
+  return correct;
+}
+
+function applyLevelSkillReward_(battle, skills, rewardId) {
+  var progress=ensureLevelProgress_(battle.player), history=progress.skillRewards || [];
+  if(history.length>=progress.level-1)throw new Error('사용 가능한 레벨업 스킬 보상이 없습니다.');
+  var reward=getLevelRewardChoices_(battle.runId,history.length+2,skills,battle).filter(function(r){return r.rewardId===rewardId;})[0];
+  if(!reward)throw new Error('레벨업 스킬 보상 후보가 아닙니다.');
+  var state={skills:normalizeOwnedSkills_(skills)};
+  applySkillReward(state,reward);
+  progress.skillRewards=history.concat([reward.targetId]);
+  return normalizeOwnedSkills_(state.skills);
 }
 
 function recordExperienceQuestion_(battle, sample) {
@@ -2187,12 +2267,8 @@ function awardMonsterExperience_(battle, monster) {
   var floorMultiplier = 1 + 0.2*(Math.max(1,Number(battle.stage && battle.stage.floor || 1))-1);
   var amount = Math.max(1,Math.round(base*floorMultiplier*multiplier));
   if (boss) amount = 100;
-  progress.xp += amount;
-  while (progress.xp >= levelExperienceRequired_(progress.level)) {
-    progress.xp -= levelExperienceRequired_(progress.level);
-    progress.level += 1;
-    progress.points += 3;
-  }
+  if(progress.level===1 && Number(battle.stage && battle.stage.floor)===1 && Number(battle.stage && battle.stage.stage)===1) amount=Math.max(amount,levelExperienceRequired_(1));
+  grantLevelExperience_(battle.player,amount);
   var event = {actor:'effect',type:'experience',target:'player',monsterId:id,amount:amount,
     before:before,after:JSON.parse(JSON.stringify(progress)),levelsGained:progress.level-before.level,
     averageCorrectRate:averageRate,averageEfficiency:averageEfficiency};
@@ -2299,6 +2375,18 @@ function validateLevelSkillUpgrades_(run, progress) {
   var previous = safeJsonParse_(run.statsJson,{}).levelProgress || {};
   var before = previous.skillUpgrades || {}, after = progress.skillUpgrades || {};
   var owned = normalizeOwnedSkills_(safeJsonParse_(run.skillsJson,[])), total = 0;
+  var oldRewards=previous.skillRewards || [], rewards=progress.skillRewards || [];
+  if(!Array.isArray(rewards) || rewards.length<oldRewards.length || rewards.length>Number(progress.level || 1)-1)throw new Error('레벨업 스킬 보상 횟수가 올바르지 않습니다.');
+  oldRewards.forEach(function(id,index){if(rewards[index]!==id)throw new Error('이미 받은 스킬 보상을 변경할 수 없습니다.');});
+  var oldRerolls=previous.skillRewardRerolls || {},rerolls=progress.skillRewardRerolls || {};
+  Object.keys(oldRerolls).forEach(function(key){if(JSON.stringify(oldRerolls[key])!==JSON.stringify(rerolls[key]))throw new Error('새로고침 기록을 변경할 수 없습니다.');});
+  Object.keys(rerolls).forEach(function(key){var level=Number(key);if(!Number.isInteger(level)||level<2||level>Number(progress.level))throw new Error('새로고침 레벨이 올바르지 않습니다.');isLevelRewardRerollCorrect_(rerolls[key],run.workbookId);});
+  rewards.slice(oldRewards.length).forEach(function(id,index){
+    var level=oldRewards.length+index+2;
+    var reward=getLevelRewardChoices_(run.runId,level,owned,null,{firstSkillId:rewards[0],reroll:rerolls[level]}).filter(function(r){return r.targetId===id;})[0];
+    if(!reward)throw new Error('레벨업 스킬 보상 후보가 아닙니다.');
+    var state={skills:owned};applySkillReward(state,reward);owned=state.skills;
+  });
   Object.keys(before).concat(Object.keys(after)).filter(function(key,i,all){return all.indexOf(key)===i;}).forEach(function(id) {
     var count = Number(after[id] || 0), old = Number(before[id] || 0);
     if (!isFinite(count) || count<old || count!==Math.floor(count)) throw new Error('스킬 강화 기록이 올바르지 않습니다.');
@@ -2306,7 +2394,7 @@ function validateLevelSkillUpgrades_(run, progress) {
     total += count;
   });
   if (total>Number(progress.level || 1)-1) throw new Error('스킬 강화 횟수가 레벨 기록과 다릅니다.');
-  return owned.map(function(s){return Object.assign({},s,{level:s.level+Number(after[s.skillId] || 0)-Number(before[s.skillId] || 0)});});
+  return normalizeOwnedSkills_(owned).map(function(s){return Object.assign({},s,{level:s.level+Number(after[s.skillId] || 0)-Number(before[s.skillId] || 0)});});
 }
 
 function setActiveMonsterScoreContext_(battleState, questionId, efficiency) {
@@ -2563,11 +2651,17 @@ function commitStageResultUnlocked_(stagePayload, authToken) {
     if (!question) {
       throw new Error('문제를 찾을 수 없습니다: ' + answerPayload.questionId);
     }
-    validateQuestionAllowedForBattle_(question, player.playerId, battleState, answerPayload.finalDifficulty);
+    if(answerPayload.actionType==='floorExperience' && isFloorRestStage_(battleState.stage)) {
+      var challenge=(clientStageState.reward && clientStageState.reward.choices || []).filter(function(r){return r.type==='experience';})[0];
+      var issued=challenge && challenge.questionView;
+      if(!issued || issued.question.questionId!==question.questionId || Number(issued.finalDifficulty)!==Number(answerPayload.finalDifficulty))throw new Error('정비 구역 경험치 문제가 올바르지 않습니다.');
+      validateQuestionAllowedForBattle_(question,player.playerId,{stage:loadStage(buildStageId_(Number(battleState.stage.floor)+1,1)),player:battleState.player},issued.finalDifficulty);
+    } else validateQuestionAllowedForBattle_(question, player.playerId, battleState, answerPayload.finalDifficulty);
     var elapsedMs = Math.max(0, Number(answerPayload.elapsedMs || 0));
     var maxMs = Math.max(1, Number(answerPayload.maxTimeMs || answerPayload.maxMs || 1));
     var isCorrect = !answerPayload.giveUp && isCorrectAnswer_(question, answerPayload.selectedAnswer, answerPayload.selectedChoiceIndex, answerPayload.selectedAnswerText);
-    var efficiency = answerPayload.attemptOnly ? 0 : calculateEfficiency(isCorrect, Math.max(0, maxMs - elapsedMs), maxMs, Math.max(0, Number(answerPayload.wrongCountAfterTimeout || 0) - getSharedRuleEngine_().consumeWrongProtection(answerPenaltyBattle, answerPayload.wrongCountAfterTimeout)), getItemQuestionModifiers_(battleState, question), question);
+    var questionModifiersForCommit = answerPayload.actionType==='floorExperience' && issued ? issued.questionModifiers : getItemQuestionModifiers_(battleState,question);
+    var efficiency = answerPayload.attemptOnly ? 0 : calculateEfficiency(isCorrect, Math.max(0, maxMs - elapsedMs), maxMs, Math.max(0, Number(answerPayload.wrongCountAfterTimeout || 0) - getSharedRuleEngine_().consumeWrongProtection(answerPenaltyBattle, answerPayload.wrongCountAfterTimeout)), questionModifiersForCommit, question);
     var scoreDelta = 0;
     answerScoreDelta += scoreDelta;
     queueQuestionAttemptStats_(battleState, question, isCorrect, answerPayload, {

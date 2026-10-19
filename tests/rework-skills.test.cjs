@@ -3,6 +3,7 @@ const assert=require('node:assert/strict');
 const vm=require('node:vm');
 const {context,copy,start}=require('./run-session.test.cjs');
 const pack=require('./fixtures/skill-rework-2026-10-17.json');
+const clientSource=require('node:fs').readFileSync('Battle.html','utf8');
 const fixtures={};
 for(const mode of ['server','browser']){
  const x=context();x.seed(x.c.DB_SHEETS.SKILLS,pack.skills);x.seed(x.c.DB_SHEETS.EFFECTS,pack.effects);x.seed(x.c.DB_SHEETS.EFFECT_RULES,pack.effectRules);
@@ -325,4 +326,26 @@ for(const mode of ['server','browser'])for(const kind of ['normal','critical','m
  if(mode==='browser')g.local.skill({...g.snapshot,skills:g.snapshot.skills.map(s=>s.skillId===skill.skillId?skill:s)},g.battle,skill,'a',1,true);else g.x.c.applySkillEffect(g.battle,skill,1,true);
  assert.equal(g.p.hp,kind==='normal'?49:kind==='critical'?54:40);
  assert.equal(g.a.currentHp,kind==='normal'?982:kind==='critical'?973:1000);
+});
+
+test('coffin UI immediately ends the current turn, skips one owned turn, then thaws and heals',()=>{
+ const g=setup('browser');g.battle.monsters=[g.a];g.a.intent={actionType:'guard',value:1};g.use('frost',13);
+ const view={battle:g.battle,availableSkills:[],score:0};
+ const ui=vm.createContext({currentView:view,window:{LearningRpgLocalRunEngine:g.local},localGameDataSnapshot:g.snapshot,RULE_ENGINE_SHARED:g.engine,
+  normalizeClientActionPoints(){},normalizeBattleView:v=>v,captureClientMonsterScoreSnapshot:()=>({}),recordClientMonsterScoreContribution:()=>0,
+  getFirstAliveMonster:b=>b.monsters.find(m=>m.currentHp>0),hasClientEffect:()=>false,getClientIntentValue:i=>i.value,
+  applyClientTimedEffectDamage(){},calculateClientMonsterGuardShield:()=>1,
+  assignClientMonsterIntents(b){b.monsters.forEach(m=>m.intent={actionType:'guard',value:1});},refreshClientSkillAvailabilityForLocks(){}});
+ for(const name of ['hasLocalBattleSkillEngine','buildClientPassTurnView','decrementClientSkillCooldowns','advanceClientBlockedTurns'])
+  vm.runInContext(clientSource.match(new RegExp('    function '+name+'\\([^]*?\\n    \\}'))[0],ui);
+ const result=ui.advanceClientBlockedTurns(view);
+ assert.equal(result.battle.turn,3);assert.equal(g.engine.hasActionBlock(result.battle.player),false);
+ assert.equal(result.battle.player.hp,68);assert.equal(result.battle.player.shield,0);
+ assert.equal(result.battle.player.currentActionPoint,10);
+ assert.equal(result.battle.lastTurnEvents.filter(e=>e.actor==='monster').length,2);
+ assert.ok(result.battle.lastTurnEvents.some(e=>e.type==='guard' && /빙하의 관/.test(e.message)));
+ const textUi=vm.createContext({getSkillDisplayMetrics:()=>({shield:82})});
+ vm.runInContext(clientSource.match(/    function buildSkillDetailDescription\([^]*?\n    \}/)[0],textUi);
+ const description=textUi.buildSkillDetailDescription({...g.s('frost',13),level:3});
+ assert.match(description,/82/);assert.match(description,/30%/);assert.match(description,/즉시 턴을 종료/);
 });
