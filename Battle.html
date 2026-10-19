@@ -246,7 +246,9 @@
         </button>
         </span>
       </div>
+      <div id="rewardUpgradePreview" class="reward-upgrade-preview" hidden></div>
       <div class="reward-confirm-row">
+        <button id="rewardUpgradeCancelButton" class="secondary" type="button" onclick="cancelSkillUpgradePreview()" hidden>취소</button>
         <button id="rewardConfirmButton" type="button" onclick="confirmRewardChoice()" disabled>확인</button>
       </div>
       <div id="rewardMessage" class="message"></div>
@@ -449,6 +451,7 @@
     var battleRewardPreparation = null;
     var victoryRewardResultPayload = null;
     var victoryRewardFlowStarted = false;
+    var stageClearPresentation = null;
     var victoryRewardRecoveryComplete = false;
     var victoryRewardDisplayStarted = false;
     var victoryRegenPresentationKey = '';
@@ -516,7 +519,7 @@
       event.preventDefault();
       submitQuestionAnswer();
     });
-    var CLIENT_BASE_GUARD_SHIELD = 5;
+    var CLIENT_BASE_GUARD_SHIELD = 0;
     var MAX_QUESTION_DIFFICULTY = 5;
     var SHORT_ANSWER_TIME_MULTIPLIER = 1.2;
     var STAGE_INTRO_SEEN_PREFIX = 'learningRpgStageIntroSeen:v2:';
@@ -827,6 +830,11 @@
       preloadMissingBattleQuestionCache();
       startWorkbookDeadlineMonitor();
       renderBattle(currentView);
+      if (workbookDeadlineExpired) return;
+      if (currentView.battle.status === 'victory') {
+        finishBattleStartFade();
+        await presentStageClear();
+      }
       if (workbookDeadlineExpired) return;
       await presentLevelStatAllocation(currentView);
       await presentLevelSkillRewards(currentView);
@@ -6113,6 +6121,8 @@
       if (pendingServerTurnView && applyPendingServerTurnSync()) {
         renderBattle(currentView);
       }
+      if (currentView.battle.status === 'victory') await presentStageClear();
+      if (workbookDeadlineExpired) { isAnimatingTurn=false; return; }
       await presentLevelStatAllocation(currentView);
       await presentLevelSkillRewards(currentView);
       if (workbookDeadlineExpired) { isAnimatingTurn=false; return; }
@@ -6269,8 +6279,9 @@
       var battle = nextView.battle;
       battle.lastTurnEvents = [];
       if (actionType === 'guard') {
-        battle.player.shield = Number(battle.player.shield || 0) + 8;
-        battle.lastTurnEvents.push({ actor: 'player', type: 'guard', shield: 8, message: '수비로 방어막 8을 만들었습니다.' });
+        var shield = Math.max(0, Math.round(CLIENT_BASE_GUARD_SHIELD + getClientEffectiveStat(battle.player, 'defense')));
+        battle.player.shield = Number(battle.player.shield || 0) + shield;
+        battle.lastTurnEvents.push({ actor: 'player', type: 'guard', shield: shield, message: '수비로 방어막 ' + shield + '을 만들었습니다.' });
       } else {
         var target = findOptimisticTargetMonster(battle, currentQuestionView && currentQuestionView.targetId || '') || getFirstAliveMonster(battle);
         if (target) {
@@ -8225,9 +8236,32 @@
       return preload;
     }
 
+    function presentStageClear() {
+      var key = getVictoryRewardKey(currentView);
+      if (stageClearPresentation && stageClearPresentation.key === key) return stageClearPresentation.promise;
+      var presentation = { key: key, complete: false };
+      stageClearPresentation = presentation;
+      showTurnBanner('STAGE CLEAR');
+      if (window.LEARNING_RPG_AUDIO) window.LEARNING_RPG_AUDIO.playReward();
+      presentation.promise = new Promise(function(resolve) {
+        window.setTimeout(function() {
+          presentation.complete = true;
+          resolve();
+        }, 1200);
+      });
+      return presentation.promise;
+    }
+
     function openRewardAfterVictory() {
       if (workbookDeadlineExpired) return;
       if (!currentView || !currentView.battle || currentView.battle.status !== 'victory') return;
+      if (!stageClearPresentation || stageClearPresentation.key !== getVictoryRewardKey(currentView) || !stageClearPresentation.complete) {
+        var clearViewKey = getVictoryRewardKey(currentView);
+        presentStageClear().then(function() {
+          if (currentView && currentView.battle && getVictoryRewardKey(currentView) === clearViewKey) openRewardAfterVictory();
+        });
+        return;
+      }
       if ((typeof monsterDropActive!=='undefined' && monsterDropActive)
         || (typeof levelAllocationActive!=='undefined' && levelAllocationActive)
         || (typeof levelRewardResolve!=='undefined' && levelRewardResolve)) return;
@@ -8665,12 +8699,17 @@
 
     function renderRewardChoices(rewardView) {
       if (workbookDeadlineExpired) return;
+      var preview = document.getElementById('rewardUpgradePreview');
+      if (preview) { preview.hidden=true;preview.innerHTML=''; }
+      var cancel = document.getElementById('rewardUpgradeCancelButton');
+      if (cancel) cancel.hidden=true;
       var starLayer = document.getElementById('starBurstLayer');
       if (starLayer) starLayer.replaceChildren();
       selectedRewardId = '';
       rewardSelectionApplying = false;
       var rerollButton = document.getElementById('rewardRerollButton');
       if (rerollButton) {
+        rerollButton.hidden = false;
         rerollButton.style.display = '';
         rerollButton.disabled = !!rewardView.rerollUsed || !!rewardView.rerollUnavailable || !!rewardView.preparedDuringBattle || (!rewardView.isLevelReward && !rewardView.localTransitionToken);
         rerollButton.title = rewardView.rerollUsed ? '새로고침 사용 완료' : (rewardView.rerollUnavailableReason || '문제를 맞히면 새로고침 · 1회');
@@ -8681,6 +8720,7 @@
       }
       if(!rewardView.isLevelReward)animateStageClearRegen(rewardView);
       var rewardContainer = document.getElementById('rewardChoices');
+      rewardContainer.hidden=false;
       var rewardTitle = document.getElementById('rewardTitle');
       var rewardSubtitle = document.querySelector('.reward-clear-header p');
       if (rewardTitle) {
@@ -8698,8 +8738,10 @@
         var inlineSkill=!!reward.skillDetail && (reward.type==='skill' || reward.type==='skillUpgrade');
         var detailCard = inlineSkill ? renderInlineRewardSkillDescription(reward) : (reward.type==='stat'?'':renderRewardDetailCard(reward, rarity, name));
         if (reward.type === 'stat') {
-          title = name;
-          name = '스텟 증가';
+          title = reward.description || name;
+          var statValue = Number(reward.value || 0);
+          var statUnit = /^(accuracy|evasion|criticalRate|criticalDamage|questionEfficiency)$/.test(reward.targetId) ? '%' : '';
+          name = (statValue >= 0 ? '+' : '') + statValue + statUnit;
         } else if (reward.type === 'skill' || reward.type === 'skillUpgrade' || reward.type === 'item') {
           title = reward.skillDetail && reward.skillDetail.name || reward.itemDetail && reward.itemDetail.name
             || name.replace(/^(스킬 획득|스킬 강화|아이템 획득)\s*:\s*/, '');
@@ -8724,7 +8766,7 @@
             '<img class="reward-choice-icon" src="' + escapeHtml(iconUrl) + '" alt="" onerror="this.remove();">' +
           '</span>' +
           '<span class="reward-choice-body">' +
-            (inlineSkill ? '<strong class="reward-skill-concept skill-status-name skill-status-'+getRewardConceptClass(reward)+'">'+escapeHtml(name)+'</strong>' : '<strong>' + escapeHtml(name) + '</strong>') +
+            (inlineSkill ? '<strong class="reward-skill-concept skill-status-name skill-status-'+getRewardConceptClass(reward)+'">'+escapeHtml(name)+'</strong>' : '<strong'+(reward.type==='stat'?' class="reward-stat-increase"':'')+'>' + escapeHtml(name) + '</strong>') +
           '</span>' +
           detailCard +
         '</button>';
@@ -9163,7 +9205,8 @@
 
     function renderRewardActionPointBadge(cost) {
       cost=Math.max(0,Math.round(Number(cost) || 0));
-      return '<span class="reward-choice-ap reward-ap-badge" role="img" aria-label="행동력 '+cost+' 소비"><svg viewBox="0 0 64 64" aria-hidden="true"><path d="M0 0H64L0 64Z" fill="#352f19"/><path d="M0 0H64L0 64" fill="none" stroke="#f5da87" stroke-width="2"/><path d="M0 0H54L0 22Z" fill="#fff0aa" opacity=".2"/></svg><b>'+cost+'</b></span>';
+      var fontSize = Math.min(23, 48 / String(cost).length);
+      return '<span class="reward-choice-ap reward-ap-badge" style="--reward-ap-font-size:'+fontSize+'px" role="img" aria-label="행동력 '+cost+' 소비"><span class="ap-pip filled reward-ap-symbol" aria-hidden="true"></span><b>'+cost+'</b></span>';
     }
 
     function getRewardConceptClass(reward) {
@@ -9270,7 +9313,7 @@
     function renderSkillUpgradeComparePanel(skill, reward, rarity, title, label) {
       var meta = escapeHtml(skill.rarityLabel || reward.rarityLabel || getRewardRarityLabel(rarity)) + ' / Lv.' + escapeHtml(skill.level || 1);
       var description = buildSkillDetailDescription(skill, skill.description || reward.detailDescription || reward.description || '-');
-      return '<span class="skill-detail-header">' +
+      return '<span class="reward-upgrade-skill-icon"><img src="'+escapeHtml(getRewardIconUrl('skill',reward))+'" alt=""></span><span class="skill-detail-header">' +
           '<strong class="skill-detail-name">' + escapeHtml(title) + '</strong>' +
           renderSkillActionPointGauge(getSkillActionPointCost(skill)) +
         '</span>' +
@@ -9499,6 +9542,34 @@
       }
       document.getElementById('rewardMessage').textContent = selectedRewardId ? '선택: ' + selectedName + ' · Enter로 확정' : '보상 하나를 선택하세요.';
       document.getElementById('rewardMessage').className = 'message';
+      var reward = typeof currentRewardView !== 'undefined' && currentRewardView && (currentRewardView.choices || []).filter(function(r){return r.rewardId===rewardId;})[0];
+      if (reward && reward.type==='skillUpgrade' && reward.skillDetail) showSkillUpgradePreview(reward);
+    }
+
+    function showSkillUpgradePreview(reward) {
+      var preview=document.getElementById('rewardUpgradePreview');
+      if (!preview) return;
+      preview.innerHTML=renderSkillUpgradeCompareDetailCard(reward,normalizeRewardRarity(reward.rarity),reward.skillDetail.name)
+        .replace('aria-hidden="true"','aria-hidden="false"');
+      preview.hidden=false;
+      document.getElementById('rewardChoices').hidden=true;
+      document.getElementById('rewardUpgradeCancelButton').hidden=false;
+      var reroll=document.getElementById('rewardRerollButton');
+      if(reroll)reroll.hidden=true;
+      document.getElementById('rewardConfirmButton').focus();
+    }
+
+    function cancelSkillUpgradePreview() {
+      if(rewardSelectionApplying)return;
+      var preview=document.getElementById('rewardUpgradePreview');
+      preview.hidden=true;preview.innerHTML='';
+      document.getElementById('rewardChoices').hidden=false;
+      document.getElementById('rewardUpgradeCancelButton').hidden=true;
+      var reroll=document.getElementById('rewardRerollButton');
+      if(reroll)reroll.hidden=false;
+      selectRewardCandidate('');
+      var card=document.querySelector('.reward-choice-card');
+      if(card)card.focus();
     }
 
     function confirmRewardChoice() {
@@ -11259,7 +11330,8 @@
       if (!banner) return;
       banner.textContent = text || '';
       banner.classList.toggle('player-turn-banner', text === '내 턴');
-      banner.classList.toggle('enemy-turn-banner', text !== '내 턴');
+      banner.classList.toggle('enemy-turn-banner', text !== '내 턴' && text !== 'STAGE CLEAR');
+      banner.classList.toggle('stage-clear-banner', text === 'STAGE CLEAR');
       var token = Number(banner.turnBannerToken || 0) + 1;
       banner.turnBannerToken = token;
       banner.classList.remove('active');

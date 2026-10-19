@@ -91,11 +91,14 @@ function loginPlayer(loginPayload) {
     loginUpdates.rejectedReason = '';
   }
   var updatedPlayer = updateRowByKey_(DB_SHEETS.PLAYERS, 'playerId', player.playerId, loginUpdates);
-  return buildAuthResponse_(normalizePlayerAccountDefaults_(updatedPlayer));
+  return buildAuthResponse_(normalizePlayerAccountDefaults_(updatedPlayer), payload.rememberMe === true);
 }
 
 function logoutPlayer(authToken) {
   if (authToken) {
+    if (String(authToken).indexOf('remember_') === 0) {
+      PropertiesService.getScriptProperties().deleteProperty(getRememberedAuthKey_(authToken));
+    }
     var cache = CacheService.getScriptCache();
     cache.remove(getAuthCacheKey_(authToken));
     cache.remove(getAuthPlayerCacheKey_(authToken));
@@ -356,6 +359,7 @@ function getPlayerByAuthToken_(authToken) {
   if (!token) {
     return null;
   }
+  if (token.indexOf('remember_') === 0) return getRememberedAuthPlayer_(token);
 
   var cache = CacheService.getScriptCache();
   var playerId = cache.get(getAuthCacheKey_(token));
@@ -376,15 +380,56 @@ function getPlayerByAuthToken_(authToken) {
   return player;
 }
 
-function buildAuthResponse_(player) {
-  var authToken = generateId_('session');
+function buildAuthResponse_(player, rememberMe) {
+  var authToken = generateId_(rememberMe ? 'remember' : 'session');
+  var expiresAt = rememberMe ? Date.now() + 30 * 24 * 60 * 60 * 1000 : 0;
+  if (rememberMe) {
+    var properties = PropertiesService.getScriptProperties();
+    var stored = properties.getProperties();
+    Object.keys(stored).forEach(function(key) {
+      if (key.indexOf('rememberedAuth_') !== 0) return;
+      var record = safeJsonParse_(stored[key], null);
+      if (!record || !(record.expiresAt > Date.now())) properties.deleteProperty(key);
+    });
+    properties.setProperty(getRememberedAuthKey_(authToken), safeJsonStringify_({
+      playerId: player.playerId, expiresAt: expiresAt,
+      credential: hashPassword_(player.passwordHash, player.passwordSalt),
+    }));
+  }
   var cache = CacheService.getScriptCache();
   cache.put(getAuthCacheKey_(authToken), player.playerId, 21600);
   cache.put(getAuthPlayerCacheKey_(authToken), safeJsonStringify_(player), 21600);
   return {
     authToken: authToken,
+    rememberExpiresAt: expiresAt,
     user: getCurrentUser(authToken),
   };
+}
+
+function getRememberedAuthKey_(token) {
+  return 'rememberedAuth_' + hashPassword_(String(token), 'remembered-auth-v1');
+}
+
+function getRememberedAuthPlayer_(token) {
+  var properties = PropertiesService.getScriptProperties();
+  var key = getRememberedAuthKey_(token);
+  var record = safeJsonParse_(properties.getProperty(key), null);
+  if (!record) return null;
+  if (!(record.expiresAt > Date.now())) {
+    properties.deleteProperty(key);
+    return null;
+  }
+  var player = findRowByKeyUncached_(DB_SHEETS.PLAYERS, 'playerId', record.playerId);
+  if (!player || !isTruthy_(player.isActive) ||
+      hashPassword_(player.passwordHash, player.passwordSalt) !== record.credential) {
+    properties.deleteProperty(key);
+    return null;
+  }
+  try { requireApprovedPlayerForLogin_(player); } catch (error) {
+    properties.deleteProperty(key);
+    return null;
+  }
+  return player;
 }
 
 function getAuthCacheKey_(authToken) {

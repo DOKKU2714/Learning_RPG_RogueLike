@@ -146,7 +146,7 @@ function finalizePreparedRewardTransitions_(view, run, payload) {
         if(battle && battle.player) {
           var skills=validateLevelSkillUpgrades_(run,ensureLevelProgress_(battle.player));
           restViews[id].choices=(restViews[id].choices || []).filter(function(r){return r.type!=='skillUpgrade';}).concat(
-            getLevelSkillUpgradeOptions_(battle,skills).map(function(owned){
+            pickOwnedSkillUpgradeCandidates_(getLevelSkillUpgradeOptions_(battle,skills),run.runId,Number(nextStage.floor || run.currentFloor)).map(function(owned){
               var row=findCachedRowByKey_(DB_SHEETS.SKILLS,'skillId',owned.skillId,600);
               return sanitizeRewardForClient_(adaptRewardForChoice_(buildAutoSkillUpgradeReward_(row),skills),battle);
             }));
@@ -186,10 +186,12 @@ function refreshPreparedRewardView_(run, payload, view) {
 
 function refreshFloorRestSkillChoices_(run, battle, view) {
   var skills=normalizeOwnedSkills_(safeJsonParse_(run.skillsJson,[]));
-  view.choices=(view.choices || []).filter(function(r){return r.type!==REWARD_TYPES.SKILL_UPGRADE;}).concat(skills.map(function(owned){
+  var upgrades=skills.map(function(owned){
     var row=findCachedRowByKey_(DB_SHEETS.SKILLS,'skillId',owned.skillId,600);
     return row && isSkillUpgradable_(row) ? sanitizeRewardForClient_(adaptRewardForChoice_(buildAutoSkillUpgradeReward_(row),skills),battle) : null;
-  }).filter(Boolean));
+  }).filter(Boolean);
+  view.choices=(view.choices || []).filter(function(r){return r.type!==REWARD_TYPES.SKILL_UPGRADE;})
+    .concat(pickOwnedSkillUpgradeCandidates_(upgrades,run.runId,Number(view.intermissionStage && view.intermissionStage.floor || battle.stage && battle.stage.floor || run.currentFloor)));
   return view;
 }
 
@@ -575,10 +577,22 @@ function buildFloorRestChoices_(run, battle, rewardGroupId, floor, ownedSkills, 
     var row = findCachedRowByKey_(DB_SHEETS.SKILLS,'skillId',owned.skillId,600);
     return row && isSkillUpgradable_(row) ? adaptRewardForChoice_(buildAutoSkillUpgradeReward_(row),ownedSkills) : null;
   }).filter(Boolean);
+  upgrades = pickOwnedSkillUpgradeCandidates_(upgrades, run.runId, floor);
   return [buildFloorRestRewardChoice_(run, battle),{
     rewardId:'floor_rest_experience',type:'experience',description:'경험치 획득',rarity:RARITIES.COMMON,value:0,questionView:questionView,
     detailDescription:'다음 스테이지 수준의 미출제·낮은 정답률 문제를 풉니다. 문제풀이 효율 %만큼 경험치를 획득합니다.'
   }].concat(upgrades);
+}
+
+function pickOwnedSkillUpgradeCandidates_(options, runId, floor) {
+  var pool = options.slice().sort(function(a,b) { return String(a.skillId || a.targetId).localeCompare(String(b.skillId || b.targetId)); });
+  var seed = 2166136261, key = String(runId) + ':skill-upgrade:' + floor;
+  for (var i=0;i<key.length;i++) seed=Math.imul(seed^key.charCodeAt(i),16777619)>>>0;
+  for (var j=pool.length-1;j>0;j--) {
+    seed=(Math.imul(seed,1664525)+1013904223)>>>0;
+    var index=seed%(j+1), item=pool[j];pool[j]=pool[index];pool[index]=item;
+  }
+  return pool.slice(0,3);
 }
 
 function pickFloorExperienceQuestion_(questions, difficulty) {

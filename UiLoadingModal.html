@@ -622,7 +622,9 @@
     patchFunction('renderRewardChoices', function(original){
       return function(){
         var result = original.apply(this, arguments);
-        playRewardOneShot();
+        battleMusicPausedForReward = true;
+        pendingIntent = null;
+        stopCurrentTrack(0);
         syncRainAmbience(360);
         syncWhiteNoise(360);
         return result;

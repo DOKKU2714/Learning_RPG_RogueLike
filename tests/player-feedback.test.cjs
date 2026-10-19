@@ -6,8 +6,8 @@ test('stage-clear regeneration distinguishes a full health bar from zero regener
   for(const [hp,regen,wanted] of [[12,0,'재생 수치가 0'],[30,0,'모두 차 있어'],[12,3,'3 재생']]){
     const messages=[];
     const ui=vm.createContext({currentView:{runId:'r',battle:{battleId:'b',status:'victory',player:{hp,maxHp:30,stats:{hp:30,hpRegen:regen}}}},
-      workbookDeadlineExpired:false,victoryRewardFlowStarted:false,victoryRewardRecoveryComplete:false,victoryRegenPresentationKey:'',
-      preloadVictoryRewardChoices(){},showPreparedVictoryReward(){},getVictoryRewardKey:()=> 'r:b',renderPlayerHud(){},
+      workbookDeadlineExpired:false,victoryRewardFlowStarted:false,victoryRewardRecoveryComplete:false,victoryRegenPresentationKey:'',stageClearPresentation:{key:'r:b',complete:true},
+      preloadVictoryRewardChoices(){},buildStageResultPayload:()=>({}),showPreparedVictoryReward(){},getVictoryRewardKey:()=> 'r:b',renderPlayerHud(){},
       animatePlayerStatusEffect(){},spawnFloatingText(){},document:{getElementById:()=>null},pushLog:m=>messages.push(m),waitForBattleLogAdvance:()=>Promise.resolve()});
     for(const name of ['presentStageClearRegen','openRewardAfterVictory'])vm.runInContext(extract(name),ui);
     ui.openRewardAfterVictory();await Promise.resolve();

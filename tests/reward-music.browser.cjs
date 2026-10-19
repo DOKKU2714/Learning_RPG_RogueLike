@@ -21,10 +21,12 @@ try{
  await page.waitForFunction(()=>renderRewardChoices.__learningRpgAudioPatched&&startBattleEntrance.__learningRpgAudioPatched&&revealStageEntranceMonsters.__learningRpgAudioPatched&&startFloorIntermissionEntrance.__learningRpgAudioPatched&&renderBattle.__learningRpgAudioPatched);
  await page.evaluate(()=>revealStageEntranceMonsters());
  await page.waitForFunction(()=>LEARNING_RPG_AUDIO.getCurrent()?.kind==='battle');
- await page.evaluate(()=>{window.previousBgm=audioSamples.find(a=>a.testPlaying&&a.src.includes('/BGM/Battle/')&&!a.src.includes('/Reward'));currentView.battle.status='victory';renderRewardChoices();});
+ await page.evaluate(()=>{window.previousBgm=audioSamples.find(a=>a.testPlaying&&a.src.includes('/BGM/Battle/')&&!a.src.includes('/Reward'));currentView.battle.status='victory';LEARNING_RPG_AUDIO.playReward();});
  assert.equal(await page.evaluate(()=>previousBgm.testPlaying),false,'BGM pauses before reward audio starts');
  assert.equal(await page.evaluate(()=>LEARNING_RPG_AUDIO.getCurrent()),null);
  assert.equal(await page.evaluate(()=>audioSamples.some(a=>a.testPlaying&&a.src.includes('/Reward'))),true);
+ await page.evaluate(()=>{window.clearSound=audioSamples.find(a=>a.testPlaying&&a.src.includes('/Reward'));clearSound.testPlaying=false;renderRewardChoices();renderRewardChoices();});
+ assert.equal(await page.evaluate(()=>audioSamples.some(a=>a.testPlaying&&a.src.includes('/Reward'))),false,'reward rendering does not replay the stage-clear sound');
  await page.evaluate(()=>{previousBgm.dispatchEvent(new Event('error'));LEARNING_RPG_AUDIO.setVolume(.4);LEARNING_RPG_AUDIO.playBattle();});
  assert.equal(await page.evaluate(()=>LEARNING_RPG_AUDIO.getCurrent()),null,'volume changes and stale errors cannot restart BGM during rewards');
  await page.evaluate(()=>{currentView.battle.status='active';startBattleEntrance();revealStageEntranceMonsters();});

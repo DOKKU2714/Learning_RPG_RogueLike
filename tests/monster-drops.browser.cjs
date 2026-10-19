@@ -6,12 +6,14 @@ const markup=client.slice(client.indexOf('  <div id="monsterDropModal"'),client.
 const script=`
 var ASSET_BASE_URL='',monsterDropActive=false,monsterDropCancel=null,workbookDeadlineExpired=false,localGameDataSnapshot={},victoryRewardPreload={},victoryRewardResultPayload={};
 var currentView={battle:{status:'victory',player:{hp:30,items:[]}},availableSkills:[]},decisions=[];
+var stageClearPresentation=null;
+function showTurnBanner(){}
 var drops={a:{dropId:'a',monsterName:'녹슨 실외기',status:'pending',reward:{itemDetail:{itemId:'a',name:'튼튼한 운동화',rarity:'rare',rarityLabel:'희귀',effectSummary:'방어력 +2 / 회피율 +5%',description:'가벼운 발걸음으로 교실을 누빈다.'}}},
 b:{dropId:'b',monsterName:'보스',status:'pending',reward:{itemDetail:{itemId:'b',name:'집중의 펜',rarity:'epic',rarityLabel:'영웅',effectSummary:'최대 문제 풀이 효율 +10%p',description:'한 번 더 생각하게 하는 펜.'}}}};
 window.LearningRpgLocalRunEngine={itemDrops:()=>drops,skills:()=>[],decideDrop:(_,battle,id,claim)=>{drops[id].status=claim?'claimed':'ignored';decisions.push([id,claim]);if(claim)battle.player.items.push({itemId:id});}};
 function cssEscape(s){return CSS.escape(s);}function setBattleInputLocked(){}function renderBattle(){}function getRewardRarityLabel(){return '희귀';}
 function escapeHtml(s){return String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;');}
-${['animateMonsterItemPickup','presentMonsterItemDrops','renderOwnedItemCard','buildItemEffectDescription','buildItemFlavorDescription','normalizeRewardRarity','bindHoverTooltips','positionHoverTooltip','hideActiveHoverTooltips','refreshFinalVictoryRewardView','openRewardAfterVictory','presentStageClearRegen','getVictoryRewardKey'].map(extract).join('\n')}
+${['animateMonsterItemPickup','presentMonsterItemDrops','renderOwnedItemCard','buildItemEffectDescription','buildItemFlavorDescription','normalizeRewardRarity','bindHoverTooltips','positionHoverTooltip','hideActiveHoverTooltips','refreshFinalVictoryRewardView','presentStageClear','openRewardAfterVictory','presentStageClearRegen','getVictoryRewardKey'].map(extract).join('\n')}
 bindHoverTooltips();
 `;
 (async()=>{

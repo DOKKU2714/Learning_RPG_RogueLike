@@ -263,7 +263,8 @@
     line-height: 1;
   }
 
-  .account-role-option input[type="radio"] {
+  .account-role-option input[type="radio"],
+  .account-role-option input[type="checkbox"] {
     flex: 0 0 auto;
     width: 16px;
     height: 16px;
@@ -2614,6 +2615,7 @@
     text-shadow: 0 2px 0 #000, 0 0 12px rgba(255,216,74,0.8), 0 0 22px rgba(0,0,0,0.95);
   }
   .turn-banner.enemy-turn-banner { --turn-color: #ff9b91; --turn-glow: #ff554b66; }
+  .turn-banner.stage-clear-banner { --turn-color: #fff; --turn-glow: #ffffff66; top: 50%; font-size: clamp(28px, 7vw, 84px); }
   .turn-banner::after { content: ''; position: absolute; inset: 0; background: linear-gradient(110deg,transparent 40%,#ffffff33 50%,transparent 60%); transform: translateX(-100%); pointer-events: none; }
   .turn-banner.active::after { animation: turn-banner-sweep 600ms ease-out forwards; }
   @keyframes turn-banner-sweep { to { transform: translateX(100%); } }
@@ -4181,6 +4183,15 @@
   }
 
   .reward-choice-body strong { display: block; width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box; }
+  .reward-choice-body strong.reward-stat-increase {font-family:var(--font-readable);font-size:clamp(24px,4vw,36px);line-height:1.2;font-weight:900;text-align:center;color:var(--reward-gem-color,#fff);margin-top:8px;}
+  #rewardChoices[hidden],.reward-upgrade-preview[hidden],#rewardUpgradeCancelButton[hidden] {display:none;}
+  .reward-upgrade-preview > .reward-upgrade-compare-card {position:static;display:grid;visibility:visible;opacity:1;transform:none;width:100%;max-width:none;box-sizing:border-box;grid-template-columns:minmax(0,1fr) 28px minmax(0,1fr);gap:16px;pointer-events:auto;margin:20px 0;}
+  .reward-upgrade-preview .reward-upgrade-panel {padding:24px 18px;min-height:300px;background:linear-gradient(155deg,#272925,#121713);border:1px solid var(--reward-gem-color,#c6b885);}
+  .reward-upgrade-preview .skill-detail-description {white-space:normal;overflow-wrap:anywhere;}
+  .reward-upgrade-skill-icon {display:block;text-align:center;}
+  .reward-upgrade-skill-icon img {width:80px;height:80px;object-fit:contain;}
+  .reward-confirm-row:has(#rewardUpgradeCancelButton:not([hidden])) {display:flex;justify-content:space-between;gap:20px;width:100%;}
+  @media(max-width:600px){.reward-upgrade-preview > .reward-upgrade-compare-card {grid-template-columns:minmax(0,1fr);}.reward-upgrade-preview .reward-upgrade-arrow {text-align:center;transform:rotate(90deg);}.reward-upgrade-preview .reward-upgrade-panel {min-height:0;padding:18px 14px;}}
 
   .reward-rarity-badge {
     width: max-content;
@@ -5553,9 +5564,9 @@
   .reward-card-footer .skill-flavor-text {display:block;min-height:36px;margin:0;padding:0;border:0;background:none;color:#929792;font-size:12px;line-height:1.5;}
   .reward-inline-description .reward-upgrade-changes {display:grid;gap:3px;margin:0;padding-top:8px;border-top:1px solid #ffffff22;font-size:12px;}
   .reward-inline-description .reward-upgrade-changes strong {font-family:inherit;font-size:inherit;}
-  .reward-choice-ap.reward-ap-badge {left:0;right:auto;top:0;width:60px;height:60px;z-index:4;}
-  .reward-ap-badge svg {display:block;width:100%;height:100%;filter:drop-shadow(0 2px 2px #0008);}
-  .reward-ap-badge b {position:absolute;left:9px;top:7px;font-family:var(--font-readable);font-size:30px;line-height:1;color:#fff0aa;text-shadow:0 2px 1px #000;}
+  .reward-choice-ap.reward-ap-badge {left:0;right:auto;top:0;width:52px;height:42px;transform:translate(-50%,-50%);z-index:4;}
+  .reward-ap-badge .reward-ap-symbol {position:absolute;inset:0;display:block;box-sizing:border-box;width:100%;height:100%;border-width:2px;filter:drop-shadow(0 3px 3px #0008);}
+  .reward-ap-badge b {position:absolute;inset:0;display:flex;align-items:center;justify-content:center;box-sizing:border-box;padding:0 10px;font-family:var(--font-readable);font-size:var(--reward-ap-font-size,23px);line-height:1;white-space:nowrap;color:#302810;text-shadow:0 1px 0 #fff6;}
   .stage-clear-reward-overlay .reward-choice-card.reward-aura-card::before,
   .stage-clear-reward-overlay .reward-choice-card.reward-aura-card::after {content:none;animation:none;}
   .reward-aura-card {--aura-spread:10px;--aura-rise:28px;}
@@ -5564,12 +5575,16 @@
   .reward-aura-card.rarity-epic {--aura-spread:34px;--aura-rise:84px;}
   .reward-aura-card.rarity-legendary {--aura-spread:46px;--aura-rise:112px;}
   .reward-aura-card.rarity-unique {--aura-spread:60px;--aura-rise:146px;}
-  .reward-card-aura {inset:0;z-index:-1;opacity:0;pointer-events:none;}
+  .reward-aura-card {isolation:isolate;}
+  .stage-clear-reward-overlay .reward-choice-card.reward-aura-card::before,
+  .reward-choice-card.reward-aura-card::before {content:'';position:absolute;inset:0;z-index:-1;border-radius:inherit;background:inherit;background-color:#151915;opacity:1;filter:none;box-shadow:none;pointer-events:none;animation:none;}
+  .reward-card-aura {inset:0;z-index:-2;opacity:0;pointer-events:none;}
   .reward-card-aura::before {content:'';position:absolute;inset:-1px;border:1px solid var(--reward-gem-color);border-radius:inherit;box-shadow:0 0 var(--aura-spread) var(--reward-gem-color),0 0 calc(var(--aura-spread)*2) var(--reward-gem-glow),inset 0 0 8px var(--reward-gem-glow);}
-  .reward-card-aura::after {content:'';position:absolute;left:calc(var(--aura-spread)*-1);right:calc(var(--aura-spread)*-1);top:calc(var(--aura-rise)*-1);height:var(--aura-rise);
-    background:repeating-linear-gradient(90deg,transparent 0 6px,var(--reward-gem-color) 6px 8px,transparent 8px 14px);
-    mask-image:linear-gradient(0deg,#000,#000b 45%,transparent);
-    clip-path:polygon(0 100%,3% 54%,6% 82%,10% 20%,14% 70%,18% 42%,22% 85%,27% 8%,31% 62%,35% 35%,39% 75%,44% 0,48% 60%,53% 24%,57% 72%,62% 6%,66% 58%,71% 32%,75% 80%,80% 12%,84% 65%,89% 38%,93% 78%,97% 26%,100% 100%);
+  .reward-card-aura::after {content:'';position:absolute;left:calc(var(--aura-spread)*-1);right:calc(var(--aura-spread)*-1);bottom:calc(100% - 18px);height:calc(var(--aura-rise) + 18px);transform-origin:center bottom;
+    background:repeating-linear-gradient(90deg,transparent 0 .5px,var(--reward-gem-color) .5px 1px,transparent 1px 2px),linear-gradient(0deg,var(--reward-gem-glow),transparent 85%);
+    mask-image:linear-gradient(0deg,#000 0 20%,#000b 48%,transparent 96%),linear-gradient(90deg,transparent,#000 10% 90%,transparent);
+    mask-composite:intersect;
+    clip-path:polygon(0 100%,0.3125% 5%,0.625% 68%,0.9375% 53%,1.25% 85%,1.5625% 7%,1.875% 78%,2.1875% 41%,2.5% 71%,2.8125% 39%,3.125% 88%,3.4375% 59%,3.75% 81%,4.0625% 43%,4.375% 74%,4.6875% 49%,5% 91%,5.3125% 19%,5.625% 84%,5.9375% 11%,6.25% 77%,6.5625% 25%,6.875% 70%,7.1875% 61%,7.5% 87%,7.8125% 61%,8.125% 80%,8.4375% 25%,8.75% 73%,9.0625% 11%,9.375% 90%,9.6875% 19%,10% 83%,10.3125% 49%,10.625% 76%,10.9375% 43%,11.25% 69%,11.5625% 59%,11.875% 86%,12.1875% 39%,12.5% 79%,12.8125% 41%,13.125% 72%,13.4375% 7%,13.75% 89%,14.0625% 53%,14.375% 82%,14.6875% 5%,15% 75%,15.3125% 37%,15.625% 68%,15.9375% 33%,16.25% 85%,16.5625% 51%,16.875% 78%,17.1875% 33%,17.5% 71%,17.8125% 37%,18.125% 88%,18.4375% 5%,18.75% 81%,19.0625% 53%,19.375% 74%,19.6875% 7%,20% 91%,20.3125% 41%,20.625% 84%,20.9375% 39%,21.25% 77%,21.5625% 59%,21.875% 70%,22.1875% 43%,22.5% 87%,22.8125% 49%,23.125% 80%,23.4375% 19%,23.75% 73%,24.0625% 11%,24.375% 90%,24.6875% 25%,25% 83%,25.3125% 61%,25.625% 76%,25.9375% 61%,26.25% 69%,26.5625% 25%,26.875% 86%,27.1875% 11%,27.5% 79%,27.8125% 19%,28.125% 72%,28.4375% 49%,28.75% 89%,29.0625% 43%,29.375% 82%,29.6875% 59%,30% 75%,30.3125% 39%,30.625% 68%,30.9375% 41%,31.25% 85%,31.5625% 7%,31.875% 78%,32.1875% 53%,32.5% 71%,32.8125% 5%,33.125% 88%,33.4375% 37%,33.75% 81%,34.0625% 33%,34.375% 74%,34.6875% 51%,35% 91%,35.3125% 33%,35.625% 84%,35.9375% 37%,36.25% 77%,36.5625% 5%,36.875% 70%,37.1875% 53%,37.5% 87%,37.8125% 7%,38.125% 80%,38.4375% 41%,38.75% 73%,39.0625% 39%,39.375% 90%,39.6875% 59%,40% 83%,40.3125% 43%,40.625% 76%,40.9375% 49%,41.25% 69%,41.5625% 19%,41.875% 86%,42.1875% 11%,42.5% 79%,42.8125% 25%,43.125% 72%,43.4375% 61%,43.75% 89%,44.0625% 61%,44.375% 82%,44.6875% 25%,45% 75%,45.3125% 11%,45.625% 68%,45.9375% 19%,46.25% 85%,46.5625% 49%,46.875% 78%,47.1875% 43%,47.5% 71%,47.8125% 59%,48.125% 88%,48.4375% 39%,48.75% 81%,49.0625% 41%,49.375% 74%,49.6875% 7%,50% 91%,50.3125% 53%,50.625% 84%,50.9375% 5%,51.25% 77%,51.5625% 37%,51.875% 70%,52.1875% 33%,52.5% 87%,52.8125% 51%,53.125% 80%,53.4375% 33%,53.75% 73%,54.0625% 37%,54.375% 90%,54.6875% 5%,55% 83%,55.3125% 53%,55.625% 76%,55.9375% 7%,56.25% 69%,56.5625% 41%,56.875% 86%,57.1875% 39%,57.5% 79%,57.8125% 59%,58.125% 72%,58.4375% 43%,58.75% 89%,59.0625% 49%,59.375% 82%,59.6875% 19%,60% 75%,60.3125% 11%,60.625% 68%,60.9375% 25%,61.25% 85%,61.5625% 61%,61.875% 78%,62.1875% 61%,62.5% 71%,62.8125% 25%,63.125% 88%,63.4375% 11%,63.75% 81%,64.0625% 19%,64.375% 74%,64.6875% 49%,65% 91%,65.3125% 43%,65.625% 84%,65.9375% 59%,66.25% 77%,66.5625% 39%,66.875% 70%,67.1875% 41%,67.5% 87%,67.8125% 7%,68.125% 80%,68.4375% 53%,68.75% 73%,69.0625% 5%,69.375% 90%,69.6875% 37%,70% 83%,70.3125% 33%,70.625% 76%,70.9375% 51%,71.25% 69%,71.5625% 33%,71.875% 86%,72.1875% 37%,72.5% 79%,72.8125% 5%,73.125% 72%,73.4375% 53%,73.75% 89%,74.0625% 7%,74.375% 82%,74.6875% 41%,75% 75%,75.3125% 39%,75.625% 68%,75.9375% 59%,76.25% 85%,76.5625% 43%,76.875% 78%,77.1875% 49%,77.5% 71%,77.8125% 19%,78.125% 88%,78.4375% 11%,78.75% 81%,79.0625% 25%,79.375% 74%,79.6875% 61%,80% 91%,80.3125% 61%,80.625% 84%,80.9375% 25%,81.25% 77%,81.5625% 11%,81.875% 70%,82.1875% 19%,82.5% 87%,82.8125% 49%,83.125% 80%,83.4375% 43%,83.75% 73%,84.0625% 59%,84.375% 90%,84.6875% 39%,85% 83%,85.3125% 41%,85.625% 76%,85.9375% 7%,86.25% 69%,86.5625% 53%,86.875% 86%,87.1875% 5%,87.5% 79%,87.8125% 37%,88.125% 72%,88.4375% 33%,88.75% 89%,89.0625% 51%,89.375% 82%,89.6875% 33%,90% 75%,90.3125% 37%,90.625% 68%,90.9375% 5%,91.25% 85%,91.5625% 53%,91.875% 78%,92.1875% 7%,92.5% 71%,92.8125% 41%,93.125% 88%,93.4375% 39%,93.75% 81%,94.0625% 59%,94.375% 74%,94.6875% 43%,95% 91%,95.3125% 49%,95.625% 84%,95.9375% 19%,96.25% 77%,96.5625% 11%,96.875% 70%,97.1875% 25%,97.5% 87%,97.8125% 61%,98.125% 80%,98.4375% 61%,98.75% 73%,99.0625% 25%,99.375% 90%,99.6875% 11%,100% 83%,100% 100%);
     filter:drop-shadow(0 0 4px var(--reward-gem-color));}
   .reward-aura-intro {animation:reward-aura-intro 2500ms var(--reward-reveal-time) ease-out both;}
   .reward-aura-intro::after {animation:reward-aura-flow 1250ms var(--reward-reveal-time) ease-in-out 2;}
@@ -5578,7 +5593,7 @@
   .reward-aura-idle::after {transform:scaleY(.45);transform-origin:bottom;}
   .reward-aura-hover {transition:opacity 350ms ease,transform 350ms ease;animation:reward-hover-ready 1ms var(--reward-reveal-time) step-end backwards;}
   .reward-aura-hover::after {animation:reward-aura-flow 1800ms ease-in-out infinite;animation-play-state:paused;}
-  .reward-aura-card:is(:hover,:focus-visible) > .reward-aura-hover {opacity:.95;transform:scale(1.04,1.06);}
+  .reward-aura-card:is(:hover,:focus-visible) > .reward-aura-hover {opacity:.95;transform:none;}
   .reward-aura-card:is(:hover,:focus-visible) > .reward-aura-hover::after {animation-play-state:running;}
   .reward-card-sheen {inset:0;z-index:3;overflow:hidden;border-radius:inherit;pointer-events:none;animation:reward-hover-ready 1ms var(--reward-reveal-time) step-end backwards;}
   .reward-card-sheen::before {content:'';position:absolute;left:-90%;top:-20%;height:140%;width:55%;background:linear-gradient(90deg,transparent,#fff6,transparent);transform:skewX(-18deg);opacity:0;}
@@ -5587,8 +5602,8 @@
   @keyframes reward-aura-idle {0%{opacity:0}30%,100%{opacity:.18}65%{opacity:.32}}
   @media(prefers-reduced-motion:reduce){.reward-aura-card:is(.rarity-epic,.rarity-legendary,.rarity-unique)>.reward-aura-idle{animation:none;opacity:.15;}}
   @keyframes reward-aura-intro {0%{opacity:0}14%,45%{opacity:.9}100%{opacity:0}}
-  @keyframes reward-aura-flow {0%,100%{transform:translateY(2px) scaleX(.98);opacity:.65}50%{transform:translateY(-5px) scaleX(1.03);opacity:1}}
+  @keyframes reward-aura-flow {0%,100%{transform:scaleY(.94);opacity:.65}50%{transform:scaleY(1.06);opacity:1}}
   @keyframes reward-card-sheen {0%{left:-90%;opacity:0}15%,65%{opacity:.65}100%{left:140%;opacity:0}}
-  @media(max-width:760px){.reward-choice-card.reward-inline-skill{min-height:420px;padding:20px 14px 40px;}.reward-inline-skill .reward-choice-icon-wrap{width:80px;flex-basis:80px;}.reward-inline-description{font-size:13px;}.reward-ap-badge b{font-size:28px;}}
+  @media(max-width:760px){.reward-choice-card.reward-inline-skill{min-height:420px;padding:20px 14px 40px;}.reward-inline-skill .reward-choice-icon-wrap{width:80px;flex-basis:80px;}.reward-inline-description{font-size:13px;}}
   @media(prefers-reduced-motion:reduce){.stage-clear-reward-overlay .reward-choice-card.reward-aura-card,.reward-aura-intro,.reward-aura-intro::after,.reward-aura-hover,.reward-card-sheen,.reward-aura-hover::after,.reward-aura-card:is(:hover,:focus-visible)>.reward-card-sheen::before{animation:none;}.reward-aura-intro{opacity:0;}.reward-aura-hover{transition:none;}.reward-aura-card:is(:hover,:focus-visible)>.reward-aura-hover{opacity:.35;}}
 </style>

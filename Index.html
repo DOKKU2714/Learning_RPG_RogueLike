@@ -286,6 +286,9 @@
       </div>
 
       <div class="vertical-menu">
+        <label id="rememberLoginField" class="account-role-option">
+          <input id="rememberLogin" type="checkbox"> 자동로그인 (30일 · 개인 기기에서만 사용)
+        </label>
         <button id="loginButton" onclick="login()">로그인</button>
         <button id="showRegisterButton" class="secondary" onclick="showRegisterForm()">회원가입</button>
         <button id="registerButton" onclick="register()">회원가입 완료</button>
@@ -676,6 +679,7 @@
           clearCurrentUserRequestTimer();
           if (mainNavigationInProgress) return;
           hideLoadingModal();
+          if (!state || !state.isRegistered) clearLoginSessionStorage();
           saveCurrentState(state);
           renderCurrentUser(state);
         })
@@ -1357,6 +1361,7 @@
       document.getElementById('studentNameField').classList.add('hidden');
       document.getElementById('avatarField').classList.add('hidden');
       document.getElementById('roleField').classList.add('hidden');
+      document.getElementById('rememberLoginField').classList.remove('hidden');
       document.getElementById('loginButton').classList.remove('hidden');
       document.getElementById('showRegisterButton').classList.remove('hidden');
       document.getElementById('registerButton').classList.add('hidden');
@@ -1372,6 +1377,7 @@
       document.getElementById('studentNameField').classList.remove('hidden');
       document.getElementById('avatarField').classList.remove('hidden');
       document.getElementById('roleField').classList.remove('hidden');
+      document.getElementById('rememberLoginField').classList.add('hidden');
       document.getElementById('loginButton').classList.add('hidden');
       document.getElementById('showRegisterButton').classList.add('hidden');
       document.getElementById('registerButton').classList.remove('hidden');
@@ -1400,22 +1406,25 @@
     }
 
     function login() {
+      var payload = getAuthFormPayload();
+      payload.rememberMe = document.getElementById('rememberLogin').checked;
       setRegisterMessage('로그인 중입니다.', 'ok');
       showLoadingModal('로그인 중...', '플레이어 정보를 확인하는 중...');
       google.script.run
         .withSuccessHandler(function(response) {
           hideLoadingModal();
-          saveAuthToken(response.authToken);
+          var remembered = saveAuthToken(response.authToken, response.rememberExpiresAt);
+          document.getElementById('password').value = '';
           saveCurrentState(response.user);
           warmupGameDataSilently();
-          setRegisterMessage('로그인되었습니다.', 'ok');
+          setRegisterMessage(remembered ? '로그인되었습니다.' : '로그인되었습니다. 브라우저 저장소를 사용할 수 없어 자동로그인을 기억하지 못했습니다.', remembered ? 'ok' : 'error');
           renderCurrentUser(response.user);
         })
         .withFailureHandler(function(error) {
           hideLoadingModal();
           setRegisterMessage(error.message, 'error');
         })
-        .loginPlayer(getAuthFormPayload());
+        .loginPlayer(payload);
     }
 
     function logout(sourceButton) {
@@ -1457,6 +1466,8 @@
     }
 
     function clearLoginSessionStorage() {
+      try { localStorage.removeItem('learningRpgRememberedAuth'); } catch (error) {}
+      document.getElementById('rememberLogin').checked = false;
       try {
         Object.keys(sessionStorage).forEach(function(key) {
           if (key.indexOf('learningRpg') === 0) {
@@ -1760,13 +1771,34 @@
 
     function getAuthToken() {
       try {
+        var remembered = JSON.parse(localStorage.getItem('learningRpgRememberedAuth') || 'null');
+        if (remembered && remembered.expiresAt > Date.now() && remembered.token) {
+          saveAuthTokenToSession(remembered.token);
+          return remembered.token;
+        }
+        localStorage.removeItem('learningRpgRememberedAuth');
+      } catch (error) {}
+      try {
         return sessionStorage.getItem('learningRpgAuthToken') || '';
       } catch (error) {
         return '';
       }
     }
 
-    function saveAuthToken(authToken) {
+    function saveAuthToken(authToken, expiresAt) {
+      saveAuthTokenToSession(authToken);
+      try {
+        localStorage.removeItem('learningRpgRememberedAuth');
+        if (expiresAt > Date.now()) {
+          localStorage.setItem('learningRpgRememberedAuth', JSON.stringify({ token: authToken, expiresAt: expiresAt }));
+        }
+        return true;
+      } catch (error) {
+        return !expiresAt;
+      }
+    }
+
+    function saveAuthTokenToSession(authToken) {
       try {
         sessionStorage.setItem('learningRpgAuthToken', authToken);
       } catch (error) {}

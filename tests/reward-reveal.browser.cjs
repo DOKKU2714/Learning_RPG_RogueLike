@@ -35,10 +35,20 @@ document.addEventListener('keydown',handleRewardKeyboard);showCards(['common','r
     const d=card.querySelector('.skill-detail-description'),ap=card.querySelector('.reward-ap-badge'),concept=card.querySelector('.reward-skill-concept'),b=card.getBoundingClientRect(),db=d.getBoundingClientRect(),ab=ap.getBoundingClientRect();
     return {position:getComputedStyle(d).position,font:getComputedStyle(d).fontSize,numberFont:getComputedStyle(d.querySelector('.skill-damage-number')).fontSize,concept:getComputedStyle(concept).color,
      burn:[...d.querySelectorAll('.skill-status-burn')].map(n=>({text:n.textContent,color:getComputedStyle(n).color})),shock:[...d.querySelectorAll('.skill-status-shock')].map(n=>getComputedStyle(n).color),
-     apLeft:ab.left-b.left,apTop:ab.top-b.top,apSize:parseFloat(getComputedStyle(ap.querySelector('b')).fontSize),contained:db.left>=b.left && db.right<=b.right+1 && db.bottom<=b.bottom,
+     apCenterX:ab.left+ab.width/2-b.left,apCenterY:ab.top+ab.height/2-b.top,apSize:parseFloat(getComputedStyle(ap.querySelector('b')).fontSize),contained:db.left>=b.left && db.right<=b.right+1 && db.bottom<=b.bottom,
      rise:parseFloat(getComputedStyle(card).getPropertyValue('--aura-rise')),spread:parseFloat(getComputedStyle(card).getPropertyValue('--aura-spread'))};
    }));
-   assert.ok(before.every(r=>r.contained && r.font==='13px' && r.numberFont===r.font && r.apLeft<=2 && r.apTop<=2 && r.apSize>=28));
+   assert.ok(before.every(r=>r.contained && r.font==='13px' && r.numberFont===r.font && Math.abs(r.apCenterX)<=2 && Math.abs(r.apCenterY)<=2 && r.apSize===23));
+   assert.equal(await page.locator('.reward-ap-badge .ap-pip.filled').count(),3);
+   const numberFits=await page.evaluate(()=>[0,1,12,999].every(cost=>{
+    const card=document.querySelector('.reward-choice-card'),original=card.querySelector('.reward-ap-badge');
+    original.insertAdjacentHTML('afterend',renderRewardActionPointBadge(cost));
+    const badge=original.nextElementSibling,b=badge.querySelector('b'),range=document.createRange();range.selectNodeContents(b);
+    const text=range.getBoundingClientRect(),box=badge.getBoundingClientRect();
+    const fits=text.left>=box.left+10 && text.right<=box.right-10 && text.top>=box.top && text.bottom<=box.bottom;
+    badge.remove();return fits;
+   }));
+   assert.ok(numberFits,'action-point digits stay inside the centered pip');
    const layout=await page.locator('.reward-choice-card').evaluateAll(cards=>cards.map(card=>{
     const heading=card.querySelector('.reward-choice-heading').getBoundingClientRect(),b=card.getBoundingClientRect();
     const meta=card.querySelector('.reward-inline-meta'),flavor=card.querySelector('.skill-flavor-text'),description=card.querySelector('.reward-inline-description');
@@ -90,7 +100,13 @@ document.addEventListener('keydown',handleRewardKeyboard);showCards(['common','r
    assert.ok(idle.every(r=>r.spikes.startsWith('polygon(')),'aura has pointed digital rays');
    await page.keyboard.press('2');assert.equal(await page.evaluate(()=>selectedRewardId),'r1');
    await page.keyboard.press('Enter');assert.equal(await page.evaluate(()=>confirmations),1);
-   await page.evaluate(()=>{view.choices=view.choices.map(r=>({rewardId:r.rewardId,type:'stat',rarity:r.rarity,description:'공격력 +2'}));renderRewardChoices(view);});
+   await page.evaluate(()=>{view.choices=view.choices.map((r,i)=>({rewardId:r.rewardId,type:'stat',rarity:r.rarity,targetId:['attack','accuracy','criticalRate'][i],value:[15,10,1.5][i],description:['공격력 +15','명중률 +10%p','치명타 확률 +1.5%p'][i]}));renderRewardChoices(view);});
+   assert.deepEqual(await page.locator('.reward-stat-increase').allTextContents(),['+15','+10%','+1.5%']);
+   assert.deepEqual(await page.locator('.reward-choice-heading').allTextContents(),['공격력 +15','명중률 +10%p','치명타 확률 +1.5%p']);
+   assert.ok(await page.locator('.reward-choice-card').evaluateAll(cards=>cards.every(card=>{
+    const icon=card.querySelector('.reward-choice-icon-wrap').getBoundingClientRect(),value=card.querySelector('.reward-stat-increase').getBoundingClientRect(),box=card.getBoundingClientRect();
+    return value.top>=icon.bottom && value.bottom<=box.bottom && value.left>=box.left && value.right<=box.right;
+   })),'stat increases appear below icons inside their cards');
    const statEffects=await page.locator('.reward-choice-card').evaluateAll(cards=>cards.map(card=>({
     charge:!!card.querySelector('.reward-charge-light'),flash:!!card.querySelector('.reward-light-card'),
     delay:card.querySelector('.reward-aura-intro').getAnimations()[0].effect.getTiming().delay
