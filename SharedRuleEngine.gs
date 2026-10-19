@@ -100,14 +100,25 @@ var RULE_ENGINE_SHARED = (function() {
       if (!isFinite(Number(rule.ruleOrder)) || Number(rule.ruleOrder) < 1 || Math.floor(Number(rule.ruleOrder)) !== Number(rule.ruleOrder)) throw new Error('Invalid EffectRules order: ' + key);
       if (seen[key]) throw new Error('Duplicate EffectRules key: ' + key);
       seen[key] = true;
-      if (['modifyStat', 'damage', 'blockAction', 'damageTakenMultiplier', 'removeOnHit'].indexOf(rule.operation) < 0) throw new Error('Unsupported effect operation: ' + rule.operation);
-      if (['passive', 'turnStart', 'turnEnd', 'onAction', 'beforeAction', 'beforeMonsterTurn', 'onHit'].indexOf(rule.triggerTiming) < 0) throw new Error('Unsupported effect timing: ' + rule.triggerTiming);
+      if (['modifyStat', 'damage', 'blockAction', 'damageTakenMultiplier', 'removeOnHit', 'combatParameter', 'directHitDamage', 'consumeStacks', 'modifyAppliedStacks', 'modifyReceivedStacks', 'consumeOnApply', 'incomingReductionIfEffect', 'triggerActions'].indexOf(rule.operation) < 0) throw new Error('Unsupported effect operation: ' + rule.operation);
+      if (['passive', 'turnStart', 'turnEnd', 'onAction', 'beforeAction', 'beforeMonsterTurn', 'onHit', 'onEvade', 'onBlock', 'onKill', 'onApplyEffect', 'onTurnStart', 'onTurnEnd'].indexOf(rule.triggerTiming) < 0) throw new Error('Unsupported effect timing: ' + rule.triggerTiming);
       if (rule.operation === 'modifyStat' && (!rule.statKey || ['flat', 'percent'].indexOf(rule.valueMode) < 0)) throw new Error('Invalid stat rule: ' + key);
       if ((rule.operation === 'modifyStat' || rule.operation === 'blockAction') && rule.triggerTiming !== 'passive') throw new Error('Stat/control rules require passive timing: ' + key);
       if ((rule.operation === 'damageTakenMultiplier' || rule.operation === 'removeOnHit') && rule.triggerTiming !== 'onHit') throw new Error('Hit rules require onHit timing: ' + key);
       if ((rule.operation === 'modifyStat' || rule.operation === 'damage' || rule.operation === 'damageTakenMultiplier') && !String(rule.valueFormula || '').trim()) throw new Error('Missing effect formula: ' + key);
       if (rule.operation === 'damage' && ['absorb', 'bypass'].indexOf(rule.shieldPolicy) < 0) throw new Error('Invalid shield policy: ' + key);
-      if (String(rule.valueFormula || '').trim()) evaluateFormula(rule.valueFormula, {value:1, stacks:1, maxHp:100, remainingTurns:1}, {
+      if (rule.operation === 'combatParameter' && (!String(rule.statKey || '').trim() || ['json','text'].indexOf(rule.valueMode)<0)) throw new Error('Invalid combat parameter: '+key);
+      if (rule.operation === 'combatParameter' && rule.valueMode === 'json') JSON.parse(rule.valueFormula);
+      if (rule.operation === 'triggerActions') {
+        var trigger=JSON.parse(rule.valueFormula);
+        if(rule.valueMode!=='json' || !Array.isArray(trigger.actions) || ['onBlock','onTurnStart','onTurnEnd'].indexOf(rule.triggerTiming)<0)throw new Error('Invalid effect trigger: '+key);
+        validateCombatActions(trigger.actions);
+      }
+      if(['directHitDamage','consumeStacks','modifyAppliedStacks','modifyReceivedStacks','consumeOnApply','incomingReductionIfEffect'].indexOf(rule.operation)>=0 && !String(rule.valueFormula || '').trim())throw new Error('Missing effect formula: '+key);
+      if(rule.operation==='directHitDamage' && ['absorb','bypass'].indexOf(rule.shieldPolicy)<0)throw new Error('Invalid shield policy: '+key);
+      if (['directHitDamage','consumeStacks'].indexOf(rule.operation)>=0 && rule.triggerTiming!=='onHit') throw new Error('Direct hit rules require onHit timing: '+key);
+      if (['modifyAppliedStacks','modifyReceivedStacks','consumeOnApply'].indexOf(rule.operation)>=0 && rule.triggerTiming!=='onApplyEffect') throw new Error('Stack modifiers require onApplyEffect timing: '+key);
+      if (['combatParameter','triggerActions'].indexOf(rule.operation)<0 && String(rule.valueFormula || '').trim()) evaluateFormula(rule.valueFormula, {value:1, stacks:1, maxHp:100, remainingTurns:1,attack:20}, {
         random:function() { return 0; },
         warn:function(message) { throw new Error('Invalid EffectRules formula (' + key + '): ' + message); }
       });
@@ -130,12 +141,12 @@ var RULE_ENGINE_SHARED = (function() {
     });
   }
 
-  function getEffectRuleValue(effect, rule, target) {
-    return evaluateFormula(rule.valueFormula, {
+  function getEffectRuleValue(effect, rule, target, extraContext) {
+    return evaluateFormula(rule.valueFormula, Object.assign({
       value: Number(effect.value || 0), stacks: Math.max(1, Number(effect.stacks || 1)),
       maxHp: Math.max(1, Number(target && (target.maxHp || target.stats && target.stats.hp) || 1)),
       remainingTurns: Number(effect.remainingTurns || 0)
-    }, {});
+    }, extraContext || {}), {});
   }
 
   function getRuleStatBonus(effect, statKey, valueMode) {
@@ -349,6 +360,12 @@ var RULE_ENGINE_SHARED = (function() {
       ? target[statKey]
       : target && target.stats && target.stats[statKey] !== undefined ? target.stats[statKey] : 0);
     return (target && target.effects || []).reduce(function(value, effect) {
+      var a=effect.assassinState;
+      if(a && a.active!==false){
+        if(statKey==='evasion')value+=Number(a.evasion || 0)+((target.shield!==undefined?Number(target.shield)===0:a.unshielded)?Number(a.unshieldedExtra || 0):0);
+        if(statKey==='attack')value+=Number(a.attackBonus || 0);
+        if(statKey==='hp')value=Math.max(1,value-Number(a.maxHpReduction || 0));
+      }
       if (effect.rules) {
         if (['questionTime', 'questionDifficulty', 'questionMaxEfficiency', 'questionMinEfficiencyPercent', 'questionEfficiencyBonusPercent', 'action'].indexOf(statKey) >= 0) return value;
         return effect.rules.reduce(function(result, rule) {
@@ -379,6 +396,14 @@ var RULE_ENGINE_SHARED = (function() {
       }
       if (!effect.statKey || effect.statKey === 'questionTime' || effect.statKey === 'questionDifficulty' || effect.statKey === 'questionMaxEfficiency' || effect.statKey === 'questionMinEfficiencyPercent' || effect.statKey === 'action') return;
       stats[effect.statKey] = getEffectiveStat({ stats: stats, effects: [effect] }, effect.statKey);
+    });
+    (activeEffects || []).forEach(function(effect) {
+      var a=effect.assassinState;
+      if(!a || a.active===false)return;
+      stats.evasion=Number(stats.evasion || 0)+Number(a.evasion || 0)+(a.unshielded?Number(a.unshieldedExtra || 0):0);
+      stats.attack=Number(stats.attack || 0)+Number(a.attackBonus || 0);
+      if(a.maxHpReduction)stats.hp=Math.max(1,Number(stats.hp || 1)-Number(a.maxHpReduction));
+      if(Number(a.guaranteedEvadeCharges)>0)stats.guaranteedEvade=true;
     });
     return stats;
   }
@@ -818,13 +843,13 @@ var RULE_ENGINE_SHARED = (function() {
     player.currentActionPoint = Math.max(0, Math.min(player.maxActionPoint, Number(player.currentActionPoint || 0)));
   }
 
-  function dealDamageToMonster(monster, amount, battle) {
+  function dealDamageToMonster(monster, amount, battle, context) {
     var incoming = Math.max(0, Math.round(Number(amount || 0)));
     var shieldBefore = Math.max(0, Number(monster.shield || 0));
     var modifiers = battle && battle.player && battle.player.itemModifiers || {};
     // Extra damage is consumed by shields only; it never spills into HP.
-    var shieldDamage = Math.min(shieldBefore, Math.max(0, Math.round(incoming * (1 + Number(modifiers.shieldDamagePercent || 0) / 100))));
-    var hpDamage = Math.min(Math.max(0, Number(monster.currentHp || 0)), Math.max(0, incoming - shieldBefore));
+    var shieldDamage = context && context.bypassShield ? 0 : Math.min(shieldBefore, Math.max(0, Math.round(incoming * (1 + Number(modifiers.shieldDamagePercent || 0) / 100))));
+    var hpDamage = Math.min(Math.max(0, Number(monster.currentHp || 0)), Math.max(0, incoming - (context && context.bypassShield ? 0 : shieldBefore)));
     monster.shield = Math.max(0, Number(monster.shield || 0) - shieldDamage);
     spendRetainedShield(monster, shieldDamage, shieldBefore);
     monster.currentHp = Math.max(0, Number(monster.currentHp || 0) - hpDamage);
@@ -1053,7 +1078,13 @@ var RULE_ENGINE_SHARED = (function() {
     var packets = [], removed = [];
     (target.effects || []).slice().forEach(function(effect) {
       var behavior = effect.behavior || {};
-      if (behavior.hitDamage) {
+      var directRules=(effect.rules || []).filter(function(r){return r.operation==='directHitDamage' && r.triggerTiming==='onHit';});
+      directRules.forEach(function(rule){
+        var extra={attack:Math.max(0,getEffectiveStat(attacker,'attack'))};
+        var consume=(effect.rules || []).filter(function(r){return r.operation==='consumeStacks' && r.triggerTiming==='onHit';}).reduce(function(sum,r){return sum+getEffectRuleValue(effect,r,target,extra);},0);
+        packets.push({damageKind:'additional',effectId:effect.effectId,amount:getEffectRuleValue(effect,rule,target,extra),consumeStacks:consume,bypassShield:rule.shieldPolicy==='bypass'});
+      });
+      if (!directRules.length && behavior.hitDamage) {
         var hit = behavior.combat && behavior.combat.additional && behavior.combat.additional.hitDamage || behavior.hitDamage;
         packets.push({damageKind:'additional', effectId:effect.effectId,
           amount:Number(hit.baseDamage || 0)+Math.max(0,getEffectiveStat(attacker,'attack'))*Number(hit.attackRatio || 0)+effectStacks(target,effect.effectId)*Number(hit.damagePerStack || 0),
@@ -1073,7 +1104,7 @@ var RULE_ENGINE_SHARED = (function() {
     if (actions === undefined) return;
     if (!Array.isArray(actions)) throw new Error('actions must be an array');
     actions.forEach(function(action) {
-      if (!action || ['damage','shield','heal','consumeStacks','moveStacks','copyStacks','removeEffect','applyEffect','storeCombo','resetCombo','cooldownSelect','cooldownAll','spreadStacks','gatherStacks','distributeStacks','cleanseLongest','counterAttack','breakControl','explosion','rewardBonus','clearShield'].indexOf(action.operation) < 0) throw new Error('Unsupported combat action');
+      if (!action || ['damage','shield','heal','actionPoint','consumeStacks','moveStacks','copyStacks','removeEffect','applyEffect','storeCombo','resetCombo','cooldownSelect','cooldownAll','spreadStacks','gatherStacks','distributeStacks','cleanseLongest','counterAttack','breakControl','explosion','rewardBonus','clearShield'].indexOf(action.operation) < 0) throw new Error('Unsupported combat action');
       if (['consumeStacks','moveStacks','copyStacks','removeEffect','applyEffect'].indexOf(action.operation) >= 0 && !action.effectId) throw new Error('Combat action requires effectId');
       if (action.damageKind && ['direct','effect','dot','additional','shatter','explosion','reflect','counter'].indexOf(action.damageKind) < 0) throw new Error('Unsupported damageKind');
       if (action.target && ['self','allEnemies','secondary','enemy'].indexOf(action.target) < 0) throw new Error('Unsupported combat action target');

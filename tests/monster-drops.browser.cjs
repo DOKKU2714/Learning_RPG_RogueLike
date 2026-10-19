@@ -11,7 +11,7 @@ b:{dropId:'b',monsterName:'보스',status:'pending',reward:{itemDetail:{itemId:'
 window.LearningRpgLocalRunEngine={itemDrops:()=>drops,skills:()=>[],decideDrop:(_,battle,id,claim)=>{drops[id].status=claim?'claimed':'ignored';decisions.push([id,claim]);if(claim)battle.player.items.push({itemId:id});}};
 function cssEscape(s){return CSS.escape(s);}function setBattleInputLocked(){}function renderBattle(){}function getRewardRarityLabel(){return '희귀';}
 function escapeHtml(s){return String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;');}
-${['animateMonsterItemPickup','presentMonsterItemDrops','renderOwnedItemCard','buildItemEffectDescription','buildItemFlavorDescription','normalizeRewardRarity','bindHoverTooltips','positionHoverTooltip','hideActiveHoverTooltips'].map(extract).join('\n')}
+${['animateMonsterItemPickup','presentMonsterItemDrops','renderOwnedItemCard','buildItemEffectDescription','buildItemFlavorDescription','normalizeRewardRarity','bindHoverTooltips','positionHoverTooltip','hideActiveHoverTooltips','refreshFinalVictoryRewardView','openRewardAfterVictory','presentStageClearRegen','getVictoryRewardKey'].map(extract).join('\n')}
 bindHoverTooltips();
 `;
 (async()=>{
@@ -37,7 +37,22 @@ bindHoverTooltips();
       assert.equal(await page.locator('#monsterDropModal').getAttribute('aria-hidden'),'true');
       assert.deepEqual(await page.evaluate(()=>decisions),[['a',true],['b',false]]);
       assert.deepEqual(await page.evaluate(()=>currentView.battle.player.items),[{itemId:'a'}]);
-      assert.equal(await page.evaluate(()=>victoryRewardPreload===null&&victoryRewardResultPayload===null),true);
+      assert.equal(await page.evaluate(()=>victoryRewardPreload!==null&&victoryRewardResultPayload!==null),true);
+      await page.evaluate(()=>{
+        Object.assign(window,{victoryRewardFlowStarted:false,victoryRewardRecoveryComplete:false,victoryRegenPresentationKey:'',preparedCount:0,logs:[]});
+        currentView.runId='test-run';currentView.battle.battleId='final';currentView.battle.stage={stageId:'5-5',floor:5,stage:5};
+        currentView.battle.monsterItemDrops=drops;Object.assign(currentView.battle.player,{maxHp:100,stats:{hp:100,hpRegen:5}});
+        window.preloadVictoryRewardChoices=view=>{window.capturedDrops=JSON.parse(JSON.stringify(view.battle.monsterItemDrops));};
+        window.buildStageResultPayload=view=>JSON.parse(JSON.stringify(view));
+        window.showPreparedVictoryReward=()=>{preparedCount++;};window.pushLog=text=>logs.push(text);
+        window.waitForBattleLogAdvance=()=>Promise.resolve();window.renderPlayerHud=()=>{};
+        window.animatePlayerStatusEffect=()=>{};window.spawnFloatingText=()=>{};
+        openRewardAfterVictory();
+      });
+      await page.waitForFunction(()=>preparedCount===1);
+      assert.equal(await page.evaluate(()=>currentView.battle.player.hp),35);
+      assert.equal(await page.evaluate(()=>capturedDrops.b.status),'ignored');
+      assert.match(await page.evaluate(()=>logs.join(' ')),/5 재생/);
       assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
       await page.evaluate(()=>{drops.a.status='pending';window.expiring=presentMonsterItemDrops(currentView);});
       await page.waitForSelector('#monsterDropModal.active');

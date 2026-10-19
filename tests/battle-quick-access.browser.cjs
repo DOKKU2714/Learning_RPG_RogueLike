@@ -65,10 +65,10 @@ const html = '<!doctype html><html><head><meta charset="UTF-8"><meta name="viewp
       assert.equal(await statRow('체력 회복').locator('b').evaluate(e=>getComputedStyle(e).fontWeight),'900');
       assert.equal(await statRow('치명타 확률').locator('.battle-stat-value-changed').count(),1);
       assert.equal(await statRow('치명타 확률').getAttribute('data-stat-reward'),'2');
-      assert.equal(await statRow('공격력').getAttribute('data-tooltip'),'공격 피해에 반영됩니다.');
+      assert.match(await statRow('공격력').getAttribute('data-tooltip'),/공격.*피해/);
       assert.equal(await statRow('회피율').locator('.battle-stat-value-changed').count(),0);
-      assert.match(await statRow('체력 회복').getAttribute('data-tooltip'),/스테이지 클리어 시 회복/);
-      assert.equal(await page.locator('.battle-stat-row[data-tooltip]').count(),12);
+      assert.match(await statRow('체력 회복').getAttribute('data-tooltip'),/스테이지.*회복/);
+      assert.equal(await page.locator('.battle-stat-row[data-tooltip]').count(),13);
       if(!mobile){
         await statRow('체력 회복').locator('b').hover();
         assert.equal(await page.locator('#hoverTooltip').getAttribute('aria-hidden'),'false');
@@ -77,6 +77,21 @@ const html = '<!doctype html><html><head><meta charset="UTF-8"><meta name="viewp
       }
       assert.equal(await statRow('공격력').locator('b').evaluate(e=>getComputedStyle(e).color),'rgb(255, 224, 138)');
       assert.equal(await page.evaluate(()=>formatEffectiveStat({attack:5},{attack:12},'attack','',{attack:10})), '12');
+      await page.evaluate(()=>{
+        window.LearningRpgLocalRunEngine={levelOptions:()=>[{key:'attack',amount:1}]};
+        currentView.battle.player.baseStats.levelProgress={level:2,spent:{attack:3}};showBattleStats();
+      });
+      assert.equal(await statRow('공격력').getAttribute('data-stat-level'),'3');
+      assert.equal(await statRow('공격력').getAttribute('data-stat-reward'),'0');
+      await page.evaluate(()=>{
+        localGameDataSnapshot.rewards=[{rewardId:'level_attack',type:'stat',targetId:'attack',value:2}];
+        currentView.battle.player.baseStats.attack+=2;
+        currentView.battle.player.baseStats.levelProgress.statRewards=[{rewardId:'level_attack',floor:1}];
+        showBattleStats();
+      });
+      assert.equal(await statRow('공격력').getAttribute('data-stat-level'),'5');
+      assert.equal(await statRow('공격력').getAttribute('data-stat-reward'),'0','random level stats stay in the level-up breakdown');
+      await page.evaluate(()=>{currentView.battle.player.baseStats.attack-=2;currentView.battle.player.baseStats.levelProgress.statRewards=[];});
       await page.evaluate(()=>{currentView.battle.player.stats.attack=12;updateBattleQuickAccess(currentView);});
       assert.equal(await page.locator('#battleStatsNotification').isVisible(),false);
       await page.screenshot({path:path.join(output,mobile?'mobile-stats.png':'desktop-stats.png')});

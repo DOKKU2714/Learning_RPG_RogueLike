@@ -65,6 +65,7 @@ test('monster drops: claim applies inventory and stats once; ignore permanently 
 });
 
 test('monster drops: claims survive UI payload serialization and signed next-stage replay without a second boss gift',()=>{
+ for(const accepted of [true,false]){
   const g=game();
   g.view=g.c.withRunSession_(g.view.runId,g.view.runSessionToken,'auth',()=>{
     const run=g.c.requireRun_(g.view.runId),state=g.c.getStageState_(run);
@@ -75,24 +76,29 @@ test('monster drops: claims survive UI payload serialization and signed next-sta
   g.view.localRunState=g.view.localRunState || g.c.decodeRunSession_(g.view.runSessionToken).run;
   g.battle=copy(g.view.battle);g.battle.status='victory';g.battle.monsters.forEach(m=>{m.currentHp=0;});
   const drops=g.engine.itemDrops(g.snapshot,g.battle),pending=Object.values(drops).filter(d=>d.status==='pending');
-  for(let i=0;i<pending.length;i++)g.engine.decideDrop(g.snapshot,g.battle,pending[i].dropId,i===0);
+  g.x.tick(5000);
+  // Finalize the next-stage permit before the item dialog is answered.
+  const early=g.c.previewRewardChoicesForStageResult({runId:g.view.runId,runSessionToken:g.view.runSessionToken,localAdvanceEnabled:true,localTransitions:[],battle:copy(g.battle),stageState:copy(g.view.stageState),answerLogs:[]},'auth');
+  for(let i=0;i<pending.length;i++)g.engine.decideDrop(g.snapshot,g.battle,pending[i].dropId,accepted && i===0);
   const html=fs.readFileSync('Battle.html','utf8');
   const ui=vm.createContext({copyStageResultValue:(v,f)=>copy(v===undefined?f:v),getBattleStatStartingStats:p=>p.startingStats || {}});
   vm.runInContext(html.match(/    function buildStageResultBattlePayload\([^]*?\n    \}/)[0],ui);
-  const p={runId:g.view.runId,runSessionToken:g.view.runSessionToken,localAdvanceEnabled:true,localTransitions:[],
+  const p={runId:g.view.runId,runSessionToken:early.runSessionToken,localAdvanceEnabled:true,localTransitions:[],
     battle:ui.buildStageResultBattlePayload(g.battle),stageState:copy(g.view.stageState),answerLogs:[]};
   g.x.tick(5000);
-  const reward=g.c.previewRewardChoicesForStageResult(copy(p),'auth');
+  const reward=g.engine.reward(g.view.localRunState,g.snapshot,p,early);
+  assert.equal(reward.localTransitionToken,early.localTransitionToken);
   assert.ok(!reward.bossItemRewards);
-  p.runSessionToken=reward.runSessionToken;p.stageState.reward=copy(reward);
+  p.runSessionToken=early.runSessionToken;p.stageState.reward=copy(reward);
   const choice=reward.choices[0],selectedAtMs=g.c.Date.now();
   const local=g.engine.advance(g.view.localRunState,g.snapshot,p,choice.rewardId,reward,{selectedAtMs});
   const checked=g.c.previewRewardChoicesForStageResult({...p,localTransitions:[{payload:copy(p),rewardId:choice.rewardId,
     rewardToken:reward.localTransitionToken,selectedAtMs}]},'auth');
   assert.equal(local.bonusItemReward,null);
-  assert.equal(local.battle.player.items.length,1);
+  assert.equal(local.battle.player.items.length,Number(accepted));
   assert.equal(local.localRunState.itemsJson,checked.localRunState.itemsJson);
-  assert.equal(local.battle.player.items[0].itemId,pending[0].reward.targetId);
+  if(accepted)assert.equal(local.battle.player.items[0].itemId,pending[0].reward.targetId);
+ }
 });
 
 test('monster drops: forged items and altered ignored decisions are rejected',()=>{

@@ -12,7 +12,7 @@ const modal=html.slice(html.indexOf('  <div id="rewardModal"'),html.indexOf('  <
       await page.setContent('<html><head>'+fs.readFileSync('UiStyles.html','utf8')+'</head><body>'+modal+
         '<div class="battle-hud"><div id="actionPanel"></div></div><div id="questionTitle"></div><div id="questionMessage"></div><button id="questionSubmitButton"></button><script>'+`
         var workbookDeadlineExpired=false,rewardSelectionApplying=false,selectedRewardId='',currentRewardView=null;
-        var levelRewardResolve=null,levelAllocationCancel=null,localGameDataSnapshot={},victoryRewardPreload={},victoryRewardResultPayload={};
+        var levelRewardResolve=null,levelAllocationCancel=null,levelAllocationActive=false,localGameDataSnapshot={},victoryRewardPreload={},victoryRewardResultPayload={};
         var currentView={runId:'run',battle:{stage:{stage:2},player:{hp:30,baseStats:{levelProgress:{level:3,xp:0,points:0,skillRewards:[]}}}},availableSkills:[]};
         function setBattleInputLocked(){} function renderBattle(){} function animateStageClearRegen(){} function renderBattleBackground(){} function fitRewardCardText(){}
         function escapeHtml(v){return String(v);} function getRewardIconUrl(){return '';}
@@ -37,7 +37,11 @@ const modal=html.slice(html.indexOf('  <div id="rewardModal"'),html.indexOf('  <
           rerollLevelReward:(_,b,record)=>{var p=b.player.baseStats.levelProgress;p.skillRewardRerolls=p.skillRewardRerolls || {};p.skillRewardRerolls[p.skillRewards.length+2]=record;return true;},
           skills:(_,b,skills)=>skills
         };
-        `+['getPlayerLevelProgress','getLevelRewardRerollQuestion','presentLevelSkillRewards','renderRewardChoices','selectRewardCandidate','handleRewardKeyboard','confirmRewardChoice','selectRewardChoice',
+        window.LearningRpgLocalRunEngine.pendingStatRewards=b=>b.player.baseStats.levelProgress.statRewards.length?0:1;
+        window.LearningRpgLocalRunEngine.statRewardChoices=(_,b)=>['a','b','c'].map(id=>({rewardId:(b.player.baseStats.levelProgress.statRewardRerolls[2]?'new-':'old-')+id,type:'stat',description:'공격력 +2',rarity:'common'}));
+        window.LearningRpgLocalRunEngine.rerollStatReward=(_,b,record)=>{b.player.baseStats.levelProgress.statRewardRerolls[2]=record;return true;};
+        window.LearningRpgLocalRunEngine.claimStatReward=(_,b,id)=>b.player.baseStats.levelProgress.statRewards.push(id);
+        `+['getPlayerLevelProgress','getLevelRewardRerollQuestion','presentLevelSkillRewards','presentLevelStatAllocation','renderRewardChoices','selectRewardCandidate','handleRewardKeyboard','confirmRewardChoice','selectRewardChoice',
           'renderFloorIntermissionActions','chooseFloorIntermissionAction','getFloorIntermissionChoice','submitQuestionAnswerOnServer','requestQuestionResultProceed','finishFloorExperienceSelection',
           'startRewardReroll','openRewardRerollQuestion','requestRewardReroll','finishRewardReroll','buildSignedQuestionResultSnapshot'].map(extract).join('\n')+
         ';document.addEventListener("keydown",handleRewardKeyboard);window.rewards=presentLevelSkillRewards(currentView);</script></body></html>');
@@ -62,6 +66,22 @@ const modal=html.slice(html.indexOf('  <div id="rewardModal"'),html.indexOf('  <
       await page.evaluate(()=>window.rewards);
       assert.deepEqual(await page.evaluate(()=>currentView.availableSkills.map(s=>s.skillId)),['d','b']);
       assert.equal(await page.evaluate(()=>currentView.battle.stage.stage),2,'claiming a level reward does not advance the stage');
+      assert.equal(await page.locator('#rewardModal').getAttribute('aria-hidden'),'true');
+      await page.evaluate(()=>{
+        Object.assign(currentView.battle.player.baseStats.levelProgress,{statRewards:[],statRewardBaseLevel:1,statRewardBaseCount:0,statRewardRerolls:{}});
+        window.statReward=presentLevelStatAllocation(currentView);
+      });
+      await page.waitForSelector('#rewardModal.active');
+      assert.equal(await page.locator('#rewardRerollButton').isVisible(),true);
+      assert.equal(await page.locator('#rewardRerollButton').isDisabled(),false);
+      await page.locator('#rewardRerollButton').click();
+      await page.evaluate(()=>requestRewardReroll('answer',{selectedAnswer:'1',selectedChoiceIndex:'1'}));
+      await page.evaluate(()=>finishRewardReroll());
+      assert.equal(await page.locator('.reward-choice-card').first().getAttribute('data-reward-id'),'new-a');
+      assert.equal(await page.locator('#rewardRerollButton').isDisabled(),true);
+      await page.keyboard.press('1');await page.keyboard.press('Enter');
+      await page.evaluate(()=>window.statReward);
+      assert.deepEqual(await page.evaluate(()=>currentView.battle.player.baseStats.levelProgress.statRewards),['new-a']);
       assert.equal(await page.locator('#rewardModal').getAttribute('aria-hidden'),'true');
       await page.evaluate(()=>renderFloorIntermissionActions());
       assert.deepEqual(await page.locator('#actionPanel > button').allTextContents(),['휴식회복','경험치 획득','스킬 강화']);

@@ -88,14 +88,14 @@ for(const mode of ['server','browser']) {
     assert.equal(bird.damage(10).damage,10);
     const book=setup('monster_Book',mode);
     book.damage(23);assert.equal(book.monster.currentHp,22);
-    assert.equal(book.monster.monsterKit.used.ms_close_book,undefined);
-    book.intent();assert.equal(book.monster.monsterKit.used.ms_close_book,undefined);
+    assert.equal(book.monster.monsterKit.used.ms_close_book,1);
+    book.intent();assert.equal(book.monster.monsterKit.used.ms_close_book,1);
     book.action();
     assert.equal(book.damage(10).damage,3);
     assert.equal(book.damage(10).damage,10);
     const computer=setup('monster_Computer',mode);
-    computer.damage(40);assert.equal(computer.monster.currentHp,40);
-    computer.intent();assert.equal(computer.monster.currentHp,40);
+    computer.damage(40);assert.equal(computer.monster.currentHp,55);
+    computer.intent();assert.equal(computer.monster.currentHp,55);
     computer.action();assert.equal(computer.monster.currentHp,55);
     computer.damage(16);assert.equal(computer.monster.currentHp,39);
     assert.equal(computer.monster.monsterKit.used.ms_reboot,1);
@@ -165,12 +165,13 @@ for(const mode of ['server','browser']) {
 }
 
 for(const mode of ['server','browser']) {
-  test('monster pack: '+mode+' HP conditions wait for the owner turn, including blocked turns',()=>{
+  test('monster pack: '+mode+' HP conditions activate immediately once, even before a blocked owner turn',()=>{
     const g=setup('monster_Computer',mode);
     g.damage(40);
-    assert.equal(g.monster.currentHp,40);
+    assert.equal(g.monster.currentHp,55);
+    assert.equal(g.battle.lastTurnEvents.find(e=>e.skillId==='ms_reboot').reaction,true);
     for(let i=0;i<3;i++)g.intent();
-    assert.equal(g.monster.currentHp,40);
+    assert.equal(g.monster.currentHp,55);
     g.c.applyEffect(g.monster,{effectId:'debuff_stun',category:'debuff',statKey:'action',effectType:'control',durationType:'turn',durationTurns:1},{turn:1});
     const result=mode==='server' ? g.c.beginCombatActorTurn_(g.battle,g.monster)
       : g.engine.actorTurn(g.snapshot,g.battle,g.monster);

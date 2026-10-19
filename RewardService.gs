@@ -165,6 +165,7 @@ function finalizePreparedRewardTransitions_(view, run, payload) {
 function refreshPreparedRewardView_(run, payload, view) {
   delete view.bossItemRewards;
   var battle = payload.battle || {};
+  if(view.floorRestChoice)refreshFloorRestSkillChoices_(run,battle,view);
   var regen = view.floorRestChoice
     ? {amount:0,nextHp:Number(run.currentHp || 0),maxHp:Number(battle.player && (battle.player.maxHp || battle.player.stats && battle.player.stats.hp) || 1)}
     : previewStageClearRegen_(run, battle);
@@ -180,6 +181,15 @@ function refreshPreparedRewardView_(run, payload, view) {
     return choice;
   });
   if(battle.combatRuntime && battle.combatRuntime.reward)applyCombatRewardBonuses_(view,battle,safeJsonParse_(run.skillsJson,[]),safeJsonParse_(run.itemsJson,[]));
+  return view;
+}
+
+function refreshFloorRestSkillChoices_(run, battle, view) {
+  var skills=normalizeOwnedSkills_(safeJsonParse_(run.skillsJson,[]));
+  view.choices=(view.choices || []).filter(function(r){return r.type!==REWARD_TYPES.SKILL_UPGRADE;}).concat(skills.map(function(owned){
+    var row=findCachedRowByKey_(DB_SHEETS.SKILLS,'skillId',owned.skillId,600);
+    return row && isSkillUpgradable_(row) ? sanitizeRewardForClient_(adaptRewardForChoice_(buildAutoSkillUpgradeReward_(row),skills),battle) : null;
+  }).filter(Boolean));
   return view;
 }
 
@@ -1626,6 +1636,14 @@ function buildPlayerProgressPatch_(run, playerData, currencyDelta) {
   return patch;
 }
 
+function buildRerolledRewardChoices_(run, battle, view) {
+  if(view.floorRestChoice || (view.choices || []).some(function(r){return r.type==='stageContinue';})) throw new Error('새로고침할 스킬 보상이 없습니다.');
+  var skills=safeJsonParse_(run.skillsJson,[]),items=safeJsonParse_(run.itemsJson,[]);
+  var choices=pickRewardChoices_(view.rewardGroupId,Number(battle.stage && battle.stage.floor || run.currentFloor),skills,items,view.choices);
+  var state=Object.assign({},view,{choices:choices,selectedRewardId:''});
+  return buildRewardChoiceView_(run.runId,view.stageId,view.rewardGroupId,state,skills,battle,view.scorePreviewSummary).choices;
+}
+
 function pickRewardChoices_(rewardGroupId, floor, ownedSkills, ownedItems, excludedChoices) {
   function identity(reward) {
     reward = reward.claimReward || reward;
@@ -2069,6 +2087,7 @@ function buildRewardSkillDetail_(reward, battleState) {
     rarityLabel: getRarityLabel_(hydrated.rarity),
     tags: hydrated.tags,
     description: hydrated.description,
+    conditionJson: hydrated.conditionJson || '{}',
     effectJson: hydrated.effectJson || '',
     upgradeJson: hydrated.upgradeJson || '{}',
     effectDetails: buildSkillEffectDetails_(hydrated),

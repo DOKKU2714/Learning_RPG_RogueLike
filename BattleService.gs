@@ -456,9 +456,10 @@ function normalizePlayerActionPoints_(battleState, resetForTurn) {
     return null;
   }
   var player = battleState.player;
+  syncConfiguredCombatStats_(battleState);
   player.baseMaxActionPoint = Math.max(0, Number(player.baseMaxActionPoint || GAME_RULES.DEFAULT_MAX_ACTION_POINT));
   if (resetForTurn) player.turnActionPointBonus = Math.max(0, Number(player.nextTurnActionPointDelta || 0));
-  var maxDelta = Number(player.actionPointMaxDelta || 0);
+  var maxDelta = Number(player.actionPointMaxDelta || 0)+(player.effects || []).reduce(function(sum,e){return sum+(e.assassinState && e.assassinState.active!==false?Number(e.assassinState.maxApBonus || 0):0);},0);
   var maxActionPoint = Math.max(0, player.baseMaxActionPoint + maxDelta + Number(player.turnActionPointBonus || 0));
   player.maxActionPoint = maxActionPoint;
   if (resetForTurn || player.currentActionPoint === undefined || player.currentActionPoint === null || player.currentActionPoint === '') {
@@ -681,6 +682,7 @@ function passPlayerTurn(runId, authToken) {
   normalizeBattleMonsters_(battleState);
   normalizePlayerActionPoints_(battleState, false);
   battleState.pendingAction = null;
+  battleState.player.assassinUnusedActionPoint=Number(battleState.player.currentActionPoint || 0);
   battleState.player.currentActionPoint = 0;
   battleState.lastTurnEvents = [];
 
@@ -696,8 +698,8 @@ function passPlayerTurn(runId, authToken) {
       });
       clearMonsterTurnShields_(battleState);
       applyMonsterTurn(battleState);
-      clearPlayerTurnShield_(battleState);
       tickEffectsAtTurnEnd(battleState);
+      clearPlayerTurnShield_(battleState);
     }
   }
 
@@ -1112,6 +1114,7 @@ function rollCriticalDamage_(damage, stats, criticalBonus) {
 }
 
 function rollHit_(attackerStats, defenderStats) {
+  if(defenderStats && defenderStats.guaranteedEvade)return {hit:false,chance:0};
   var rawAccuracy = attackerStats && attackerStats.accuracy;
   var rawEvasion = defenderStats && defenderStats.evasion;
   var accuracy = normalizeAccuracy_(rawAccuracy);
@@ -1259,6 +1262,7 @@ function monsterKitEvent_(battle, monster, entry, detail) {
     monsterId:monster.instanceId || monster.monsterId, monsterName:monster.name,
     skillId:entry && entry.skill.skillId || '', skillName:entry && entry.skill.name || '',
     attackEffect:entry && entry.skill.attackEffect || 'none',
+    reaction:!!(entry && entry.rule && entry.rule.trigger !== 'action'),
     message:monster.name + '의 ' + (entry && entry.skill.name || '특성') + '!'}, detail || {});
   battle.lastTurnEvents = battle.lastTurnEvents || [];
   battle.lastTurnEvents.splice(Number.isInteger(event.eventIndex) ? event.eventIndex : battle.lastTurnEvents.length, 0, event);
@@ -1272,7 +1276,7 @@ function prepareMonsterKit_(battle, monster, timing) {
   var state = monsterKitState_(monster);
   skills.forEach(function(entry) {
     var rule = entry.rule, id = entry.skill.skillId;
-    var ready = rule.trigger === 'battleStart' || (timing === 'ownerTurnStart' && rule.trigger === 'hpBelow' &&
+    var ready = rule.trigger === 'battleStart' || ((timing === 'ownerTurnStart' || timing === 'damage') && rule.trigger === 'hpBelow' &&
       Number(monster.currentHp) / Math.max(1, Number(monster.maxHp)) * 100 <= Number(rule.hpBelowPercent));
     if (!ready || state.used[id]) return;
     state.used[id] = 1; // Claim before dispatch; heal and damage can re-enter.
@@ -1442,7 +1446,7 @@ function monsterKitDamage_(battle, monster, entry, action, payload) {
   for (var i=0; i<count && battle.player.hp>0 && monster.currentHp>0; i++) {
     var stats = monsterKitStats_(monster);
     var targetStats = calculateEffectiveStats(battle.player.stats || {}, battle.player.effects || []);
-    var hit = action.unavoidable ? {hit:true,chance:100} : rollHit_(stats,targetStats);
+    var hit = targetStats.guaranteedEvade ? {hit:false,chance:0} : action.unavoidable ? {hit:true,chance:100} : rollHit_(stats,targetStats);
     var event = {type:entry ? 'skill' : 'attack',attackEffect:entry ? entry.skill.attackEffect || 'slash' : monster.attackEffect || 'slash',
       hitIndex:i+1,hitCount:count,hitChance:hit.chance};
     // Reflected damage happens inside the player's action, not a monster turn.
@@ -1454,7 +1458,7 @@ function monsterKitDamage_(battle, monster, entry, action, payload) {
     }
     if (!hit.hit) {
       processSkillTriggers_(battle,'onMiss',{actor:'monster',target:battle.player,damageKind:'direct'});
-      processSkillTriggers_(battle,'onEvade',{actor:'player',target:monster,damageKind:'direct'});
+      processSkillTriggers_(battle,'onEvade',{actor:'player',target:monster,damageKind:'direct',originalDamage:action.value!==undefined?Number(action.value):stats.attack*Number(action.multiplier===undefined?1:action.multiplier)});
       monsterKitEvent_(battle,monster,entry,Object.assign(event,{missed:true,message:monster.name + '의 공격이 빗나갔습니다.'}));
       continue;
     }
@@ -1848,7 +1852,7 @@ function applyMonsterAttackIntent_(battleState, monster, intent) {
   var hit = rollHit_(monsterStats, playerStats);
   if (!hit.hit) {
     processSkillTriggers_(battleState, 'onMiss', {actor:'monster',target:battleState.player,damageKind:'direct'});
-    processSkillTriggers_(battleState, 'onEvade', {actor:'player',target:monster,damageKind:'direct'});
+    processSkillTriggers_(battleState, 'onEvade', {actor:'player',target:monster,damageKind:'direct',originalDamage:Math.max(0,Number(monsterStats.attack || 0))});
     battleState.lastMonsterAction = {
       type: ACTION_TYPES.ATTACK,
       monsterId: monster.instanceId || monster.monsterId,
@@ -1934,10 +1938,11 @@ function applyMonsterSkillIntent_(battleState, monster, intent) {
     var playerStats = calculateEffectiveStats(battleState.player.stats || getConfiguredBasePlayerStats_(), battleState.player.effects || []);
     var hitCount = calculateMonsterSkillHitCount_(battleState, monster, skill, monsterStats);
     for (var hitIndex = 0; hitIndex < hitCount && Number(battleState.player.hp || 0) > 0; hitIndex += 1) {
+      playerStats=calculateEffectiveStats(battleState.player.stats || {},battleState.player.effects || []);
       var hit = rollHit_(monsterStats, playerStats);
       if (!hit.hit) {
         processSkillTriggers_(battleState, 'onMiss', {actor:'monster',target:battleState.player,damageKind:'direct'});
-        processSkillTriggers_(battleState, 'onEvade', {actor:'player',target:monster,damageKind:'direct'});
+        processSkillTriggers_(battleState, 'onEvade', {actor:'player',target:monster,damageKind:'direct',originalDamage:calculateMonsterSkillDamage_(battleState,monster,skill,monsterStats)});
         battleState.lastTurnEvents.push({
           actor: 'monster',
           type: ACTION_TYPES.SKILL,
@@ -2039,6 +2044,8 @@ function dealDamageToPlayer_(battleState, damage, attacker, damageContext) {
   // The caller inserts the attack here, ahead of reactions emitted during damage resolution.
   var eventIndex = battleState.lastTurnEvents.length;
   var context = Object.assign({damageKind:'direct',actor:'monster'}, damageContext || {});
+  damage=modifyIncomingEffectRuleDamage_(battleState,attacker,damage);
+  if(attacker)(attacker.effects || []).forEach(function(e){if(e.assassinState && e.assassinState.incomingBonus)damage*=1+e.assassinState.incomingBonus/100;});
   if(context.damageKind==='direct') {
     (battleState.player.effects || []).forEach(function(e){damage*=Number(combatEffectConfig_(e).incomingMultiplier || 1);});
     (attacker && attacker.effects || []).forEach(function(e){damage*=Number(combatEffectConfig_(e).retaliationMultiplier || 1);});
@@ -2065,6 +2072,7 @@ function dealDamageToPlayer_(battleState, damage, attacker, damageContext) {
     processSkillTriggers_(battleState, 'onDamaged', { damage: totalDamage, shieldDamage: shieldDamage, hpDamage: hpDamage, target:attacker, actor:'monster' });
   }
   processSkillTriggers_(battleState, 'onDamage', Object.assign({}, context, {target:battleState.player,damage:totalDamage,hpDamage:hpDamage,shieldDamage:shieldDamage}));
+  syncConfiguredCombatStats_(battleState);
   return { damage: totalDamage, shieldDamage: shieldDamage, hpDamage: hpDamage, eventIndex: eventIndex };
 }
 
@@ -2075,13 +2083,14 @@ function dealDamageToMonster_(battleState, monster, damage, damageContext) {
   var context = Object.assign({damageKind:'effect',actor:'player'}, damageContext || {});
   prepareMonsterKit_(battleState, monster);
   damage=modifyCombatOutgoing_(battleState,monster,damage,context);
-  damage=reduceMonsterKitDamage_(battleState,monster,damage,context);
+  if(!context.fixedDamage)damage=reduceMonsterKitDamage_(battleState,monster,damage,context);
+  (monster.effects || []).forEach(function(e){if(e.assassinState && e.assassinState.outgoingBonus)damage*=1+e.assassinState.outgoingBonus/100;});
   var reactions = context.damageKind === 'direct' ? getSharedRuleEngine_().directHitReactions(monster, battleState.player) : {packets:[],removed:[]};
   var totalDamage = Math.max(0, Math.round(Number(damage || 0)));
   var shieldBefore = Number(monster.shield || 0);
   var hpBefore = Number(monster.currentHp || 0);
-  var result = getSharedRuleEngine_().dealDamageToMonster(monster, totalDamage, battleState);
-  prepareMonsterKit_(battleState, monster);
+  var result = getSharedRuleEngine_().dealDamageToMonster(monster, totalDamage, battleState,context);
+  prepareMonsterKit_(battleState, monster, 'damage');
   if (monster.intent && monster.intent.monsterKit && monster.currentHp > 0) monster.intent = selectMonsterKitIntent_(battleState, monster);
   if (context.damageKind === 'direct' && result.damage > 0 && monster.currentHp > 0) {
     dispatchMonsterKitTrigger_(battleState, monster, 'onDamaged', context);
@@ -2092,7 +2101,7 @@ function dealDamageToMonster_(battleState, monster, damage, damageContext) {
   }
   var killScore = recordMonsterScoreContribution_(battleState, monster, hpBefore, monster.currentHp, result.damage);
   syncPrimaryMonster_(battleState);
-  var payload = Object.assign({}, context, result, {target:monster});
+  var payload = Object.assign({}, context, result, {target:monster,overkill:Math.max(0,result.displayDamage-result.shieldDamage-hpBefore)});
   if (context.damageKind === 'direct') {
     processSkillTriggers_(battleState, 'onHit', payload);
     if (context.isCritical) processSkillTriggers_(battleState, 'onCritical', payload);
@@ -2101,8 +2110,8 @@ function dealDamageToMonster_(battleState, monster, damage, damageContext) {
   reactions.removed.forEach(function(effect) { processSkillTriggers_(battleState, 'onEffectRemoved', Object.assign({}, context, {target:monster,effectId:effect.effectId,reason:'hit'})); });
   if (hpBefore > 0 && Number(monster.currentHp || 0) <= 0) emitCombatKill_(battleState, monster, payload);
   reactions.packets.forEach(function(packet) {
-    if (Number(monster.currentHp || 0) <= 0 || packet.amount <= 0) return;
-    var packetContext=Object.assign({},context,{damageKind:packet.damageKind,isCritical:false,effectId:packet.effectId,shieldOnlyDamage:0,baseAdditionalDamage:packet.amount});
+    if (result.damage <= 0 || Number(monster.currentHp || 0) <= 0 || packet.amount <= 0) return;
+    var packetContext=Object.assign({},context,{damageKind:packet.damageKind,isCritical:false,fixedDamage:false,bypassShield:!!packet.bypassShield,effectId:packet.effectId,shieldOnlyDamage:0,baseAdditionalDamage:packet.amount});
     var packetAmount=packet.amount;
     if(packet.damageKind==='shatter')packetAmount*=Number(context.shatterMultiplier || 1);
     packetAmount=modifyCombatAdditional_(battleState,monster,packetAmount,packetContext);
@@ -2127,6 +2136,7 @@ function emitCombatKill_(battleState, monster, payload) {
 // Run-local progression lives in statsJson so checkpoints, rewards and new
 // battles carry it through the same persistence path as permanent stat gains.
 function getLevelStatOptions_() {
+  // Saved runs may still contain investments made with the former fixed table.
   return [
     {key:'attack',label:'공격력',amount:1}, {key:'defense',label:'방어력',amount:1},
     {key:'hp',label:'최대 체력',amount:1}, {key:'hpRegen',label:'체력 회복',amount:1},
@@ -2137,14 +2147,97 @@ function getLevelStatOptions_() {
   ];
 }
 
+function getNextLevelStatRewardLevel_(player) {
+  var p=ensureLevelProgress_(player);
+  return p.statRewardBaseLevel+(p.statRewards || []).length-p.statRewardBaseCount+1;
+}
+
+function getPendingLevelStatRewards_(battle) {
+  var p=ensureLevelProgress_(battle.player);
+  return Math.max(0,p.level-getNextLevelStatRewardLevel_(battle.player)+1+Math.max(0,p.points-p.statRewardBasePoints));
+}
+
+function getLevelStatRewardChoices_(battle, ordinal, floor, ignoreReroll) {
+  var progress=ensureLevelProgress_(battle.player);
+  ordinal=ordinal===undefined?(progress.statRewards || []).length:ordinal;
+  floor=floor===undefined?Math.max(1,Number(battle.stage && battle.stage.floor || 1)):floor;
+  var pool=readTableCached_(DB_SHEETS.REWARDS,600).filter(function(row){
+    return row.type===REWARD_TYPES.STAT && row.rewardId && ALLOWED_REWARD_STAT_KEYS_.indexOf(row.targetId)>=0
+      && Number.isFinite(Number(row.value)) && Number(row.value)>0 && Number.isFinite(Number(row.weight)) && Number(row.weight)>0
+      && (!Number(row.minFloor) || floor>=Number(row.minFloor)) && (!Number(row.maxFloor) || floor<=Number(row.maxFloor));
+  }).slice().sort(function(a,b){return String(a.rewardId).localeCompare(String(b.rewardId));});
+  var level=progress.statRewardBaseLevel+ordinal-progress.statRewardBaseCount+1;
+  var record=!ignoreReroll && (progress.statRewardRerolls || {})[level];
+  var rerolled=record && isLevelRewardRerollCorrect_(record);
+  if(rerolled){
+    var previous=getLevelStatRewardChoices_(battle,ordinal,floor,true).map(function(r){return r.rewardId;});
+    var fresh=pool.filter(function(r){return previous.indexOf(r.rewardId)<0;});
+    var targets=fresh.map(function(r){return r.targetId;}).filter(function(id,index,all){return all.indexOf(id)===index;});
+    if(targets.length>=3)pool=fresh;
+  }
+  var seed=2166136261,key=String(battle.runId || battle.battleId)+':level-stat:'+ordinal+':'+floor+(rerolled?':reroll':'');
+  for(var i=0;i<key.length;i++)seed=Math.imul(seed^key.charCodeAt(i),16777619)>>>0;
+  var choices=[];
+  while(pool.length && choices.length<3){
+    seed=(Math.imul(seed,1664525)+1013904223)>>>0;
+    var total=pool.reduce(function(sum,row){return sum+Number(row.weight);},0),roll=seed/4294967296*total,picked=pool[pool.length-1];
+    for(var j=0;j<pool.length;j++){roll-=Number(pool[j].weight);if(roll<0){picked=pool[j];break;}}
+    var reward=attachRewardRarity_(Object.assign({},picked,{value:Number(picked.value)}));
+    // Descriptions are editable prose; value is the authoritative increase.
+    reward.description=buildLevelStatRewardDescription_(reward);
+    choices.push(reward);
+    pool=pool.filter(function(row){return row.rewardId!==picked.rewardId && row.targetId!==picked.targetId;});
+  }
+  return choices;
+}
+
+function buildLevelStatRewardDescription_(reward) {
+  var labels={attack:'공격력',defense:'방어력',hp:'최대 체력',hpRegen:'체력 재생',accuracy:'명중률',evasion:'회피율',criticalRate:'치명타 확률',criticalDamage:'치명타 피해',questionEfficiency:'문제 풀이 효율'};
+  var percent=['accuracy','evasion','criticalRate','criticalDamage','questionEfficiency'].indexOf(reward.targetId)>=0;
+  return (labels[reward.targetId] || reward.targetId)+' +'+Number(reward.value)+(percent?'%p':'');
+}
+
+function applyLevelStatReward_(battle,rewardId) {
+  var progress=ensureLevelProgress_(battle.player);
+  if(!getPendingLevelStatRewards_(battle))throw new Error('선택 가능한 레벨업 스탯 보상이 없습니다.');
+  var level=getNextLevelStatRewardLevel_(battle.player);
+  var reward=getLevelStatRewardChoices_(battle).filter(function(r){return r.rewardId===rewardId;})[0];
+  if(!reward)throw new Error('스탯 보상 후보가 아닙니다.');
+  var player=battle.player,previousMaxHp=Number(player.maxHp || player.stats && player.stats.hp || 1);
+  player.baseStats[reward.targetId]=Math.round((Number(player.baseStats[reward.targetId] || 0)+reward.value)*100)/100;
+  progress.statRewards=(progress.statRewards || []).concat([{rewardId:reward.rewardId,level:level,floor:Math.max(1,Number(battle.stage && battle.stage.floor || 1))}]);
+  player.stats=calculateStatsWithItemEffects_(player.baseStats,player.items || []);
+  player.maxHp=Number(player.stats.hp || previousMaxHp);
+  syncConfiguredCombatStats_(battle);
+  if(Number(player.hp || 0)>0)player.hp=Math.min(player.maxHp,Number(player.hp)+Math.max(0,player.maxHp-previousMaxHp));
+  return reward;
+}
+
+function applyLevelStatRewardReroll_(battle,record) {
+  var progress=ensureLevelProgress_(battle.player),level=getNextLevelStatRewardLevel_(battle.player);
+  if(!getPendingLevelStatRewards_(battle))throw new Error('선택 가능한 레벨업 스탯 보상이 없습니다.');
+  if((progress.statRewardRerolls || {})[level])throw new Error('새로고침은 한 번만 가능합니다.');
+  var correct=isLevelRewardRerollCorrect_(record);
+  progress.statRewardRerolls=Object.assign({},progress.statRewardRerolls);
+  progress.statRewardRerolls[level]=JSON.parse(JSON.stringify(record));
+  return correct;
+}
+
 function ensureLevelProgress_(player) {
   player.baseStats = player.baseStats || Object.assign({}, player.stats || {});
   var progress = player.baseStats.levelProgress;
-  if (!progress || typeof progress !== 'object') progress = {level:1,xp:0,points:0,spent:{}};
+  if (!progress || typeof progress !== 'object') progress = {level:1,xp:0,points:0,spent:{},statRewardVersion:1,statRewards:[]};
   progress.level = Math.max(1, Math.floor(Number(progress.level) || 1));
   progress.xp = Math.max(0, Math.floor(Number(progress.xp) || 0));
   progress.points = Math.max(0, Math.floor(Number(progress.points) || 0));
   progress.spent = progress.spent || {};
+  if(progress.statRewardVersion!==2){
+    // Keep all old gains, collapsing an unfinished point-allocation screen to one choice.
+    progress.statRewardBaseLevel=Math.max(1,progress.level-(progress.points>0?1:0));
+    progress.statRewardBaseCount=(progress.statRewards || []).length;
+    progress.statRewardBasePoints=progress.points;
+    progress.statRewardVersion=2;
+  }
   player.baseStats.levelProgress = progress;
   return progress;
 }
@@ -2161,7 +2254,6 @@ function grantLevelExperience_(player, amount) {
   while (progress.xp >= levelExperienceRequired_(progress.level)) {
     progress.xp -= levelExperienceRequired_(progress.level);
     progress.level += 1;
-    progress.points += 3;
   }
   return progress;
 }
@@ -2335,6 +2427,7 @@ function validateLevelStatsForCommit_(run, serverBattle, receivedBattle) {
     player:{baseStats:JSON.parse(JSON.stringify(expected))},lastTurnEvents:[],
     experienceAwarded:Object.assign({},serverBattle.experienceAwarded || {})};
   var starting = ensureLevelProgress_(simulation.player);
+  var previousProgress=JSON.parse(JSON.stringify(starting));
   var previousSpent = Object.assign({},starting.spent);
   // The server supplies monster definitions and XP values. The client supplies
   // per-monster solve aggregates, just as it supplies damage/kill outcomes.
@@ -2352,6 +2445,20 @@ function validateLevelStatsForCommit_(run, serverBattle, receivedBattle) {
   });
   var actual = received.levelProgress || {level:1,xp:0,points:0,spent:{}};
   var calculated = ensureLevelProgress_(simulation.player);
+  var legalSkills=validateLevelSkillUpgrades_(run,actual);
+  var oldKills=expected.levelProgress && expected.levelProgress.assassinKills || {},kills=actual.assassinKills || {};
+  Object.keys(oldKills).forEach(function(id){if(JSON.stringify(kills[id])!==JSON.stringify(oldKills[id]))throw new Error('처치 보상 기록을 변경할 수 없습니다.');});
+  Object.keys(kills).forEach(function(id){
+    if(oldKills[id])return;
+    var record=kills[id],owned=legalSkills.filter(function(s){return s.skillId===record.sourceSkillId;})[0];
+    var master=owned && findCachedRowByKey_(DB_SHEETS.SKILLS,'skillId',owned.skillId,600);
+    var config=master && getSkillExecutionRule_(master).combat;
+    var before=(serverBattle.monsters || []).filter(function(m){return String(m.instanceId || m.monsterId)===id;})[0];
+    var after=(receivedBattle.monsters || []).filter(function(m){return String(m.instanceId || m.monsterId)===id;})[0];
+    if(!config || !config.effectRules || !config.effectRules.killReward || !before || before.currentHp<=0 || !after || after.currentHp>0
+      || !Number.isInteger(record.level) || record.level<1 || record.level>Number(owned.level))throw new Error('처치 스탯 보상 기록이 올바르지 않습니다.');
+    calculated.points+=Number(config.effectRules.killReward.statPointsPerKill || 1);
+  });
   if (Number(actual.level)!==calculated.level || Number(actual.xp)!==calculated.xp) throw new Error('레벨 또는 경험치가 처치 기록과 다릅니다.');
   var spent = actual.spent || {}, options = getLevelStatOptions_(), deltas={},used=0;
   if (Object.keys(spent).some(function(key){return !options.some(function(o){return o.key===key;});})) throw new Error('스탯 투자 항목이 올바르지 않습니다.');
@@ -2360,8 +2467,31 @@ function validateLevelStatsForCommit_(run, serverBattle, receivedBattle) {
     if (!isFinite(count)||count<0||count!==Math.floor(count)) throw new Error('스탯 투자 기록이 올바르지 않습니다.');
     used+=count;deltas[option.key]=count*option.amount;
   });
+  if((!expected.levelProgress || Number(expected.levelProgress.statRewardVersion)>=1) && used)throw new Error('무작위 스탯 보상을 선택해야 합니다.');
+  if(actual.statRewardVersion!==2 || actual.statRewardBaseLevel!==previousProgress.statRewardBaseLevel || actual.statRewardBaseCount!==previousProgress.statRewardBaseCount || actual.statRewardBasePoints!==previousProgress.statRewardBasePoints)throw new Error('스탯 보상 버전이 올바르지 않습니다.');
+  var oldStatRewards=previousProgress.statRewards || [],statRewards=actual.statRewards || [];
+  if(!Array.isArray(statRewards) || statRewards.length<oldStatRewards.length)throw new Error('스탯 보상 기록이 올바르지 않습니다.');
+  var statRewardLimit=calculated.level+Math.max(0,calculated.points-previousProgress.statRewardBasePoints);
+  if(statRewards.length-previousProgress.statRewardBaseCount>statRewardLimit-previousProgress.statRewardBaseLevel)throw new Error('스탯 보상 횟수가 레벨 기록과 다릅니다.');
+  var oldRerolls=previousProgress.statRewardRerolls || {},rerolls=actual.statRewardRerolls || {};
+  Object.keys(oldRerolls).forEach(function(key){if(stableProgressRecordJson_(oldRerolls[key])!==stableProgressRecordJson_(rerolls[key]))throw new Error('스탯 새로고침 기록을 변경할 수 없습니다.');});
+  Object.keys(rerolls).forEach(function(key){
+    var level=Number(key);
+    if(!Number.isInteger(level) || level<=previousProgress.statRewardBaseLevel || level>statRewardLimit)throw new Error('스탯 새로고침 레벨이 올바르지 않습니다.');
+    if(!oldRerolls[key] && level<previousProgress.statRewardBaseLevel+oldStatRewards.length-previousProgress.statRewardBaseCount+1)throw new Error('완료한 스탯 보상을 새로고침할 수 없습니다.');
+    isLevelRewardRerollCorrect_(rerolls[key],run.workbookId);
+  });
+  calculated.statRewardRerolls=rerolls;
+  oldStatRewards.forEach(function(record,index){if(stableProgressRecordJson_(record)!==stableProgressRecordJson_(statRewards[index]))throw new Error('스탯 보상 기록을 변경할 수 없습니다.');});
+  for(var statIndex=oldStatRewards.length;statIndex<statRewards.length;statIndex++){
+    var record=statRewards[statIndex],floor=Math.max(1,Number(simulation.stage.floor || 1));
+    if(!record || record.floor!==floor)throw new Error('스탯 보상 층 기록이 올바르지 않습니다.');
+    if(record.level!==previousProgress.statRewardBaseLevel+statIndex-previousProgress.statRewardBaseCount+1)throw new Error('스탯 보상 레벨 기록이 올바르지 않습니다.');
+    var selected=getLevelStatRewardChoices_({runId:run.runId,battleId:serverBattle.battleId,stage:simulation.stage,player:simulation.player},statIndex,floor).filter(function(r){return r.rewardId===record.rewardId;})[0];
+    if(!selected)throw new Error('스탯 보상 후보가 아닙니다.');
+    deltas[selected.targetId]=Number(deltas[selected.targetId] || 0)+selected.value;
+  }
   if (used>calculated.points || Number(actual.points)!==calculated.points-used) throw new Error('스탯 포인트가 레벨 기록과 다릅니다.');
-  validateLevelSkillUpgrades_(run,actual);
   var keys=Object.keys(expected).concat(Object.keys(received));
   keys.forEach(function(key) {
     if(key==='levelProgress')return;
@@ -2369,6 +2499,17 @@ function validateLevelStatsForCommit_(run, serverBattle, receivedBattle) {
     if (!isFinite(Number(received[key] || 0)) || Math.abs(Number(received[key] || 0)-wanted)>0.000001) throw new Error('플레이어 능력치가 게임 진행 기록과 다릅니다.');
   });
   return true;
+}
+
+function stableProgressRecordJson_(value) {
+  function ordered(input){
+    if(Array.isArray(input))return input.map(ordered);
+    if(input && typeof input==='object'){
+      var result=Object.create(null);Object.keys(input).sort().forEach(function(key){result[key]=ordered(input[key]);});return result;
+    }
+    return input;
+  }
+  return JSON.stringify(ordered(value));
 }
 
 function validateLevelSkillUpgrades_(run, progress) {
@@ -2379,7 +2520,7 @@ function validateLevelSkillUpgrades_(run, progress) {
   if(!Array.isArray(rewards) || rewards.length<oldRewards.length || rewards.length>Number(progress.level || 1)-1)throw new Error('레벨업 스킬 보상 횟수가 올바르지 않습니다.');
   oldRewards.forEach(function(id,index){if(rewards[index]!==id)throw new Error('이미 받은 스킬 보상을 변경할 수 없습니다.');});
   var oldRerolls=previous.skillRewardRerolls || {},rerolls=progress.skillRewardRerolls || {};
-  Object.keys(oldRerolls).forEach(function(key){if(JSON.stringify(oldRerolls[key])!==JSON.stringify(rerolls[key]))throw new Error('새로고침 기록을 변경할 수 없습니다.');});
+  Object.keys(oldRerolls).forEach(function(key){if(stableProgressRecordJson_(oldRerolls[key])!==stableProgressRecordJson_(rerolls[key]))throw new Error('새로고침 기록을 변경할 수 없습니다.');});
   Object.keys(rerolls).forEach(function(key){var level=Number(key);if(!Number.isInteger(level)||level<2||level>Number(progress.level))throw new Error('새로고침 레벨이 올바르지 않습니다.');isLevelRewardRerollCorrect_(rerolls[key],run.workbookId);});
   rewards.slice(oldRewards.length).forEach(function(id,index){
     var level=oldRewards.length+index+2;
@@ -2479,6 +2620,7 @@ function clearPlayerTurnShield_(battleState) {
     return battleState;
   }
   getSharedRuleEngine_().clearCombatTurnShield(battleState.player);
+  syncConfiguredCombatStats_(battleState);
   return battleState;
 }
 
@@ -3253,6 +3395,7 @@ function getBattleClientConfig_() {
     questionResultHoldMs: clampClientDelay_(settings.questionResultHoldMs, 900, 0, 5000),
     questionActionStartDelayMs: clampClientDelay_(settings.questionActionStartDelayMs, 0, 0, 2000),
     firstStageIntroLines: getFirstStageIntroLines_(settings),
+    skillConceptKeywords: getSkillConceptKeywords_(settings),
     minAnswerEfficiency: getClientNumberSetting_(settings.minAnswerEfficiency, GAME_RULES.MIN_ANSWER_EFFICIENCY),
     maxAnswerEfficiency: getClientNumberSetting_(settings.maxAnswerEfficiency, GAME_RULES.MAX_ANSWER_EFFICIENCY),
     extraWrongEfficiencyPenalty: getClientNumberSetting_(settings.extraWrongEfficiencyPenalty, GAME_RULES.EXTRA_WRONG_EFFICIENCY_PENALTY),
@@ -3260,6 +3403,17 @@ function getBattleClientConfig_() {
     questionTimePerDifficultySec: Number(timeSettings.questionTimePerDifficultySec || GAME_RULES.QUESTION_TIME_PER_DIFFICULTY_SEC),
     maxQuestionTimeSec: Number(timeSettings.maxQuestionTimeSec || 0),
   };
+}
+
+function getSkillConceptKeywords_(settings) {
+  var defaults={burn:['발화'],shock:['감전'],luck:['행운'],assassin:['암살'],poison:['중독'],strike:['타격'],chill:['냉기'],freeze:['빙결'],common:['공용'],bleed:['출혈'],stun:['기절']};
+  var configured=settings && settings.skillConceptKeywordsJson;
+  if(typeof configured==='string')configured=safeJsonParse_(configured,{});
+  if(!configured || typeof configured!=='object' || Array.isArray(configured))return defaults;
+  Object.keys(defaults).forEach(function(concept){
+    if(Array.isArray(configured[concept]))defaults[concept]=configured[concept].slice(0,40).filter(function(word){return typeof word==='string' && word.trim() && word.length<=40;}).map(function(word){return word.trim();});
+  });
+  return defaults;
 }
 
 function getClientNumberSetting_(value, fallback) {

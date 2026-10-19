@@ -232,6 +232,13 @@ function advanceRunStage(stagePayload, rewardId, authToken, rewardView) {
       var currentBattle = getStageState_(run).battle;
       // Network retries return the already prepared next battle without applying twice.
       if (currentBattle && currentBattle.battleId !== stagePayload.battle.battleId && !getWorkbookPlayWindow_(getRunWorkbookContext_(run).workbookId).expired) return buildBattleStateView_(run, getStageState_(run));
+      if(stagePayload.localRewardRerollAnswer) {
+        var original=verifyLocalRewardView_(rewardView && rewardView.localTransitionToken);
+        if(original.runId!==run.runId || original.stageId!==stagePayload.battle.stage.stageId
+          || !original.localTransition || original.localTransition.battleId && original.localTransition.battleId!==stagePayload.battle.battleId) throw new Error('새로고침 보상 정보가 현재 전투와 다릅니다.');
+        rewardView=getLocalRunRuleEngine_().rerollReward(run,ACTIVE_GAME_DATA_SNAPSHOT_,stagePayload,original,stagePayload.localRewardRerollAnswer).rewardView;
+        stagePayload.stageState=Object.assign({},stagePayload.stageState,{reward:rewardView});
+      }
       var committed = commitStageResultUnlocked_(stagePayload, authToken);
       if (committed.battle && committed.battle.status === STATUS.BATTLE_DEFEAT) return committed;
       if(rewardView && stagePayload.floorExperienceAnswer)rewardView=Object.assign({},rewardView,{floorExperienceAnswer:stagePayload.floorExperienceAnswer});

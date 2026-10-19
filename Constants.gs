@@ -314,6 +314,7 @@ var MASTER_SETTINGS = Object.freeze([
   { key: 'maxQuestionTimeSec', value: '20', type: 'number', description: 'Maximum final question time in seconds. Leave empty or 0 for no maximum.' },
   { key: 'questionResultHoldMs', value: '1400', type: 'number', description: 'Milliseconds to keep the correct-answer result visible before battle resolution continues.' },
   { key: 'questionActionStartDelayMs', value: '0', type: 'number', description: 'Milliseconds to wait after closing the question modal before playing the battle action.' },
+  { key: 'skillConceptKeywordsJson', value: JSON.stringify({burn:['발화'],shock:['감전'],luck:['행운'],assassin:['암살'],poison:['중독'],strike:['타격'],chill:['냉기'],freeze:['빙결'],common:['공용'],bleed:['출혈'],stun:['기절']}), type: 'json', description: '스킬 설명에서 컨셉 색으로 강조할 단어. 컨셉별 문자열 배열. 예: {"burn":["발화","불씨","화염"],"shock":["감전","전류"]}' },
   { key: 'firstStageIntroLinesJson', value: JSON.stringify([
     { text: '눈을 떠보니 학교 옥상이다 .', sparkleDot: true },
     { text: '일단 여기서 나가야겠다.' },

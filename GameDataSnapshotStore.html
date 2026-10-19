@@ -94,17 +94,26 @@
     if (memorySnapshot) return Promise.resolve(memorySnapshot);
     return openDatabase().then(function(database) {
       return new Promise(function(resolve, reject) {
-        var transaction = database.transaction(STORE_NAME, 'readonly');
+        var settled=false,transaction;
+        var timeout=global.setTimeout(function(){finish(null,new Error('로컬 게임 데이터 읽기 시간이 초과되었습니다.'));},5000);
+        function finish(snapshot,error){
+          if(settled)return;settled=true;global.clearTimeout(timeout);
+          if(error && transaction){try{transaction.abort();}catch(ignore){}}
+          database.close();
+          if(error){reject(error);return;}
+          memorySnapshot=snapshot;resolve(snapshot);
+        }
+        try {
+        transaction=database.transaction(STORE_NAME, 'readonly');
+        transaction.onerror=transaction.onabort=function(){finish(null,transaction.error || new Error('로컬 게임 데이터 읽기가 중단되었습니다.'));};
         var request = transaction.objectStore(STORE_NAME).get(SNAPSHOT_KEY);
         request.onsuccess = function() {
-          database.close();
-          memorySnapshot = request.result || loadSessionFallback() || null;
-          resolve(memorySnapshot);
+          finish(request.result || loadSessionFallback() || null);
         };
         request.onerror = function() {
-          database.close();
-          reject(request.error || new Error('로컬 게임 데이터를 읽지 못했습니다.'));
+          finish(null,request.error || new Error('로컬 게임 데이터를 읽지 못했습니다.'));
         };
+        }catch(error){finish(null,error);}
       });
     }).catch(function() {
       memorySnapshot = loadSessionFallback();

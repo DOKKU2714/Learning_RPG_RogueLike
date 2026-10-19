@@ -25,8 +25,8 @@ function getLocalRunEngineSource_() {
   [commitStageResultUnlocked_, selectRewardUnlocked_, startBattle, buildBattleStateView_,
     applySkillEffect, processSkillTriggers_, processSkillFailPenaltyAfterAnswer_,
     tickEffectsAtTurnStart, tickEffectsAtTurnEnd, tickEffectsOnPlayerAction,
-     getAvailableSkills, normalizePlayerActionPoints_, refreshPreparedRewardView_, getLevelRewardChoices_, applyLevelSkillReward_, applyLevelRewardReroll_,
-     dealDamageToPlayer_, dealDamageToMonster_, beginCombatActorTurn_, clearPlayerTurnShield_, prepareCombatHit_, applyMonsterBurnDamage_, selectMonsterAction, executeMonsterKitIntent_, recordExperienceQuestion_, settleMonsterExperience_, allocateLevelStats_, getLevelStatOptions_, getLevelSkillUpgradeOptions_, applyLevelSkillUpgrade_, settleMonsterItemDrops_, decideMonsterItemDrop_].forEach(collect);
+     getAvailableSkills, normalizePlayerActionPoints_, refreshPreparedRewardView_, buildRerolledRewardChoices_, getLevelRewardChoices_, applyLevelSkillReward_, applyLevelRewardReroll_, applyLevelStatRewardReroll_, getPendingLevelStatRewards_,
+     dealDamageToPlayer_, dealDamageToMonster_, beginCombatActorTurn_, clearPlayerTurnShield_, prepareCombatHit_, applyMonsterBurnDamage_, selectMonsterAction, executeMonsterKitIntent_, recordExperienceQuestion_, settleMonsterExperience_, allocateLevelStats_, getLevelStatOptions_, getLevelStatRewardChoices_, applyLevelStatReward_, getLevelSkillUpgradeOptions_, applyLevelSkillUpgrade_, settleMonsterItemDrops_, decideMonsterItemDrop_].forEach(collect);
   var constants = { DB_SHEETS: DB_SHEETS, DB_COLUMNS: DB_COLUMNS, STATUS: STATUS, AVATAR_TYPES: AVATAR_TYPES,
     QUESTION_TYPES: QUESTION_TYPES, ACTION_TYPES: ACTION_TYPES, SKILL_TYPES: SKILL_TYPES, REWARD_TYPES: REWARD_TYPES,
     RARITIES: RARITIES, RARITY_LABELS: RARITY_LABELS, EFFECT_CATEGORIES: EFFECT_CATEGORIES, EFFECT_TYPES: EFFECT_TYPES,
@@ -38,7 +38,7 @@ function getLocalRunEngineSource_() {
     ALLOWED_REWARD_STAT_KEYS_: ALLOWED_REWARD_STAT_KEYS_, MASTER_ITEMS: MASTER_ITEMS,
     MASTER_EFFECTS: MASTER_EFFECTS, MASTER_MONSTERS: MASTER_MONSTERS, MASTER_SETTINGS: MASTER_SETTINGS, MASTER_SKILLS: MASTER_SKILLS };
   var declarations = Object.keys(constants).map(function(name) { return 'var ' + name + '=' + JSON.stringify(constants[name]) + ';'; }).join('\n');
-   var source = '(function(nativeDate,nativeMath){\n' + declarations + '\n' + adapters + '\n' + getSharedRuleEngineSource_() + '\n' + sources.join('\n') + '\nreturn {advance: advanceLocalRun, reward: refreshLocalReward, skill: applyLocalBattleSkill, trigger: processLocalBattleTrigger, tick: tickLocalBattleEffects, skills: getLocalBattleSkills, damage:applyLocalCombatDamage, playerDamage:applyLocalPlayerDamage, actorTurn:beginLocalActorTurn, hitStats:localCombatHitStats, monsterIntent:localMonsterIntent, monsterAction:localMonsterAction, experienceQuestion:recordExperienceQuestion_, settleExperience:settleMonsterExperience_, levelOptions:getLevelStatOptions_, levelRequired:levelExperienceRequired_, allocate:allocateLocalLevelStats, rewardChoices:localLevelRewardChoices, claimLevelReward:localLevelReward, rerollLevelReward:localLevelRewardReroll, upgradeOptions:localLevelUpgradeOptions, upgrade:localLevelUpgrade, itemDrops:localMonsterItemDrops, decideDrop:localDecideMonsterItemDrop};\n})(Date,Math)';
+   var source = '(function(nativeDate,nativeMath){\n' + declarations + '\n' + adapters + '\n' + getSharedRuleEngineSource_() + '\n' + sources.join('\n') + '\nreturn {advance: advanceLocalRun, reward: refreshLocalReward, rerollReward: rerollLocalReward, skill: applyLocalBattleSkill, trigger: processLocalBattleTrigger, tick: tickLocalBattleEffects, skills: getLocalBattleSkills, damage:applyLocalCombatDamage, playerDamage:applyLocalPlayerDamage, actorTurn:beginLocalActorTurn, hitStats:localCombatHitStats, monsterIntent:localMonsterIntent, monsterAction:localMonsterAction, experienceQuestion:recordExperienceQuestion_, settleExperience:settleMonsterExperience_, levelOptions:getLevelStatOptions_, statRewardChoices:localLevelStatChoices, claimStatReward:localLevelStatReward, pendingStatRewards:getPendingLevelStatRewards_, rerollStatReward:localLevelStatReroll, levelRequired:levelExperienceRequired_, allocate:allocateLocalLevelStats, rewardChoices:localLevelRewardChoices, claimLevelReward:localLevelReward, rerollLevelReward:localLevelRewardReroll, upgradeOptions:localLevelUpgradeOptions, upgrade:localLevelUpgrade, itemDrops:localMonsterItemDrops, decideDrop:localDecideMonsterItemDrop};\n})(Date,Math)';
   if (/\b(?:SpreadsheetApp|PropertiesService|CacheService|LockService|UrlFetchApp|ScriptApp)\b/.test(source)) throw new Error('클라이언트 전투 규칙에 서버 의존성이 남아 있습니다.');
   return source;
 }
@@ -74,6 +74,15 @@ function getLocalRunEngineAdapters_() {
       }
       return battle;
     });
+  }
+  function localLevelStatChoices(snapshot,battle) {
+    return withLocalBattleRules(snapshot,battle,function(){return getLevelStatRewardChoices_(battle);});
+  }
+  function localLevelStatReward(snapshot,battle,rewardId) {
+    return withLocalBattleRules(snapshot,battle,function(){return applyLevelStatReward_(battle,rewardId);});
+  }
+  function localLevelStatReroll(snapshot,battle,record) {
+    return withLocalBattleRules(snapshot,battle,function(){return applyLevelStatRewardReroll_(battle,record);});
   }
   function allocateLocalLevelStats(snapshot, battle, allocation) {
     return withLocalBattleRules(snapshot,battle,function() { return allocateLevelStats_(battle,allocation); });
@@ -134,6 +143,29 @@ function getLocalRunEngineAdapters_() {
   function refreshLocalReward(run, snapshot, payload, view) {
     localRun = cloneLocal(run); localSnapshot = snapshot; Date = nativeDate;
     return refreshPreparedRewardView_(localRun, payload, cloneLocal(view));
+  }
+  function rerollLocalReward(run, snapshot, payload, view, answer) {
+    if (!view || view.preparedDuringBattle || !view.localTransition || view.rerollUsed) throw new Error('현재 보상은 새로고침할 수 없습니다.');
+    if (!view.rerollQuestion || !(Number(view.rerollQuestion.totalCount)>0)) throw new Error('새로고침 문제가 없습니다.');
+    answer=answer || {};
+    localRun=cloneLocal(run);localSnapshot=snapshot;
+    var next=cloneLocal(view),correct=!answer.giveUp && isCorrectAnswer_(view.rerollQuestion,answer.selectedAnswer,answer.selectedChoiceIndex,answer.selectedAnswerText);
+    localSeed=(Number(view.localTransition.seed)^0x7265726f)>>>0;
+    Math.random=function(){localSeed=(Math.imul(1664525,localSeed)+1013904223)>>>0;return localSeed/4294967296;};
+    try {
+      if(correct) {
+        next.choices=buildRerolledRewardChoices_(localRun,payload.battle,view);
+        // Continue with the same signed stage permit, currency and recovery receipt.
+        var restViews=next.localTransition.restViews;
+        if(restViews) {
+          var template=restViews[Object.keys(restViews)[0]];
+          next.choices.forEach(function(choice){if(!restViews[choice.rewardId] && template)restViews[choice.rewardId]=cloneLocal(template);});
+        }
+      }
+      next.rerollUsed=true;
+      next.localRerollAnswer=cloneLocal(answer);
+      return {rerollStatus:correct?'success':'failed',rewardView:next};
+    } finally {Math.random=nativeMath.random;}
   }
   function advanceLocalRun(run, snapshot, payload, rewardId, rewardView, options) {
     options = options || {};
@@ -304,6 +336,10 @@ function replayLocalRunTransitions_(transitions, authToken) {
       || permit.battleId && permit.battleId !== payload.battle.battleId
       || state.battle && state.battle.battleId !== payload.battle.battleId) throw new Error('스테이지 진행 순서가 올바르지 않습니다.');
     validateLevelStatsForCommit_(run,state.battle || {},payload.battle);
+    if(rewardView.floorRestChoice)refreshFloorRestSkillChoices_(run,payload.battle,rewardView);
+    if(payload.localRewardRerollAnswer) {
+      rewardView=getLocalRunRuleEngine_().rerollReward(run,ACTIVE_GAME_DATA_SNAPSHOT_,payload,rewardView,payload.localRewardRerollAnswer).rewardView;
+    }
     var selectedAt = Number(event.selectedAtMs || 0);
     var now = new Date().getTime();
     if (!isFinite(selectedAt) || selectedAt < permit.issuedAtMs || selectedAt > now + 1000) throw new Error('보상 선택 시간이 올바르지 않습니다.');

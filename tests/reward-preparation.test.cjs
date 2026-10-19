@@ -109,7 +109,7 @@ test('reward UI displays the prefetched plan while victory finalization is still
     victoryRewardRecoveryComplete:true,victoryRewardDisplayStarted:false,runSessionToken:g.token,localRunTransitions:[],
     buildStageResultPayload:()=>copy(p),getPendingQuestionUnderstanding:()=>[],getAuthToken:()=> 'auth',showPreparedVictoryReward:()=>{displayed++;},
     google:{script:{run:{withSuccessHandler(fn){callback=fn;return this;},withFailureHandler(){return this;},previewRewardChoicesForStageResult(p){requested=p;}}}}});
-  for(const name of ['getVictoryRewardKey','preloadVictoryRewardChoices']) vm.runInContext(html.match(new RegExp('    function '+name+'\\([^]*?\\n    \\}'))[0],c);
+  for(const name of ['getVictoryRewardKey','refreshFinalVictoryRewardView','preloadVictoryRewardChoices']) vm.runInContext(html.match(new RegExp('    function '+name+'\\([^]*?\\n    \\}'))[0],c);
   c.preloadVictoryRewardChoices(c.currentView);
   assert.equal(displayed,1); assert.equal(c.victoryRewardPreload.loading,true);
   assert.ok(c.victoryRewardPreload.rewardView.choices.length);
@@ -146,7 +146,7 @@ test('victory finalization sends current answers for reroll eligibility instead 
     runSessionToken:'token',localRunTransitions:[],getPendingQuestionUnderstanding:()=>[],getAuthToken:()=> 'auth',
     buildStageResultPayload:(v,options)=>({runId:v.runId,battle:copy(v.battle),answerLogs:options && options.includeAnswerLogs===false ? [] : [{questionId:'recent'}]}),
     google:{script:{run:{withSuccessHandler(){return this;},withFailureHandler(){return this;},previewRewardChoicesForStageResult(p){requested=p;}}}}});
-  for(const name of ['getVictoryRewardKey','preloadVictoryRewardChoices'])
+  for(const name of ['getVictoryRewardKey','refreshFinalVictoryRewardView','preloadVictoryRewardChoices'])
     vm.runInContext(html.match(new RegExp('    function '+name+'\\([^]*?\\n    \\}'))[0],c);
   c.preloadVictoryRewardChoices(view);
   assert.deepEqual(copy(requested.answerLogs),[{questionId:'recent'}]);
@@ -161,7 +161,7 @@ test('empty victory responses retry once and expose a useful error instead of a 
       runSessionToken:'token',localRunTransitions:[],victoryRewardDisplayStarted:false,
       getPendingQuestionUnderstanding:()=>[],getAuthToken:()=> 'auth',buildStageResultPayload:v=>({runId:v.runId,battle:copy(v.battle)}),rememberRunSession:()=>{},
       google:{script:{run:{withSuccessHandler(fn){callback=fn;return this;},withFailureHandler(){return this;},previewRewardChoicesForStageResult(){calls++;callback(recover&&calls===2?{choices:[{rewardId:'saved-choice'}]}:null);}}}}});
-    for(const name of ['getVictoryRewardKey','preloadVictoryRewardChoices'])vm.runInContext(html.match(new RegExp('    function '+name+'\\([^]*?\\n    \\}'))[0],c);
+    for(const name of ['getVictoryRewardKey','refreshFinalVictoryRewardView','preloadVictoryRewardChoices'])vm.runInContext(html.match(new RegExp('    function '+name+'\\([^]*?\\n    \\}'))[0],c);
     c.preloadVictoryRewardChoices(c.currentView);
     assert.equal(calls,2);assert.equal(c.victoryRewardPreload.loading,false);
     if(recover)assert.equal(c.victoryRewardPreload.rewardView.choices[0].rewardId,'saved-choice');
@@ -190,7 +190,7 @@ test('background preparation uses the existing RPC and falls back on an older se
     battleRewardPreparation:null,victoryRewardPreload:null,victoryRewardResultPayload:null,
     workbookDeadlineExpired:false,runSessionToken:'token',localRunTransitions:[],
     buildStageResultPayload:v=>({runId:v.runId,battle:copy(v.battle)}),getPendingQuestionUnderstanding:()=>[],getAuthToken:()=> 'auth'});
-  for(const name of ['getVictoryRewardKey','prepareBattleRewardsInBackground','preloadVictoryRewardChoices']) {
+  for(const name of ['getVictoryRewardKey','refreshFinalVictoryRewardView','prepareBattleRewardsInBackground','preloadVictoryRewardChoices']) {
     vm.runInContext(html.match(new RegExp('    function '+name+'\\([^]*?\\n    \\}'))[0],c);
   }
   c.prepareBattleRewardsInBackground(view);

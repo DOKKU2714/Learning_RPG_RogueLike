@@ -97,7 +97,7 @@
           <span class="skill-detail-card action-detail-card" aria-hidden="true">
             <span class="skill-detail-header">
               <strong class="skill-detail-name">기본 공격</strong>
-              <span class="skill-detail-line skill-detail-ap-line">행동력 <em class="skill-detail-ap-inline">1</em> 소비</span>
+              <span class="skill-ap-gauge" role="img" aria-label="행동력 1 소비"><span class="ap-icons" aria-hidden="true"><span class="ap-pip filled"></span><span class="ap-pip empty"></span><span class="ap-pip empty"></span></span></span>
             </span>
             <span class="skill-detail-meta">기본 행동 / 적 대상</span>
             <span class="skill-detail-description">적에게 약 <strong id="attackActionPreviewValue" class="skill-damage-number">0</strong> 피해를 입힙니다.</span>
@@ -109,7 +109,7 @@
           <span class="skill-detail-card action-detail-card" aria-hidden="true">
             <span class="skill-detail-header">
               <strong class="skill-detail-name">기본 수비</strong>
-              <span class="skill-detail-line skill-detail-ap-line">행동력 <em class="skill-detail-ap-inline">1</em> 소비</span>
+              <span class="skill-ap-gauge" role="img" aria-label="행동력 1 소비"><span class="ap-icons" aria-hidden="true"><span class="ap-pip filled"></span><span class="ap-pip empty"></span><span class="ap-pip empty"></span></span></span>
             </span>
             <span class="skill-detail-meta">기본 행동 / 자신 대상</span>
             <span class="skill-detail-description"><strong id="guardActionPreviewValue" class="skill-damage-number">0</strong> 방어막을 얻습니다.</span>
@@ -164,15 +164,6 @@
       <p>강화할 스킬 하나를 선택하세요.</p>
       <div id="levelSkillChoices" class="level-skill-choices"></div>
       <p id="levelSkillError" role="alert"></p>
-    </section>
-  </div>
-  <div id="levelStatModal" class="level-stat-overlay" aria-hidden="true">
-    <section class="level-stat-panel" role="dialog" aria-modal="true" aria-labelledby="levelStatTitle">
-      <h2 id="levelStatTitle">레벨 업!</h2>
-      <p>스탯 포인트 <strong id="levelStatPoints">3</strong>개를 배분하세요.</p>
-      <div id="levelStatChoices" class="level-stat-choices"></div>
-      <p id="levelStatError" role="alert"></p>
-      <button id="levelStatConfirm" type="button" disabled>투자 확정</button>
     </section>
   </div>
 
@@ -672,7 +663,7 @@
       setPlayerTurn(false);
       finishBattleStartFade();
       hideLoadingModal(true);
-      ['rewardModal', 'scoreModal', 'levelStatModal', 'levelSkillModal', 'levelUpBanner', 'monsterDropModal'].forEach(function(id) {
+      ['rewardModal', 'scoreModal', 'levelSkillModal', 'levelUpBanner', 'monsterDropModal'].forEach(function(id) {
         var modal = document.getElementById(id);
         if (modal) { modal.classList.remove('active'); modal.setAttribute('aria-hidden','true'); }
       });
@@ -1274,6 +1265,18 @@
     }
 
     function bindHoverTooltips() {
+      function alignSkillDetail(event) {
+        var target=event.target.closest && event.target.closest('.skill-button, .action-detail-button, .reward-choice-card');
+        if(!target)return;
+        var detail=target.querySelector('.skill-detail-card, .reward-detail-card');
+        if(!detail)return;
+        detail.style.setProperty('--detail-offset-x','0px');
+        var rect=detail.getBoundingClientRect();
+        var offset=Math.max(12-rect.left,Math.min(0,window.innerWidth-12-rect.right));
+        detail.style.setProperty('--detail-offset-x',offset+'px');
+      }
+      document.addEventListener('mouseover',alignSkillDetail);
+      document.addEventListener('focusin',alignSkillDetail);
       var activeTooltipTarget = null;
       var tooltip = document.getElementById('hoverTooltip');
       if (!tooltip) {
@@ -1612,7 +1615,6 @@
         icons += '<span class="ap-pip ' + (i < cost ? 'filled' : 'empty') + '" aria-hidden="true"></span>';
       }
       return '<span class="skill-ap-gauge" role="img" aria-label="행동력 ' + cost + ' 소비">' +
-        '<span class="skill-ap-label" aria-hidden="true">' + (cost === 0 ? '소모 없음' : '행동력') + '</span>' +
         '<span class="ap-icons" aria-hidden="true">' + icons + '</span></span>';
     }
 
@@ -1655,6 +1657,7 @@
             (difficultyBonusText ? '<span class="' + escapeHtml(getSkillDifficultyBonusClass(skill)) + '">' + escapeHtml(difficultyBonusText) + '</span>' : '') +
             (useLimitText ? '<span class="skill-detail-line">' + escapeHtml(useLimitText) + '</span>' : '') +
             (cooldown ? '<span class="skill-detail-line">' + escapeHtml(cooldown) + '</span>' : '') +
+            buildSkillFlavorDescription(skill, description || reasonText) +
           '</span>' +
         '</button>';
       }).join('') + '<button class="secondary skill-cancel-button" type="button" onclick="closeSkillPanel()">취소</button>';
@@ -1718,7 +1721,7 @@
 
     function buildBattleStatTooltipContent(target) {
       var suffix = target.getAttribute('data-stat-unit') || '';
-      var rows = [['reward', '보상'], ['item', '아이템'], ['buff', '버프·디버프']].map(function(source) {
+      var rows = [['level', '레벨업 스탯'], ['reward', '보상'], ['item', '아이템'], ['buff', '버프·디버프']].map(function(source) {
         var amount = Math.round(Number(target.getAttribute('data-stat-' + source[0]) || 0) * 10) / 10;
         if (!isFinite(amount) || !amount) return '';
         return '<div class="battle-stat-tooltip-source stat-source-' + source[0] + '"><span>' + source[1] + '</span><strong' + (amount < 0 ? ' class="stat-source-negative"' : '') + '>' + escapeHtml((amount > 0 ? '+' : '') + amount + suffix) + '</strong></div>';
@@ -1799,6 +1802,50 @@
         var stacks = effect.stacks === undefined ? 1 : Number(effect.stacks);
         return total + (Number.isFinite(stacks) ? Math.max(0, stacks) : 0);
       }, 0);
+    }
+
+    function syncMonsterBurnVisual(monsterId, monster) {
+      var scope=document.querySelector('[data-monster-id="' + cssEscape(monsterId) + '"] .compact-monster');
+      if(!scope)return;
+      var burning=(monster.currentHp === undefined && monster.hp === undefined || Number(monster.currentHp !== undefined ? monster.currentHp : monster.hp)>0) && (monster.effects || []).some(function(e){return getDamageVisualType(e.effectId)==='burn' && Number(e.stacks || 0)>0;});
+      var overlay=scope.querySelector('.burn-persistent');
+      if(!burning){if(overlay)overlay.remove();return;}
+      if(!overlay){
+        overlay=scope.querySelector('.element-vfx-burn');
+        if(!overlay){playDamageTypeEffect('burn','monster',monsterId);overlay=scope.querySelector('.element-vfx-burn');}
+        if(overlay)overlay.classList.add('burn-persistent');
+      }
+    }
+
+    function syncMonsterShockVisual(monsterId,monster) {
+      var scope=document.querySelector('[data-monster-id="'+cssEscape(monsterId)+'"] .compact-monster');
+      if(!scope)return;
+      var effects=monster && (Array.isArray(monster.effects)?monster.effects:monster.debuffs) || [];
+      var alive=monster && (monster.currentHp===undefined && monster.hp===undefined || Number(monster.currentHp!==undefined?monster.currentHp:monster.hp)>0);
+      var shocked=alive && effects.some(function(e){return getDamageVisualType(e.effectId)==='shock' && Number(e.stacks || 0)>0;});
+      var overlay=scope.querySelector('.shock-persistent');
+      if(!shocked){if(overlay)overlay.remove();return;}
+      if(overlay)return;
+      overlay=document.createElement('div');overlay.className='element-vfx shock-persistent';overlay.setAttribute('aria-hidden','true');
+      for(var i=0;i<3;i++){
+        var bolt=document.createElement('i');bolt.className='shock-idle-bolt';
+        bolt.style.setProperty('--idle-bolt-index',String(i));
+        bolt.innerHTML='<svg viewBox="0 0 20 42"><path d="M13 2 5 17 13 19 7 39 18 21 11 17Z"/></svg>';
+        overlay.appendChild(bolt);
+      }
+      var art=scope.querySelector('.monster-art');
+      if(art){var box=scope.getBoundingClientRect(),imageBox=art.getBoundingClientRect();overlay.style.left=(imageBox.left-box.left)+'px';overlay.style.top=(imageBox.top-box.top)+'px';overlay.style.width=imageBox.width+'px';overlay.style.height=imageBox.height+'px';}
+      scope.appendChild(overlay);
+    }
+
+    function presentPlayerBurn(stacks) {
+      document.querySelectorAll('.player-burn-alert').forEach(function(node){node.remove();});
+      var alert=document.createElement('div');
+      alert.className='player-burn-alert';
+      alert.setAttribute('role','status');
+      alert.innerHTML='<div class="player-burn-flame">' + getPixelFlameSvg(0) + '<strong>발화 ' + Math.max(1,Number(stacks || 1)) + '</strong></div>';
+      document.body.appendChild(alert);
+      window.setTimeout(function(){alert.remove();},1500);
     }
 
     function syncMonsterChillVisual(monsterId, monster) {
@@ -1934,7 +1981,7 @@
         var slot = layer.querySelector('[data-monster-id="' + cssEscape(recovery.id) + '"]');
         if (slot) spawnHpRecoveryFragment(slot.querySelector('.monster-hp-bar'), recovery.before, recovery.hp - recovery.before, Math.max(recovery.max, recovery.hp + recovery.shield), { text: slot.querySelector('.monster-hp-text'), shield: recovery.shield, max: recovery.max });
       });
-      monsters.forEach(function(monster) { syncMonsterFreezeVisual(monster.instanceId || monster.monsterId, monster); syncMonsterChillVisual(monster.instanceId || monster.monsterId, monster); });
+      monsters.forEach(function(monster) { syncMonsterFreezeVisual(monster.instanceId || monster.monsterId, monster); syncMonsterChillVisual(monster.instanceId || monster.monsterId, monster); syncMonsterBurnVisual(monster.instanceId || monster.monsterId, monster); syncMonsterShockVisual(monster.instanceId || monster.monsterId,monster); });
       bindMonsterTargetClicks();
     }
 
@@ -2486,7 +2533,7 @@
         label: status.icon || icon,
         tooltip: tooltip.main,
         statTooltip: tooltip.stat,
-        remainingTurns: status.remainingTurns || '',
+        remainingTurns: status.durationClock === 'stacks' && status.decayTiming === 'none' ? '' : (status.remainingTurns || ''),
       };
     }
 
@@ -2494,7 +2541,7 @@
       var name = status.name || status.effectId || (type === 'buff' ? 'Buff' : 'Debuff');
       var hasCustomDescription = !!String(status.description || '').trim();
       var description = buildStatusDescription(status, type);
-      var duration = status.remainingTurns ? '\n남은 턴: ' + status.remainingTurns : '';
+      var duration = status.remainingTurns && !(status.durationClock === 'stacks' && status.decayTiming === 'none') ? '\n남은 턴: ' + status.remainingTurns : '';
       var stack = Number(status.stacks || 1) > 1 ? '\n중첩: ' + Number(status.stacks || 1) : '';
       if(status.criticalCharges!==undefined)stack+='\n남은 타격 횟수: '+status.criticalCharges;
       if(status.criticalBank!==undefined)stack+='\n현재 저금: '+status.criticalBank;
@@ -2545,7 +2592,16 @@
       var statLabel = getStatLabel(status.statKey);
       var direction = total < 0 ? '감소' : '증가';
       var suffix = status.effectType === 'percent' ? '%' : '';
+      var formulaContext={};
+      if(/\{\{?\s*calc:/i.test(String(template || ''))){
+        var source=status.sourceSkill || status.assassinState && status.assassinState.sourceSkill || {};
+        var skillId=source.skillId || status.skillId;
+        var known=skillId && typeof findAvailableSkill==='function' ? findAvailableSkill(skillId) : null;
+        var skill=Object.assign({},known || {},source,{level:Number(source.level || known && known.level || 1)});
+        formulaContext=getSkillDescriptionTemplateValues(skill).formulaContext;
+      }
       return String(template || '')
+        .replace(/\{\{?\s*calc:([^{}]+?)\}\}?/gi,function(match,expression){return getSkillDescriptionFormulaValue(expression,formulaContext);})
         .replace(/\{total\}/g, amount + suffix)
         .replace(/\{amount\}/g, amount + suffix)
         .replace(/\{value\}/g, baseValue + suffix)
@@ -2607,6 +2663,8 @@
         debuff_poison: 'PSN',
         debuff_freeze: 'FRZ',
         debuff_burn: 'BRN',
+        effect_v2_burn: 'BRN',
+        effect_ignition: 'BRN',
         debuff_stun: 'STN',
         debuff_weak: 'WEK',
         debuff_corrosion: 'DEF-',
@@ -2716,8 +2774,12 @@
           while (progress.xp>=required) {
             progress.xp -= required;
             progress.level++;
-            levelPops.push(presentLevelUpFlash());
-            if(deathRewardPresentation && deathRewardPresentation.view && !levelAllocationActive)levelPops.push(presentLevelStatAllocation(deathRewardPresentation.view));
+            levelPops.push(presentLevelUpFlash().then(async function() {
+              await new Promise(function(resolve){window.setTimeout(resolve,350);});
+              if(deathRewardPresentation && deathRewardPresentation.view && !levelAllocationActive && !workbookDeadlineExpired) {
+                await presentLevelStatAllocation(deathRewardPresentation.view);
+              }
+            }));
             required = progress.level===1 ? 8 : 60+5*(progress.level-2);
           }
           renderPlayerExperience(null,progress);
@@ -2792,7 +2854,7 @@
         var previous=currentRewardView;
         var level=(progress.skillRewards || []).length+2;
         var rerollQuestion=getLevelRewardRerollQuestion();
-        currentRewardView={isLevelReward:true,runId:view.runId,choices:choices,
+        currentRewardView={isLevelReward:true,levelRewardTargetView:view,runId:view.runId,choices:choices,
           rerollUsed:!!(progress.skillRewardRerolls || {})[level],rerollQuestion:rerollQuestion,
           rerollUnavailable:!rerollQuestion,rerollUnavailableReason:rerollQuestion ? '' : '풀었던 문제가 없습니다.'};
         renderRewardChoices(currentRewardView);
@@ -2823,7 +2885,9 @@
         var choices=document.getElementById('levelSkillChoices');
         choices.innerHTML=options.map(function(s){
           var detail=(view.availableSkills || []).filter(function(a){return a.skillId===s.skillId;})[0] || s;
-          return '<button type="button" data-upgrade-skill="' + escapeHtml(s.skillId) + '"><strong>' + escapeHtml(detail.name || s.skillId) + '</strong><span>Lv.' + s.level + ' → Lv.' + (s.level+1) + '</span><small>' + escapeHtml(detail.description || '') + '</small></button>';
+          var before=Object.assign({},detail,{level:Number(s.level || 1)});
+          var after=Object.assign({},before,{level:before.level+1});
+          return '<button type="button" data-upgrade-skill="' + escapeHtml(s.skillId) + '"><strong>' + escapeHtml(detail.name || s.skillId) + '</strong><span>Lv.' + before.level + ' → Lv.' + after.level + '</span><small>' + buildSkillDetailDescription(after,detail.description || '') + '</small>' + buildSkillUpgradeChangeSummary(before,after) + '</button>';
         }).join('');
         var trap=function(event){
           if(event.key==='Escape')event.preventDefault();
@@ -2855,85 +2919,36 @@
     }
 
     async function presentLevelStatAllocation(view) {
-      var battle = view && view.battle;
-      if (!battle || !battle.player || Number(battle.player.hp || 0)<=0 || levelAllocationActive) return;
-      var progress = getPlayerLevelProgress(battle.player);
-      if (!Number(progress.points || 0)) return;
-      var engine = window.LearningRpgLocalRunEngine;
-      if (!engine || !engine.allocate) return;
-      levelAllocationActive = true;
-      setBattleInputLocked(true);
-      if (workbookDeadlineExpired) { levelAllocationActive=false; return; }
-      var modal = document.getElementById('levelStatModal');
-      var confirm = document.getElementById('levelStatConfirm');
-      var options = engine.levelOptions(), allocation = {}, available = Number(progress.points);
-      var previousFocus = document.activeElement;
-      modal.classList.add('active'); modal.setAttribute('aria-hidden','false');
-      document.getElementById('levelStatTitle').textContent = 'Lv.' + progress.level + ' · 스탯 투자';
-      document.getElementById('levelStatError').textContent = '';
-      function renderChoices() {
-        var used = Object.keys(allocation).reduce(function(sum,key){return sum+allocation[key];},0);
-        var remaining = available-used;
-        document.getElementById('levelStatPoints').textContent = remaining;
-        document.getElementById('levelStatChoices').innerHTML = options.map(function(option) {
-          var count = Number(allocation[option.key] || 0);
-          var value = Number(battle.player.baseStats && battle.player.baseStats[option.key] || 0);
-          return '<div class="level-stat-row"><span class="level-stat-label" tabindex="0" data-tooltip="' + escapeHtml(getStatDescription(option.key)) + '"><strong>' + escapeHtml(option.label) + '</strong><small>포인트당 +' + option.amount + (option.percent ? '%p' : '') + '</small></span>' +
-            '<span class="level-stat-value' + (count ? ' increased' : '') + '">' + Math.round((value+option.amount*count)*100)/100 + (option.percent ? '%' : '') + (count ? ' (+' + Math.round(option.amount*count*100)/100 + ')' : '') + '</span>' +
-            '<button type="button" data-level-key="' + option.key + '" data-level-delta="-1" aria-label="' + escapeHtml(option.label) + ' 감소"' + (count ? '' : ' disabled') + '>−</button>' +
-            '<span class="level-stat-count">' + count + '</span><button type="button" data-level-key="' + option.key + '" data-level-delta="1" aria-label="' + escapeHtml(option.label) + ' 증가"' + (remaining ? '' : ' disabled') + '>+</button></div>';
-        }).join('');
-        confirm.disabled = remaining!==0;
-      }
-      renderChoices();
-      document.getElementById('levelStatChoices').onclick = function(event) {
-        var button = event.target.closest('[data-level-key]');
-        if (!button || button.disabled) return;
-        var key = button.dataset.levelKey;
-        allocation[key] = Number(allocation[key] || 0)+Number(button.dataset.levelDelta);
-        renderChoices();
-        var replacement = document.querySelector('[data-level-key="' + key + '"][data-level-delta="' + button.dataset.levelDelta + '"]:not(:disabled)');
-        if (replacement) replacement.focus(); else confirm.focus();
-      };
-      var trap = function(event) {
-        if (event.key==='Tab') {
-          var buttons = Array.prototype.slice.call(modal.querySelectorAll('button:not(:disabled)'));
-          if (!buttons.length) return;
-          var index = buttons.indexOf(document.activeElement);
-          var next = (index+(event.shiftKey ? -1 : 1)+buttons.length)%buttons.length;
-          event.preventDefault(); buttons[next].focus();
+      var battle=view && view.battle,engine=window.LearningRpgLocalRunEngine;
+      if(!battle || !battle.player || Number(battle.player.hp || 0)<=0 || levelAllocationActive || !engine || !engine.statRewardChoices || !engine.claimStatReward)return;
+      var progress=getPlayerLevelProgress(battle.player);
+      if(!engine.pendingStatRewards || !engine.pendingStatRewards(battle))return;
+      levelAllocationActive=true;
+      var previous=currentRewardView,previousFocus=document.activeElement;
+      try {
+        while(engine.pendingStatRewards(battle)>0 && !workbookDeadlineExpired){
+          var choices=engine.statRewardChoices(localGameDataSnapshot,battle);
+          if(!choices.length){pushLog('현재 층에서 선택할 수 있는 스탯 보상이 없습니다. Rewards 시트를 확인해주세요.');break;}
+          setBattleInputLocked(true);
+          var level=progress.statRewardBaseLevel+(progress.statRewards || []).length-progress.statRewardBaseCount+1;
+          var rerollQuestion=getLevelRewardRerollQuestion();
+          currentRewardView={isLevelReward:true,isLevelStatReward:true,levelRewardTargetView:view,runId:view.runId,choices:choices,
+            rerollUsed:!!(progress.statRewardRerolls || {})[level],rerollQuestion:rerollQuestion,
+            rerollUnavailable:!rerollQuestion,rerollUnavailableReason:rerollQuestion?'':'풀었던 문제가 없습니다.'};
+          renderRewardChoices(currentRewardView);
+          var selected=await new Promise(function(resolve){levelRewardResolve=resolve;levelAllocationCancel=function(){resolve(false);};});
+          levelRewardResolve=null;levelAllocationCancel=null;
+          document.getElementById('rewardModal').classList.remove('active','stage-clear-reward-overlay');
+          document.getElementById('rewardModal').setAttribute('aria-hidden','true');
+          if(!selected)break;
+          victoryRewardPreload=null;victoryRewardResultPayload=null;
+          if(view===currentView)renderBattle(view);
         }
-        if (event.key==='Escape') event.preventDefault();
-        event.stopImmediatePropagation();
-      };
-      document.addEventListener('keydown',trap,true);
-      modal.querySelector('button:not(:disabled)').focus();
-      var invested = await new Promise(function(resolve) {
-        levelAllocationCancel = function(){resolve(false);};
-        confirm.onclick = function() {
-          if (confirm.disabled) return;
-          try {
-            engine.allocate(localGameDataSnapshot,battle,allocation);
-            view.availableSkills = engine.skills(localGameDataSnapshot,battle,view.availableSkills || []);
-            view.questionCache = [];
-            // The victory receipt stays server-cached; rebuild the preview with
-            // the invested HP/regen instead of the pre-allocation snapshot.
-            if (battle.status === 'victory') {
-              victoryRewardPreload = null;
-              victoryRewardResultPayload = null;
-            }
-            resolve(true);
-          } catch (error) { document.getElementById('levelStatError').textContent = error.message || String(error); }
-        };
-      });
-      document.removeEventListener('keydown',trap,true);
-      levelAllocationCancel = null;
-      confirm.onclick = null;
-      document.getElementById('levelStatChoices').onclick = null;
-      modal.classList.remove('active'); modal.setAttribute('aria-hidden','true');
-      levelAllocationActive = false;
-      if (invested && view===currentView) renderBattle(view);
-      if (previousFocus && previousFocus.isConnected) previousFocus.focus();
+      } finally {
+        levelRewardResolve=null;levelAllocationCancel=null;
+        currentRewardView=previous;levelAllocationActive=false;
+        if(previousFocus && previousFocus.isConnected)previousFocus.focus();
+      }
     }
 
     function renderPlayerHud(player) {
@@ -2968,7 +2983,7 @@
       for (var i = 0; i < max; i += 1) {
         icons += '<span class="ap-pip ' + (i < current ? 'filled' : 'empty') + '" data-ap-index="' + i + '" aria-hidden="true"></span>';
       }
-      var html = '<span class="ap-label">행동력</span><span class="ap-icons">' + icons + '</span><strong>' + current + ' / ' + max + '</strong><span class="ap-cost-preview" aria-live="polite"></span>';
+      var html = '<span class="ap-icons">' + icons + '</span><strong>' + current + ' / ' + max + '</strong><span class="ap-cost-preview" aria-live="polite"></span>';
       ['actionPanelApGauge'].forEach(function(id) {
         var element = document.getElementById(id);
         if (element) { element.innerHTML = html; element.setAttribute('aria-label', '행동력 ' + current + ' / ' + max); }
@@ -3324,23 +3339,27 @@
       if (!target) return;
       var source = sourceRect || target.getBoundingClientRect(), destination = target.getBoundingClientRect();
       var node = document.createElement('span');
-      var rarity = normalizeRewardRarity(drop.reward.itemDetail && drop.reward.itemDetail.rarity);
+      var rarity = normalizeRewardRarity(drop.reward.itemDetail && drop.reward.itemDetail.rarity || drop.reward.rarity);
       node.className = 'monster-item-pickup rarity-' + rarity;
       node.setAttribute('aria-hidden','true');
       node.innerHTML = '<span class="item-drop-aura"></span><span class="item-drop-pillar"></span><span class="item-drop-rays"></span><img src="' + ASSET_BASE_URL + '/Resources/Item.png" alt="">';
       var x = source.left + source.width/2, y = source.top + source.height/2;
-      node.style.left = x + 'px'; node.style.top = y + 'px';
       document.body.appendChild(node);
+      var edge=node.offsetWidth/2+12;
+      x=Math.max(edge,Math.min(window.innerWidth-edge,x));
+      y=Math.max(edge+48,Math.min(window.innerHeight-edge,y));
+      var liftX=Math.min(32,window.innerWidth-edge-x);
+      node.style.left = x + 'px'; node.style.top = y + 'px';
       try {
         if (node.animate) {
           var reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
           var dx = destination.left + destination.width/2 - x, dy = destination.top + destination.height/2 - y;
           await node.animate(reduced ? [{opacity:1},{opacity:0}] : [
             {transform:'translate(0,0) scale(.5)',opacity:0},
-            {transform:'translate(32px,-48px) scale(1.1)',opacity:1,offset:.23},
-            {transform:'translate(32px,-36px) scale(1)',opacity:1,offset:.58},
+            {transform:'translate('+liftX+'px,-48px) scale(1.1)',opacity:1,offset:.23},
+            {transform:'translate('+liftX+'px,-36px) scale(1)',opacity:1,offset:.68},
             {transform:'translate(' + dx + 'px,' + dy + 'px) scale(.2)',opacity:0}
-          ], {duration:reduced ? 80 : 1250,easing:'ease-in-out',fill:'forwards'}).finished;
+          ], {duration:reduced ? 80 : (rarity==='legendary' || rarity==='unique' ? 2100 : 1250),easing:'ease-in-out',fill:'forwards'}).finished;
         }
       } catch (error) { /* A cancelled animation still releases the reward queue. */ }
       finally { node.remove(); }
@@ -3402,7 +3421,8 @@
           });
           hideActiveHoverTooltips();
           if(accepted===null)break;
-          if(battle.status==='victory'){victoryRewardPreload=null;victoryRewardResultPayload=null;}
+          // Keep the in-flight preparation. Final HP/items are rebased once
+          // all choices finish, without restarting the server request.
           renderBattle(view);
         }
       } finally {
@@ -3469,6 +3489,8 @@
       var baseAp = Number(player.baseMaxActionPoint || 3);
       var itemApDelta = Number(player.itemModifiers && player.itemModifiers.actionPoint || 0);
       var startingStats = getBattleStatStartingStats(player);
+      var levelOptions=window.LearningRpgLocalRunEngine && window.LearningRpgLocalRunEngine.levelOptions ? window.LearningRpgLocalRunEngine.levelOptions() : [];
+      var levelSpent=baseStats.levelProgress && baseStats.levelProgress.spent || {};
       var descriptions = {
         '체력': ['hp', getStatDescription('hp')],
         '방어막': ['', '체력 대신 먼저 소모됩니다.'],
@@ -3502,12 +3524,18 @@
       panel.innerHTML = '<div class="battle-quick-panel-header"><strong>현재 스텟</strong><button class="secondary" type="button" onclick="closeBattleStats()" aria-label="스텟 닫기">닫기</button></div>' + rows.map(function(row) {
         var definition = descriptions[row[0]] || ['', ''];
         var key = definition[0];
-        var rewardDelta = key && key !== 'ap' ? Number(baseStats[key] || 0) - Number(startingStats[key] || 0) : 0;
+        var levelOption=levelOptions.filter(function(option){return option.key===key;})[0];
+        var levelDelta=levelOption?Number(levelSpent[key] || 0)*Number(levelOption.amount):0;
+        (baseStats.levelProgress && baseStats.levelProgress.statRewards || []).forEach(function(record){
+          var reward=(localGameDataSnapshot && localGameDataSnapshot.rewards || []).filter(function(r){return r.rewardId===record.rewardId;})[0];
+          if(reward && reward.targetId===key)levelDelta+=Number(reward.value || 0);
+        });
+        var rewardDelta = key && key !== 'ap' ? Number(baseStats[key] || 0) - Number(startingStats[key] || 0)-levelDelta : 0;
         var itemDelta = key === 'ap' ? itemApDelta : key ? Number(stats[key] || 0) - Number(baseStats[key] || 0) : 0;
         var finalValue = key === 'hp' ? Number(player.maxHp || stats.hp || 0) : Number((key === 'hpRegen' ? stats : effectiveStats)[key] || 0);
         var buffDelta = key === 'ap' ? Number(player.maxActionPoint || baseAp) - baseAp : key ? finalValue - Number(stats[key] || 0) : 0;
-        var changed = [rewardDelta, itemDelta, buffDelta].some(function(value) { return Math.abs(value) >= 0.05; });
-        var breakdown = key ? ' data-stat-reward="' + rewardDelta + '" data-stat-item="' + itemDelta + '" data-stat-buff="' + buffDelta + '" data-stat-unit="' + (/^(accuracy|evasion|criticalRate|criticalDamage|questionEfficiency)$/.test(key) ? '%p' : '') + '"' : '';
+        var changed = [levelDelta, rewardDelta, itemDelta, buffDelta].some(function(value) { return Math.abs(value) >= 0.05; });
+        var breakdown = key ? ' data-stat-level="'+levelDelta+'" data-stat-reward="' + rewardDelta + '" data-stat-item="' + itemDelta + '" data-stat-buff="' + buffDelta + '" data-stat-unit="' + (/^(accuracy|evasion|criticalRate|criticalDamage|questionEfficiency)$/.test(key) ? '%p' : '') + '"' : '';
         return '<div class="battle-stat-row" tabindex="0" data-tooltip="' + escapeHtml(definition[1]) + '"' + breakdown + '><span>' + escapeHtml(row[0]) + '</span><b' + (changed ? ' class="battle-stat-value-changed"' : '') + '>' + (row[2] ? row[1] : escapeHtml(row[1])) + '</b></div>';
       }).join('');
       panel.classList.remove('hidden');
@@ -3587,6 +3615,8 @@
         debuff_poison: 'M9 2h6m-5 0v7l-5 9v3h14v-3l-5-9V2M7 15h10m-7 3h.1m4-1h.1',
         debuff_freeze: 'M12 2v20M3 7l18 10M3 17 21 7M9 4l3 3 3-3M9 20l3-3 3 3M3 10l4-1-1-4M21 14l-4 1 1 4',
         debuff_burn: 'M12 2c2 6 7 7 7 13a7 7 0 0 1-14 0c0-3 2-5 4-7v5c4-3 4-7 3-11ZM12 13c-3 3-3 7 0 8 3-1 3-5 0-8',
+        effect_v2_burn: 'M12 2c2 6 7 7 7 13a7 7 0 0 1-14 0c0-3 2-5 4-7v5c4-3 4-7 3-11ZM12 13c-3 3-3 7 0 8 3-1 3-5 0-8',
+        effect_ignition: 'M12 2c2 6 7 7 7 13a7 7 0 0 1-14 0c0-3 2-5 4-7v5c4-3 4-7 3-11ZM12 13c-3 3-3 7 0 8 3-1 3-5 0-8',
         debuff_stun: 'm12 2 3 6 7 1-5 5 1 7-6-3-6 3 1-7-5-5 7-1Z',
         debuff_weak: 'M12 3v17m-6-6 6 6 6-6M6 5h12',
         debuff_corrosion: shield + 'M13 4 9 11l6 2-5 7',
@@ -4385,19 +4415,24 @@
         updateBattleInputLockState();
         return;
       }
-      Promise.all([window.LearningRpgQuestionStore.get(getSelectedWorkbookId()), loadQuestionUnderstandingRatings()]).then(function(results) {
-        var snapshot = results[0];
+      // Understanding ratings are optional remote metadata. They must never
+      // hold the locally stored questions (and all combat input) behind an RPC.
+      try { Promise.resolve(loadQuestionUnderstandingRatings()).catch(function() {}); } catch(error) {}
+      var settled=false,workbookId=getSelectedWorkbookId();
+      var timer=window.setTimeout(function(){finish(null);},8000);
+      function finish(snapshot){
+        if(settled)return;
+        settled=true;window.clearTimeout(timer);
         questionCacheRefillInFlight = false;
+        if(snapshot && String(snapshot.workbookId || '')!==String(workbookId))snapshot=null;
         localQuestionSnapshot = snapshot || null;
         localWorkbookQuestions = snapshot && Array.isArray(snapshot.questions) ? snapshot.questions.slice() : [];
         questionCachePreloadFailed = !localWorkbookQuestions.length;
         if (currentView) currentView.questionCacheDeferred = false;
         updateBattleInputLockState();
-      }).catch(function() {
-        questionCacheRefillInFlight = false;
-        questionCachePreloadFailed = true;
-        updateBattleInputLockState();
-      });
+      }
+      try { Promise.resolve(window.LearningRpgQuestionStore.get(workbookId)).then(finish,function(){finish(null);}); }
+      catch(error){finish(null);}
     }
 
     function refreshBattleQuestionSnapshot(options) {
@@ -5769,12 +5804,15 @@
 
     function refreshEventStatuses(event, nextView) {
       if (!event || !nextView || !nextView.battle) return;
-      var targetId = event.targetMonsterId || (event.actor === 'monster' && event.type === 'buff' ? event.monsterId : '');
+      var targetId = event.targetMonsterId || (event.actor === 'monster' && ['buff','heal','guard'].indexOf(event.type)>=0 ? event.monsterId : '');
       var target = targetId ? (nextView.battle.monsters || []).filter(function(monster) {
         return getMonsterRuntimeId(monster) === String(targetId);
       })[0] : nextView.battle.player;
       var statusTarget = event.statusSnapshot || target;
       if (!statusTarget) return;
+      var previousBurn=(currentView.battle.player.effects || []).reduce(function(sum,e){return sum+(getDamageVisualType(e.effectId)==='burn'?Number(e.stacks || 0):0);},0);
+      var nextBurn=!targetId ? (statusTarget.effects || []).reduce(function(sum,e){return sum+(getDamageVisualType(e.effectId)==='burn'?Number(e.stacks || 0):0);},0) : 0;
+      if(!targetId && nextBurn>previousBurn)presentPlayerBurn(nextBurn);
       var visualTarget = targetId ? (currentView.battle.monsters || []).filter(function(monster) {
         return getMonsterRuntimeId(monster) === String(targetId);
       })[0] : currentView.battle.player;
@@ -5795,6 +5833,8 @@
       slot.insertAdjacentHTML('beforeend', renderStatusIcons(statusTarget));
       syncMonsterFreezeVisual(targetId, statusTarget);
       syncMonsterChillVisual(targetId, statusTarget);
+      syncMonsterBurnVisual(targetId, statusTarget);
+      syncMonsterShockVisual(targetId,statusTarget);
     }
 
     async function playTurnEffectEvent(event) {
@@ -5803,6 +5843,7 @@
         if (event.target === 'monster') {
           event.targetMonsterId = event.targetMonsterId || getFirstAliveMonsterId(currentView && currentView.battle);
           if (event.statusSnapshot) syncMonsterChillVisual(event.targetMonsterId, event.statusSnapshot);
+          if (event.statusSnapshot) syncMonsterShockVisual(event.targetMonsterId,event.statusSnapshot);
           var elementalHit = playDamageTypeEffect(getDamageVisualType(event.damageKind) || event.effectId, 'monster', event.targetMonsterId);
           if (!elementalHit && !event.effectId && event.attackEffect) {
             await animatePlayerAttack(event.targetMonsterId, event.attackEffect);
@@ -5864,6 +5905,39 @@
       }
     }
 
+    async function playMonsterReactionEvent(event, nextView) {
+      pushLog(event.message || '몬스터의 특성이 발동했습니다.');
+      if(event.type==='guard') {
+        applyMonsterShieldDelta(event.monsterId,event.shield || 0);
+        animateMonsterShield(event.monsterId);
+      } else if(event.type==='heal') {
+        var slot=document.querySelector('[data-monster-id="' + cssEscape(event.monsterId) + '"]');
+        var text=slot && slot.querySelector('.monster-hp-text');
+        if(text && Number(event.heal)>0) {
+          var match=getHpTextMatch(text);
+          if(match) {
+            var hp=Number(match[1]),shield=Number(match[2]),maxHp=Number(match[3]);
+            var nextHp=Math.min(maxHp,hp+Number(event.heal));
+            animateHpShieldText(text,hp,nextHp,shield,shield,maxHp);
+            var fill=slot.querySelector('.monster-hp-bar > .hp-current');
+            var lag=slot.querySelector('.monster-hp-bar > .hp-lag');
+            if(fill)fill.style.width=(nextHp/Math.max(1,maxHp, nextHp+shield)*100)+'%';
+            if(lag && fill)lag.style.width=fill.style.width;
+          }
+          spawnFloatingText(text,'+'+event.heal,'heal-green');
+        }
+        animateMonsterStatusEffect(event.monsterId,'buff');
+      } else if(event.type==='attack' || event.type==='skill') {
+        if(!event.missed)animatePlayerHit(event.damage,event.hpDamage,event.shieldDamage,event.isCritical);
+      } else if(event.type==='debuff') {
+        animatePlayerStatusEffect('debuff');
+      } else {
+        animateMonsterStatusEffect(event.monsterId,'buff');
+      }
+      refreshEventStatuses(event,nextView);
+      await finishActionDescription();
+    }
+
     async function playTurnSequence(nextView) {
       if (workbookDeadlineExpired) return;
       cancelTargetSelection();
@@ -5889,15 +5963,15 @@
       if (window.LearningRpgLocalRunEngine && window.LearningRpgLocalRunEngine.itemDrops) {
         window.LearningRpgLocalRunEngine.itemDrops(localGameDataSnapshot,nextView.battle);
       }
-      if (nextView && nextView.battle && nextView.battle.status === 'victory') {
-        preloadVictoryRewardChoices(nextView);
-      }
+      // Prepare the signed next-stage permit during death/level/item dialogs.
+      // Presentation and progression still wait for those choices to finish.
+      if(nextView && nextView.battle && nextView.battle.status==='victory')preloadVictoryRewardChoices(nextView);
       var events = (nextView.battle.lastTurnEvents || []).slice();
       deathRewardPresentation = {view:nextView,events:events, drops:nextView.battle.monsterItemDrops || {}, started:{}, flights:[], progress:Object.assign({}, (events.find(function(event) { return event.type === 'experience'; }) || {}).before || getPlayerLevelProgress(currentView.battle.player))};
       if (window.LearningRpgLocalRunEngine && window.LearningRpgLocalRunEngine.itemDrops) {
         deathRewardPresentation.drops = window.LearningRpgLocalRunEngine.itemDrops(localGameDataSnapshot,nextView.battle);
       }
-      var firstMonsterEventIndex = events.findIndex(function(event) { return event.actor === 'monster'; });
+      var firstMonsterEventIndex = events.findIndex(function(event) { return event.actor === 'monster' && !event.reaction; });
       var monsterTurnAdvanced = Number(nextView.battle.turn || 1) > Number(currentView.battle.turn || 1);
       var consumedSimultaneousEvents = {};
 
@@ -5908,15 +5982,16 @@
         }
         var event = events[i];
         if (event.type === 'experience') continue;
-        // Effects after a monster action belong to that point in the turn.
-        if (firstMonsterEventIndex >= 0 && i >= firstMonsterEventIndex && (event.actor === 'effect' || event.turnPhase === 'playerTurnStart')) continue;
+        // Keep reactions (including player-owned shield effects) after the hit that triggered them.
+        if (firstMonsterEventIndex >= 0 && i >= firstMonsterEventIndex) continue;
         if (event.actor === 'effect') await playTurnEffectEvent(event);
         if (event.actor === 'player') await playTurnPlayerEvent(event, events, i, consumedSimultaneousEvents, nextView);
+        if (event.actor === 'monster' && event.reaction && (firstMonsterEventIndex<0 || i<firstMonsterEventIndex)) await playMonsterReactionEvent(event,nextView);
       }
 
       var monsterEvents = events.filter(function(event, index) {
         if (event.type === 'experience') return false;
-        return event.actor === 'monster' || (firstMonsterEventIndex >= 0 && index >= firstMonsterEventIndex && (event.actor === 'effect' || event.turnPhase === 'playerTurnStart'));
+        return firstMonsterEventIndex >= 0 && index >= firstMonsterEventIndex;
       });
       var playerTurnAnnounced = false;
       if (monsterEvents.length) {
@@ -6246,6 +6321,7 @@
       var monsterScoreSnapshot = captureClientMonsterScoreSnapshot(battle);
       battle.lastTurnEvents = [];
       normalizeClientActionPoints(battle.player);
+      battle.player.assassinUnusedActionPoint=Number(battle.player.currentActionPoint || 0);
       battle.player.currentActionPoint = 0;
 
       (battle.monsters || []).forEach(function(monster) {
@@ -6357,7 +6433,7 @@
           if (!hit.hit) {
             if (hasLocalBattleSkillEngine()) {
               window.LearningRpgLocalRunEngine.trigger(localGameDataSnapshot,battle,'onMiss',{actor:'monster',target:battle.player,damageKind:'direct'});
-              window.LearningRpgLocalRunEngine.trigger(localGameDataSnapshot,battle,'onEvade',{actor:'player',target:monster,damageKind:'direct'});
+              window.LearningRpgLocalRunEngine.trigger(localGameDataSnapshot,battle,'onEvade',{actor:'player',target:monster,damageKind:'direct',originalDamage:damage});
             }
             battle.lastTurnEvents.push({
               actor: 'monster',
@@ -6406,7 +6482,6 @@
         }
       });
 
-      RULE_ENGINE_SHARED.clearCombatTurnShield(battle.player);
       if (hasLocalBattleSkillEngine()) {
         window.LearningRpgLocalRunEngine.tick(localGameDataSnapshot, battle, 'turnEnd');
       } else {
@@ -6417,6 +6492,7 @@
         });
         decrementClientTurnEffects(battle.player);
       }
+      RULE_ENGINE_SHARED.clearCombatTurnShield(battle.player);
       battle.turn = Number(battle.turn || 1) + 1;
       battle.status = Number(battle.player.hp || 0) <= 0 ? 'defeat' : 'active';
       if (battle.status !== 'defeat' && !getFirstAliveMonster(battle)) {
@@ -6460,7 +6536,8 @@
       var currentTurn = Number(battle.turn || 1);
       Object.keys(battle.skillCooldowns).forEach(function(skillId) {
         var startedTurn = Number(battle.skillCooldownStartedTurns[skillId] || 0);
-        if (startedTurn && currentTurn <= startedTurn + 1) {
+        // The use turn counts toward the cooldown: 1 is ready next turn.
+        if (startedTurn && currentTurn <= startedTurn) {
           return;
         }
         battle.skillCooldowns[skillId] = Math.max(0, Number(battle.skillCooldowns[skillId] || 0) - 1);
@@ -6995,6 +7072,8 @@
       battle.skillUseCounts = battle.skillUseCounts || {};
       var skill = findSkillInView(view, skillId) || {};
       var cooldown = parseClientPositiveNumber(skill.cooldown);
+      var resets=battle.combatRuntime && battle.combatRuntime.assassinCooldownResets || {};
+      if(resets[skillId]){cooldown=0;battle.skillCooldowns[skillId]=0;delete resets[skillId];}
       if (cooldown > 0) {
         battle.skillCooldowns[skillId] = Math.max(Number(battle.skillCooldowns[skillId] || 0), cooldown);
         battle.skillCooldownStartedTurns[skillId] = Number(battle.turn || 1);
@@ -7200,7 +7279,7 @@
       if(skill && skill.skillId==='skill_v2_frost_13') {
         var shield=getSkillDisplayMetrics(skill).shield;
         var healPercent=Math.min(100,20+5*(Math.max(1,Number(skill.level || 1))-1));
-        return '방어막 <strong class="skill-damage-number">' + shield + '</strong>을 얻고 자기 빙결됩니다. 즉시 턴을 종료하고 다음 내 턴 1회를 건너뜁니다. 그다음 내 턴 시작에 해제되며 잃은 체력의 <strong class="skill-damage-number">' + healPercent + '%</strong>를 회복합니다. 방어막은 빙결 중 유지되며 피격으로 빙결이 풀리지 않습니다.';
+        return highlightSkillStatusNames('방어막 <strong class="skill-damage-number">' + shield + '</strong>을 얻고 자기 빙결됩니다. 즉시 턴을 종료하고 다음 내 턴 1회를 건너뜁니다. 그다음 내 턴 시작에 해제되며 잃은 체력의 <strong class="skill-damage-number">' + healPercent + '%</strong>를 회복합니다. 방어막은 빙결 중 유지되며 피격으로 빙결이 풀리지 않습니다.');
       }
       var customDescription = String(skill && skill.description || '').trim();
       if (customDescription) {
@@ -7220,7 +7299,8 @@
     }
 
     function renderSkillDescriptionTemplate(skill, template) {
-      var text = escapeHtml(template || '-').replace(/\r?\n/g, '<br>');
+      var description = String(template || '-').replace(/"[^"]+"|“[^”]+”/g, '').trim();
+      var text = escapeHtml(description).replace(/\r?\n/g, '<br>');
       var values = getSkillDescriptionTemplateValues(skill);
       [
         { keys: ['damage', '피해', '피해량'], value: values.damage, highlight: true },
@@ -7256,7 +7336,36 @@
         var value = getSkillDescriptionFormulaValue(expression, values.formulaContext);
         return '<strong class="skill-damage-number">' + escapeHtml(value) + '</strong>';
       });
-      return text;
+      return highlightSkillStatusNames(text);
+    }
+
+    function highlightSkillStatusNames(html) {
+      var names=Object.assign(Object.create(null),{'발화':'burn','중독':'poison','빙결':'freeze','냉기':'chill','출혈':'bleed','감전':'shock','기절':'stun','행운':'luck','암살':'assassin','타격':'strike','공용':'common'});
+      var configured=typeof currentView!=='undefined' && currentView && currentView.clientConfig && currentView.clientConfig.skillConceptKeywords;
+      if(configured && typeof configured==='object')Object.keys(configured).forEach(function(concept){
+        if(['burn','poison','freeze','chill','bleed','shock','stun','luck','assassin','strike','common'].indexOf(concept)<0 || !Array.isArray(configured[concept]))return;
+        Object.keys(names).forEach(function(word){if(names[word]===concept)delete names[word];});
+        configured[concept].slice(0,40).forEach(function(word){if(typeof word==='string' && word.trim() && word.length<=40)names[word.trim()]=concept;});
+      });
+      var words=Object.keys(names).sort(function(a,b){return b.length-a.length;});
+      if(!words.length)return String(html);
+      var pattern=new RegExp(words.map(function(word){return word.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');}).join('|'),'g');
+      // Only decorate text nodes in already escaped output, never HTML attributes.
+      return String(html).split(/(<[^>]*>)/g).map(function(part){
+        if(part.charAt(0)==='<')return part;
+        return part.replace(pattern,function(name){
+          return '<strong class="skill-status-name skill-status-'+names[name]+'">'+name+'</strong>';
+        });
+      }).join('');
+    }
+
+    function buildSkillFlavorDescription(skill, fallbackText) {
+      var description = String(skill && skill.description || fallbackText || '');
+      var quotes = description.match(/"[^"]+"|“[^”]+”/g) || [];
+      if (!quotes.length) return '';
+      return '<span class="skill-flavor-text">' + quotes.map(function(quote) {
+        return escapeHtml(quote);
+      }).join('<br>') + '</span>';
     }
 
     function getSkillDescriptionFormulaValue(expression, context) {
@@ -7367,6 +7476,13 @@
         comboBattleBonus: Math.min(12, Number(chain.total || 0)), poisonShield: Math.min(30, poison),
         lowHpBonus: Math.min(1, Math.max(0, (1 - Number(player.hp || 0) / Math.max(1, Number(player.maxHp || playerStats.maxHp || player.hp || 1))) / 0.7)),
       });
+      var aliveBurnTargets = (battle.monsters || []).filter(function(m) { return Number(m.currentHp !== undefined ? m.currentHp : m.hp) > 0; });
+      var previewTargetId = skill && skill.targetId || (typeof currentQuestionView !== 'undefined' && currentQuestionView && currentQuestionView.targetId) || '';
+      var burnTarget = aliveBurnTargets.filter(function(m) { return (m.instanceId || m.monsterId) === previewTargetId; })[0] || aliveBurnTargets[0];
+      function burnStacks(target) { return (target && target.effects || []).reduce(function(sum,e) { return sum + (e.effectId === 'effect_v2_burn' ? Number(e.stacks || 0) : 0); },0); }
+      var enemyBurnTotal = aliveBurnTargets.reduce(function(sum,m) { return sum + burnStacks(m); },0);
+      Object.assign(context, {targetBurn:burnStacks(burnTarget),selectedBurn:burnStacks(burnTarget),selfBurn:burnStacks(player),
+        enemyBurnTotal:enemyBurnTotal,allBurnTotal:enemyBurnTotal+burnStacks(player),selectedMaxHp:Number(burnTarget && burnTarget.maxHp || 0)});
       var previewRange = getSkillPreviewDamageRange(skill);
       var formulaRange = getSkillFormulaDamageRange(rule, context);
       var formulaShieldRange = getSkillFormulaShieldRange(rule, context);
@@ -7452,7 +7568,9 @@
       return {
         name: first.name || first.effectName || (detail && detail.name) || first.effectId || (detail && detail.effectId) || '',
         value: value,
-        chance: Math.min(100, Math.max(0, Number(first.chance !== undefined ? first.chance : (detail && detail.chance !== undefined ? detail.chance : 100)) + (first.chance === undefined && detail && detail.chance !== undefined ? 0 : (String(first.category || detail && detail.category || '').toLowerCase() === 'debuff' ? Number(context && context.debuffChanceUpgrade || 0) : 0)))),
+        chance: first.chanceFormula !== undefined
+          ? Math.min(100, Math.max(0, evaluateSkillDisplayFormula(first.chanceFormula, context || {}, 'max')))
+          : Math.min(100, Math.max(0, Number(first.chance !== undefined ? first.chance : (detail && detail.chance !== undefined ? detail.chance : 100)) + (first.chance === undefined && detail && detail.chance !== undefined ? 0 : (String(first.category || detail && detail.category || '').toLowerCase() === 'debuff' ? Number(context && context.debuffChanceUpgrade || 0) : 0)))),
       };
     }
 
@@ -7681,6 +7799,12 @@
     }
 
     function getSkillUseLimitText(skill) {
+      var dynamicConditions = safeJsonParseClient(skill && skill.conditionJson, {});
+      if (dynamicConditions.perBattleLimitFormula) {
+        var limit = Math.max(1, Math.floor(evaluateSkillDisplayFormula(dynamicConditions.perBattleLimitFormula, {level:Math.max(1,Number(skill.level || 1))}, 'max')));
+        var used = Number(currentView && currentView.battle && currentView.battle.skillUseCounts && currentView.battle.skillUseCounts[skill.skillId] || 0);
+        return '사용 가능 횟수: 전투 ' + Math.max(0,limit-used) + '/' + limit + '회';
+      }
       var useLimitText = String(skill && skill.useLimitText || '').trim();
       if (useLimitText) {
         return /^사용 가능 횟수/.test(useLimitText) ? useLimitText : '사용 가능 횟수: ' + useLimitText;
@@ -7793,6 +7917,7 @@
     }
 
     function rollClientHit(attacker, defender) {
+      if((defender && defender.effects || []).some(function(e){return e.assassinState && e.assassinState.active!==false && Number(e.assassinState.guaranteedEvadeCharges)>0;}))return {hit:false,chance:0};
       var accuracy = getClientCombatStat(attacker, 'accuracy', 100);
       var evasion = getClientCombatStat(defender, 'evasion', 0);
       var chance = Math.max(0, Math.min(100, accuracy - evasion));
@@ -7954,6 +8079,16 @@
       });
     }
 
+    function refreshFinalVictoryRewardView(rewardView) {
+      var receipt=victoryRewardResultPayload,engine=typeof window!=='undefined' && window.LearningRpgLocalRunEngine;
+      if(!rewardView || !receipt || !receipt.choicesSettled || receipt.key!==getVictoryRewardKey(currentView)
+        || !localRunState || !engine || !engine.reward)return rewardView;
+      // Recalculate only result-dependent values. The signed choices, seed,
+      // next-stage permit and pre-regeneration HP receipt remain unchanged.
+      try {return engine.reward(localRunState,localGameDataSnapshot,receipt.payload,rewardView) || rewardView;}
+      catch(error){return rewardView;} // An optional preview cannot invalidate a signed permit.
+    }
+
     function preloadVictoryRewardChoices(view, pendingRewardId) {
       view = view || currentView;
       if (!view || !view.battle || view.battle.status !== 'victory') return null;
@@ -7987,9 +8122,16 @@
         if (victoryRewardDisplayStarted) {
           document.getElementById('rewardMessage').textContent = preload.error.message;
         }
+        victoryRewardDisplayStarted = false;
+        if(typeof document!=='undefined') {
+          var retryButton=document.getElementById('rewardLoadRetryButton');
+          if(retryButton)retryButton.hidden=false;
+        }
+        if(typeof pushLog==='function')pushLog(preload.error.message+' · 보상 다시 불러오기를 눌러주세요.',{instant:true});
+        preload.errorMessageShown=true;
       }
       function requestFinalReward(plan) {
-        if (victoryRewardPreload !== preload || workbookDeadlineExpired) return;
+        if (victoryRewardPreload !== preload || workbookDeadlineExpired || preload.finalized) return;
         if (plan && plan.choices && plan.rewardPreparationToken) {
           payload.rewardPreparationToken = plan.rewardPreparationToken;
           // A local preview is optional; its failure must not block the server request.
@@ -8001,6 +8143,21 @@
             if (preload.rewardView && victoryRewardRecoveryComplete) showPreparedVictoryReward();
           }
         }
+        var settled=false,timeoutId=null;
+        function settleRequest() {
+          if(settled)return false;
+          settled=true;
+          if(timeoutId && window.clearTimeout)window.clearTimeout(timeoutId);
+          return true;
+        }
+        function requestFailed(error) {
+          if(!settleRequest() || victoryRewardPreload!==preload || workbookDeadlineExpired || preload.finalized)return;
+          if(!preload.responseRetried){preload.responseRetried=true;window.setTimeout(function(){requestFinalReward(plan);},600);return;}
+          failFinalReward(error);
+        }
+        if(typeof window!=='undefined' && window.setTimeout)timeoutId=window.setTimeout(function(){
+          requestFailed({message:'보상 준비 응답이 지연되고 있습니다.'});
+        },15000);
         try {
           // Use the newest checkpoint if the background preparation acknowledged prior stages.
           payload.runSessionToken = runSessionToken;
@@ -8009,11 +8166,14 @@
           payload.rewardResponseFormat = 'json';
         google.script.run
           .withSuccessHandler(function(rewardView) {
-            if (victoryRewardPreload !== preload) return;
+            // A valid response can arrive after the client watchdog. Keep the
+            // first valid result for this battle instead of discarding it forever.
+            if (victoryRewardPreload !== preload || preload.finalized || workbookDeadlineExpired) return;
             if (typeof rewardView === 'string') {
               try { rewardView = JSON.parse(rewardView); } catch (error) { rewardView = null; }
             }
             if (!rewardView || (!(rewardView.battle && rewardView.battle.status === 'defeat') && (!Array.isArray(rewardView.choices) || !rewardView.choices.length))) {
+              if(!settleRequest())return;
               if (!preload.responseRetried) {
                 preload.responseRetried = true;
                 requestFinalReward(plan);
@@ -8022,12 +8182,15 @@
               failFinalReward({message:'서버가 비어 있는 보상 응답을 반환했습니다. 보상 다시 불러오기를 눌러주세요.'});
               return;
             }
+            settleRequest();
+            preload.finalized=true;preload.error=null;
             preload.loading = false;
             rememberRunSession(rewardView);
             if (rewardView && rewardView.battle && rewardView.battle.status === 'defeat') {
               handleRewardSelectionResponse(rewardView);
               return;
             }
+            rewardView=refreshFinalVictoryRewardView(rewardView);
             preload.rewardView = rewardView;
             if (victoryRewardDisplayStarted && currentView && getVictoryRewardKey(currentView) === key) {
               currentRewardView = rewardView;
@@ -8045,21 +8208,19 @@
               rewardSelectionApplying = false;
               selectRewardChoice(rewardId);
             }
+            if(victoryRewardRecoveryComplete && !victoryRewardDisplayStarted && typeof showPreparedVictoryReward==='function')showPreparedVictoryReward();
           })
-          .withFailureHandler(function(error) {
-            if (victoryRewardPreload !== preload || workbookDeadlineExpired) return;
-            // Retry the same result once, retaining any queued selection.
-            if (!preload.responseRetried) {
-              preload.responseRetried = true;
-              window.setTimeout(function() { requestFinalReward(plan); }, 600);
-              return;
-            }
-            failFinalReward(error);
-          })
+          .withFailureHandler(requestFailed)
           .previewRewardChoicesForStageResult(payload, getAuthToken());
-        } catch (error) { failFinalReward(error); }
+        } catch (error) { if(settleRequest())failFinalReward(error); }
       }
-      if (preparation && preparation.loading) preparation.promise.then(requestFinalReward, function() { requestFinalReward(null); });
+      if (preparation && preparation.loading) {
+        var preparationFinished=false;
+        function continuePreparation(plan){if(preparationFinished)return;preparationFinished=true;requestFinalReward(plan);}
+        // Background preparation is optional; a lost callback cannot block victory.
+        window.setTimeout(function(){continuePreparation(null);},3000);
+        preparation.promise.then(continuePreparation,function(){continuePreparation(null);});
+      }
       else requestFinalReward(preparation && preparation.rewardView);
       return preload;
     }
@@ -8067,7 +8228,12 @@
     function openRewardAfterVictory() {
       if (workbookDeadlineExpired) return;
       if (!currentView || !currentView.battle || currentView.battle.status !== 'victory') return;
-      preloadVictoryRewardChoices(currentView);
+      if ((typeof monsterDropActive!=='undefined' && monsterDropActive)
+        || (typeof levelAllocationActive!=='undefined' && levelAllocationActive)
+        || (typeof levelRewardResolve!=='undefined' && levelRewardResolve)) return;
+      if(!victoryRewardFlowStarted)victoryRewardResultPayload={key:getVictoryRewardKey(currentView),payload:buildStageResultPayload(currentView),choicesSettled:true};
+      var preload=preloadVictoryRewardChoices(currentView);
+      if(preload && preload.rewardView)preload.rewardView=refreshFinalVictoryRewardView(preload.rewardView);
       if (victoryRewardFlowStarted) {
         if (victoryRewardRecoveryComplete) showPreparedVictoryReward();
         return;
@@ -8092,10 +8258,23 @@
 
     function showPreparedVictoryReward() {
       if (workbookDeadlineExpired) return;
+      if (!currentView || !currentView.battle || currentView.battle.status!=='victory') return;
       if (victoryRewardDisplayStarted) return;
       var preload = preloadVictoryRewardChoices(currentView);
       if (!preload) return;
+      if(preload.error) {
+        if(!preload.errorMessageShown){pushLog(preload.error.message);preload.errorMessageShown=true;}
+        var retryButton=document.getElementById('rewardLoadRetryButton');
+        if(retryButton)retryButton.hidden=false;
+        return;
+      }
       if (preload.rewardView) {
+        var automaticContinue=preload.rewardView.choices.length===1 && preload.rewardView.choices[0].type==='stageContinue';
+        if(automaticContinue && (preload.rewardView.preparedDuringBattle || rewardSelectionApplying)) {
+          if(!preload.autoContinueWaitingMessageShown){preload.autoContinueWaitingMessageShown=true;pushLog('다음 스테이지 준비 중...',{instant:true});}
+          window.setTimeout(showPreparedVictoryReward,120);
+          return;
+        }
         var retryButton = document.getElementById('rewardLoadRetryButton');
         if (retryButton) retryButton.hidden = true;
         victoryRewardDisplayStarted = true;
@@ -8143,6 +8322,7 @@
       currentView.stageState.reward = {
         stageId: rewardView.stageId,
         rerollUsed: !!rewardView.rerollUsed,
+        localRerollAnswer: rewardView.localRerollAnswer || null,
         battleCompletionReceipt: rewardView.battleCompletionReceipt || null,
         rewardGroupId: rewardView.rewardGroupId,
         choices: rewardView.choices || [],
@@ -8173,6 +8353,7 @@
         localAdvanceEnabled: !!(localRunState && window.LearningRpgLocalRunEngine),
         localTransitions: localRunTransitions.slice(),
         floorExperienceAnswer: currentView && currentView.floorExperienceAnswer || null,
+        localRewardRerollAnswer: view.stageState && view.stageState.reward && view.stageState.reward.localRerollAnswer || null,
         questionUnderstanding: typeof getPendingQuestionUnderstanding === 'function' ? getPendingQuestionUnderstanding() : [],
         battle: buildStageResultBattlePayload(view.battle || {}),
         answerLogs: options.includeAnswerLogs === false
@@ -8490,6 +8671,7 @@
       rewardSelectionApplying = false;
       var rerollButton = document.getElementById('rewardRerollButton');
       if (rerollButton) {
+        rerollButton.style.display = '';
         rerollButton.disabled = !!rewardView.rerollUsed || !!rewardView.rerollUnavailable || !!rewardView.preparedDuringBattle || (!rewardView.isLevelReward && !rewardView.localTransitionToken);
         rerollButton.title = rewardView.rerollUsed ? '새로고침 사용 완료' : (rewardView.rerollUnavailableReason || '문제를 맞히면 새로고침 · 1회');
       }
@@ -8497,15 +8679,15 @@
       if (rewardView.intermissionStage) {
         renderBattleBackground(rewardView.intermissionStage);
       }
-      animateStageClearRegen(rewardView);
+      if(!rewardView.isLevelReward)animateStageClearRegen(rewardView);
       var rewardContainer = document.getElementById('rewardChoices');
       var rewardTitle = document.getElementById('rewardTitle');
       var rewardSubtitle = document.querySelector('.reward-clear-header p');
       if (rewardTitle) {
-        rewardTitle.textContent = rewardView.isLevelReward ? '레벨업 · 스킬 보상' : (rewardView.intermissionRewardOnly ? '보상' : (rewardView.floorRestChoice ? '층 정비' : '스킬 강화'));
+        rewardTitle.textContent = rewardView.isLevelStatReward ? '레벨업 · 스탯 보상' : (rewardView.isLevelReward ? '레벨업 · 스킬 보상' : (rewardView.intermissionRewardOnly ? '보상' : (rewardView.floorRestChoice ? '층 정비' : '스킬 강화')));
       }
       if (rewardSubtitle) {
-        rewardSubtitle.textContent = rewardView.intermissionRewardOnly ? '스킬을 선택하세요' : (rewardView.floorRestChoice ? '휴식하거나 스킬을 강화하세요' : '스킬을 선택하세요');
+        rewardSubtitle.textContent = rewardView.isLevelStatReward ? '스탯 보상 하나를 선택하세요' : (rewardView.intermissionRewardOnly ? '스킬을 선택하세요' : (rewardView.floorRestChoice ? '휴식하거나 스킬을 강화하세요' : '스킬을 선택하세요'));
       }
       rewardContainer.classList.remove('has-selection');
       rewardContainer.innerHTML = rewardView.choices.map(function(reward, index) {
@@ -8513,7 +8695,8 @@
         var rarity = normalizeRewardRarity(reward.rarity);
         var title = reward.displayTitle || getRewardDisplayTitle(reward.type);
         var name = reward.description || reward.rewardId;
-        var detailCard = renderRewardDetailCard(reward, rarity, name);
+        var inlineSkill=!!reward.skillDetail && (reward.type==='skill' || reward.type==='skillUpgrade');
+        var detailCard = inlineSkill ? renderInlineRewardSkillDescription(reward) : (reward.type==='stat'?'':renderRewardDetailCard(reward, rarity, name));
         if (reward.type === 'stat') {
           title = name;
           name = '스텟 증가';
@@ -8524,25 +8707,15 @@
             ? getRewardSkillConcept(reward) : getRewardDisplayTitle(reward.type);
         }
         var rarityBadge = reward.type === 'rest' ? '회복' : (reward.rarityLabel || getRewardRarityLabel(rarity));
-        // A bounded, deterministic burst follows the light-card as it contracts.
-        var dustCount = { epic: 24, legendary: 32, unique: 40 }[rarity] || 0;
-        var dust = [];
-        for (var particleIndex = 0; particleIndex < dustCount; particleIndex += 1) {
-          var angle = particleIndex * 2.399963;
-          var spread = 30 + (particleIndex % 7) * 6;
-          dust.push('<span class="reward-dust-particle" style="--dust-x:' + (50 + Math.cos(angle) * 46).toFixed(2) + '%;' +
-            '--dust-y:' + (50 + Math.sin(angle) * 46).toFixed(2) + '%;' +
-            '--dust-dx:' + (Math.cos(angle) * spread).toFixed(2) + 'px;' +
-            '--dust-dy:' + (Math.sin(angle) * spread - 48).toFixed(2) + 'px;' +
-            '--dust-delay:' + ((particleIndex * 37) % 190) + 'ms;' +
-            '--dust-duration:' + (1000 + (particleIndex % 6) * 160) + 'ms;' +
-            '--dust-size:' + (1.5 + (particleIndex % 4) * .65) + 'px"></span>');
-        }
-        return '<button type="button" aria-pressed="false" class="reward-choice-card rarity-' + escapeHtml(rarity) + '" data-reward-id="' + escapeHtml(reward.rewardId) + '">' +
-          '<span class="reward-reveal-effect reward-charge-light" aria-hidden="true"><span class="reward-charge-spectrum"></span><span class="reward-charge-star"></span></span>' +
+        return '<button type="button" aria-pressed="false" class="reward-choice-card reward-aura-card'+(inlineSkill?' reward-inline-skill':'')+' rarity-' + escapeHtml(rarity) + '" data-reward-id="' + escapeHtml(reward.rewardId) + '">' +
+          '<span class="reward-reveal-effect reward-charge-light" aria-hidden="true"><span class="reward-charge-star"></span><span class="reward-charge-spectrum"></span></span>' +
           '<span class="reward-reveal-effect reward-reveal-flash" aria-hidden="true"><span class="reward-light-card"></span></span>' +
-          (dustCount ? '<span class="reward-reveal-effect reward-rarity-dust" aria-hidden="true">' + dust.join('') + '</span>' : '') +
-          (reward.skillDetail ? '<span class="reward-choice-ap">' + renderSkillActionPointGauge(getSkillActionPointCost(reward.skillDetail)) + '</span>' : '<span class="reward-choice-shortcut" aria-hidden="true">' + (index + 1) + '</span>') +
+          '<span class="reward-reveal-effect reward-card-aura reward-aura-intro" aria-hidden="true"></span>' +
+          '<span class="reward-reveal-effect reward-card-aura reward-aura-idle" aria-hidden="true"></span>' +
+          '<span class="reward-reveal-effect reward-card-aura reward-aura-hover" aria-hidden="true"></span>' +
+          '<span class="reward-reveal-effect reward-card-sheen" aria-hidden="true"></span>' +
+          (reward.skillDetail ? renderRewardActionPointBadge(getSkillActionPointCost(reward.skillDetail)) : '') +
+          '<span class="reward-choice-shortcut" aria-hidden="true">' + (index + 1) + '</span>' +
           '<span class="reward-choice-selected-label" aria-hidden="true">✓ 선택됨</span>' +
           renderRewardRarityGems(rarity) +
           '<span class="reward-choice-heading">' + escapeHtml(title) + '</span>' +
@@ -8551,7 +8724,7 @@
             '<img class="reward-choice-icon" src="' + escapeHtml(iconUrl) + '" alt="" onerror="this.remove();">' +
           '</span>' +
           '<span class="reward-choice-body">' +
-            '<strong>' + escapeHtml(name) + '</strong>' +
+            (inlineSkill ? '<strong class="reward-skill-concept skill-status-name skill-status-'+getRewardConceptClass(reward)+'">'+escapeHtml(name)+'</strong>' : '<strong>' + escapeHtml(name) + '</strong>') +
           '</span>' +
           detailCard +
         '</button>';
@@ -8669,14 +8842,38 @@
         var question=rewardRerollQuestion;
         try {
           var engine=window.LearningRpgLocalRunEngine;
-          var correct=engine.rerollLevelReward(localGameDataSnapshot,currentView.battle,
+          var targetView=currentRewardView.levelRewardTargetView || currentView;
+          var reroll=currentRewardView.isLevelStatReward?engine.rerollStatReward:engine.rerollLevelReward;
+          var correct=reroll(localGameDataSnapshot,targetView.battle,
             {question:buildSignedQuestionResultSnapshot(question),signature:question.snapshotSignature,answer:answer});
           currentRewardView.rerollUsed=true;
-          currentRewardView.choices=engine.rewardChoices(localGameDataSnapshot,currentView.battle,currentView.availableSkills || []);
+          currentRewardView.choices=currentRewardView.isLevelStatReward?engine.statRewardChoices(localGameDataSnapshot,targetView.battle):engine.rewardChoices(localGameDataSnapshot,targetView.battle,targetView.availableSkills || []);
           currentQuestionView.rerollComplete=true;currentQuestionView.rerollStatus=correct ? 'success' : 'failed';
           document.getElementById('questionSubmitButton').disabled=false;
           document.getElementById('questionSubmitButton').textContent='보상으로 돌아가기';
           document.getElementById('questionMessage').textContent=correct ? '보상을 새로고침했습니다.' : '오답입니다. 기존 보상을 선택하세요.';
+        } catch(error) {
+          document.getElementById('questionMessage').textContent=error.message;
+          document.getElementById('questionSubmitButton').disabled=false;
+          document.getElementById('questionSubmitButton').textContent='재시도';
+        }
+        rewardRerollBusy=false;rewardSelectionApplying=false;return;
+      }
+      if(action==='answer' && typeof localRunState!=='undefined' && localRunState && window.LearningRpgLocalRunEngine && window.LearningRpgLocalRunEngine.rerollReward) {
+        try {
+          var response=window.LearningRpgLocalRunEngine.rerollReward(localRunState,localGameDataSnapshot,
+            buildStageResultPayload(currentView),currentRewardView,answer);
+          var intermissionRewardsOnly=!currentRewardView.floorRestChoice && response.rewardView.floorRestChoice;
+          currentRewardView=response.rewardView;
+          if(intermissionRewardsOnly)currentRewardView=Object.assign({},currentRewardView,{floorRestChoice:false,choices:getFloorIntermissionRewardChoices(currentRewardView)});
+          ensureClientRewardState(currentRewardView);
+          if(victoryRewardPreload)victoryRewardPreload.rewardView=currentRewardView;
+          currentQuestionView.rerollComplete=true;
+          currentQuestionView.rerollStatus=response.rerollStatus;
+          document.getElementById('questionSubmitButton').disabled=false;
+          document.getElementById('questionSubmitButton').textContent='보상으로 돌아가기';
+          document.getElementById('questionMessage').textContent=response.rerollStatus==='success'
+            ? '정답입니다. 보상 전체를 새로고침했습니다.' : '새로고침 실패 · 효율 0% · 기존 보상을 선택하세요.';
         } catch(error) {
           document.getElementById('questionMessage').textContent=error.message;
           document.getElementById('questionSubmitButton').disabled=false;
@@ -8964,6 +9161,28 @@
       return '<span class="difficulty-stars" aria-label="난이도 ' + count + '">' + stars + '</span>';
     }
 
+    function renderRewardActionPointBadge(cost) {
+      cost=Math.max(0,Math.round(Number(cost) || 0));
+      return '<span class="reward-choice-ap reward-ap-badge" role="img" aria-label="행동력 '+cost+' 소비"><svg viewBox="0 0 64 64" aria-hidden="true"><path d="M0 0H64L0 64Z" fill="#352f19"/><path d="M0 0H64L0 64" fill="none" stroke="#f5da87" stroke-width="2"/><path d="M0 0H54L0 22Z" fill="#fff0aa" opacity=".2"/></svg><b>'+cost+'</b></span>';
+    }
+
+    function getRewardConceptClass(reward) {
+      var names={'발화':'burn','감전':'shock','행운':'luck','암살':'assassin','중독':'poison','타격':'strike','냉기':'chill','빙결':'freeze','출혈':'bleed','기절':'stun','공용':'common'};
+      return names[getRewardSkillConcept(reward)] || 'common';
+    }
+
+    function renderInlineRewardSkillDescription(reward) {
+      var skill=reward.skillDetail,changes='';
+      if(reward.type==='skillUpgrade') {
+        var before=Object.assign({},skill,{level:Math.max(1,Number(skill.level || 1)-Math.max(1,Number(reward.value || 1)))});
+        changes=buildSkillUpgradeChangeSummary(before,skill);
+      }
+      return '<span class="reward-inline-description"><span class="skill-detail-description">'+
+        buildSkillDetailDescription(skill,skill.description || reward.detailDescription || reward.description || '-')+
+        '</span>'+changes+'</span><span class="reward-card-footer"><span class="reward-inline-meta">'+buildRewardSkillDetailLines(skill)+'</span>'+
+        buildSkillFlavorDescription(skill,reward.detailDescription || reward.description)+'</span>';
+    }
+
     function renderRewardDetailCard(reward, rarity, fallbackName) {
       if (reward && reward.type === 'skillUpgrade' && reward.skillDetail) {
         return renderSkillUpgradeCompareDetailCard(reward, rarity, fallbackName);
@@ -8984,6 +9203,7 @@
         '<span class="skill-detail-meta">' + detailMeta + '</span>' +
         '<span class="skill-detail-description">' + detail + '</span>' +
         buildRewardSkillDetailLines(reward.skillDetail) +
+        (reward.skillDetail ? buildSkillFlavorDescription(reward.skillDetail, reward.detailDescription || reward.description) : '') +
       '</span>';
     }
 
@@ -9056,7 +9276,8 @@
         '</span>' +
         '<span class="skill-detail-meta reward-upgrade-state-label">' + escapeHtml(label) + ' / ' + meta + '</span>' +
         '<span class="skill-detail-description">' + description + '</span>' +
-        buildRewardSkillDetailLines(skill);
+        buildRewardSkillDetailLines(skill) +
+        buildSkillFlavorDescription(skill, reward.detailDescription || reward.description);
     }
 
     function buildRewardSkillDetailLines(skill) {
@@ -9339,10 +9560,14 @@
         if(!levelRewardResolve)return;
         try {
           var engine=window.LearningRpgLocalRunEngine;
-          var skills=engine.claimLevelReward(localGameDataSnapshot,currentView.battle,currentView.availableSkills || [],rewardId);
-          currentView.availableSkills=engine.skills(localGameDataSnapshot,currentView.battle,skills);
-          currentView.questionCache=[];
-          levelRewardResolve(true);
+          // XP animation may open this reward before currentView advances to the settled battle.
+          var targetView=currentRewardView.levelRewardTargetView || currentView;
+          var skills=targetView.availableSkills || [];
+          if(currentRewardView.isLevelStatReward)engine.claimStatReward(localGameDataSnapshot,targetView.battle,rewardId);
+          else skills=engine.claimLevelReward(localGameDataSnapshot,targetView.battle,skills,rewardId);
+          targetView.availableSkills=engine.skills(localGameDataSnapshot,targetView.battle,skills);
+          targetView.questionCache=[];
+          var resolveLevelReward=levelRewardResolve;levelRewardResolve=null;resolveLevelReward(true);
         } catch(error){document.getElementById('rewardMessage').textContent=error.message;}
         return;
       }
@@ -9474,6 +9699,13 @@
         button.disabled = false;
         document.getElementById('rewardMessage').textContent = error && error.message || '보상을 적용하지 못했습니다.';
         document.getElementById('rewardMessage').className = 'message error';
+        if(currentRewardView && currentRewardView.choices && currentRewardView.choices.length===1 && currentRewardView.choices[0].type==='stageContinue') {
+          victoryRewardDisplayStarted=false;
+          if(victoryRewardPreload)victoryRewardPreload.error={message:error && error.message || '다음 스테이지로 이동하지 못했습니다.'};
+          pushLog(error && error.message || '다음 스테이지로 이동하지 못했습니다.',{instant:true});
+          var retryButton=document.getElementById('rewardLoadRetryButton');
+          if(retryButton)retryButton.hidden=false;
+        }
         updateWorkbookCountdown();
       }
     }
@@ -10128,7 +10360,11 @@
     }
 
     function preloadFollowingStageStatic() {
-      // All static battle definitions already belong to the initial run snapshot.
+      // Static definitions are already local. Refresh the next floor's question
+      // snapshot while the player is choosing rest/experience/upgrade rewards.
+      if(!currentView || !isFloorIntermissionView(currentView))return;
+      var floor=Number(currentView.battle && currentView.battle.stage && currentView.battle.stage.floor || 0);
+      if(floor){var pending=ensureNextFloorQuestionRefresh({runId:currentView.runId,currentFloor:floor+1});if(pending)pending.catch(function(){});}
     }
 
     function preloadNextBattleAfterReward(response) {
@@ -10578,13 +10814,21 @@
       }
       applyMonsterDamageDelta(monsterId, visibleHpDamage, shieldDamage || 0);
       if (visibleHpDamage <= 0 && visibleShieldDamage <= 0) return Promise.resolve();
+      if(target.querySelector('.burn-persistent') && elementalHit!=='shock') {
+        target.classList.remove('burn-damage-pulse');void target.offsetWidth;target.classList.add('burn-damage-pulse');
+        var burnToken=String(Number(target.dataset.burnHitToken || 0)+1);target.dataset.burnHitToken=burnToken;
+        window.setTimeout(function(){if(target.dataset.burnHitToken===burnToken)target.classList.remove('burn-damage-pulse');},700);
+      }
       if (elementalHit) {
+        target.classList.remove('monster-hit-red','monster-hit-white');
+        if(elementalHit==='shock')target.classList.remove('burn-damage-pulse');
+        target.classList.toggle('monster-shock-hit',elementalHit==='shock');
         var elementalAnchor = target.closest('.monster-slot');
         setMonsterSpriteState(target,'hit');
         target.classList.remove('monster-dot-hit');void target.offsetWidth;target.classList.add('monster-dot-hit');
         if(visibleHpDamage>0)playBattleHitSound(false);
         var dotToken=String(Number(target.dataset.dotHitToken || 0)+1);target.dataset.dotHitToken=dotToken;
-        window.setTimeout(function(){if(target.dataset.dotHitToken===dotToken){target.classList.remove('monster-dot-hit');if(!target.classList.contains('monster-state-death'))resetMonsterSpriteState(target);}},700);
+        window.setTimeout(function(){if(target.dataset.dotHitToken===dotToken){target.classList.remove('monster-dot-hit','monster-shock-hit');if(!target.classList.contains('monster-state-death'))resetMonsterSpriteState(target);}},700);
         spawnFloatingDamage(elementalAnchor && elementalAnchor.querySelector('.monster-hp-text') || target, attackDamage, 'damage-white', false);
         return skippableAutoDelay(ATTACK_EFFECT_DELAY_MS).then(function(){
           if (isMonsterDefeatedInDom(monsterId)) { animateMonsterDeath(monsterId); return skippableAutoDelay(DEATH_STATE_HOLD_MS); }
@@ -10787,7 +11031,7 @@
 
     function getDamageVisualType(value) {
       var types = {
-        debuff_burn:'burn', effect_v2_burn:'burn', burn:'burn', fire:'burn',
+        debuff_burn:'burn', effect_v2_burn:'burn', effect_ignition:'burn', burn:'burn', fire:'burn',
         explosion:'explosion', effect_v2_explosion:'explosion',
         effect_v2_chill:'chill', chill:'chill', cold:'chill',
         debuff_freeze:'freeze', effect_v2_freeze:'freeze', freeze:'freeze', frozen:'freeze', shatter:'shatter',
@@ -10795,6 +11039,31 @@
         effect_v2_shock:'shock', shock:'shock'
       };
       return types[String(value || '').trim().toLowerCase()] || '';
+    }
+
+    function getPixelFlameSvg(variant) {
+      var outlines = [
+        'M7 0H9V4H11V8H13V12H15V22H13V26H11V28H5V26H3V24H1V14H3V10H5V16H7V10H5V6H7Z',
+        'M9 0H11V6H9V10H13V14H15V22H13V26H11V28H5V26H3V24H1V16H3V8H5V14H7V8H9Z',
+        'M5 0H7V6H9V10H11V6H13V14H15V22H13V26H11V28H5V26H3V24H1V14H3V10H5V16H7V10H5Z'
+      ];
+      return '<svg viewBox="0 0 16 28" shape-rendering="crispEdges" aria-hidden="true"><path fill="#df461b" d="' + outlines[variant % outlines.length] + '"/><path fill="#ff8b26" d="M7 8H9V14H11V12H13V22H11V26H5V24H3V18H5V20H7Z"/><path fill="#ffd65c" d="M7 16H9V20H11V24H9V26H5V22H7Z"/><path fill="#fff1b8" d="M7 22H9V26H7Z"/></svg>';
+    }
+
+    function resetBurnParticle(particle, initial) {
+      var random = function(min,max) { return Math.round(min + Math.random() * (max-min)); };
+      particle.style.setProperty('--x',random(6,84)+'%');
+      particle.style.setProperty('--y',random(38,80)+'%');
+      particle.style.setProperty('--size',(random(12,20)*2)+'px');
+      particle.style.setProperty('--drift',random(-14,14)+'px');
+      particle.style.setProperty('--flame-sway',random(-8,8)+'px');
+      particle.style.setProperty('--flame-rise',random(18,34)+'px');
+      // Keep the clock stable on respawn; changing its duration/delay would jump mid-cycle.
+      if(initial) {
+        particle.style.setProperty('--flame-duration',random(1100,1600)+'ms');
+        particle.style.setProperty('--delay',random(-3000,0)+'ms');
+      }
+      particle.innerHTML=getPixelFlameSvg(random(0,2));
     }
 
     function playDamageTypeEffect(effectId, targetType, monsterId) {
@@ -10810,6 +11079,7 @@
       if (type === 'shatter') { releaseMonsterFreeze(monsterId, 'shatter'); return true; }
       if (type === 'freeze' && scope.querySelector('.ice-persistent')) return true;
       if (type === 'chill' && scope.querySelector('.chill-persistent')) return true;
+      if (type === 'burn' && scope.querySelector('.burn-persistent')) return true;
       var art = scope.querySelector('.monster-art');
       var overlay = document.createElement('div');
       overlay.className = 'element-vfx element-vfx-' + type;
@@ -10821,7 +11091,7 @@
         overlay.style.top = (imageBox.top-box.top) + 'px';
         overlay.style.width = imageBox.width + 'px'; overlay.style.height = imageBox.height + 'px';
       }
-      var count = {burn:24,explosion:24,chill:18,freeze:12,poison:18,shock:10}[type];
+      var count = {burn:7,explosion:24,chill:18,freeze:12,poison:18,shock:10}[type];
       var duration = {burn:3200,explosion:1600,chill:2600,freeze:2600,poison:3200,shock:2400}[type];
       overlay.style.setProperty('--element-duration',duration+'ms');
       var random = function(min,max) { return min+Math.random()*(max-min); };
@@ -10842,10 +11112,7 @@
         p.style.setProperty('--angle',(i/count*360+random(-8,8)).toFixed(1)+'deg');
         p.style.setProperty('--travel',random(45,105).toFixed(0)+'px');
         if(type==='burn') {
-          p.style.setProperty('--x',random(3,86).toFixed(1)+'%');p.style.setProperty('--y',random(32,78).toFixed(1)+'%');
-          p.style.setProperty('--size',random(18,38).toFixed(1)+'px');
-          p.style.setProperty('--delay',random(-1000,0).toFixed(0)+'ms');
-          p.innerHTML='<svg viewBox="0 0 60 100" preserveAspectRatio="none"><path fill="#ef3915" d="M30 0C44 24 18 30 44 44C64 57 63 87 39 98C10 108-7 83 4 61C9 49 19 44 16 29C33 39 23 55 32 58C49 42 21 29 30 0Z"/><path fill="#ffad24" d="M32 29C40 48 24 57 40 66C53 77 45 98 27 98C7 96 4 78 15 66C22 56 27 49 23 44C31 48 26 66 32 69C42 60 27 49 32 29Z"/><path fill="#fff4b8" d="M29 67C39 80 32 82 38 87C41 94 32 101 24 96C12 90 25 84 29 67Z"/></svg>';
+          resetBurnParticle(p,true);
         }
         if(type==='shock') {
           // Two strokes: a soft cyan corona around a sharp white electric core.
@@ -10854,6 +11121,10 @@
         }
         overlay.appendChild(p);
       }
+      if(type==='burn')overlay.addEventListener('animationiteration',function(event) {
+        // Reuse the bounded particle pool, respawning only at the invisible cycle boundary.
+        if(event.animationName==='element-flame' && event.target.classList.contains('element-particle'))resetBurnParticle(event.target,false);
+      });
       // Bound concurrent overlays on rapid multi-hit attacks without leaking timers.
       var previous=scope.querySelectorAll('.element-vfx-'+type);
       if(previous.length>=3)previous[0].remove();
@@ -10862,18 +11133,18 @@
       var tintTarget=art || scope;
       var tintClass='element-tint-'+type;
       var tintKey='elementTint'+type;
-      if(type==='poison' || type==='freeze' || type==='burn' || type==='shock') {
+      if(type==='poison' || type==='freeze' || type==='shock') {
         tintTarget.classList.remove(tintClass); void tintTarget.offsetWidth;
         tintTarget.classList.add(tintClass);
         var token=String(Number(tintTarget.dataset[tintKey] || 0)+1);
         tintTarget.dataset[tintKey]=token;
       }
       window.setTimeout(function(){
-        if (overlay.classList.contains('ice-persistent') || overlay.classList.contains('chill-persistent')) return;
+        if (overlay.classList.contains('ice-persistent') || overlay.classList.contains('chill-persistent') || overlay.classList.contains('burn-persistent')) return;
         overlay.remove();
         if(token && tintTarget.dataset[tintKey]===token)tintTarget.classList.remove(tintClass);
       },duration);
-      return true;
+      return type;
     }
 
     function playLegacyDamageTypeEffect(effectId, targetType, monsterId) {

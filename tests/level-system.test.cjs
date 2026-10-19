@@ -4,9 +4,10 @@ const vm = require('node:vm');
 const fs = require('node:fs');
 const {context,start,copy} = require('./run-session.test.cjs');
 
-function game() {
+function game(rewardRows) {
   const x=context(),c=x.c;
   x.seed(c.DB_SHEETS.SKILLS,[...c.MASTER_SKILLS,...require('./fixtures/skill-rework-2026-10-17.json').skills]);
+  if(rewardRows)x.seed(c.DB_SHEETS.REWARDS,rewardRows);
   const view=start(x);
   const snapshot=view.gameDataSnapshot;
   const battle=copy(view.battle);
@@ -56,13 +57,14 @@ test('level system: boss grants exactly 100 XP without forcing a level, excess c
   battle.player.baseStats.levelProgress={level:4,xp:0,points:0,spent:{}};
   const m={instanceId:'boss',monsterId:'boss',type:'boss',currentHp:0,experience:1};
   const event=c.awardMonsterExperience_(battle,m);
-  assert.equal(event.amount,100);assert.equal(event.after.level,5);assert.equal(event.after.points,3);
+  assert.equal(event.amount,100);assert.equal(event.after.level,5);assert.equal(event.after.points,0);
   m.instanceId='next';m.experience=600;
   const next=c.awardMonsterExperience_(battle,m);
   assert.equal(next.amount,100);assert.equal(next.levelsGained,1);
   assert.equal(next.after.xp,55);
   assert.equal(next.after.level,6);
-  assert.equal(next.after.points,6);
+  assert.equal(next.after.points,0);
+  assert.equal(c.getPendingLevelStatRewards_(battle),2);
 });
 
 test('level system: level skill upgrade is limited, validated, saved once and restored',()=>{
@@ -156,7 +158,8 @@ test('level system: efficiency investment raises both endpoints on the server an
 });
 
 test('level system: investments and skill upgrades survive prefetched rewards, next-stage replay and cached receipts',()=>{
-  const g=game();
+  const regen={rewardId:'regen',type:'stat',targetId:'hpRegen',value:1,weight:1};
+  const g=game([regen]);
   const originalSnapshot=g.snapshot;
   g.view=g.c.withRunSession_(g.view.runId,g.view.runSessionToken,'auth',()=>{
     const run=g.c.requireRun_(g.view.runId),state=g.c.getStageState_(run);
@@ -178,9 +181,9 @@ test('level system: investments and skill upgrades survive prefetched rewards, n
   g.x.tick(5000);
   const prepared=g.c.previewRewardChoicesForStageResult(copy(p),'auth');
   p.runSessionToken=prepared.runSessionToken;
-  const points=g.battle.player.baseStats.levelProgress.points;
-  assert.ok(points>=3);
-  g.engine.allocate(g.snapshot,g.battle,{hpRegen:points});
+  const points=g.engine.pendingStatRewards(g.battle);
+  assert.ok(points>=1);
+  while(g.engine.pendingStatRewards(g.battle))g.engine.claimStatReward(g.snapshot,g.battle,'regen');
   const earned=g.engine.rewardChoices(g.snapshot,g.battle,g.view.availableSkills);
   const acquired=g.engine.claimLevelReward(g.snapshot,g.battle,g.view.availableSkills,earned[0].rewardId);
   g.engine.upgrade(g.snapshot,g.battle,acquired,'skill_basic_slash');
@@ -226,7 +229,8 @@ test('level system: first kill always levels up, and 25 baseline stages give 15 
     c.awardMonsterExperience_(battle,{instanceId:`${floor}-${stage}`,type:stage===5?'boss':'normal',currentHp:0});
   }
   assert.equal(battle.player.baseStats.levelProgress.level-1,15);
-  assert.equal(battle.player.baseStats.levelProgress.points,45);
+  assert.equal(battle.player.baseStats.levelProgress.points,0);
+  assert.equal(c.getPendingLevelStatRewards_(battle),15);
 });
 
 test('level system: skill reward candidates match on server/browser and survive repeated saving',()=>{

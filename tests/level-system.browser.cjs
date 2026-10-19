@@ -5,18 +5,29 @@ const assert=require('node:assert/strict');
 const client=fs.readFileSync('Battle.html','utf8'),server=fs.readFileSync('BattleService.gs','utf8');
 const styles=fs.readFileSync('UiStyles.html','utf8');
 const extract=(source,name)=>source.match(new RegExp('(?:    )?(?:async )?function '+name+'\\([^]*?\\n'+(source===client?'    ':'')+'\\}'))[0];
-const panel=client.slice(client.indexOf('  <div id="levelUpBanner"'),client.indexOf('  <div id="questionModal"'));
+const panel=client.slice(client.indexOf('  <div id="levelUpBanner"'),client.indexOf('  <div id="questionModal"'))+client.slice(client.indexOf('  <div id="rewardModal"'),client.indexOf('  <div id="scoreModal"'));
+const rewards=require('./fixtures/level-stat-rewards.json').filter(r=>['reward_stat_hp_7','reward_stat_evasion_12.5','reward_stat_hp_regen_2'].includes(r.rewardId));
 const script=`
-var deathRewardPresentation=null,levelAllocationActive=false,levelAllocationCancel=null,workbookDeadlineExpired=false,localGameDataSnapshot={},victoryRewardPreload={},victoryRewardResultPayload={},currentView={battle:{status:'victory',player:{hp:30,maxHp:30,baseStats:{hp:30,attack:10,criticalRate:5,levelProgress:{level:2,xp:20,points:3,spent:{}}},stats:{hp:30},items:[]}},availableSkills:[]};
+var deathRewardPresentation=null,levelAllocationActive=false,levelAllocationCancel=null,workbookDeadlineExpired=false,localGameDataSnapshot={rewards:${JSON.stringify(rewards)}},victoryRewardPreload={},victoryRewardResultPayload={},currentView={battle:{status:'victory',player:{hp:30,maxHp:30,baseStats:{hp:30,attack:10,criticalRate:5,levelProgress:{level:2,xp:20,points:0,spent:{},statRewardVersion:2,statRewardBaseLevel:1,statRewardBaseCount:0,statRewardBasePoints:0}},stats:{hp:30},items:[]}},availableSkills:[]};
 var locked=false,sounds=[],arrivalOrbs=[];function setBattleInputLocked(value){locked=value;}function playBattleSound(key){sounds.push(key);if(key==='xp')arrivalOrbs.push(document.querySelectorAll('.experience-orb').length);}
 function escapeHtml(s){return String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;');}
 function cssEscape(s){return CSS.escape(s);}
 function renderBattle(view){renderPlayerExperience(view.battle.player);}
 function calculateStatsWithItemEffects_(stats){return {...stats};}
-${['getLevelStatOptions_','ensureLevelProgress_','allocateLevelStats_'].map(name=>extract(server,name)).join('\n')}
-window.LearningRpgLocalRunEngine={levelOptions:getLevelStatOptions_,allocate:(_,b,a)=>allocateLevelStats_(b,a),skills:()=>[]};
-${['getStatDescription','bindHoverTooltips','positionHoverTooltip','getPlayerLevelProgress','renderPlayerExperience','animateExperienceRewards','presentLevelUpFlash','presentLevelStatAllocation','spawnShieldEffect','spawnFloatingText'].map(name=>extract(client,name)).join('\n')}
-bindHoverTooltips();
+${['getLevelStatRewardChoices_','buildLevelStatRewardDescription_','ensureLevelProgress_','applyLevelStatReward_','getNextLevelStatRewardLevel_','getPendingLevelStatRewards_'].map(name=>extract(server,name)).join('\n')}
+var currentRewardView=null,levelRewardResolve=null,rewardSelectionApplying=false,selectedRewardId='';
+var DB_SHEETS={REWARDS:'Rewards'},REWARD_TYPES={STAT:'stat'},ALLOWED_REWARD_STAT_KEYS_=['hp','hpRegen','evasion'];
+function readTableCached_(){return localGameDataSnapshot.rewards;}
+function attachRewardRarity_(r){return r;} function syncConfiguredCombatStats_(){}
+function pushLog(){} function animateStageClearRegen(){throw Error('Level choices must not apply stage-clear regeneration');} function renderBattleBackground(){} function fitRewardCardText(){}
+function getRewardIconUrl(){return '';} function normalizeRewardRarity(r){return r;} function getRewardRarityLabel(r){return r;}
+function getRewardDisplayTitle(){return '스탯 증가';} function getRewardSkillConcept(){return '';}
+function renderRewardRarityGems(){return '';} function buildRewardHoverDescription(r){return r.detailDescription || '';}
+function formatRewardMeta(){return '스탯 증가';} function buildRewardSkillDetailLines(){return '';}
+function getLevelRewardRerollQuestion(){return {questionId:'q'};}
+window.LearningRpgLocalRunEngine={pendingStatRewards:getPendingLevelStatRewards_,statRewardChoices:(_,b)=>getLevelStatRewardChoices_(b),claimStatReward:(_,b,id)=>applyLevelStatReward_(b,id),skills:()=>[]};
+${['getStatDescription','bindHoverTooltips','positionHoverTooltip','getPlayerLevelProgress','renderPlayerExperience','animateExperienceRewards','presentLevelUpFlash','presentLevelStatAllocation','renderRewardChoices','renderRewardDetailCard','selectRewardCandidate','confirmRewardChoice','selectRewardChoice','handleRewardKeyboard','spawnShieldEffect','spawnFloatingText'].map(name=>extract(client,name)).join('\n')}
+bindHoverTooltips();document.addEventListener("keydown",handleRewardKeyboard);
 `;
 (async()=>{
   const browser=await chromium.launch({channel:'msedge',headless:true});
@@ -52,61 +63,49 @@ bindHoverTooltips();
       assert.equal(xpBounds.x,0);
       assert.equal(xpBounds.width,viewport.width);
       await page.evaluate(()=>{window.investment=presentLevelStatAllocation(currentView);});
-      await page.waitForSelector('#levelStatModal.active');
-      assert.equal(await page.locator('.level-stat-value').first().textContent(),'10');
-      assert.equal(await page.locator('.level-stat-row').count(),9);
-      const descriptions=[
-        '기본공격이나 스킬의 피해량을 높여주는 수치 입니다.',
-        '방어막 획득량이 증가하는 수치입니다.',
-        '체력이 0 이하로 감소하면 게임에 패배합니다.',
-        '스테이지 종료 후 회복하는 체력의 양 입니다.',
-        '상대에게 공격이 적중 할 확률 입니다. 100% 이상의 수치는 상대의 회피율을 같은 양 만큼 상쇄 시킵니다.',
-        '상대의 공격을 무시 할 확률 입니다.',
-        '공격 시 적에게 추가 피해를 입힐 확률 입니다.',
-        '치명타 발생 시 추가로 입히는 피해 배율 입니다.',
-        '문제 풀이 시의 효율이 증가합니다.'
-      ];
-      for(let i=0;i<9;i++){
-        const label=page.locator('.level-stat-label').nth(i);
-        assert.equal(await label.getAttribute('data-tooltip'),descriptions[i]);
-        await label.hover();
-        assert.equal(await page.locator('#hoverTooltip').innerText(),descriptions[i]);
-        assert.equal(await page.locator('#hoverTooltip').isVisible(),true);
+      await page.waitForSelector('#rewardModal.active');
+      assert.equal(await page.locator('.reward-choice-card').count(),3);
+      assert.equal(await page.locator('#rewardRerollButton').isVisible(),true);
+      assert.equal(await page.locator('#rewardRerollButton').isDisabled(),false);
+      assert.equal(await page.locator('.reward-detail-card').count(),0,'stat choices do not create hover tooltips');
+      assert.ok(!(await page.locator('.reward-clear-header p').textContent()).includes('포인트'));
+      assert.equal(await page.locator('#rewardTitle').textContent(),'레벨업 · 스탯 보상');
+      assert.ok((await page.locator('.reward-choice-heading').allTextContents()).includes('체력 재생 +1'),'display uses the actual value, not stale prose');
+      assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+      await page.waitForFunction(()=>[...document.querySelectorAll('.reward-choice-heading')].every(n=>n.checkVisibility({visibilityProperty:true})));
+      if(process.env.LEVEL_PREVIEW_DIR){fs.mkdirSync(process.env.LEVEL_PREVIEW_DIR,{recursive:true});await page.screenshot({path:path.join(process.env.LEVEL_PREVIEW_DIR,`level-stat-rewards-${viewport.width}.png`)});}
+      for(const [i,id] of ['reward_stat_hp_7','reward_stat_evasion_12.5','reward_stat_hp_regen_2'].entries()){
+        if(i>0)await page.evaluate(()=>{currentView.battle.player.baseStats.levelProgress.level++;window.investment=presentLevelStatAllocation(currentView);});
+        await page.locator(`[data-reward-id="${id}"]`).click();
+        await page.locator('#rewardConfirmButton').click();
+        await page.evaluate(()=>window.investment);
+        assert.equal(await page.locator('#rewardModal').getAttribute('aria-hidden'),'true','one choice closes the stat reward');
       }
-      assert.ok(await page.locator('#hoverTooltip').evaluate(e=>Number(getComputedStyle(e).zIndex))>9200);
-      await page.locator('.level-stat-label').first().focus();
-      assert.equal(await page.locator('#hoverTooltip').innerText(),descriptions[0]);
-      assert.equal(await page.locator('#levelStatConfirm').isDisabled(),true);
-      await page.keyboard.press('Escape');assert.equal(await page.locator('#levelStatModal').getAttribute('aria-hidden'),'false');
-      assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
-      if(process.env.LEVEL_PREVIEW_DIR){fs.mkdirSync(process.env.LEVEL_PREVIEW_DIR,{recursive:true});await page.screenshot({path:path.join(process.env.LEVEL_PREVIEW_DIR,`level-up-${viewport.width}.png`)});}
-      for(const key of ['attack','criticalRate','questionEfficiency']) await page.locator(`[data-level-key="${key}"][data-level-delta="1"]`).click();
-      assert.equal(await page.locator('.level-stat-value').first().textContent(),'11 (+1)');
-      assert.equal(await page.locator('.level-stat-value').first().evaluate(e=>getComputedStyle(e).color),'rgb(255, 225, 107)');
-      assert.equal(await page.locator('#levelStatPoints').textContent(),'0');
-      await page.locator('[data-level-key="attack"][data-level-delta="-1"]').click();
-      assert.equal(await page.locator('#levelStatConfirm').isDisabled(),true);
-      await page.locator('[data-level-key="attack"][data-level-delta="1"]').click();
-      await page.locator('#levelStatConfirm').click();
       await page.evaluate(()=>window.investment);
-      assert.equal(await page.locator('#levelStatModal').getAttribute('aria-hidden'),'true');
+      assert.equal(await page.locator('#rewardModal').getAttribute('aria-hidden'),'true');
       const stats=await page.evaluate(()=>currentView.battle.player.baseStats);
-      assert.equal(stats.attack,11);assert.equal(stats.criticalRate,6.5);assert.equal(stats.questionEfficiency,2);assert.equal(stats.levelProgress.points,0);
+      assert.equal(stats.hp,37);assert.equal(stats.evasion,12.5);assert.equal(stats.hpRegen,1);assert.equal(stats.levelProgress.points,0);
+      assert.equal(stats.levelProgress.statRewards.length,3);
       assert.equal(await page.evaluate(()=>victoryRewardPreload===null && victoryRewardResultPayload===null),true);
       assert.ok(!client.includes('await presentLevelSkillUpgrade(currentView)'),'level-up flow never opens skill upgrades');
       await page.evaluate(()=>{
-        currentView.battle.player.baseStats.levelProgress.points=3;
+        window.settledView=JSON.parse(JSON.stringify(currentView));
+        settledView.battle.player.baseStats.levelProgress.level++;
         var originalAllocation=presentLevelStatAllocation;
         presentLevelStatAllocation=function(view){window.orbsAtAllocation=document.querySelectorAll('.experience-orb').length;return originalAllocation(view);};
-        deathRewardPresentation={view:currentView,progress:{level:1,xp:0}};
+        deathRewardPresentation={view:settledView,progress:{level:1,xp:0}};
         window.immediateLevel=animateExperienceRewards([{type:'experience',monsterId:'m',amount:30,before:{level:1,xp:0},after:{level:2,xp:22}}]);
       });
-      await page.waitForSelector('#levelStatModal.active');
-      assert.ok(await page.evaluate(()=>window.orbsAtAllocation)>0,'stat allocation starts on level-up before the remaining XP orbs land');
-      assert.equal(await page.locator('#levelUpBanner.active').count(),1);
+      await page.waitForSelector('#rewardModal.active');
+      assert.equal(await page.evaluate(()=>window.orbsAtAllocation),0,'stat choices follow the level-up animation');
+      assert.equal(await page.locator('#levelUpBanner.active').count(),0);
       assert.ok(await page.locator('#levelUpBanner').evaluate(e=>parseFloat(getComputedStyle(e).fontSize))>=70);
-      for(let i=0;i<3;i++)await page.locator('[data-level-key="attack"][data-level-delta="1"]').click();
-      await page.locator('#levelStatConfirm').click();
+      for(let i=0;i<1;i++){
+        await page.waitForFunction(()=>document.querySelector('.reward-choice-heading').checkVisibility({visibilityProperty:true}));
+        await page.keyboard.press('1');await page.keyboard.press('Enter');
+        await page.waitForFunction(()=>getPendingLevelStatRewards_(settledView.battle)===0);
+        assert.equal(await page.evaluate(()=>currentView.battle.player.baseStats.levelProgress.points),0,'animation still displays the previous battle');
+      }
       await page.evaluate(()=>window.immediateLevel);
       await page.evaluate(()=>{deathRewardPresentation=null;spawnShieldEffect(null,false,42);document.querySelector('.player-guard-effect').getAnimations().forEach(a=>{a.pause();a.currentTime=450;});});
       assert.equal(await page.locator('.player-shield-amount').textContent(),'+42');
@@ -114,11 +113,11 @@ bindHoverTooltips();
       const shield=await page.locator('.player-guard-effect').boundingBox();
       assert.ok(shield.width>=190);assert.ok(Math.abs(shield.x+shield.width/2-viewport.width/2)<1);
       assert.ok(Math.abs(shield.y+shield.height/2-viewport.height/2)<1);
-      await page.evaluate(()=>{currentView.battle.player.baseStats.levelProgress.points=3;window.expiring=presentLevelStatAllocation(currentView);});
-      await page.waitForSelector('#levelStatModal.active');
+      await page.evaluate(()=>{currentView.battle.player.baseStats.levelProgress.level++;window.expiring=presentLevelStatAllocation(currentView);});
+      await page.waitForSelector('#rewardModal.active');
       await page.evaluate(()=>{workbookDeadlineExpired=true;levelAllocationCancel();});
       await page.evaluate(()=>window.expiring);
-      assert.equal(await page.locator('#levelStatModal').getAttribute('aria-hidden'),'true');
+      assert.equal(await page.locator('#rewardModal').getAttribute('aria-hidden'),'true');
       assert.deepEqual(errors,[]);
       await page.close();
     }

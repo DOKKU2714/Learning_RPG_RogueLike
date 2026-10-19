@@ -122,18 +122,28 @@
     if (memorySnapshots[workbookId]) return Promise.resolve(memorySnapshots[workbookId]);
     return openDatabase().then(function(database) {
       return new Promise(function(resolve, reject) {
-        var transaction = database.transaction(STORE_NAME, 'readonly');
+        var settled=false,transaction;
+        var timeout=global.setTimeout(function(){finish(null,new Error('로컬 문제집 읽기 시간이 초과되었습니다.'));},5000);
+        function finish(snapshot,error){
+          if(settled)return;settled=true;global.clearTimeout(timeout);
+          if(error && transaction){try{transaction.abort();}catch(ignore){}}
+          database.close();
+          if(error){reject(error);return;}
+          if(snapshot)memorySnapshots[workbookId]=snapshot;
+          resolve(snapshot);
+        }
+        try {
+        transaction = database.transaction(STORE_NAME, 'readonly');
+        transaction.onerror=transaction.onabort=function(){finish(null,transaction.error || new Error('로컬 문제집 읽기가 중단되었습니다.'));};
         var request = transaction.objectStore(STORE_NAME).get(workbookId);
         request.onsuccess = function() {
-          database.close();
           var snapshot = request.result || loadSessionFallback(workbookId) || null;
-          if (snapshot) memorySnapshots[workbookId] = snapshot;
-          resolve(snapshot);
+          finish(snapshot);
         };
         request.onerror = function() {
-          database.close();
-          reject(request.error || new Error('로컬 문제집을 읽지 못했습니다.'));
+          finish(null,request.error || new Error('로컬 문제집을 읽지 못했습니다.'));
         };
+        }catch(error){finish(null,error);}
       });
     }).catch(function() {
       var snapshot = loadSessionFallback(workbookId);

@@ -9,11 +9,12 @@ test('monster death plays the kill sound once for each defeated monster',()=>{
  const sounds=[],states=[],timers=[];
  const slots=Object.fromEntries(['a','b'].map(id=>{
   const classes=new Set();
-  return [id,{classList:{contains:c=>classes.has(c),add:c=>classes.add(c)},querySelector:()=>({id,classList:{remove(){}}}),parentNode:null}];
+  return [id,{classList:{contains:c=>classes.has(c),add:c=>classes.add(c)},querySelector:()=>({id,classList:{remove(){}}}),getBoundingClientRect:()=>({}),parentNode:null}];
  }));
  const c=vm.createContext({document:{querySelector:selector=>slots[selector.match(/="([^"]+)"/)[1]]},cssEscape:s=>s,
   playBattleSound:key=>sounds.push(key),setMonsterSpriteState:(target,state)=>states.push([target.id,state]),
   window:{setTimeout:cb=>timers.push(cb)},DEATH_STATE_HOLD_MS:2200});
+ c.startMonsterDeathRewards=()=>{};
  vm.runInContext(extract('animateMonsterDeath'),c);
  c.animateMonsterDeath('a');c.animateMonsterDeath('a');c.animateMonsterDeath('b');c.animateMonsterDeath('missing');
  assert.deepEqual(sounds,['kill','kill']);assert.equal(states.length,2);assert.equal(timers.length,2);
@@ -46,6 +47,7 @@ test('turn playback preserves attack then poison death and interleaves effects b
   const banners=[];
   const c=vm.createContext({
     window:{},document:{},workbookDeadlineExpired:false,pendingActionPointVisualCost:null,
+    getPlayerLevelProgress:()=>({}),
     localGameDataSnapshot:{},currentView:{battle:{}},battleQuestionCache:[],pendingServerTurnView:null,
     pendingTurnResolutionActive:false,passTurnLogPending:false,
     MONSTER_TURN_START_DELAY_MS:0,MONSTER_TURN_END_DELAY_MS:0,BATTLE_STEP_DELAY_MS:0,
@@ -59,7 +61,7 @@ test('turn playback preserves attack then poison death and interleaves effects b
     collectMonsterMultiHitEvents:(events,i)=>[events[i]],
     playMonsterAttackImpact:e=>order.push(e.message),
     animateExperienceRewards(){},normalizeBattleView:v=>v,resetBattleQuestionCacheFromView(){},
-    renderBattle(){},presentLevelStatAllocation(){},presentMonsterItemDrops(){},
+    renderBattle(){},presentLevelStatAllocation(){},presentLevelSkillRewards(){},presentMonsterItemDrops(){},
   });
   vm.runInContext(extract('playTurnSequence'),c);
   await c.playTurnSequence({battle:{status:'active',lastTurnEvents:[

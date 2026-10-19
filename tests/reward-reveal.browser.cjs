@@ -1,205 +1,106 @@
-const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
-const fs = require('node:fs');
-const assert = require('node:assert/strict');
-const html = fs.readFileSync('Battle.html', 'utf8');
-const extract = name => html.match(new RegExp('    function ' + name + '\\([^]*?\\n    \\}'))[0];
-const modal = html.slice(html.indexOf('  <div id="rewardModal"'), html.indexOf('  <div id="scoreModal"'));
-
-(async () => {
-  const browser = await chromium.launch({ channel: 'msedge', headless: true });
-  try {
-    const page = await browser.newPage({ viewport: { width: 1366, height: 900 } });
-    const errors = [];
-    page.on('pageerror', error => errors.push(error.message));
-    await page.setContent('<html><head>' + fs.readFileSync('UiStyles.html', 'utf8') + '</head><body>' + modal +
-      '<div id="starBurstLayer"><span class="star-particle-correct">★</span></div><script>' + `
-      var workbookDeadlineExpired=false,selectedRewardId='',rewardSelectionApplying=false;
-      function animateStageClearRegen(){} function renderBattleBackground(){} function fitRewardCardText(){}
-      function escapeHtml(v){return String(v).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;');}
-      function getRewardIconUrl(){return 'data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><path fill="silver" stroke="white" stroke-width="2" d="M50 8 78 30 64 72 36 72 22 30Z"/><path fill="#778899" d="M50 8 64 72 50 92 36 72Z"/></svg>');}
-      function normalizeRewardRarity(v){return v;} function getRewardRarityLabel(v){return v;}
-      function getRewardDisplayTitle(){return '능력 강화';}
-      function renderRewardDetailCard(){return '<span class="reward-detail-card">보상 설명</span>';}
-      function renderRewardRarityGems(){return '';}
-      function startRewardReroll(){} function confirmRewardChoice(){}
-      var view={localTransitionToken:'signed',choices:['common','rare','unique'].map((rarity,i)=>({rewardId:'r'+i,type:'stat',rarity,description:['힘 +1','지혜 +2','체력 +5'][i]}))};
-      ` + ['renderRewardChoices', 'selectRewardCandidate', 'handleRewardKeyboard'].map(extract).join('\n') +
-      ';document.addEventListener("keydown",handleRewardKeyboard);renderRewardChoices(view);</script></body></html>');
-    assert.equal(await page.locator('#starBurstLayer').innerHTML(), '');
-    const cards = page.locator('.reward-choice-card');
-    const timings = await cards.evaluateAll(nodes => nodes.map(el => ({
-      duration:parseFloat(getComputedStyle(el).getPropertyValue('--reward-charge-time')),
-      delay:parseFloat(getComputedStyle(el.querySelector('.reward-charge-light')).animationDelay),
-      halo:parseFloat(getComputedStyle(el).getPropertyValue('--reward-halo')),
-      shake:parseFloat(getComputedStyle(el).getPropertyValue('--reward-shake')),
-      flash:parseFloat(getComputedStyle(el).getPropertyValue('--reward-flash-scale')),
-      sheen:getComputedStyle(el,'::after').content,
-    })));
-    assert.deepEqual(timings.map(t => t.delay), [0,0,0], 'all lights start together');
-    assert.deepEqual(timings.map(t => t.duration), [300,1150,4150]);
-    const rhythm = await cards.evaluateAll(nodes => nodes.map(card => ({
-      charge:card.querySelector('.reward-charge-light').getAnimations().map(a=>({name:a.animationName,duration:a.effect.getTiming().duration,iterations:a.effect.getTiming().iterations})),
-      flicker:card.querySelector('.reward-charge-star').getAnimations()[0].effect.getTiming(),
-      spectrum:card.querySelector('.reward-charge-spectrum').getAnimations()[0].effect.getTiming(),
-    })));
-    rhythm.forEach(t => {
-      assert.equal(t.charge.find(a=>a.name==='reward-charge-grow').duration,300);
-      assert.deepEqual(t.charge.find(a=>a.name==='reward-charge-vibrate'),{name:'reward-charge-vibrate',duration:120,iterations:Infinity});
-      assert.equal(t.flicker.duration,240); assert.equal(t.flicker.iterations,Infinity);
-      assert.equal(t.spectrum.duration,800); assert.equal(t.spectrum.iterations,Infinity);
-    });
-    const allChargeTimes = await cards.nth(0).evaluate(el => ['common','uncommon','rare','epic','legendary','unique'].map(rarity=>{
-      const copy=el.cloneNode(true);copy.className='reward-choice-card rarity-'+rarity;el.parentElement.appendChild(copy);
-      const time=parseFloat(getComputedStyle(copy).getPropertyValue('--reward-charge-time'));copy.remove();return time;
-    }));
-    assert.deepEqual(allChargeTimes,[300,650,1150,1900,2900,4150]);
-    assert.match(await cards.nth(2).locator('.reward-charge-star').evaluate(el => getComputedStyle(el,'::before').clipPath), /polygon\(50% 0%, 54% 44%/);
-    assert.match(await cards.nth(2).locator('.reward-charge-spectrum').evaluate(el => getComputedStyle(el).backgroundImage), /conic-gradient/);
-    assert.equal(await cards.nth(0).locator('.reward-dust-particle').count(), 0);
-    assert.equal(await cards.nth(1).locator('.reward-dust-particle').count(), 0);
-    assert.equal(await cards.nth(2).locator('.reward-dust-particle').count(), 40);
-    assert.ok(timings[0].duration < timings[1].duration && timings[1].duration < timings[2].duration);
-    assert.ok(timings[0].halo < timings[1].halo && timings[1].halo < timings[2].halo);
-    assert.ok(timings[0].shake < timings[1].shake && timings[1].shake < timings[2].shake);
-    assert.ok(timings[0].flash < timings[1].flash && timings[1].flash < timings[2].flash);
-    assert.equal(timings[0].sheen, 'none');
-    assert.notEqual(timings[1].sheen, 'none');
-    const highHeading = cards.nth(2).locator('.reward-choice-heading');
-    assert.equal(await highHeading.evaluate(el => getComputedStyle(el).visibility), 'hidden');
-    await page.keyboard.press('3');
-    assert.equal(await page.evaluate(() => selectedRewardId), '');
-    await page.waitForTimeout(1100);
-    assert.equal(await cards.nth(0).locator('.reward-choice-heading').evaluate(el => getComputedStyle(el).visibility), 'visible');
-    assert.equal(await highHeading.evaluate(el => getComputedStyle(el).visibility), 'hidden');
-    assert.ok(Number(await cards.nth(2).locator('.reward-charge-light').evaluate(el => getComputedStyle(el).opacity)) > 0);
-    if (process.env.REWARD_CHARGE_SCREENSHOT) await page.screenshot({ path:process.env.REWARD_CHARGE_SCREENSHOT });
-    await page.waitForTimeout(timings[2].duration - 1100 + 1000);
-    assert.equal(await highHeading.evaluate(el => getComputedStyle(el).visibility), 'visible');
-    assert.equal(await cards.nth(2).locator('.reward-choice-icon-wrap').evaluate(el => el.getAnimations().length), 0);
-    await page.waitForFunction(() => getComputedStyle(document.querySelector('.rarity-unique .reward-charge-light')).visibility === 'hidden', null, {timeout:5000});
-    await cards.nth(2).click();
-    await page.waitForTimeout(270);
-    assert.equal(await page.evaluate(() => selectedRewardId), 'r2');
-    assert.equal(await page.locator('#rewardConfirmButton').isDisabled(), false);
-    assert.equal(await cards.nth(2).evaluate(el => getComputedStyle(el).transform), 'matrix(1, 0, 0, 1, 0, -5)');
-    await cards.nth(2).hover();
-    await page.waitForTimeout(170);
-    assert.equal(await cards.nth(2).locator('.reward-detail-card').evaluate(el => getComputedStyle(el).opacity), '1');
-    if (process.env.REWARD_REVEAL_SCREENSHOT) await page.screenshot({ path: process.env.REWARD_REVEAL_SCREENSHOT });
-
-    // Freeze each rarity at the same point in its own reveal, so the actual
-    // interpolated cross -> rectangle -> contraction can be inspected reliably.
-    await page.evaluate(() => {
-      view.choices = ['epic','legendary','unique'].map((rarity,i) => ({rewardId:'r'+i,type:'stat',rarity,description:'힘 +' + (i+3)}));
-      renderRewardChoices(view);
-      window.revealAnimations = Array.from(document.querySelectorAll('.reward-choice-card'), card => ({
-        charge: parseFloat(getComputedStyle(card).getPropertyValue('--reward-charge-time')),
-        animations: card.getAnimations({subtree:true}),
-      }));
-      revealAnimations.forEach(({animations}) => animations.forEach(a => a.pause()));
-      document.querySelector('.reward-modal').getAnimations().forEach(a => a.finish());
-    });
-    const seek = async offset => {
-      await page.evaluate(offset => revealAnimations.forEach(({charge,animations}) => animations.forEach(a => {a.currentTime = charge + offset;})), offset);
-    };
-    assert.deepEqual(await cards.evaluateAll(nodes => nodes.map(el => el.querySelectorAll('.reward-dust-particle').length)), [24,32,40]);
-    const dustColors = await cards.evaluateAll(nodes => nodes.map(el => ({
-      particle:getComputedStyle(el.querySelector('.reward-dust-particle')).color,
-      rarity:getComputedStyle(el).getPropertyValue('--reward-gem-color').trim(),
-    })));
-    assert.deepEqual(dustColors.map(c => c.particle), ['rgb(223, 114, 255)','rgb(255, 141, 54)','rgb(255, 74, 74)']);
-    await seek(-700);
-    const chargeTint = () => cards.evaluateAll(nodes => nodes.map(card => ({
-      color:getComputedStyle(card.querySelector('.reward-charge-star'),'::before').backgroundColor,
-      aura:Number(getComputedStyle(card.querySelector('.reward-charge-light'),'::after').opacity),
-    })));
-    const initialTint = await chargeTint();
-    initialTint.forEach(state => { assert.equal(state.color,'rgb(255, 255, 255)'); assert.equal(state.aura,0); });
-    await seek(-350);
-    const halfwayTint = await chargeTint();
-    halfwayTint.forEach((state,i) => {
-      assert.notEqual(state.color,initialTint[i].color,'rarity tint begins before the card morph');
-      assert.notEqual(state.color,dustColors[i].particle,'tint blends gradually');
-      assert.ok(state.aura > 0 && state.aura < .65);
-    });
-    await seek(0);
-    assert.deepEqual((await chargeTint()).map(state => state.color),dustColors.map(state => state.particle));
-    await seek(-150);
-    const sustainedCharge = await cards.evaluateAll(nodes => nodes.map(card => ({
-      scale:Number(getComputedStyle(card.querySelector('.reward-charge-light')).scale),
-      target:Number(getComputedStyle(card).getPropertyValue('--reward-charge-scale')),
-      flicker:card.querySelector('.reward-charge-star').getAnimations()[0].playState,
-    })));
-    sustainedCharge.forEach(state=>assert.equal(state.scale,state.target,'growth finishes at the same speed and holds while the effects repeat'));
-    if (process.env.REWARD_SPECTRUM_SCREENSHOT) await page.screenshot({path:process.env.REWARD_SPECTRUM_SCREENSHOT});
-    await seek(85);
-    const crossShape = await cards.nth(0).locator('.reward-light-card').evaluate(el => getComputedStyle(el).clipPath);
-    await seek(370);
-    const lightCardState = await cards.nth(0).locator('.reward-light-card').evaluate(el => ({
-      shape:getComputedStyle(el).clipPath, scale:new DOMMatrixReadOnly(getComputedStyle(el).transform).a,
-    }));
-    assert.notEqual(crossShape, lightCardState.shape);
-    assert.match(lightCardState.shape, /polygon\(50% 0%, 100% 0%, 100% 0%/);
-    assert.ok(lightCardState.scale > 1, 'light reaches the full card silhouette');
-    const rarityFlash = await cards.evaluateAll(nodes => nodes.map(card => ({
-      color:getComputedStyle(card.querySelector('.reward-light-card'),'::after').backgroundColor,
-      opacity:Number(getComputedStyle(card.querySelector('.reward-light-card'),'::after').opacity),
-    })));
-    assert.deepEqual(rarityFlash.map(s=>s.color),['rgb(223, 114, 255)','rgb(255, 141, 54)','rgb(255, 74, 74)']);
-    rarityFlash.forEach(state=>assert.equal(state.opacity,1,'the full card silhouette flashes in its rarity color'));
-    assert.equal(await cards.nth(0).locator('.reward-choice-heading').evaluate(el => getComputedStyle(el).visibility), 'hidden');
-    if (process.env.REWARD_MORPH_SCREENSHOT) await page.screenshot({path:process.env.REWARD_MORPH_SCREENSHOT});
-    for (const offset of [85,200,370,450,520,850]) {
-      await seek(offset);
-      const geometry=await cards.nth(0).locator('.reward-light-card').evaluate(el=>{
-        const style=getComputedStyle(el),m=new DOMMatrixReadOnly(style.transform);
-        return {a:m.a,b:m.b,c:m.c,d:m.d,points:Array.from(style.clipPath.matchAll(/([\d.]+)% ([\d.]+)%/g),match=>[Number(match[1]),Number(match[2])])};
-      });
-      assert.equal(geometry.b,0,'light never rotates');assert.equal(geometry.c,0);
-      assert.equal(geometry.a,geometry.d,'light scales uniformly from its center');
-      assert.equal(geometry.points.length,12);
-      for(let i=1;i<6;i++) {
-        const mirror=geometry.points[12-i];
-        assert.ok(Math.abs(geometry.points[i][0]+mirror[0]-100)<.01,'morph stays symmetric horizontally');
-        assert.ok(Math.abs(geometry.points[i][1]-mirror[1])<.01);
-      }
-    }
-    await seek(620);
-    assert.equal(await cards.nth(0).locator('.reward-light-card').evaluate(el=>Number(getComputedStyle(el,'::after').opacity)),0,'rarity flash ends after contraction');
-    const contractedScale = await cards.nth(0).locator('.reward-light-card').evaluate(el => new DOMMatrixReadOnly(getComputedStyle(el).transform).a);
-    assert.ok(contractedScale < lightCardState.scale * .2, 'card light rapidly contracts before disappearing');
-    assert.equal(await cards.nth(0).locator('.reward-choice-heading').evaluate(el => getComputedStyle(el).visibility), 'visible');
-    assert.ok(Number(await cards.nth(0).locator('.reward-dust-particle').first().evaluate(el => getComputedStyle(el).opacity)) > 0);
-    await seek(850);
-    const lingering=await cards.nth(0).locator('.reward-reveal-flash').evaluate(el=>({opacity:Number(getComputedStyle(el).opacity),glow:Number(getComputedStyle(el,'::after').opacity),visibility:getComputedStyle(el).visibility}));
-    assert.equal(lingering.visibility,'visible');
-    assert.ok(lingering.opacity>0 && lingering.opacity<1 && lingering.glow>0,'bright afterglow fades after the fast collapse');
-    if (process.env.REWARD_DUST_SCREENSHOT) await page.screenshot({path:process.env.REWARD_DUST_SCREENSHOT});
-    await seek(2800);
-    const halos = await cards.evaluateAll(nodes => nodes.map(card => {
-      const style=getComputedStyle(card,'::before');
-      return {shadow:style.boxShadow,opacity:Number(style.opacity),layer:style.zIndex,blur:style.filter};
-    }));
-    halos.forEach((state,i) => {
-      assert.ok(state.shadow.includes(dustColors[i].particle),'persistent halo uses the card rarity color');
-      assert.ok(state.opacity > 0 && state.opacity < .6,'halo stays subtle after the reveal');
-      assert.equal(state.layer,'-1','halo sits behind the card content');
-      assert.equal(state.blur,'blur(8px)');
-    });
-    assert.ok((await page.locator('.reward-dust-particle').evaluateAll(nodes => nodes.map(el => getComputedStyle(el).opacity))).every(v => Number(v) === 0), 'burst finishes instead of running indefinitely');
-    assert.equal(await cards.nth(0).locator('.reward-reveal-flash').evaluate(el => getComputedStyle(el).visibility), 'hidden');
-    await page.setViewportSize({width:390,height:844});
-    await page.evaluate(() => renderRewardChoices(view));
-    assert.equal(await cards.count(), 3);
-    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'effects do not widen the mobile viewport');
-    await page.emulateMedia({ reducedMotion: 'reduce' });
-    await page.evaluate(() => renderRewardChoices(view));
-    assert.equal(await cards.nth(2).evaluate(el => getComputedStyle(el).animationName), 'none');
-    assert.equal(await cards.nth(2).evaluate(el => getComputedStyle(el).visibility), 'visible');
-    assert.equal(await cards.nth(2).locator('.reward-choice-heading').evaluate(el => getComputedStyle(el).visibility), 'visible');
-    assert.equal(await page.locator('.reward-reveal-effect').evaluateAll(nodes => nodes.every(el => getComputedStyle(el).display === 'none')), true);
-    assert.equal(await cards.nth(2).locator('.reward-dust-particle').first().evaluate(el => el.getAnimations().length), 0);
-    assert.deepEqual(errors, []);
-    console.log('Reward reveal OK: spectral pointed cross, card morph and contraction, rarity-colored finite dust, charge timing, selection, tooltip, mobile, reduced motion.');
-  } finally { await browser.close(); }
-})().catch(error => { console.error(error); process.exitCode = 1; });
+const {chromium}=require(process.env.PLAYWRIGHT_MODULE || 'playwright');
+const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
+const source=fs.readFileSync('Battle.html','utf8'),styles=fs.readFileSync('UiStyles.html','utf8');
+const extract=name=>source.match(new RegExp('    function '+name+'\\([^]*?\\n    \\}'))[0];
+const modal=source.slice(source.indexOf('  <div id="rewardModal"'),source.indexOf('  <div id="scoreModal"'));
+const names=['renderRewardChoices','selectRewardCandidate','handleRewardKeyboard','renderRewardActionPointBadge','getRewardConceptClass','getRewardSkillConcept','renderInlineRewardSkillDescription','buildSkillFlavorDescription','buildSkillDetailDescription','renderSkillDescriptionTemplate','replaceSkillDescriptionTokens','escapeRegExpClient','highlightSkillStatusNames'];
+const script=`
+var workbookDeadlineExpired=false,selectedRewardId='',rewardSelectionApplying=false;
+var currentView={clientConfig:{skillConceptKeywords:{burn:['발화','불씨'],shock:['감전','전류']}}};
+function animateStageClearRegen(){} function renderBattleBackground(){} function fitRewardCardText(){}
+function escapeHtml(v){return String(v).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;');}
+function normalizeRewardRarity(r){return r;} function getRewardRarityLabel(r){return r;}
+function getRewardDisplayTitle(){return '스킬 획득';} function renderRewardRarityGems(){return '';}
+function getSkillActionPointCost(s){return s.actionPointCost;} function getSkillDescriptionTemplateValues(){return {damage:27};}
+function buildRewardSkillDetailLines(){return '<span>쿨타임 2턴</span>';}
+function buildSkillUpgradeChangeSummary(){return '<span class="reward-upgrade-changes">피해 20 → 27 (+7)</span>';}
+function renderRewardDetailCard(reward){if(reward.type!=='stat')throw Error('Skill selection must not create hover tooltips');return '';}
+function confirmRewardChoice(){window.confirmations=(window.confirmations||0)+1;}
+function getRewardIconUrl(){return 'data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80"><path fill="#ff8b26" d="M32 4H44V16H52V28H64V60H52V72H24V64H12V40H24V48H32Z"/><path fill="#ffdf7f" d="M32 36H44V48H52V60H40V68H28V52H32Z"/></svg>');}
+${names.map(extract).join('\n')}
+function showCards(rarities){var concepts=['발화','감전','암살'];window.view={isLevelReward:true,choices:rarities.map((rarity,i)=>({rewardId:'r'+i,type:i===2?'skillUpgrade':'skill',rarity,value:1,skillDetail:{name:['불씨 방패','전도체 투척','선제공격'][i],concept:concepts[i],tags:[],level:2,actionPointCost:i===0?0:i,description:'적에게 {damage} 피해를 입힙니다.\\n발화와 불씨, 감전과 전류에 반응합니다. 체력이 가득 찬 적에게 추가 피해를 입힙니다.\\n"불꽃은 남는다."'}}))};renderRewardChoices(view);}
+document.addEventListener('keydown',handleRewardKeyboard);showCards(['common','rare','unique']);
+`;
+(async()=>{
+ const browser=await chromium.launch({channel:'msedge',headless:true});
+ const output=process.env.REWARD_CARD_OUTPUT || path.resolve('.tmp_spreadsheet/reward-cards-2026-10-19');fs.mkdirSync(output,{recursive:true});
+ try{
+  for(const width of [1366,390]){
+   const page=await browser.newPage({viewport:{width,height:1000}}),errors=[];page.on('pageerror',e=>errors.push(e.message));
+   await page.setContent('<html><head>'+styles+'</head><body style="background:#1e2823">'+modal+'<script>'+script+'</script></body></html>');
+   assert.equal(await page.locator('.reward-inline-description').count(),3);
+   assert.equal(await page.locator('.reward-detail-card').count(),0);
+   assert.deepEqual(await page.locator('.reward-ap-badge b').allTextContents(),['0','1','2']);
+   const before=await page.locator('.reward-choice-card').evaluateAll(cards=>cards.map(card=>{
+    const d=card.querySelector('.skill-detail-description'),ap=card.querySelector('.reward-ap-badge'),concept=card.querySelector('.reward-skill-concept'),b=card.getBoundingClientRect(),db=d.getBoundingClientRect(),ab=ap.getBoundingClientRect();
+    return {position:getComputedStyle(d).position,font:getComputedStyle(d).fontSize,numberFont:getComputedStyle(d.querySelector('.skill-damage-number')).fontSize,concept:getComputedStyle(concept).color,
+     burn:[...d.querySelectorAll('.skill-status-burn')].map(n=>({text:n.textContent,color:getComputedStyle(n).color})),shock:[...d.querySelectorAll('.skill-status-shock')].map(n=>getComputedStyle(n).color),
+     apLeft:ab.left-b.left,apTop:ab.top-b.top,apSize:parseFloat(getComputedStyle(ap.querySelector('b')).fontSize),contained:db.left>=b.left && db.right<=b.right+1 && db.bottom<=b.bottom,
+     rise:parseFloat(getComputedStyle(card).getPropertyValue('--aura-rise')),spread:parseFloat(getComputedStyle(card).getPropertyValue('--aura-spread'))};
+   }));
+   assert.ok(before.every(r=>r.contained && r.font==='13px' && r.numberFont===r.font && r.apLeft<=2 && r.apTop<=2 && r.apSize>=28));
+   const layout=await page.locator('.reward-choice-card').evaluateAll(cards=>cards.map(card=>{
+    const heading=card.querySelector('.reward-choice-heading').getBoundingClientRect(),b=card.getBoundingClientRect();
+    const meta=card.querySelector('.reward-inline-meta'),flavor=card.querySelector('.skill-flavor-text'),description=card.querySelector('.reward-inline-description');
+    return {centered:Math.abs(heading.x+heading.width/2-b.x-b.width/2)<1,footer:meta.parentElement.classList.contains('reward-card-footer'),
+      separate:!description.contains(meta),quoteBelow:flavor.getBoundingClientRect().top>=meta.getBoundingClientRect().bottom,
+      quoteColor:getComputedStyle(flavor).color,quotedInDescription:description.textContent.includes('불꽃은 남는다')};
+   }));
+   assert.ok(layout.every(r=>r.centered && r.footer && r.separate && r.quoteBelow && !r.quotedInDescription && r.quoteColor==='rgb(146, 151, 146)'));
+   assert.deepEqual(before.map(r=>r.concept),['rgb(255, 118, 40)','rgb(100, 255, 242)','rgb(147, 96, 181)']);
+   assert.ok(before.every(r=>r.burn.some(w=>w.text==='불씨') && r.burn.every(w=>w.color==='rgb(255, 118, 40)') && r.shock.every(c=>c==='rgb(100, 255, 242)')));
+   assert.ok(before[0].rise<before[1].rise && before[1].rise<before[2].rise);
+   const rises=await page.locator('.reward-choice-card').first().evaluate(card=>['common','uncommon','rare','epic','legendary','unique'].map(rarity=>{
+    const node=card.cloneNode(true);node.className='reward-choice-card reward-aura-card rarity-'+rarity;card.parentElement.appendChild(node);
+    const rise=parseFloat(getComputedStyle(node).getPropertyValue('--aura-rise'));node.remove();return rise;
+   }));
+   assert.ok(rises.every((value,i)=>i===0 || value>rises[i-1]),'all six rarities increase aura size');
+   assert.equal(await page.locator('.reward-upgrade-changes').count(),1);
+   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+   const reveal=await page.locator('.reward-choice-card').evaluateAll(cards=>cards.map(card=>{
+    const animations=card.getAnimations({subtree:true}),content=card.querySelector('.reward-choice-heading'),aura=card.querySelector('.reward-aura-intro');
+    const revealTime=animations.find(a=>a.animationName==='reward-card-materialize').effect.getTiming().delay;
+    const seek=time=>animations.forEach(a=>{a.pause();a.currentTime=time;});
+    seek(0);
+    const hiddenInitially=getComputedStyle(content).visibility==='hidden' && getComputedStyle(aura).opacity==='0';
+    seek(revealTime-100);
+    const charging=getComputedStyle(content).visibility==='hidden' && Number(getComputedStyle(card.querySelector('.reward-reveal-flash')).opacity)>0;
+    seek(revealTime+400);
+    return {revealTime,hiddenInitially,charging,visible:getComputedStyle(content).visibility==='visible',aura:Number(getComputedStyle(aura).opacity),color:getComputedStyle(card).getPropertyValue('--reward-gem-color').trim()};
+   }));
+   assert.ok(reveal.every(r=>r.hiddenInitially && r.charging && r.visible && r.aura>.7),'charge and flash precede the card and its rarity aura');
+   assert.deepEqual(reveal.map(r=>Math.round(r.revealTime)),[820,1670,4670]);
+   assert.deepEqual(reveal.map(r=>r.color),['#f1f1f1','#63a8ff','#ff4a4a']);
+   await page.screenshot({path:path.join(output,'cards-'+width+'.png'),fullPage:true});
+   await page.evaluate(()=>document.getAnimations().forEach(a=>{a.currentTime=8000;}));
+   assert.equal(await page.locator('.reward-aura-intro').first().evaluate(n=>getComputedStyle(n).opacity),'0','entrance aura finishes');
+   const first=page.locator('.reward-choice-card').first();await first.hover();
+   await page.waitForTimeout(450);
+   assert.ok(Number(await first.locator('.reward-aura-hover').evaluate(n=>getComputedStyle(n).opacity))>.7);
+   assert.equal(await first.locator('.reward-aura-hover').evaluate(n=>getComputedStyle(n,'::after').animationIterationCount),'infinite');
+   assert.equal(await first.locator('.reward-card-sheen').evaluate(n=>getComputedStyle(n,'::before').animationIterationCount),'1');
+   await page.waitForTimeout(950);
+   assert.equal(await first.locator('.reward-card-sheen').evaluate(n=>getComputedStyle(n,'::before').opacity),'0','shine runs once');
+   await page.mouse.move(1,1);await page.waitForTimeout(400);
+   assert.equal(await first.locator('.reward-aura-hover').evaluate(n=>getComputedStyle(n).opacity),'0','hover aura fades out');
+   const idle=await page.locator('.reward-choice-card').evaluateAll(cards=>cards.map(card=>({display:getComputedStyle(card.querySelector('.reward-aura-idle')).display,
+    opacity:Number(getComputedStyle(card.querySelector('.reward-aura-idle')).opacity),spikes:getComputedStyle(card.querySelector('.reward-aura-hover'),'::after').clipPath})));
+   assert.equal(idle[0].display,'none');assert.equal(idle[1].display,'none');assert.equal(idle[2].display,'block');
+   assert.ok(idle[2].opacity>0 && idle[2].opacity<.4,'unique aura stays faintly visible without hover');
+   assert.ok(idle.every(r=>r.spikes.startsWith('polygon(')),'aura has pointed digital rays');
+   await page.keyboard.press('2');assert.equal(await page.evaluate(()=>selectedRewardId),'r1');
+   await page.keyboard.press('Enter');assert.equal(await page.evaluate(()=>confirmations),1);
+   await page.evaluate(()=>{view.choices=view.choices.map(r=>({rewardId:r.rewardId,type:'stat',rarity:r.rarity,description:'공격력 +2'}));renderRewardChoices(view);});
+   const statEffects=await page.locator('.reward-choice-card').evaluateAll(cards=>cards.map(card=>({
+    charge:!!card.querySelector('.reward-charge-light'),flash:!!card.querySelector('.reward-light-card'),
+    delay:card.querySelector('.reward-aura-intro').getAnimations()[0].effect.getTiming().delay
+   })));
+   assert.ok(statEffects.every(r=>r.charge && r.flash));
+   assert.deepEqual(statEffects.map(r=>r.delay),reveal.map(r=>r.revealTime),'stat and skill rewards share the reveal timing');
+   await page.emulateMedia({reducedMotion:'reduce'});
+   assert.equal(await first.locator('.reward-aura-intro').evaluate(n=>getComputedStyle(n).animationName),'none');
+   assert.deepEqual(errors,[]);await page.close();console.log('Inline skill cards, AP, configurable concepts and rarity auras OK: '+width);
+  }
+  console.log('Screenshots: '+output);
+ }finally{await browser.close();}
+})().catch(e=>{console.error(e);process.exitCode=1;});

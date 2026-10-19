@@ -8,7 +8,7 @@ const read = name => fs.readFileSync(path.join(root, name), 'utf8');
 function functions(c, file, names) {
   const source = read(file);
   for (const name of names) {
-    const match = source.match(new RegExp('    function ' + name + '\\([^]*?\\n    \\}'));
+    const match = source.match(new RegExp('    (?:async )?function ' + name + '\\([^]*?\\n    \\}'));
     assert.ok(match, name); vm.runInContext(match[0], c);
   }
 }
@@ -43,6 +43,57 @@ function browser(options = {}) {
 function store(x,file){vm.runInContext(read(file).match(/<script>([^]*?)<\/script>/)[1],x.c,{filename:file});}
 const flush = async () => {for(let i=0;i<12;i++) await Promise.resolve();};
 const view = () => ({runId:'r',entryToken:'entry',battle:{stage:{stageId:'floor_1_stage_1',floor:1,stage:1},player:{hp:100},status:'active'},gameDataSnapshot:{monsters:[],skills:[],items:[]}});
+
+function preloadContext(get,ratings=()=>new Promise(()=>{})){
+ const x=browser();Object.assign(x.c,{currentView:view(),questionCacheRefillInFlight:false,questionCachePreloadFailed:false,
+  localWorkbookQuestions:[],localQuestionSnapshot:null,getSelectedWorkbookId:()=> 'w',updateBattleInputLockState(){},
+  loadQuestionUnderstandingRatings:ratings,LearningRpgQuestionStore:{get}});
+ functions(x.c,'Battle.html',['preloadMissingBattleQuestionCache','isInitialQuestionCachePreparing']);return x;
+}
+
+test('stored questions unlock combat even when the optional ratings server never answers',async()=>{
+ const snapshot={workbookId:'w',questions:[{questionId:'q'}]},x=preloadContext(()=>Promise.resolve(snapshot));
+ x.c.preloadMissingBattleQuestionCache();await flush();
+ assert.equal(x.c.localWorkbookQuestions.length,1);assert.equal(x.c.isInitialQuestionCachePreparing(),false);
+ assert.equal(x.c.questionCachePreloadFailed,false);assert.equal(x.timeouts.size,0);
+});
+
+test('ratings lookup exceptions do not prevent the local question read',async()=>{
+ const x=preloadContext(()=>Promise.resolve({workbookId:'w',questions:[{}]}),()=>{throw Error('bridge unavailable');});
+ x.c.preloadMissingBattleQuestionCache();await flush();assert.equal(x.c.localWorkbookQuestions.length,1);
+});
+
+test('a silent question store stops waiting and ignores a stale success after timeout',async()=>{
+ let finish;const x=preloadContext(()=>new Promise(resolve=>{finish=resolve;}));
+ x.c.preloadMissingBattleQuestionCache();assert.equal(x.c.isInitialQuestionCachePreparing(),true);
+ [...x.timeouts.values()].find(t=>t.delay===8000).fn();assert.equal(x.c.isInitialQuestionCachePreparing(),false);
+ assert.equal(x.c.questionCachePreloadFailed,true);finish({workbookId:'w',questions:[{}]});await flush();
+ assert.equal(x.c.localWorkbookQuestions.length,0);
+ x.c.LearningRpgQuestionStore.get=()=>Promise.resolve({workbookId:'w',questions:[{}]});
+ x.c.preloadMissingBattleQuestionCache();await flush();assert.equal(x.c.questionCachePreloadFailed,false);
+});
+
+test('synchronous question store exceptions and mismatched workbooks release the input wait',async()=>{
+ for(const get of [()=>{throw Error('unavailable');},()=>Promise.resolve({workbookId:'other',questions:[{}]})]){
+  const x=preloadContext(get);x.c.preloadMissingBattleQuestionCache();await flush();
+  assert.equal(x.c.questionCacheRefillInFlight,false);assert.equal(x.c.questionCachePreloadFailed,true);
+ }
+});
+
+test('both snapshot read transactions time out to session storage and close late callbacks',async()=>{
+ for(const file of ['QuestionSnapshotStore.html','GameDataSnapshotStore.html']){
+  const x=browser();let openRequest,readRequest={},closed=0,aborted=0;
+  const question=file.startsWith('Question'),snapshot=question?{workbookId:'w',questions:[{}]}:{monsters:[],skills:[]};
+  x.session.set(question?'learningRpgQuestionSnapshot:w':'learningRpgGameDataSnapshot',JSON.stringify(snapshot));
+  const transaction={objectStore:()=>({get:()=>readRequest}),abort(){aborted++;}};
+  x.c.indexedDB={open:()=>openRequest={}};store(x,file);
+  const promise=question?x.c.LearningRpgQuestionStore.get('w'):x.c.LearningRpgGameDataStore.get();
+  openRequest.result={transaction:()=>transaction,close(){closed++;}};openRequest.onsuccess();await flush();
+  [...x.timeouts.values()].find(t=>t.delay===5000).fn();const result=await promise;
+  assert.deepEqual(JSON.parse(JSON.stringify(result)),snapshot);assert.equal(closed,1);assert.equal(aborted,1);
+  readRequest.result={invalid:true};readRequest.onsuccess();assert.equal(closed,1);
+ }
+});
 
 test('fullscreen confirmation before the battle response does not leave the response waiting behind black fade',async()=>{
   const x=browser({battle:true});const applied=[];x.c.applyInitialBattleView=v=>applied.push(v);
