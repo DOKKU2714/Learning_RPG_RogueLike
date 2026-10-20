@@ -4,3 +4,5 @@ outputs/
 .tmp_spreadsheet/
 .codex-temp/
 
+# Added by code-review-graph
+.code-review-graph/
