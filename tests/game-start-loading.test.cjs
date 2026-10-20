@@ -34,7 +34,7 @@ test('tip tags support nested bold, italic and hex colors while keeping HTML as 
  assert.equal(render(unsafe).map(p=>p.textContent).join(''),unsafe);
 });
 
-function loadingContext(){
+function loadingContext(embedded=false){
  const nodes={},intervals=[],timeouts=[],listeners={},created=[];let now=1000,success;
  const node=()=>({hidden:false,style:{},classList:{add(){},remove(){}},appendChild(){},replaceChildren(){}});
  const document={createElement:()=>{const value=node();created.push(value);return value;},createTextNode:text=>text,body:node(),documentElement:{},getElementById:id=>nodes[id]||(nodes[id]=node())};
@@ -42,7 +42,9 @@ function loadingContext(){
  const c=vm.createContext({document,Math:math,Date:{now:()=>now},sessionStorage:{getItem:()=>JSON.stringify([{tipId:'a',text:'A',displaySeconds:2},{tipId:'b',text:'B',displaySeconds:3}]),setItem(){}},
   google:{script:{run:{withSuccessHandler(fn){success=fn;return this;},withFailureHandler(){return this;},getGameStartTips(){}}}},
   setTimeout:(fn,ms)=>timeouts.push({fn,ms}),setInterval:(fn,ms)=>intervals.push({fn,ms}),clearTimeout(){},clearInterval(){},addEventListener:(name,fn)=>listeners[name]=fn});
- c.window=c;vm.runInContext(fs.readFileSync('UiGameStartLoading.html','utf8').match(/<script>([^]*?)<\/script>/)[1],c);
+ c.window=c;
+ if(embedded){c.GAME_START_CHANNEL='test-channel';c.parent={postMessage(){},parent:null};c.parent.parent=c.parent;}
+ vm.runInContext(fs.readFileSync('UiGameStartLoading.html','utf8').match(/<script>([^]*?)<\/script>/)[1],c);
  return {c,intervals,timeouts,listeners,nodes,created,setNow:value=>now=value,reply:rows=>success(rows)};
 }
 
@@ -71,7 +73,31 @@ test('loading is hidden before the embedded battle is allowed to start its title
  x.listeners.message({data:{type:'learningRpgBattleReady',channel: new URL(frame.src).searchParams.get('gameStartChannel')},source:frame.contentWindow,origin:'https://battle.test'});
  x.timeouts[x.timeouts.length-1].fn();await Promise.resolve();assert.equal(started,true);
 });
-test('initial loading waits for local questions and assets before signaling ready',async()=>{
+test('page arrival and later intro share a handoff even when loading has already faded',async()=>{
+ const x=loadingContext(true);let messages=0,finished=false;
+ x.c.parent.postMessage=()=>messages++;
+ const arrival=x.c.LearningRpgGameStart.ready();
+ assert.equal(x.c.LearningRpgGameStart.ready(),arrival);assert.equal(messages,1);
+ arrival.then(()=>finished=true);await Promise.resolve();assert.equal(finished,false);
+ x.listeners.message({data:{type:'learningRpgStartIntro',channel:'test-channel'},source:x.c.parent});
+ await arrival;assert.equal(finished,true);
+ assert.equal(x.c.LearningRpgGameStart.ready(),arrival,'slow data preparation reuses the completed handoff');
+});
+
+test('battle page dismisses host loading before starting asynchronous data preparation',()=>{
+ const calls=[],c=vm.createContext({window:{LearningRpgGameStart:{ready:()=>calls.push('arrival')}},
+ setupBattleUi:()=>calls.push('ui'),consumeInitialBattleView:()=>({}),loadInitialBattleView:()=>calls.push('data')});
+ vm.runInContext(extract('initializeBattlePage'),c);c.initializeBattlePage();
+ assert.deepEqual(calls,['arrival','ui','data']);
+});
+
+test('a late battle failure restores the dismissed loading error screen',()=>{
+ const x=loadingContext();x.c.LearningRpgGameStart.begin();x.created[0].hidden=true;
+ x.c.LearningRpgGameStart.fail('준비 실패');
+ assert.equal(x.created[0].hidden,false);assert.equal(x.nodes.gameStartLoadingError.hidden,false);
+});
+
+test('initial loading waits for local questions and assets before starting the intro',async()=>{
  let pending=true,finishWait,assetsReady,done=false;
  const c=vm.createContext({Date,document:{querySelectorAll:()=>[],fonts:{ready:new Promise(resolve=>assetsReady=resolve)}},
  isInitialQuestionCachePreparing:()=>pending,isLocalQuestionSnapshotUnavailable:()=>false,

@@ -699,6 +699,9 @@
     }
 
     function initializeBattlePage() {
+      // Begin dismissing the host loading screen as soon as this page arrives.
+      // initializeBattleView awaits the same handoff before starting the intro.
+      if (window.LearningRpgGameStart) window.LearningRpgGameStart.ready();
       if (window.installBattleFullscreenGuardHook) window.installBattleFullscreenGuardHook();
       setupBattleUi();
       var initialView = consumeInitialBattleView();

@@ -23,7 +23,7 @@
   if(global.LearningRpgGameStart)return;
   var embedded=!!global.GAME_START_CHANNEL,channel=global.GAME_START_CHANNEL || '';
   var active=false,startedAt=0,frame=null,tipIndex=0,tipTimer=null,loadTimer=null,readyResolve=null,dotsTimer=null,dotCount=0;
-  var tips=[],tipChangedAt=0,finishStarted=false;
+  var tips=[],tipChangedAt=0,finishStarted=false,readyPromise=null;
   var root=document.createElement('div');root.id='gameStartLoading';root.hidden=true;
   root.innerHTML='<button id="gameStartTip" type="button" aria-label="다음 팁"><small>TIP · 클릭하면 다음 팁</small><span id="gameStartTipText"></span></button><div id="gameStartLoadingStatus" role="status" aria-label="로딩중"><div id="gameStartSpinner" aria-hidden="true"></div><span aria-hidden="true">로딩중<span id="gameStartLoadingDots"></span></span></div><div id="gameStartLoadingError" hidden><p id="gameStartLoadingErrorText"></p><button id="gameStartLoadingBack" type="button">돌아가기</button></div>';
   document.body.appendChild(root);
@@ -112,7 +112,7 @@
     active=false;finishStarted=true;
     global.clearInterval(tipTimer);global.clearInterval(dotsTimer);global.clearTimeout(loadTimer);
     document.getElementById('gameStartLoadingErrorText').textContent=message || '게임을 시작하지 못했습니다.';
-    document.getElementById('gameStartLoadingError').hidden=false;root.classList.add('finishing');
+    document.getElementById('gameStartLoadingError').hidden=false;root.hidden=false;root.classList.add('finishing');
   }
   function postToHost(type,message){
     var data={type:type,channel:channel,message:message || ''};
@@ -136,7 +136,8 @@
   }
   function ready(){
     if(!embedded)return Promise.resolve();
-    return new Promise(function(resolve){readyResolve=resolve;postToHost('learningRpgBattleReady');});
+    if(!readyPromise)readyPromise=new Promise(function(resolve){readyResolve=resolve;postToHost('learningRpgBattleReady');});
+    return readyPromise;
   }
   global.addEventListener('message',function(event){
     var data=event.data || {};if(!channel || data.channel!==channel)return;
