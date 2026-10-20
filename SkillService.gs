@@ -1061,8 +1061,8 @@ function applySkillRuleSelfDamage_(battleState, skill, rule, context) {
   }
   var damage = Math.max(0, Math.round(evaluateSkillFormulaValue_(selfDamage, context, selfDamage, battleState, skill)));
   battleState.player.hp = Math.max(0, Number(battleState.player.hp || 0) - damage);
-  getSharedRuleEngine_().reviveAfterDamage(battleState.player, battleState);
   battleState.lastTurnEvents.push({ actor: 'player', type: 'selfDamage', skillId: skill.skillId, damage: damage, hpDamage: damage, message: skill.name + '의 반동으로 ' + damage + ' 피해를 받았습니다.' });
+  getSharedRuleEngine_().reviveAfterDamage(battleState.player, battleState);
   if (damage > 0) processSkillTriggers_(battleState, 'onDamaged', {hpDamage:damage, damage:damage, actor:'player', selfTurn:true});
 }
 
@@ -3104,7 +3104,8 @@ function applyStackedDamageEffect_(target, effectId, battleState, actor, ruleOve
   getSharedRuleEngine_().spendRetainedShield(target, shieldDamage, previousShield);
   if (isMonster) target.currentHp = Math.max(0, currentHp - hpDamage);
   else target.hp = Math.max(0, currentHp - hpDamage);
-  getSharedRuleEngine_().reviveAfterDamage(target, battleState);
+  var revivalEventIndex = (battleState && battleState.lastTurnEvents || []).length;
+  var revived = getSharedRuleEngine_().reviveAfterDamage(target, battleState);
 
   var decay = damageRule ? (effect.decayTiming === 'onTrigger' ? Number(effect.decayStacks || 0) : 0) : 1;
   effect.stacks = stacks - (consumeStacks === false || dotModifiers.preserve ? 0 : decay);
@@ -3124,7 +3125,7 @@ function applyStackedDamageEffect_(target, effectId, battleState, actor, ruleOve
     normalizeBattleStateEffects_(battleState);
     syncPrimaryMonster_(battleState);
     battleState.lastTurnEvents = battleState.lastTurnEvents || [];
-    battleState.lastTurnEvents.push({
+    battleState.lastTurnEvents.splice(revived ? revivalEventIndex : battleState.lastTurnEvents.length, 0, {
       actor: 'effect',
       type: 'effectDamage',
       target: isMonster ? 'monster' : 'player',

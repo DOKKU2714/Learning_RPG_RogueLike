@@ -28,6 +28,16 @@ function setup() {
     'getSkillDisplayHealPercent', 'getSkillHitCount']) vm.runInContext(extract(name), c);
   return c;
 }
+
+test('shock shield preview includes only living enemy stacks and scales with level',()=>{
+  const c=setup(),pack=require('../scripts/build-shock-pack.cjs');
+  c.currentView.battle.player.stats={attack:20,defense:10};
+  c.currentView.battle.monsters=[3,2,10].map((stacks,i)=>({instanceId:String(i),currentHp:i===2?0:100,
+    effects:[{effectId:'effect_v2_shock',stacks}]}));
+  const skill=pack.skills.find(s=>s.name==='전자기장 생성');
+  assert.equal(c.getSkillDisplayMetrics({...skill,level:1}).shield,37);
+  assert.equal(c.getSkillDisplayMetrics({...skill,level:3}).shield,51);
+});
 test('fixed descriptions show actual damage increase across multiple upgrade levels', () => {
   const c = setup();
   const skill = { type: 'damage', baseValue: 5, description: '적에게 피해를 입힙니다.', upgradeJson: '{"damage":3}' };

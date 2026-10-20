@@ -113,6 +113,9 @@ for(const mode of ['server','browser']){
    const g=game(mode,'maxHp*0.75');g.use(15);g.p.hp=1;g.shock(g.p,2);
    const poison={...g.snapshot.effects.find(e=>e.effectId==='effect_v2_poison'),stacks:3};g.engine.applyEffect(g.p,poison,{},0);
    g.end();assert.equal(g.p.hp,75);
+   const damageIndex=g.b.lastTurnEvents.findIndex(e=>e.type==='effectDamage' && e.target==='player');
+   const healIndex=g.b.lastTurnEvents.findIndex(e=>e.type==='heal' && e.effectId==='effect_v2_shock_aed');
+   assert.ok(damageIndex>=0 && damageIndex<healIndex,'damage animation precedes revival');
  });
 }
 test('shock: all skill states match server and browser',()=>{

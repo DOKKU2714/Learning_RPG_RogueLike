@@ -454,13 +454,13 @@ var RULE_ENGINE_SHARED = (function() {
           var hpDamage = Math.min(currentHp, damage - shieldDamage);
           if (target.currentHp !== undefined) target.currentHp = Math.max(0, currentHp - hpDamage);
           else target.hp = Math.max(0, currentHp - hpDamage);
-          reviveAfterDamage(target, battle);
           if (rule.shieldPolicy !== 'bypass') target.shield = Math.max(0, Number(target.shield || 0) - shieldDamage);
           totalDamage += hpDamage + shieldDamage;
           if (battle) {
             battle.lastTurnEvents = battle.lastTurnEvents || [];
             battle.lastTurnEvents.push({actor:'effect', type:'effectDamage', target:actor === 'monster' ? 'monster' : 'player', effectId:effect.effectId, targetMonsterId:actor === 'monster' ? target.instanceId || target.monsterId || '' : '', damage:hpDamage + shieldDamage, hpDamage:hpDamage, shieldDamage:shieldDamage, message:(effect.name || effect.effectId) + '로 ' + (hpDamage + shieldDamage) + ' 피해!'});
           }
+          reviveAfterDamage(target, battle);
         });
         return;
       }
@@ -472,7 +472,6 @@ var RULE_ENGINE_SHARED = (function() {
         target.currentHp = Math.max(0, Number(target.currentHp || 0) - damage);
       } else {
         target.hp = Math.max(0, Number(target.hp || 0) - damage);
-        reviveAfterDamage(target, battle);
       }
       totalDamage += damage;
       if (battle) {
@@ -489,6 +488,7 @@ var RULE_ENGINE_SHARED = (function() {
           message: (effect.name || effect.effectId || '효과') + '로 ' + damage + ' 피해!'
         });
       }
+      reviveAfterDamage(target, battle);
     });
     return totalDamage;
   }
@@ -1375,8 +1375,8 @@ var RULE_ENGINE_SHARED = (function() {
       var selfDamage = Number(rule.selfDamage || 0) + Number(rule.failPenalty && rule.failPenalty.selfDamageOnUse || 0);
       selfDamage = Math.max(0, Math.round(evaluateFormula(selfDamage, context, options)));
       battle.player.hp = Math.max(0, Number(battle.player.hp || 0) - selfDamage);
-      reviveAfterDamage(battle.player, battle);
       battle.lastTurnEvents.push({ actor: 'player', type: 'selfDamage', skillId: skill.skillId || '', damage: selfDamage, hpDamage: selfDamage, message: (skill.name || '스킬') + '의 반동으로 ' + selfDamage + ' 피해를 받았습니다.' });
+      reviveAfterDamage(battle.player, battle);
     }
     trackSkillTags(battle, skill);
     if (!battle.lastTurnEvents.length) {
