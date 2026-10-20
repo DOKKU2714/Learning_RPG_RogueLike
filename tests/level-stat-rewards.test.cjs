@@ -53,12 +53,12 @@ test('stat rewards: Rewards values, floor limits, weights and deterministic draw
   }
   assert.ok(g.c.getLocalRunEngineSource_().includes('function getLevelStatRewardChoices_'));
 });
-test('stat rewards: invalid/zero-weight rows are excluded and live value wins over stale description',()=>{
+test('stat rewards: invalid rows are excluded, authored descriptions stay visible and value controls the increase',()=>{
   const rows=[{rewardId:'regen',type:'stat',targetId:'hpRegen',value:1,weight:100,minFloor:1,maxFloor:5,description:'체력재생 +999'},
     {rewardId:'disabled',type:'stat',targetId:'attack',value:100,weight:0},
     {rewardId:'bad',type:'stat',targetId:'notAStat',value:100,weight:100}];
   const g=game(rows),choices=g.engine.statRewardChoices(g.snapshot,g.battle);
-  assert.equal(choices.length,1);assert.equal(choices[0].description,'체력 재생 +1');
+  assert.equal(choices.length,1);assert.equal(choices[0].description,'체력재생 +999');
   const before=g.battle.player.baseStats.hpRegen;
   g.engine.claimStatReward(g.snapshot,g.battle,'regen');assert.equal(g.battle.player.baseStats.hpRegen,before+1);
   assert.deepEqual(copy(g.engine.statRewardChoices({...g.snapshot,rewards:[]},g.battle)),[],'missing rows do not use hardcoded rewards');

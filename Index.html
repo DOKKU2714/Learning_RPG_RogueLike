@@ -205,6 +205,7 @@
   </style>
 </head>
 <body>
+  <?!= include_('UiGameStartLoading'); ?>
   <? var skipIntroOnLoad = requestParams && requestParams.skipIntro === '1'; ?>
   <section id="introScreen" class="intro-screen screen <?= skipIntroOnLoad ? '' : 'active' ?>" onclick="enterApp()">
     <button id="introSoundToggleButton" class="sound-toggle-button menu-sound-toggle sound-muted" type="button" onclick="toggleSoundVolume(event)" aria-pressed="false" aria-label="&#49548;&#47532; &#44732;&#51664;" title="&#49548;&#47532; &#44732;&#51664;">
@@ -1001,6 +1002,7 @@
         return;
       }
       if (!window.LearningRpgQuestionStore || typeof google === 'undefined' || !google.script || !google.script.run) {
+        if (window.LearningRpgGameStart) window.LearningRpgGameStart.abort();
         resetMainNavigation();
         setWorkbookSelectMessage('브라우저 로컬 저장소나 서버 연결을 사용할 수 없습니다.', 'error');
         showWorkbookSelectModal();
@@ -1071,6 +1073,7 @@
     }
 
     function handleWorkbookSnapshotFailure(workbook, error) {
+      if (window.LearningRpgGameStart) window.LearningRpgGameStart.abort();
       questionSnapshotReadyCallbacks = [];
       questionSnapshotLoadingWorkbookId = '';
       resetMainNavigation();
@@ -1489,6 +1492,7 @@
         return;
       }
       if (!beginMainNavigation(sourceButton)) return;
+      if (window.LearningRpgGameStart) window.LearningRpgGameStart.begin();
       showLoadingModal('게임을 준비하는 중...', '브라우저 로컬 문제집이 준비되었는지 확인합니다.', {
         steps: GAME_START_LOADING_STEPS,
         activeStep: 0,
@@ -1518,6 +1522,7 @@
     }
 
     function handleGameStartFailure(error) {
+      if (window.LearningRpgGameStart) window.LearningRpgGameStart.abort();
       resetMainNavigation();
       hideLoadingModal(true);
       setMainMessage(error && error.message || '게임을 시작하지 못했습니다.', 'error');
@@ -1552,6 +1557,10 @@
     }
 
     function transitionToBattlePage(startedAt, entryToken) {
+      if (window.LearningRpgGameStart && window.LearningRpgGameStart.isActive()) {
+        goToPage('battle',{loading:false,params:{entryToken:String(entryToken || '')}});
+        return;
+      }
       var elapsed = Date.now() - Number(startedAt || Date.now());
       var waitMs = Math.max(0, 250 - elapsed);
       window.setTimeout(function() {
@@ -1631,6 +1640,10 @@
         nextUrl += '&' + encodeURIComponent(key) + '=' + encodeURIComponent(String(value));
       });
       if (sourceButton && !beginMainNavigation(sourceButton)) return;
+      if (page==='battle' && window.LearningRpgGameStart && window.LearningRpgGameStart.isActive()) {
+        window.LearningRpgGameStart.navigate(nextUrl).catch(handleGameStartFailure);
+        return;
+      }
       navigateTop(nextUrl);
     }
 

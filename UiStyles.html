@@ -3206,7 +3206,7 @@
     background: #000;
     opacity: 0;
     pointer-events: none;
-    transition: opacity 420ms ease;
+    transition: opacity 800ms ease;
   }
 
   .stage-intro-overlay.active {
@@ -4143,6 +4143,7 @@
     box-shadow: none;
     color: inherit;
   }
+  .reward-choice-card:has(.reward-stat-increase) .reward-choice-icon-wrap {width:min(176px,74%);}
 
   .reward-choice-icon {
     width: 100%;
@@ -5540,6 +5541,18 @@
   .skill-status-bleed { --skill-status-color: #f02f3c; }
   .skill-status-stun { --skill-status-color: #ffe08a; }
   .skill-status-name, .reward-choice-card strong.skill-status-name { color: var(--skill-status-color); }
+  .skill-status-fixed-damage {--skill-status-color:#8d55b7;}
+  .skill-status-action-point,.skill-status-critical-rate {--skill-status-color:#ffd84a;}
+  .skill-status-critical-damage {--skill-status-color:#ff8d36;}
+  .skill-detail-description .skill-status-name {font-weight:900;}
+  .hud-skill-detail {width:min(360px,calc(100vw - 56px));padding:24px 18px 18px;gap:12px;}
+  .hud-skill-detail > .skill-detail-header {justify-content:flex-end;padding-left:24px;}
+  .hud-skill-detail .skill-detail-name {text-align:right;white-space:normal;overflow:visible;overflow-wrap:anywhere;}
+  .hud-skill-detail > .skill-detail-meta {text-align:right;}
+  .hud-skill-detail > .skill-detail-description {white-space:normal;overflow-wrap:anywhere;}
+  .hud-skill-footer {display:grid;gap:6px;padding-top:12px;margin-top:8px;border-top:1px solid #ffffff22;font-family:var(--font-readable);}
+  .hud-skill-footer .skill-flavor-text {margin-top:4px;}
+  .touch-detail-copy.hud-skill-detail {padding-top:28px!important;overflow:visible!important;}
   .stat-source-level { color: #a7df90; }
   .reward-choice-card .reward-upgrade-compare-card,
   .reward-choice-card:nth-child(3n) .reward-upgrade-compare-card {
@@ -5564,7 +5577,7 @@
   .reward-card-footer .skill-flavor-text {display:block;min-height:36px;margin:0;padding:0;border:0;background:none;color:#929792;font-size:12px;line-height:1.5;}
   .reward-inline-description .reward-upgrade-changes {display:grid;gap:3px;margin:0;padding-top:8px;border-top:1px solid #ffffff22;font-size:12px;}
   .reward-inline-description .reward-upgrade-changes strong {font-family:inherit;font-size:inherit;}
-  .reward-choice-ap.reward-ap-badge {left:0;right:auto;top:0;width:52px;height:42px;transform:translate(-50%,-50%);z-index:4;}
+  .reward-choice-ap.reward-ap-badge {left:8px;right:auto;top:8px;width:52px;height:42px;transform:translate(-50%,-50%);z-index:4;}
   .reward-ap-badge .reward-ap-symbol {position:absolute;inset:0;display:block;box-sizing:border-box;width:100%;height:100%;border-width:2px;filter:drop-shadow(0 3px 3px #0008);}
   .reward-ap-badge b {position:absolute;inset:0;display:flex;align-items:center;justify-content:center;box-sizing:border-box;padding:0 10px;font-family:var(--font-readable);font-size:var(--reward-ap-font-size,23px);line-height:1;white-space:nowrap;color:#302810;text-shadow:0 1px 0 #fff6;}
   .stage-clear-reward-overlay .reward-choice-card.reward-aura-card::before,
@@ -5580,17 +5593,15 @@
   .reward-choice-card.reward-aura-card::before {content:'';position:absolute;inset:0;z-index:-1;border-radius:inherit;background:inherit;background-color:#151915;opacity:1;filter:none;box-shadow:none;pointer-events:none;animation:none;}
   .reward-card-aura {inset:0;z-index:-2;opacity:0;pointer-events:none;}
   .reward-card-aura::before {content:'';position:absolute;inset:-1px;border:1px solid var(--reward-gem-color);border-radius:inherit;box-shadow:0 0 var(--aura-spread) var(--reward-gem-color),0 0 calc(var(--aura-spread)*2) var(--reward-gem-glow),inset 0 0 8px var(--reward-gem-glow);}
-  .reward-card-aura::after {content:'';position:absolute;left:calc(var(--aura-spread)*-1);right:calc(var(--aura-spread)*-1);bottom:calc(100% - 18px);height:calc(var(--aura-rise) + 18px);transform-origin:center bottom;
-    background:repeating-linear-gradient(90deg,transparent 0 .5px,var(--reward-gem-color) .5px 1px,transparent 1px 2px),linear-gradient(0deg,var(--reward-gem-glow),transparent 85%);
-    mask-image:linear-gradient(0deg,#000 0 20%,#000b 48%,transparent 96%),linear-gradient(90deg,transparent,#000 10% 90%,transparent);
-    mask-composite:intersect;
-    clip-path:polygon(0 100%,0.3125% 5%,0.625% 68%,0.9375% 53%,1.25% 85%,1.5625% 7%,1.875% 78%,2.1875% 41%,2.5% 71%,2.8125% 39%,3.125% 88%,3.4375% 59%,3.75% 81%,4.0625% 43%,4.375% 74%,4.6875% 49%,5% 91%,5.3125% 19%,5.625% 84%,5.9375% 11%,6.25% 77%,6.5625% 25%,6.875% 70%,7.1875% 61%,7.5% 87%,7.8125% 61%,8.125% 80%,8.4375% 25%,8.75% 73%,9.0625% 11%,9.375% 90%,9.6875% 19%,10% 83%,10.3125% 49%,10.625% 76%,10.9375% 43%,11.25% 69%,11.5625% 59%,11.875% 86%,12.1875% 39%,12.5% 79%,12.8125% 41%,13.125% 72%,13.4375% 7%,13.75% 89%,14.0625% 53%,14.375% 82%,14.6875% 5%,15% 75%,15.3125% 37%,15.625% 68%,15.9375% 33%,16.25% 85%,16.5625% 51%,16.875% 78%,17.1875% 33%,17.5% 71%,17.8125% 37%,18.125% 88%,18.4375% 5%,18.75% 81%,19.0625% 53%,19.375% 74%,19.6875% 7%,20% 91%,20.3125% 41%,20.625% 84%,20.9375% 39%,21.25% 77%,21.5625% 59%,21.875% 70%,22.1875% 43%,22.5% 87%,22.8125% 49%,23.125% 80%,23.4375% 19%,23.75% 73%,24.0625% 11%,24.375% 90%,24.6875% 25%,25% 83%,25.3125% 61%,25.625% 76%,25.9375% 61%,26.25% 69%,26.5625% 25%,26.875% 86%,27.1875% 11%,27.5% 79%,27.8125% 19%,28.125% 72%,28.4375% 49%,28.75% 89%,29.0625% 43%,29.375% 82%,29.6875% 59%,30% 75%,30.3125% 39%,30.625% 68%,30.9375% 41%,31.25% 85%,31.5625% 7%,31.875% 78%,32.1875% 53%,32.5% 71%,32.8125% 5%,33.125% 88%,33.4375% 37%,33.75% 81%,34.0625% 33%,34.375% 74%,34.6875% 51%,35% 91%,35.3125% 33%,35.625% 84%,35.9375% 37%,36.25% 77%,36.5625% 5%,36.875% 70%,37.1875% 53%,37.5% 87%,37.8125% 7%,38.125% 80%,38.4375% 41%,38.75% 73%,39.0625% 39%,39.375% 90%,39.6875% 59%,40% 83%,40.3125% 43%,40.625% 76%,40.9375% 49%,41.25% 69%,41.5625% 19%,41.875% 86%,42.1875% 11%,42.5% 79%,42.8125% 25%,43.125% 72%,43.4375% 61%,43.75% 89%,44.0625% 61%,44.375% 82%,44.6875% 25%,45% 75%,45.3125% 11%,45.625% 68%,45.9375% 19%,46.25% 85%,46.5625% 49%,46.875% 78%,47.1875% 43%,47.5% 71%,47.8125% 59%,48.125% 88%,48.4375% 39%,48.75% 81%,49.0625% 41%,49.375% 74%,49.6875% 7%,50% 91%,50.3125% 53%,50.625% 84%,50.9375% 5%,51.25% 77%,51.5625% 37%,51.875% 70%,52.1875% 33%,52.5% 87%,52.8125% 51%,53.125% 80%,53.4375% 33%,53.75% 73%,54.0625% 37%,54.375% 90%,54.6875% 5%,55% 83%,55.3125% 53%,55.625% 76%,55.9375% 7%,56.25% 69%,56.5625% 41%,56.875% 86%,57.1875% 39%,57.5% 79%,57.8125% 59%,58.125% 72%,58.4375% 43%,58.75% 89%,59.0625% 49%,59.375% 82%,59.6875% 19%,60% 75%,60.3125% 11%,60.625% 68%,60.9375% 25%,61.25% 85%,61.5625% 61%,61.875% 78%,62.1875% 61%,62.5% 71%,62.8125% 25%,63.125% 88%,63.4375% 11%,63.75% 81%,64.0625% 19%,64.375% 74%,64.6875% 49%,65% 91%,65.3125% 43%,65.625% 84%,65.9375% 59%,66.25% 77%,66.5625% 39%,66.875% 70%,67.1875% 41%,67.5% 87%,67.8125% 7%,68.125% 80%,68.4375% 53%,68.75% 73%,69.0625% 5%,69.375% 90%,69.6875% 37%,70% 83%,70.3125% 33%,70.625% 76%,70.9375% 51%,71.25% 69%,71.5625% 33%,71.875% 86%,72.1875% 37%,72.5% 79%,72.8125% 5%,73.125% 72%,73.4375% 53%,73.75% 89%,74.0625% 7%,74.375% 82%,74.6875% 41%,75% 75%,75.3125% 39%,75.625% 68%,75.9375% 59%,76.25% 85%,76.5625% 43%,76.875% 78%,77.1875% 49%,77.5% 71%,77.8125% 19%,78.125% 88%,78.4375% 11%,78.75% 81%,79.0625% 25%,79.375% 74%,79.6875% 61%,80% 91%,80.3125% 61%,80.625% 84%,80.9375% 25%,81.25% 77%,81.5625% 11%,81.875% 70%,82.1875% 19%,82.5% 87%,82.8125% 49%,83.125% 80%,83.4375% 43%,83.75% 73%,84.0625% 59%,84.375% 90%,84.6875% 39%,85% 83%,85.3125% 41%,85.625% 76%,85.9375% 7%,86.25% 69%,86.5625% 53%,86.875% 86%,87.1875% 5%,87.5% 79%,87.8125% 37%,88.125% 72%,88.4375% 33%,88.75% 89%,89.0625% 51%,89.375% 82%,89.6875% 33%,90% 75%,90.3125% 37%,90.625% 68%,90.9375% 5%,91.25% 85%,91.5625% 53%,91.875% 78%,92.1875% 7%,92.5% 71%,92.8125% 41%,93.125% 88%,93.4375% 39%,93.75% 81%,94.0625% 59%,94.375% 74%,94.6875% 43%,95% 91%,95.3125% 49%,95.625% 84%,95.9375% 19%,96.25% 77%,96.5625% 11%,96.875% 70%,97.1875% 25%,97.5% 87%,97.8125% 61%,98.125% 80%,98.4375% 61%,98.75% 73%,99.0625% 25%,99.375% 90%,99.6875% 11%,100% 83%,100% 100%);
-    filter:drop-shadow(0 0 4px var(--reward-gem-color));}
+  .reward-card-aura::after {content:'';position:absolute;inset:calc(var(--aura-rise)*-1) calc(var(--aura-rise)*-.6);transform-origin:center;
+    background:repeating-conic-gradient(from 0deg,transparent 0deg .35deg,var(--reward-gem-color) .35deg .6deg,transparent .6deg 1deg);
+    mask-image:linear-gradient(0deg,transparent,#000 20% 80%,transparent),linear-gradient(90deg,transparent,#000 20% 80%,transparent);
+    mask-composite:intersect;filter:drop-shadow(0 0 3px var(--reward-gem-color));}
   .reward-aura-intro {animation:reward-aura-intro 2500ms var(--reward-reveal-time) ease-out both;}
   .reward-aura-intro::after {animation:reward-aura-flow 1250ms var(--reward-reveal-time) ease-in-out 2;}
   .reward-aura-idle {display:none;}
   .reward-aura-card:is(.rarity-epic,.rarity-legendary,.rarity-unique) > .reward-aura-idle {display:block;animation:reward-aura-idle 2800ms var(--reward-reveal-time) ease-in-out infinite both;}
-  .reward-aura-idle::after {transform:scaleY(.45);transform-origin:bottom;}
+  .reward-aura-idle::after {transform:scale(.9);transform-origin:center;}
   .reward-aura-hover {transition:opacity 350ms ease,transform 350ms ease;animation:reward-hover-ready 1ms var(--reward-reveal-time) step-end backwards;}
   .reward-aura-hover::after {animation:reward-aura-flow 1800ms ease-in-out infinite;animation-play-state:paused;}
   .reward-aura-card:is(:hover,:focus-visible) > .reward-aura-hover {opacity:.95;transform:none;}
@@ -5602,7 +5613,7 @@
   @keyframes reward-aura-idle {0%{opacity:0}30%,100%{opacity:.18}65%{opacity:.32}}
   @media(prefers-reduced-motion:reduce){.reward-aura-card:is(.rarity-epic,.rarity-legendary,.rarity-unique)>.reward-aura-idle{animation:none;opacity:.15;}}
   @keyframes reward-aura-intro {0%{opacity:0}14%,45%{opacity:.9}100%{opacity:0}}
-  @keyframes reward-aura-flow {0%,100%{transform:scaleY(.94);opacity:.65}50%{transform:scaleY(1.06);opacity:1}}
+  @keyframes reward-aura-flow {0%,100%{transform:scale(.96);opacity:.65}50%{transform:scale(1.04);opacity:1}}
   @keyframes reward-card-sheen {0%{left:-90%;opacity:0}15%,65%{opacity:.65}100%{left:140%;opacity:0}}
   @media(max-width:760px){.reward-choice-card.reward-inline-skill{min-height:420px;padding:20px 14px 40px;}.reward-inline-skill .reward-choice-icon-wrap{width:80px;flex-basis:80px;}.reward-inline-description{font-size:13px;}}
   @media(prefers-reduced-motion:reduce){.stage-clear-reward-overlay .reward-choice-card.reward-aura-card,.reward-aura-intro,.reward-aura-intro::after,.reward-aura-hover,.reward-card-sheen,.reward-aura-hover::after,.reward-aura-card:is(:hover,:focus-visible)>.reward-card-sheen::before{animation:none;}.reward-aura-intro{opacity:0;}.reward-aura-hover{transition:none;}.reward-aura-card:is(:hover,:focus-visible)>.reward-aura-hover{opacity:.35;}}

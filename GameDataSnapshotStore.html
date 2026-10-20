@@ -177,7 +177,7 @@
     var fullscreenGuardHookInstalled = false;
     var fullscreenGuardPollId = null;
     var fullscreenConfirmInProgress = false;
-    var fullscreenStartConfirmed = false;
+    var fullscreenStartConfirmed = !!(global.LearningRpgGameStart && global.LearningRpgGameStart.isEmbedded());
 
     function isBattleFullscreen() {
       if (document.fullscreenElement) return true;
@@ -290,6 +290,11 @@
     }
 
     function checkBattleFullscreen() {
+      if (global.LearningRpgGameStart && global.LearningRpgGameStart.isEmbedded()) {
+        hideBattleFullscreenGuard();
+        releasePendingBattleInitialView();
+        return;
+      }
       if (isBattleFullscreen()) {
         hideBattleFullscreenGuard();
         releasePendingBattleInitialView();

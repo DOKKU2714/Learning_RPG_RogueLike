@@ -1,0 +1,134 @@
+<style>
+  #gameStartLoading {position:fixed;inset:0;z-index:100010;background:#000;color:#ededed;opacity:0;transition:opacity 4000ms ease;pointer-events:none;}
+  #gameStartLoading.active {opacity:1;pointer-events:auto;}
+  #gameStartLoading[hidden],#gameStartLoadingError[hidden] {display:none;}
+  .game-start-loading #loadingModal {visibility:hidden!important;pointer-events:none!important;}
+  #gameStartTip {all:unset;display:block;position:absolute;left:max(5vw,env(safe-area-inset-left));bottom:max(7vh,env(safe-area-inset-bottom));max-width:min(720px,calc(100% - 240px));padding:12px 0;border:0;outline:0;box-shadow:none;appearance:none;background:transparent;color:#ddd;text-align:left;line-height:1.8;font-size:clamp(14px,1.6vw,19px);font-family:var(--font-readable, sans-serif);cursor:pointer;transition:opacity 1000ms ease;-webkit-tap-highlight-color:transparent;}
+  #gameStartTip::before,#gameStartTip::after {content:none;display:none;}
+  #gameStartTip small {display:block;margin-bottom:10px;color:#888;font-size:11px;letter-spacing:.16em;}
+  #gameStartTip:is(:hover,:active,:focus,:focus-visible) {border:0;outline:0;box-shadow:none;background:transparent;transform:none;filter:none;}
+  #gameStartLoadingStatus {position:absolute;right:max(5vw,env(safe-area-inset-right));bottom:max(8vh,env(safe-area-inset-bottom));display:flex;align-items:center;gap:12px;color:#ddd;font-family:var(--font-readable,sans-serif);font-size:16px;transition:opacity 1000ms ease;}
+  #gameStartSpinner {width:32px;height:32px;box-sizing:border-box;border:2px solid #ffffff26;border-top-color:#eee;border-radius:50%;animation:game-start-spin 1100ms linear infinite;}
+  #gameStartLoadingDots {display:inline-block;width:1.5em;text-align:left;}
+  #gameStartLoading.finishing #gameStartTip,#gameStartLoading.finishing #gameStartLoadingStatus {opacity:0;pointer-events:none;}
+  #gameStartLoadingError {position:absolute;inset:30% 10%;display:grid;place-content:center;gap:24px;text-align:center;}
+  #gameStartFrame {position:fixed;inset:0;width:100%;height:100%;border:0;background:#000;z-index:100005;}
+  @keyframes game-start-spin {to{transform:rotate(360deg)}}
+  @media(max-width:600px){#gameStartTip{max-width:calc(100% - 48px);left:24px;bottom:96px;}#gameStartLoadingStatus{right:24px;bottom:36px;font-size:14px;}#gameStartSpinner{width:26px;height:26px;}}
+  @media(prefers-reduced-motion:reduce){#gameStartLoading{transition-duration:200ms;}#gameStartSpinner{animation-duration:2200ms;}}
+</style>
+<script>
+(function(global){
+  if(global.LearningRpgGameStart)return;
+  var embedded=!!global.GAME_START_CHANNEL,channel=global.GAME_START_CHANNEL || '';
+  var active=false,startedAt=0,frame=null,tipIndex=0,tipTimer=null,loadTimer=null,readyResolve=null,dotsTimer=null,dotCount=0;
+  var tips=[],tipChangedAt=0,finishStarted=false;
+  var root=document.createElement('div');root.id='gameStartLoading';root.hidden=true;
+  root.innerHTML='<button id="gameStartTip" type="button" aria-label="다음 팁"><small>TIP · 클릭하면 다음 팁</small><span id="gameStartTipText"></span></button><div id="gameStartLoadingStatus" role="status" aria-label="로딩중"><div id="gameStartSpinner" aria-hidden="true"></div><span aria-hidden="true">로딩중<span id="gameStartLoadingDots"></span></span></div><div id="gameStartLoadingError" hidden><p id="gameStartLoadingErrorText"></p><button id="gameStartLoadingBack" type="button">돌아가기</button></div>';
+  document.body.appendChild(root);
+  function delay(ms){return new Promise(function(resolve){global.setTimeout(resolve,ms);});}
+  function saveTips(){try{sessionStorage.setItem('learningRpgLoadingTips',JSON.stringify(tips));}catch(error){}}
+  function loadTips(){
+    try{tips=JSON.parse(sessionStorage.getItem('learningRpgLoadingTips') || '[]');if(!Array.isArray(tips))tips=[];}catch(error){tips=[];}
+    if(!embedded && typeof google!=='undefined' && google.script && google.script.run){
+      google.script.run.withSuccessHandler(function(rows){tips=Array.isArray(rows)?rows:[];tipIndex=0;saveTips();renderTip();}).withFailureHandler(function(){}).getGameStartTips();
+    }
+  }
+  function renderTip(){
+    var target=document.getElementById('gameStartTipText');target.replaceChildren();
+    var tip=tips.length?tips[tipIndex%tips.length]:null;
+    document.getElementById('gameStartTip').style.visibility=tip?'visible':'hidden';
+    if(!tip)return;
+    var colors={'일반':'#f1f1f1','드문':'#77f08c','희귀':'#63a8ff','영웅':'#df72ff','전설':'#ff8d36','고유':'#ff4a4a'};
+    String(tip.text || '').split(/(일반|드문|희귀|영웅|전설|고유)/g).forEach(function(text){
+      if(colors[text]){var span=document.createElement('span');span.textContent=text;span.style.color=colors[text];target.appendChild(span);}
+      else target.appendChild(document.createTextNode(text));
+    });
+  }
+  function nextTip(){tipIndex++;tipChangedAt=Date.now();renderTip();}
+  document.getElementById('gameStartTip').onclick=nextTip;
+  document.getElementById('gameStartLoadingBack').onclick=function(){abort();if(typeof global.resetMainNavigation==='function')global.resetMainNavigation();};
+  function begin(){
+    if(active)return;
+    // Request while the Start click still carries browser user activation.
+    try{if(!document.fullscreenElement && document.documentElement.requestFullscreen)Promise.resolve(document.documentElement.requestFullscreen({navigationUI:'hide'})).catch(function(){});}catch(error){}
+    active=true;finishStarted=false;startedAt=Date.now();tipChangedAt=startedAt;tipIndex=0;
+    loadTips();
+    channel=global.crypto && global.crypto.randomUUID?global.crypto.randomUUID():String(Date.now())+Math.random().toString(36).slice(2);
+    root.hidden=false;root.classList.remove('active','finishing');document.getElementById('gameStartLoadingError').hidden=true;
+    document.body.classList.add('game-start-loading');renderTip();void root.offsetWidth;root.classList.add('active');
+    tipTimer=global.setInterval(function(){if(Date.now()-tipChangedAt>=5000)nextTip();},250);
+    dotCount=0;document.getElementById('gameStartLoadingDots').textContent='';
+    dotsTimer=global.setInterval(function(){dotCount=(dotCount+1)%4;document.getElementById('gameStartLoadingDots').textContent='.'.repeat(dotCount);},500);
+    loadTimer=global.setTimeout(function(){fail('게임 준비 시간이 초과되었습니다. 돌아가서 다시 시작해 주세요.');},120000);
+  }
+  function fadeDuration(){return global.matchMedia && global.matchMedia('(prefers-reduced-motion: reduce)').matches?200:4000;}
+  function navigate(url){
+    if(!active)throw new Error('게임 시작 화면이 준비되지 않았습니다.');
+    var navigationChannel=channel;
+    return delay(Math.max(0,fadeDuration()-(Date.now()-startedAt))).then(function(){
+      if(!active || channel!==navigationChannel || frame)return;
+      frame=document.createElement('iframe');frame.id='gameStartFrame';frame.title='Learning Roguelike';frame.allow='fullscreen; autoplay';frame.allowFullscreen=true;
+      frame.src=url+(url.indexOf('?')<0?'?':'&')+'gameStartChannel='+encodeURIComponent(channel);
+      document.body.appendChild(frame);
+      if(global.LEARNING_RPG_AUDIO)global.LEARNING_RPG_AUDIO.stop(0);
+    });
+  }
+  function abort(){
+    active=false;finishStarted=false;global.clearInterval(tipTimer);global.clearInterval(dotsTimer);global.clearTimeout(loadTimer);
+    root.hidden=true;root.classList.remove('active','finishing');document.body.classList.remove('game-start-loading');
+    if(frame){frame.remove();frame=null;}
+    var modal=document.getElementById('loadingModal');if(modal)modal.classList.remove('active');
+  }
+  function fail(message){
+    active=false;finishStarted=true;
+    global.clearInterval(tipTimer);global.clearInterval(dotsTimer);global.clearTimeout(loadTimer);
+    document.getElementById('gameStartLoadingErrorText').textContent=message || '게임을 시작하지 못했습니다.';
+    document.getElementById('gameStartLoadingError').hidden=false;root.classList.add('finishing');
+  }
+  function postToHost(type,message){
+    var data={type:type,channel:channel,message:message || ''};
+    // HtmlService uses both sandboxFrame and userHtmlFrame. Do not assume a fixed depth.
+    var ancestor=global.parent;
+    for(var hop=0;hop<16;hop++){
+      ancestor.postMessage(data,'*');
+      if(ancestor===ancestor.parent)break;
+      ancestor=ancestor.parent;
+    }
+  }
+  function isDescendantWindow(source,ancestor){
+    try{
+      for(var hop=0;source && hop<16;hop++){
+        if(source===ancestor)return true;
+        if(source===source.parent)break;
+        source=source.parent;
+      }
+    }catch(error){}
+    return false;
+  }
+  function ready(){
+    if(!embedded)return Promise.resolve();
+    return new Promise(function(resolve){readyResolve=resolve;postToHost('learningRpgBattleReady');});
+  }
+  global.addEventListener('message',function(event){
+    var data=event.data || {};if(!channel || data.channel!==channel)return;
+    if(embedded){
+      if(!isDescendantWindow(global.parent,event.source))return;
+      if(data.type==='learningRpgStartIntro' && readyResolve){var resolve=readyResolve;readyResolve=null;resolve();}
+      return;
+    }
+    if(!active || !frame)return;
+    if(!isDescendantWindow(event.source,frame.contentWindow))return;
+    if(data.type==='learningRpgBattleFailed'){fail(data.message);return;}
+    if(data.type!=='learningRpgBattleReady' || finishStarted)return;
+    finishStarted=true;global.clearTimeout(loadTimer);global.clearInterval(tipTimer);global.clearInterval(dotsTimer);root.classList.add('finishing');
+    delay(1000).then(function(){
+      if(!active)return;
+      event.source.postMessage({type:'learningRpgStartIntro',channel:channel},event.origin);
+      root.hidden=true;document.body.classList.remove('game-start-loading');
+    });
+  });
+  global.LearningRpgGameStart={begin:begin,navigate:navigate,abort:abort,fail:fail,ready:ready,isActive:function(){return active;},isEmbedded:function(){return embedded;},reportFailure:function(message){if(embedded)postToHost('learningRpgBattleFailed',message);}};
+  loadTips();
+})(window);
+</script>

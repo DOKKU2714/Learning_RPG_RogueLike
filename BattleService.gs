@@ -2183,8 +2183,8 @@ function getLevelStatRewardChoices_(battle, ordinal, floor, ignoreReroll) {
     var total=pool.reduce(function(sum,row){return sum+Number(row.weight);},0),roll=seed/4294967296*total,picked=pool[pool.length-1];
     for(var j=0;j<pool.length;j++){roll-=Number(pool[j].weight);if(roll<0){picked=pool[j];break;}}
     var reward=attachRewardRarity_(Object.assign({},picked,{value:Number(picked.value)}));
-    // Descriptions are editable prose; value is the authoritative increase.
-    reward.description=buildLevelStatRewardDescription_(reward);
+    // Keep authored card titles; value remains the authoritative increase.
+    reward.description=String(picked.description || '').trim() || buildLevelStatRewardDescription_(reward);
     choices.push(reward);
     pool=pool.filter(function(row){return row.rewardId!==picked.rewardId && row.targetId!==picked.targetId;});
   }

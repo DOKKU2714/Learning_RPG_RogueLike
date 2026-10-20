@@ -14,6 +14,8 @@
   </style>
 </head>
 <body class="battle-page-body">
+  <script>window.GAME_START_CHANNEL = <?!= JSON.stringify(String(requestParams.gameStartChannel || '')).replace(/</g, '\\u003c') ?>;</script>
+  <?!= include_('UiGameStartLoading'); ?>
   <svg class="battle-effect-definitions" width="0" height="0" aria-hidden="true" focusable="false" style="position:absolute;pointer-events:none">
     <defs>
       <filter id="monsterShieldOutline" x="-25%" y="-25%" width="150%" height="150%" color-interpolation-filters="sRGB">
@@ -94,26 +96,24 @@
         <div id="questionCacheStatus" class="question-cache-status hidden" role="status">브라우저에 저장된 로컬 문제집을 불러오는 중...</div>
         <button id="attackActionButton" class="combat-icon-button action-detail-button action-detail-attack" data-ap-cost="1" aria-label="공격" onclick="chooseAction('attack')"><span class="action-shortcut-number" aria-hidden="true">1</span>
           <svg class="combat-action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 3 19 10 10 19 5 14 14 5Z"/><path d="m6 12 6 6M8 16l-4 4M2 19l3 3M10 14l7-7"/></svg><span class="action-button-label">공격</span>
-          <span class="skill-detail-card action-detail-card" aria-hidden="true">
+          <span class="skill-detail-card action-detail-card hud-skill-detail" aria-hidden="true">
+            <span class="reward-choice-ap reward-ap-badge" role="img" aria-label="행동력 1 소비"><span class="ap-pip filled reward-ap-symbol" aria-hidden="true"></span><b>1</b></span>
             <span class="skill-detail-header">
               <strong class="skill-detail-name">기본 공격</strong>
-              <span class="skill-ap-gauge" role="img" aria-label="행동력 1 소비"><span class="ap-icons" aria-hidden="true"><span class="ap-pip filled"></span><span class="ap-pip empty"></span><span class="ap-pip empty"></span></span></span>
             </span>
-            <span class="skill-detail-meta">기본 행동 / 적 대상</span>
             <span class="skill-detail-description">적에게 약 <strong id="attackActionPreviewValue" class="skill-damage-number">0</strong> 피해를 입힙니다.</span>
-            <span class="skill-detail-line">문제 풀이 효율에 따라 피해량이 변합니다.</span>
+            <span class="hud-skill-footer"><span class="skill-detail-meta">기본 행동 / 적 대상</span><span class="skill-detail-line">문제 풀이 효율에 따라 피해량이 변합니다.</span></span>
           </span>
         </button>
         <button id="guardActionButton" class="combat-icon-button action-detail-button action-detail-guard" data-ap-cost="1" aria-label="수비" onclick="chooseAction('guard')"><span class="action-shortcut-number" aria-hidden="true">2</span>
           <svg class="combat-action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 21 6v6c0 5-9 10-9 10S3 17 3 12V6Z M12 6v11 M7 11h10"/></svg><span class="action-button-label">수비</span>
-          <span class="skill-detail-card action-detail-card" aria-hidden="true">
+          <span class="skill-detail-card action-detail-card hud-skill-detail" aria-hidden="true">
+            <span class="reward-choice-ap reward-ap-badge" role="img" aria-label="행동력 1 소비"><span class="ap-pip filled reward-ap-symbol" aria-hidden="true"></span><b>1</b></span>
             <span class="skill-detail-header">
               <strong class="skill-detail-name">기본 수비</strong>
-              <span class="skill-ap-gauge" role="img" aria-label="행동력 1 소비"><span class="ap-icons" aria-hidden="true"><span class="ap-pip filled"></span><span class="ap-pip empty"></span><span class="ap-pip empty"></span></span></span>
             </span>
-            <span class="skill-detail-meta">기본 행동 / 자신 대상</span>
             <span class="skill-detail-description"><strong id="guardActionPreviewValue" class="skill-damage-number">0</strong> 방어막을 얻습니다.</span>
-            <span class="skill-detail-line">문제 풀이 효율에 따라 방어막 수치가 변합니다.</span>
+            <span class="hud-skill-footer"><span class="skill-detail-meta">기본 행동 / 자신 대상</span><span class="skill-detail-line">문제 풀이 효율에 따라 방어막 수치가 변합니다.</span></span>
           </span>
         </button>
         <button id="skillToggleButton" class="combat-icon-button" aria-label="스킬" type="button" onclick="toggleSkillPanel()"><span class="action-shortcut-number" aria-hidden="true">3</span><svg class="combat-action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m14 2-9 12h7l-2 8 9-12h-7Z"/></svg><span class="action-button-label">스킬</span></button>
@@ -528,8 +528,8 @@
     var STAGE_ENTRANCE_BLACK_HOLD_MS = 20;
     var STAGE_ENTRANCE_TITLE_DELAY_MS = 80;
     var STAGE_ENTRANCE_TITLE_FADE_IN_MS = 900;
-    var STAGE_ENTRANCE_TITLE_VISIBLE_MS = 2000;
-    var STAGE_ENTRANCE_FADE_OUT_MS = 420;
+    var STAGE_ENTRANCE_TITLE_VISIBLE_MS = 4000;
+    var STAGE_ENTRANCE_FADE_OUT_MS = 800;
     var STAGE_ENTRANCE_FADE_DELAY_MS = STAGE_ENTRANCE_TITLE_DELAY_MS
       + STAGE_ENTRANCE_TITLE_FADE_IN_MS
       + STAGE_ENTRANCE_TITLE_VISIBLE_MS;
@@ -726,6 +726,7 @@
     }
 
     function showBattleEntryFailure(message) {
+      if (window.LearningRpgGameStart) window.LearningRpgGameStart.reportFailure(message);
       if (window.dismissBattleFullscreenGuard) window.dismissBattleFullscreenGuard();
       var fade = document.getElementById('battleStartFade');
       if (fade) fade.classList.remove('active');
@@ -830,6 +831,11 @@
       preloadMissingBattleQuestionCache();
       startWorkbookDeadlineMonitor();
       renderBattle(currentView);
+      if (window.LearningRpgGameStart && window.LearningRpgGameStart.isEmbedded()) {
+        setBattleInputLocked(true);
+        await waitForInitialBattleLoading();
+        await window.LearningRpgGameStart.ready();
+      }
       if (workbookDeadlineExpired) return;
       if (currentView.battle.status === 'victory') {
         finishBattleStartFade();
@@ -854,6 +860,19 @@
       } else {
         startBattleEntrance();
       }
+    }
+
+    async function waitForInitialBattleLoading() {
+      var startedAt=Date.now();
+      while (isInitialQuestionCachePreparing()) {
+        if (Date.now()-startedAt>15000) throw new Error('로컬 문제집 준비 시간이 초과되었습니다. 다시 시작해 주세요.');
+        await delay(50);
+      }
+      if (isLocalQuestionSnapshotUnavailable()) throw new Error('로컬 문제집을 불러오지 못했습니다. 메인 화면에서 문제집을 다시 선택해 주세요.');
+      var images=Array.prototype.slice.call(document.querySelectorAll('#battleShell img')).filter(function(img){return !img.complete;});
+      var assets=images.map(function(img){return new Promise(function(resolve){img.addEventListener('load',resolve,{once:true});img.addEventListener('error',resolve,{once:true});});});
+      if(document.fonts && document.fonts.ready)assets.push(document.fonts.ready);
+      await Promise.race([Promise.all(assets),delay(8000)]);
     }
 
     function setupBattleUi() {
@@ -1655,17 +1674,19 @@
         return '<button class="skill-button rarity-' + escapeHtml(rarityClass) + (shouldHighlightZeroCostSkill ? ' zero-cost-skill-attention' : '') + '" data-ap-cost="' + escapeHtml(apCost) + '" data-skill-id="' + escapeHtml(skill.skillId) + '" data-skill-disabled="' + escapeHtml(isDisabled ? 'true' : 'false') + '" data-unavailable-reason="' + escapeHtml(reason || '') + '"' + disabled + '>' +
           '<span class="skill-button-name">' + escapeHtml(skill.name) + '</span>' +
           renderSkillActionPointGauge(apCost) +
-          '<span class="skill-detail-card rarity-' + escapeHtml(rarityClass) + '" aria-hidden="true">' +
+          '<span class="skill-detail-card hud-skill-detail rarity-' + escapeHtml(rarityClass) + '" aria-hidden="true">' +
+            renderRewardActionPointBadge(apCost) +
             '<span class="skill-detail-header">' +
               '<strong class="skill-detail-name">' + escapeHtml(skill.name) + '</strong>' +
-              renderSkillActionPointGauge(apCost) +
             '</span>' +
             '<span class="skill-detail-meta">' + escapeHtml(rarity) + ' / Lv.' + escapeHtml(skill.level || 1) + '</span>' +
             '<span class="skill-detail-description">' + detailDescription + '</span>' +
+            '<span class="hud-skill-footer">' +
             (difficultyBonusText ? '<span class="' + escapeHtml(getSkillDifficultyBonusClass(skill)) + '">' + escapeHtml(difficultyBonusText) + '</span>' : '') +
             (useLimitText ? '<span class="skill-detail-line">' + escapeHtml(useLimitText) + '</span>' : '') +
             (cooldown ? '<span class="skill-detail-line">' + escapeHtml(cooldown) + '</span>' : '') +
             buildSkillFlavorDescription(skill, description || reasonText) +
+            '</span>' +
           '</span>' +
         '</button>';
       }).join('') + '<button class="secondary skill-cancel-button" type="button" onclick="closeSkillPanel()">취소</button>';
@@ -2379,6 +2400,20 @@
 
     function getRewardIconUrl(type, reward) {
       if (!ASSET_BASE_URL) return '';
+      if (type === 'stat' && reward) {
+        var statFiles = {
+          attack: 'Attack.png',
+          defense: 'Defence.png',
+          questionEfficiency: 'Question.png',
+          criticalDamage: 'CritDamage.png',
+          accuracy: 'Accuracy.png',
+          criticalRate: 'CritChance.png',
+          evasion: 'Dodge.png',
+          hp: 'Health.png',
+          hpRegen: 'HealthRegen.png'
+        };
+        if (statFiles[reward.targetId]) return ASSET_BASE_URL + '/Resources/Stats/' + statFiles[reward.targetId];
+      }
       if ((type === 'skill' || type === 'skillUpgrade') && reward) {
         var conceptFiles = {
           '타격': 'Strike', '암살': 'Assassin', '중독': 'Poison',
@@ -2784,7 +2819,7 @@
             progress.level++;
             levelPops.push(presentLevelUpFlash().then(async function() {
               await new Promise(function(resolve){window.setTimeout(resolve,350);});
-              if(deathRewardPresentation && deathRewardPresentation.view && !levelAllocationActive && !workbookDeadlineExpired) {
+              if(deathRewardPresentation && deathRewardPresentation.view && deathRewardPresentation.view.battle.status!=='victory' && !levelAllocationActive && !workbookDeadlineExpired) {
                 await presentLevelStatAllocation(deathRewardPresentation.view);
               }
             }));
@@ -7358,6 +7393,7 @@
         Object.keys(names).forEach(function(word){if(names[word]===concept)delete names[word];});
         configured[concept].slice(0,40).forEach(function(word){if(typeof word==='string' && word.trim() && word.length<=40)names[word.trim()]=concept;});
       });
+      Object.assign(names,{'고정 피해':'fixed-damage','고정피해':'fixed-damage','행동력':'action-point','치명타 확률':'critical-rate','치명타확률':'critical-rate','치명타 피해':'critical-damage','치명타피해':'critical-damage'});
       var words=Object.keys(names).sort(function(a,b){return b.length-a.length;});
       if(!words.length)return String(html);
       var pattern=new RegExp(words.map(function(word){return word.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');}).join('|'),'g');

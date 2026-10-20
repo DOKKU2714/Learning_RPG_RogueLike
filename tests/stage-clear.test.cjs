@@ -35,3 +35,18 @@ test('turn playback waits for clear presentation before level and item rewards',
   assert.ok(clear < playback.indexOf('await presentLevelStatAllocation(currentView)'));
   assert.ok(clear < playback.indexOf('await presentMonsterItemDrops(currentView)'));
 });
+
+test('kill XP defers stat rewards on victory while non-final kills still offer them', async () => {
+  for (const status of ['victory','active']) {
+    let offered=0;
+    const nodes={playerExpTrack:{getBoundingClientRect:()=>({left:0,top:0,width:10,height:10})},playerExpFill:{style:{}},experienceGainText:{remove(){}}};
+    const c=vm.createContext({deathRewardPresentation:{view:{battle:{status}},progress:{level:1,xp:7}},
+      levelAllocationActive:false,workbookDeadlineExpired:false,
+      document:{getElementById:id=>nodes[id]||null,querySelector:()=>null,createElement:()=>({style:{},setAttribute(){},remove(){}}),body:{appendChild(){}}},
+      window:{innerWidth:1000,innerHeight:700,setTimeout:fn=>fn(),matchMedia:()=>({matches:true})},
+      cssEscape:s=>s,renderPlayerExperience(){},playBattleSound(){},presentLevelUpFlash:()=>Promise.resolve(),presentLevelStatAllocation:()=>{offered++;return Promise.resolve();}});
+    vm.runInContext(extract('animateExperienceRewards'),c);
+    await c.animateExperienceRewards([{type:'experience',monsterId:'m',amount:1,before:{level:1,xp:7},after:{level:2,xp:0}}]);
+    assert.equal(offered,status==='victory'?0:1,status);
+  }
+});

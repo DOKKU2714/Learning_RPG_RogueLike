@@ -38,7 +38,7 @@ document.addEventListener('keydown',handleRewardKeyboard);showCards(['common','r
      apCenterX:ab.left+ab.width/2-b.left,apCenterY:ab.top+ab.height/2-b.top,apSize:parseFloat(getComputedStyle(ap.querySelector('b')).fontSize),contained:db.left>=b.left && db.right<=b.right+1 && db.bottom<=b.bottom,
      rise:parseFloat(getComputedStyle(card).getPropertyValue('--aura-rise')),spread:parseFloat(getComputedStyle(card).getPropertyValue('--aura-spread'))};
    }));
-   assert.ok(before.every(r=>r.contained && r.font==='13px' && r.numberFont===r.font && Math.abs(r.apCenterX)<=2 && Math.abs(r.apCenterY)<=2 && r.apSize===23));
+   assert.ok(before.every(r=>r.contained && r.font==='13px' && r.numberFont===r.font && Math.abs(r.apCenterX-8)<=2 && Math.abs(r.apCenterY-8)<=2 && r.apSize===23));
    assert.equal(await page.locator('.reward-ap-badge .ap-pip.filled').count(),3);
    const numberFits=await page.evaluate(()=>[0,1,12,999].every(cost=>{
     const card=document.querySelector('.reward-choice-card'),original=card.querySelector('.reward-ap-badge');
@@ -94,10 +94,11 @@ document.addEventListener('keydown',handleRewardKeyboard);showCards(['common','r
    await page.mouse.move(1,1);await page.waitForTimeout(400);
    assert.equal(await first.locator('.reward-aura-hover').evaluate(n=>getComputedStyle(n).opacity),'0','hover aura fades out');
    const idle=await page.locator('.reward-choice-card').evaluateAll(cards=>cards.map(card=>({display:getComputedStyle(card.querySelector('.reward-aura-idle')).display,
-    opacity:Number(getComputedStyle(card.querySelector('.reward-aura-idle')).opacity),spikes:getComputedStyle(card.querySelector('.reward-aura-hover'),'::after').clipPath})));
+    opacity:Number(getComputedStyle(card.querySelector('.reward-aura-idle')).opacity),rays:getComputedStyle(card.querySelector('.reward-aura-hover'),'::after').backgroundImage,
+    edges:['top','right','bottom','left'].map(edge=>parseFloat(getComputedStyle(card.querySelector('.reward-aura-hover'),'::after')[edge]))})));
    assert.equal(idle[0].display,'none');assert.equal(idle[1].display,'none');assert.equal(idle[2].display,'block');
    assert.ok(idle[2].opacity>0 && idle[2].opacity<.4,'unique aura stays faintly visible without hover');
-   assert.ok(idle.every(r=>r.spikes.startsWith('polygon(')),'aura has pointed digital rays');
+   assert.ok(idle.every(r=>r.rays.includes('repeating-conic-gradient')&&r.edges.every(edge=>edge<0)),'dense rays extend beyond all four card edges');
    await page.keyboard.press('2');assert.equal(await page.evaluate(()=>selectedRewardId),'r1');
    await page.keyboard.press('Enter');assert.equal(await page.evaluate(()=>confirmations),1);
    await page.evaluate(()=>{view.choices=view.choices.map((r,i)=>({rewardId:r.rewardId,type:'stat',rarity:r.rarity,targetId:['attack','accuracy','criticalRate'][i],value:[15,10,1.5][i],description:['공격력 +15','명중률 +10%p','치명타 확률 +1.5%p'][i]}));renderRewardChoices(view);});
