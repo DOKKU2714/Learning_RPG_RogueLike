@@ -26,7 +26,7 @@ function renderRewardRarityGems(){return '';} function buildRewardHoverDescripti
 function formatRewardMeta(){return '스탯 증가';} function buildRewardSkillDetailLines(){return '';}
 function getLevelRewardRerollQuestion(){return {questionId:'q'};}
 window.LearningRpgLocalRunEngine={pendingStatRewards:getPendingLevelStatRewards_,statRewardChoices:(_,b)=>getLevelStatRewardChoices_(b),claimStatReward:(_,b,id)=>applyLevelStatReward_(b,id),skills:()=>[]};
-${['getStatDescription','bindHoverTooltips','positionHoverTooltip','getPlayerLevelProgress','renderPlayerExperience','animateExperienceRewards','presentLevelUpFlash','presentLevelStatAllocation','renderRewardChoices','renderRewardDetailCard','selectRewardCandidate','confirmRewardChoice','selectRewardChoice','handleRewardKeyboard','spawnShieldEffect','spawnFloatingText'].map(name=>extract(client,name)).join('\n')}
+${['getStatDescription','bindGlossaryTooltips','bindHoverTooltips','positionHoverTooltip','getPlayerLevelProgress','renderPlayerExperience','animateExperienceRewards','presentLevelUpFlash','presentLevelStatAllocation','renderRewardChoices','renderRewardDetailCard','selectRewardCandidate','confirmRewardChoice','selectRewardChoice','handleRewardKeyboard','spawnShieldEffect','spawnFloatingText'].map(name=>extract(client,name)).join('\n')}
 bindHoverTooltips();document.addEventListener("keydown",handleRewardKeyboard);
 `;
 (async()=>{

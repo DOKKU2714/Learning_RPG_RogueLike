@@ -1988,11 +1988,12 @@ function buildAutoSkillUpgradeReward_(skill) {
 }
 
 function adaptRewardForChoice_(reward, ownedSkills) {
-  if (reward.type === REWARD_TYPES.SKILL && hasOwnedSkill_(ownedSkills, reward.targetId)) {
-    return buildSkillUpgradeRewardView_(reward);
-  }
-  if (reward.type === REWARD_TYPES.SKILL_UPGRADE) {
-    return buildSkillUpgradeRewardView_(reward);
+  if (reward.type === REWARD_TYPES.SKILL_UPGRADE ||
+      reward.type === REWARD_TYPES.SKILL && hasOwnedSkill_(ownedSkills, reward.targetId)) {
+    var owned = normalizeOwnedSkills_(ownedSkills).filter(function(skill) { return skill.skillId === reward.targetId; })[0];
+    return buildSkillUpgradeRewardView_(Object.assign({}, reward, {
+      level: Number(owned && owned.level || 1) + Math.max(1, Number(reward.value || 1)),
+    }));
   }
   return reward;
 }

@@ -1394,6 +1394,21 @@ function isMonsterKitMeleeHit_(context) {
 
 function applyMonsterKitActions_(battle, monster, entry, actions, payload) {
   var hitLanded = false;
+  var statusEvents = {};
+  function statusEvent(detail) {
+    detail = detail || {type:'buff'};
+    var key = detail.type === 'debuff' ? 'player' : 'monster';
+    var previous = statusEvents[key];
+    if (previous && battle.lastTurnEvents[battle.lastTurnEvents.length - 1] === previous &&
+        (previous.type === detail.type || previous.type === 'buff' || detail.type === 'buff')) {
+      var type = detail.type === 'buff' ? previous.type : detail.type;
+      if (detail.heal !== undefined) detail.heal += Number(previous.heal || 0);
+      if (detail.shield !== undefined) detail.shield += Number(previous.shield || 0);
+      Object.assign(previous, detail, {type:type});
+      return;
+    }
+    statusEvents[key] = monsterKitEvent_(battle, monster, entry, detail);
+  }
   (actions || []).forEach(function(action, index) {
     if (action.requiresHit && !hitLanded) return;
     var target = action.target === 'player' ? battle.player : monster;
@@ -1420,22 +1435,22 @@ function applyMonsterKitActions_(battle, monster, entry, actions, payload) {
     } else if (action.op === 'heal') {
       var previous = Number(monster.currentHp || 0);
       monster.currentHp = Math.min(Number(monster.maxHp), previous + Math.max(0,Number(action.value || 0)));
-      monsterKitEvent_(battle, monster, entry, {type:'heal',heal:monster.currentHp-previous});
+      statusEvent({type:'heal',heal:monster.currentHp-previous});
       return;
     } else if (action.op === 'shield') {
       var shield = Math.max(0, Number(action.value || 0));
       monster.shield = Number(monster.shield || 0) + shield;
       effect.behavior = {retainShield:true}; effect.retainedShield = shield;
-      monsterKitEvent_(battle, monster, entry, {type:'guard',shield:shield});
+      statusEvent({type:'guard',shield:shield});
     } else if (action.op === 'overrideSkill') {
       monsterKitState_(monster).overrides[action.skillId] = {multiplier:Number(action.multiplier), hitCount:Number(action.hitCount || 1)};
-      monsterKitEvent_(battle, monster, entry);
+      statusEvent();
       return;
     } else {
       throw new Error('지원하지 않는 몬스터 스킬 동작: ' + action.op);
     }
     applyEffect(target, effect, {source:monster.instanceId || monster.monsterId, skillId:entry && entry.skill.skillId || '',turn:battle.turn});
-    if (action.op !== 'shield') monsterKitEvent_(battle, monster, entry, {type:action.target === 'player' ? 'debuff' : 'buff',
+    if (action.op !== 'shield') statusEvent({type:action.target === 'player' ? 'debuff' : 'buff',
       statusSnapshot:{effects:JSON.parse(JSON.stringify(target.effects || []))}});
   });
 }
@@ -2065,6 +2080,7 @@ function dealDamageToPlayer_(battleState, damage, attacker, damageContext) {
   battleState.player.shield = Math.max(0, shieldBefore - shieldDamage);
   getSharedRuleEngine_().spendRetainedShield(battleState.player, shieldDamage, shieldBefore);
   battleState.player.hp = Math.max(0, Number(battleState.player.hp || 0) - hpDamage);
+  getSharedRuleEngine_().reviveAfterDamage(battleState.player, battleState);
   if (shieldDamage > 0) {
     processSkillTriggers_(battleState, 'onBlock', { damage: totalDamage, shieldDamage: shieldDamage, hpDamage: hpDamage, target:attacker, actor:'monster',damageKind:context.damageKind });
   }
@@ -3396,6 +3412,7 @@ function getBattleClientConfig_() {
     questionActionStartDelayMs: clampClientDelay_(settings.questionActionStartDelayMs, 0, 0, 2000),
     firstStageIntroLines: getFirstStageIntroLines_(settings),
     skillConceptKeywords: getSkillConceptKeywords_(settings),
+    glossary: getBattleGlossary_(),
     minAnswerEfficiency: getClientNumberSetting_(settings.minAnswerEfficiency, GAME_RULES.MIN_ANSWER_EFFICIENCY),
     maxAnswerEfficiency: getClientNumberSetting_(settings.maxAnswerEfficiency, GAME_RULES.MAX_ANSWER_EFFICIENCY),
     extraWrongEfficiencyPenalty: getClientNumberSetting_(settings.extraWrongEfficiencyPenalty, GAME_RULES.EXTRA_WRONG_EFFICIENCY_PENALTY),
@@ -3403,6 +3420,14 @@ function getBattleClientConfig_() {
     questionTimePerDifficultySec: Number(timeSettings.questionTimePerDifficultySec || GAME_RULES.QUESTION_TIME_PER_DIFFICULTY_SEC),
     maxQuestionTimeSec: Number(timeSettings.maxQuestionTimeSec || 0),
   };
+}
+
+function getBattleGlossary_() {
+  return readTableCached_(DB_SHEETS.GLOSSARY, 600).filter(function(row) {
+    return typeof row.keyword === 'string' && row.keyword.trim() && typeof row.description === 'string' && row.description.trim();
+  }).map(function(row) {
+    return {keyword: row.keyword.trim(), description: row.description.trim()};
+  });
 }
 
 function getSkillConceptKeywords_(settings) {

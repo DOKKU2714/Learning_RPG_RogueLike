@@ -6,13 +6,14 @@ const battle = fs.readFileSync('Battle.html', 'utf8');
 const styles = fs.readFileSync('UiStyles.html', 'utf8');
 const extract = name => battle.match(new RegExp('    function ' + name + '\\([^]*?\\n    \\}'))[0];
 const preview = vm.createContext({ escapeHtml: text => String(text), getRewardRarityLabel: () => '일반',
+  getRewardIconUrl: () => '',
   getSkillActionPointCost: () => 1, buildRewardSkillDetailLines: () => '',
   buildSkillDetailDescription: () => '적에게 피해를 입힙니다.',
   getClientSkillUpgradeValue: (skill, key) => key === 'damage' ? (skill.level - 1) * 3 : 0,
   getSkillDisplayMetrics: skill => ({ damage: 15 + (skill.level - 1) * 3,
     minDamage: 15 + (skill.level - 1) * 3, maxDamage: 15 + (skill.level - 1) * 3 }),
 });
-for (const name of ['renderSkillActionPointGauge', 'renderSkillUpgradeCompareDetailCard', 'renderSkillUpgradeComparePanel', 'buildSkillUpgradeChangeSummary', 'buildSkillFlavorDescription'])
+for (const name of ['renderSkillActionPointGauge', 'renderSkillUpgradeCompareDetailCard', 'renderSkillUpgradeComparePanel', 'highlightSkillUpgradeNumbers', 'buildSkillUpgradeChangeSummary', 'buildSkillFlavorDescription'])
   vm.runInContext(extract(name), preview);
 const upgradeCard = preview.renderSkillUpgradeCompareDetailCard({ value: 1,
   skillDetail: { name: '강화 공격', level: 2 } }, 'common', '강화 공격');
@@ -45,8 +46,7 @@ const upgradeCard = preview.renderSkillUpgradeCompareDetailCard({ value: 1,
     }
     await page.locator('[data-reward-id="b"]').hover();
     await page.waitForTimeout(180);
-    assert.match(await page.locator('.reward-upgrade-changes').innerText(), /피해 15 → 18 \(\+3\)/);
-    assert.equal(await page.locator('.reward-upgrade-changes').evaluate(el => getComputedStyle(el.closest('.reward-detail-card')).opacity), '1');
+    assert.equal(await page.locator('.reward-upgrade-changes').count(), 0);
     assert.equal(await page.evaluate(() => confirmations), 0);
     await page.keyboard.press('Enter');
     assert.equal(await page.evaluate(() => confirmations), 1);

@@ -18,7 +18,7 @@ const startingStats = `var localGameDataSnapshot={basePlayerStats:{hp:25,attack:
 const funcs = ['getBattleQuickStatSignature','getBattleQuickItemCounts','saveBattleQuickAccessState','updateBattleQuickAccess',
   'markBattleQuickAccessRead','renderBattleQuickAccessIcons','toggleBattleStats','closeBattleStats','toggleBattleInventory',
   'toggleBattleMenu','closeBattleMenu','showBattleStats','getStatDescription','getBattleStatStartingStats','formatEffectiveStat','buildBattleStatTooltipContent','showBattleItems','closeItemModal',
-  'getOwnedItemDetailsForModal','renderOwnedItemCard','buildItemEffectDescription','buildItemFlavorDescription','bindHoverTooltips','positionHoverTooltip','hideActiveHoverTooltips'];
+  'getOwnedItemDetailsForModal','renderOwnedItemCard','buildItemEffectDescription','buildItemFlavorDescription','bindGlossaryTooltips','bindHoverTooltips','positionHoverTooltip','hideActiveHoverTooltips'];
 const html = '<!doctype html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">'+styles+touch+
   '</head><body>'+body.replaceAll('<?= getAssetBaseUrl_() ?>','https://assets.test')+'<script>'+script+
   startingStats+funcs.map(extract).join('\n')+'\nbindHoverTooltips();updateBattleQuickAccess(currentView);</script></body></html>';

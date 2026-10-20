@@ -24,7 +24,7 @@ async function populate(page,count) {
   await page.evaluate(({count,image})=>{
     document.getElementById('monsterLayer').innerHTML=Array.from({length:count},(_,i)=>
       `<article class="monster-slot monster-count-${count}"><div class="thin-hp-bar monster-hp-bar"><span class="hp-current" style="width:65%"></span><span class="monster-shield-fill" style="left:65%;width:20%"></span><div class="monster-hp-text">65 <span class="shield-value">+ 20</span> / 100</div></div><div class="monster-intent" data-tooltip="다음 턴 공격 5"><span>⚔ 5</span></div><div class="monster-sprite-placeholder compact-monster monster-image-sprite"><img class="monster-art" src="${image}"></div><div class="monster-display-name">몬스터 ${i+1}</div></article>`).join('');
-    document.getElementById('actionPanelApGauge').innerHTML='<span class="ap-label">행동력</span><span class="ap-icons"><span class="ap-pip filled"></span><span class="ap-pip filled"></span><span class="ap-pip filled"></span></span><strong>3 / 3</strong><span class="ap-cost-preview"></span>';
+    document.getElementById('actionPanelApGauge').innerHTML='<span class="ap-label">행동력</span><span class="ap-icons"><span class="ap-pip filled"></span><span class="ap-pip filled"></span><span class="ap-pip filled"></span></span><span class="ap-cost-preview"></span>';
     document.getElementById('playerStatusRow').innerHTML='<span class="status-icon buff" data-tooltip="힘: 공격력 +1">↑<em class="status-stacks">1</em></span>';
     document.getElementById('playerHpFill').style.width='70%';
     document.getElementById('playerHpText').innerHTML='70 <span class="shield-value">+ 10</span> / 100';

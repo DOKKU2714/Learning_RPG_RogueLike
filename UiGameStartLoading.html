@@ -6,6 +6,7 @@
   #gameStartTip {all:unset;display:block;position:absolute;left:max(5vw,env(safe-area-inset-left));bottom:max(7vh,env(safe-area-inset-bottom));max-width:min(720px,calc(100% - 240px));padding:12px 0;border:0;outline:0;box-shadow:none;appearance:none;background:transparent;color:#ddd;text-align:left;line-height:1.8;font-size:clamp(14px,1.6vw,19px);font-family:var(--font-readable, sans-serif);cursor:pointer;transition:opacity 1000ms ease;-webkit-tap-highlight-color:transparent;}
   #gameStartTip::before,#gameStartTip::after {content:none;display:none;}
   #gameStartTip small {display:block;margin-bottom:10px;color:#888;font-size:11px;letter-spacing:.16em;}
+  #gameStartTipText {white-space:pre-wrap;}
   #gameStartTip:is(:hover,:active,:focus,:focus-visible) {border:0;outline:0;box-shadow:none;background:transparent;transform:none;filter:none;}
   #gameStartLoadingStatus {position:absolute;right:max(5vw,env(safe-area-inset-right));bottom:max(8vh,env(safe-area-inset-bottom));display:flex;align-items:center;gap:12px;color:#ddd;font-family:var(--font-readable,sans-serif);font-size:16px;transition:opacity 1000ms ease;}
   #gameStartSpinner {width:32px;height:32px;box-sizing:border-box;border:2px solid #ffffff26;border-top-color:#eee;border-radius:50%;animation:game-start-spin 1100ms linear infinite;}
@@ -31,7 +32,14 @@
   function loadTips(){
     try{tips=JSON.parse(sessionStorage.getItem('learningRpgLoadingTips') || '[]');if(!Array.isArray(tips))tips=[];}catch(error){tips=[];}
     if(!embedded && typeof google!=='undefined' && google.script && google.script.run){
-      google.script.run.withSuccessHandler(function(rows){tips=Array.isArray(rows)?rows:[];tipIndex=0;saveTips();renderTip();}).withFailureHandler(function(){}).getGameStartTips();
+      google.script.run.withSuccessHandler(function(rows){
+        var current=tips[tipIndex%tips.length];
+        tips=Array.isArray(rows)?rows:[];
+        var index=current?tips.findIndex(function(tip){return tip.tipId===current.tipId;}):-1;
+        tipIndex=index>=0?index:Math.floor(Math.random()*tips.length) || 0;
+        if(index<0)tipChangedAt=Date.now();
+        saveTips();renderTip();
+      }).withFailureHandler(function(){}).getGameStartTips();
     }
   }
   function renderTip(){
@@ -39,25 +47,45 @@
     var tip=tips.length?tips[tipIndex%tips.length]:null;
     document.getElementById('gameStartTip').style.visibility=tip?'visible':'hidden';
     if(!tip)return;
-    var colors={'일반':'#f1f1f1','드문':'#77f08c','희귀':'#63a8ff','영웅':'#df72ff','전설':'#ff8d36','고유':'#ff4a4a'};
-    String(tip.text || '').split(/(일반|드문|희귀|영웅|전설|고유)/g).forEach(function(text){
-      if(colors[text]){var span=document.createElement('span');span.textContent=text;span.style.color=colors[text];target.appendChild(span);}
-      else target.appendChild(document.createTextNode(text));
+    appendTipText(target,tip.text);
+  }
+  function appendTipText(target,text){
+    var colors={'일반':'#f1f1f1','드문':'#77f08c','희귀':'#63a8ff','영웅':'#df72ff','전설':'#ff8d36','고유':'#ff4a4a'},stack=[];
+    String(text || '').split(/(\[b\]|\[i\]|\[color=#[0-9a-fA-F]{6}\]|\[\/(?:b|i|color)\])/g).forEach(function(token){
+      var open=token.match(/^\[(b|i|color)(?:=(#[0-9a-fA-F]{6}))?\]$/);
+      if(open){stack.push({tag:open[1],color:open[2]});return;}
+      var close=token.match(/^\[\/(b|i|color)\]$/);
+      if(close && stack.length && stack[stack.length-1].tag===close[1]){stack.pop();return;}
+      var color='';stack.forEach(function(style){if(style.color)color=style.color;});
+      token.split(/(일반|드문|희귀|영웅|전설|고유)/g).forEach(function(part){
+        if(!part)return;
+        if(!stack.length && !colors[part]){target.appendChild(document.createTextNode(part));return;}
+        var span=document.createElement('span');span.textContent=part;
+        if(color || colors[part])span.style.color=color || colors[part];
+        if(stack.some(function(style){return style.tag==='b';}))span.style.fontWeight='bold';
+        if(stack.some(function(style){return style.tag==='i';}))span.style.fontStyle='italic';
+        target.appendChild(span);
+      });
     });
   }
   function nextTip(){tipIndex++;tipChangedAt=Date.now();renderTip();}
+  function tipDuration(){
+    var tip=tips[tipIndex%tips.length],seconds=Number(tip && tip.displaySeconds);
+    return (isFinite(seconds) && seconds>0?seconds:5)*1000;
+  }
   document.getElementById('gameStartTip').onclick=nextTip;
   document.getElementById('gameStartLoadingBack').onclick=function(){abort();if(typeof global.resetMainNavigation==='function')global.resetMainNavigation();};
   function begin(){
     if(active)return;
     // Request while the Start click still carries browser user activation.
     try{if(!document.fullscreenElement && document.documentElement.requestFullscreen)Promise.resolve(document.documentElement.requestFullscreen({navigationUI:'hide'})).catch(function(){});}catch(error){}
-    active=true;finishStarted=false;startedAt=Date.now();tipChangedAt=startedAt;tipIndex=0;
+    active=true;finishStarted=false;startedAt=Date.now();tipChangedAt=startedAt;
     loadTips();
+    tipIndex=Math.floor(Math.random()*tips.length) || 0;
     channel=global.crypto && global.crypto.randomUUID?global.crypto.randomUUID():String(Date.now())+Math.random().toString(36).slice(2);
     root.hidden=false;root.classList.remove('active','finishing');document.getElementById('gameStartLoadingError').hidden=true;
     document.body.classList.add('game-start-loading');renderTip();void root.offsetWidth;root.classList.add('active');
-    tipTimer=global.setInterval(function(){if(Date.now()-tipChangedAt>=5000)nextTip();},250);
+    tipTimer=global.setInterval(function(){if(Date.now()-tipChangedAt>=tipDuration())nextTip();},250);
     dotCount=0;document.getElementById('gameStartLoadingDots').textContent='';
     dotsTimer=global.setInterval(function(){dotCount=(dotCount+1)%4;document.getElementById('gameStartLoadingDots').textContent='.'.repeat(dotCount);},500);
     loadTimer=global.setTimeout(function(){fail('게임 준비 시간이 초과되었습니다. 돌아가서 다시 시작해 주세요.');},120000);
@@ -124,8 +152,8 @@
     finishStarted=true;global.clearTimeout(loadTimer);global.clearInterval(tipTimer);global.clearInterval(dotsTimer);root.classList.add('finishing');
     delay(1000).then(function(){
       if(!active)return;
-      event.source.postMessage({type:'learningRpgStartIntro',channel:channel},event.origin);
       root.hidden=true;document.body.classList.remove('game-start-loading');
+      event.source.postMessage({type:'learningRpgStartIntro',channel:channel},event.origin);
     });
   });
   global.LearningRpgGameStart={begin:begin,navigate:navigate,abort:abort,fail:fail,ready:ready,isActive:function(){return active;},isEmbedded:function(){return embedded;},reportFailure:function(message){if(embedded)postToHost('learningRpgBattleFailed',message);}};

@@ -23,6 +23,7 @@ var DB_SHEETS = Object.freeze({
   BATTLE_LOGS: 'BattleLogs',
   NOTICES: 'Notices',
   LOADING_TIPS: 'LoadingTips',
+  GLOSSARY: 'Glossary',
 });
 
 var DB_COLUMNS = Object.freeze({
@@ -51,7 +52,8 @@ var DB_COLUMNS = Object.freeze({
   REWARDS: ['rewardId', 'type', 'targetId', 'value', 'weight', 'minFloor', 'maxFloor', 'description', 'detailDescription', 'rarity'],
   BATTLE_LOGS: ['battleLogId', 'runId', 'playerId', 'floor', 'stage', 'result', 'summaryJson', 'createdAt'],
   NOTICES: ['noticeId', 'title', 'body', 'active', 'priority', 'startAt', 'endAt', 'updatedAt'],
-  LOADING_TIPS: ['tipId', 'text', 'active', 'sortOrder'],
+  LOADING_TIPS: ['tipId', 'text', 'active', 'sortOrder', 'displaySeconds'],
+  GLOSSARY: ['keyword', 'description'],
 });
 
 var DB_SCHEMA = Object.freeze([
@@ -79,6 +81,7 @@ var DB_SCHEMA = Object.freeze([
   { sheetName: DB_SHEETS.BATTLE_LOGS, headers: DB_COLUMNS.BATTLE_LOGS },
   { sheetName: DB_SHEETS.NOTICES, headers: DB_COLUMNS.NOTICES },
   { sheetName: DB_SHEETS.LOADING_TIPS, headers: DB_COLUMNS.LOADING_TIPS },
+  { sheetName: DB_SHEETS.GLOSSARY, headers: DB_COLUMNS.GLOSSARY },
 ]);
 
 var STATUS = Object.freeze({

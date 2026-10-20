@@ -7,9 +7,13 @@ var rewardSelectionApplying=false,selectedRewardId='',workbookDeadlineExpired=fa
 var currentRewardView={choices:[{rewardId:'up',type:'skillUpgrade',value:1,rarity:'rare',skillDetail:{name:'강화 스킬',level:3}}]};
 function escapeHtml(s){return String(s)} function normalizeRewardRarity(s){return s}
 function buildSkillUpgradeChangeSummary(){return '<span class="reward-upgrade-changes">피해 10 → 15</span>'}
-function renderSkillUpgradeComparePanel(skill,reward,rarity,title,label){return '<strong>'+label+'</strong><span>Lv.'+skill.level+'</span>'}
+function getRewardRarityLabel(){return '일반'} function getRewardIconUrl(){return ''}
+function renderSkillActionPointGauge(){return ''} function getSkillActionPointCost(){return 1}
+function buildRewardSkillDetailLines(){return '<span>쿨타임 2턴</span>'}
+function buildSkillFlavorDescription(){return ''}
+function buildSkillDetailDescription(skill){return '모든 적에게 <strong class="skill-damage-number">'+(13+skill.level)+'</strong> 피해, 발화 '+(1+skill.level)+'중첩. '+(35-5*skill.level)+'% 확률, 발화 2중첩.'}
 function selectRewardChoice(){applied++}
-${['selectRewardCandidate','showSkillUpgradePreview','cancelSkillUpgradePreview','renderSkillUpgradeCompareDetailCard','confirmRewardChoice'].map(extract).join('\n')}
+${['selectRewardCandidate','showSkillUpgradePreview','cancelSkillUpgradePreview','renderSkillUpgradeCompareDetailCard','renderSkillUpgradeComparePanel','highlightSkillUpgradeNumbers','confirmRewardChoice'].map(extract).join('\n')}
 `;
 (async()=>{const browser=await chromium.launch({channel:'msedge',headless:true});try{
  for(const width of [1366,390]){
@@ -18,6 +22,10 @@ ${['selectRewardCandidate','showSkillUpgradePreview','cancelSkillUpgradePreview'
  await page.locator('.reward-choice-card').hover();assert.equal(await page.locator('#rewardUpgradePreview').isVisible(),false);
  await page.locator('.reward-choice-card').click();assert.equal(await page.locator('#rewardChoices').isVisible(),false);
  assert.equal(await page.locator('.reward-upgrade-panel').count(),2);
+ assert.equal(await page.locator('.reward-upgrade-changes').count(),0);
+ assert.equal(await page.locator('.reward-upgrade-panel:not(.reward-upgrade-after) .reward-upgrade-number').count(),0);
+ assert.deepEqual(await page.locator('.reward-upgrade-after .reward-upgrade-number').allTextContents(),['16','4','20%']);
+ assert.ok(await page.locator('.reward-upgrade-after .reward-upgrade-number').first().evaluate(el=>parseFloat(getComputedStyle(el).fontSize)>parseFloat(getComputedStyle(el.closest('.skill-detail-description')).fontSize)));
  assert.match(await page.locator('#rewardUpgradePreview').innerText(),/Lv.2/);assert.match(await page.locator('#rewardUpgradePreview').innerText(),/Lv.3/);
  assert.equal(await page.evaluate(()=>applied),0);
  await page.locator('#rewardUpgradeCancelButton').click();assert.equal(await page.locator('#rewardChoices').isVisible(),true);assert.equal(await page.evaluate(()=>selectedRewardId),'');

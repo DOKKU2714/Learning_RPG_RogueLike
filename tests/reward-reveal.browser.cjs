@@ -7,7 +7,8 @@ const names=['renderRewardChoices','selectRewardCandidate','handleRewardKeyboard
 const script=`
 var workbookDeadlineExpired=false,selectedRewardId='',rewardSelectionApplying=false;
 var currentView={clientConfig:{skillConceptKeywords:{burn:['발화','불씨'],shock:['감전','전류']}}};
-function animateStageClearRegen(){} function renderBattleBackground(){} function fitRewardCardText(){}
+function animateStageClearRegen(){} function renderBattleBackground(){}
+${extract('fitRewardCardText')}
 function escapeHtml(v){return String(v).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;');}
 function normalizeRewardRarity(r){return r;} function getRewardRarityLabel(r){return r;}
 function getRewardDisplayTitle(){return '스킬 획득';} function renderRewardRarityGems(){return '';}
@@ -29,6 +30,15 @@ document.addEventListener('keydown',handleRewardKeyboard);showCards(['common','r
    const page=await browser.newPage({viewport:{width,height:1000}}),errors=[];page.on('pageerror',e=>errors.push(e.message));
    await page.setContent('<html><head>'+styles+'</head><body style="background:#1e2823">'+modal+'<script>'+script+'</script></body></html>');
    assert.equal(await page.locator('.reward-inline-description').count(),3);
+   await page.evaluate(()=>{
+    document.querySelector('.reward-choice-heading').textContent='아주 긴 이름을 가진 전설의 스킬 보상';
+    fitRewardCardText();
+   });
+   const title=await page.locator('.reward-choice-heading').first().evaluate(el=>({
+    whiteSpace:getComputedStyle(el).whiteSpace,fits:el.scrollWidth<=el.clientWidth,
+    size:parseFloat(getComputedStyle(el).fontSize),
+   }));
+   assert.equal(title.whiteSpace,'nowrap');assert.ok(title.fits);assert.ok(title.size<26);
    assert.equal(await page.locator('.reward-detail-card').count(),0);
    assert.deepEqual(await page.locator('.reward-ap-badge b').allTextContents(),['0','1','2']);
    const before=await page.locator('.reward-choice-card').evaluateAll(cards=>cards.map(card=>{

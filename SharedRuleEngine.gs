@@ -109,6 +109,11 @@ var RULE_ENGINE_SHARED = (function() {
       if (rule.operation === 'damage' && ['absorb', 'bypass'].indexOf(rule.shieldPolicy) < 0) throw new Error('Invalid shield policy: ' + key);
       if (rule.operation === 'combatParameter' && (!String(rule.statKey || '').trim() || ['json','text'].indexOf(rule.valueMode)<0)) throw new Error('Invalid combat parameter: '+key);
       if (rule.operation === 'combatParameter' && rule.valueMode === 'json') JSON.parse(rule.valueFormula);
+      if (rule.operation === 'combatParameter' && rule.statKey === 'revive') {
+        var revival = JSON.parse(rule.valueFormula);
+        if (rule.valueMode !== 'json' || rule.triggerTiming !== 'passive' || typeof revival.hpFormula !== 'string' || !revival.hpFormula.trim()) throw new Error('Invalid revival rule: '+key);
+        evaluateFormula(revival.hpFormula, {maxHp:100,value:30}, {warn:function(message) { throw new Error('Invalid revival formula: '+message); }});
+      }
       if (rule.operation === 'triggerActions') {
         var trigger=JSON.parse(rule.valueFormula);
         if(rule.valueMode!=='json' || !Array.isArray(trigger.actions) || ['onBlock','onTurnStart','onTurnEnd'].indexOf(rule.triggerTiming)<0)throw new Error('Invalid effect trigger: '+key);
@@ -414,6 +419,23 @@ var RULE_ENGINE_SHARED = (function() {
     });
   }
 
+  function reviveAfterDamage(target, battle) {
+    if (!battle || target !== battle.player || Number(target.hp) > 0) return false;
+    var effect = (target.effects || []).filter(function(candidate) {
+      return (candidate.rules || []).some(function(rule) { return rule.operation === 'combatParameter' && rule.statKey === 'revive'; });
+    })[0];
+    if (!effect) return false;
+    var rule = effect.rules.filter(function(rule) { return rule.operation === 'combatParameter' && rule.statKey === 'revive'; })[0];
+    var config = JSON.parse(rule.valueFormula);
+    var maxHp = Math.max(1, Number(target.maxHp || target.stats && target.stats.hp || 1));
+    var hp = evaluateFormula(config.hpFormula, {maxHp:maxHp,value:Number(effect.value || 0)}, {warn:function(message) { throw new Error('Invalid revive formula: '+message); }});
+    removeCombatEffect(target, effect.effectId, 'consumed');
+    target.hp = Math.max(1, Math.min(maxHp, Math.round(hp)));
+    battle.lastTurnEvents = battle.lastTurnEvents || [];
+    battle.lastTurnEvents.push({actor:'effect',type:'heal',target:'player',effectId:effect.effectId,heal:target.hp,message:(effect.name || '부활')+' 효과로 체력 '+target.hp+' 부활!'});
+    return true;
+  }
+
   function applyTimedEffectDamage(target, timing, battle, actor, currentTurn) {
     if (!target) return 0;
     if (isCombatInvulnerable(target)) return 0;
@@ -432,6 +454,7 @@ var RULE_ENGINE_SHARED = (function() {
           var hpDamage = Math.min(currentHp, damage - shieldDamage);
           if (target.currentHp !== undefined) target.currentHp = Math.max(0, currentHp - hpDamage);
           else target.hp = Math.max(0, currentHp - hpDamage);
+          reviveAfterDamage(target, battle);
           if (rule.shieldPolicy !== 'bypass') target.shield = Math.max(0, Number(target.shield || 0) - shieldDamage);
           totalDamage += hpDamage + shieldDamage;
           if (battle) {
@@ -449,6 +472,7 @@ var RULE_ENGINE_SHARED = (function() {
         target.currentHp = Math.max(0, Number(target.currentHp || 0) - damage);
       } else {
         target.hp = Math.max(0, Number(target.hp || 0) - damage);
+        reviveAfterDamage(target, battle);
       }
       totalDamage += damage;
       if (battle) {
@@ -536,6 +560,8 @@ var RULE_ENGINE_SHARED = (function() {
       enemyHp: Number(target && target.currentHp || 0),
       enemyMaxHp: Number(target && target.maxHp || 0),
       enemyShield: Number(target && target.shield || 0),
+      targetShock: effectStacks(target, 'effect_v2_shock'),
+      enemyShockTotal: (battle.monsters || []).filter(function(m) { return Number(m.currentHp || 0) > 0; }).reduce(function(sum,m) { return sum + effectStacks(m,'effect_v2_shock'); },0),
       efficiency: Number(efficiency || 0),
       usedStrikeSkillCountThisBattle: Number(tagCounts.strike || tagCounts['타격'] || 0),
       usedStrikeSkillCountThisTurn: Number(turnTagCounts.strike || turnTagCounts['타격'] || 0)
@@ -1271,7 +1297,7 @@ var RULE_ENGINE_SHARED = (function() {
     }
     var totalDamageDealt = 0;
     targets.forEach(function(target) {
-      var perTargetHits = normalizedTargetMode === 'randomEnemies' ? 1 : hitCount;
+      var perTargetHits = normalizedTargetMode === 'randomEnemies' ? 1 : rule.hitCount === undefined ? hitCount : Math.max(0, Math.round(evaluateFormula(rule.hitCount, buildFormulaContext(battle,skill,target,efficiency), options)));
       for (var i = 0; i < perTargetHits; i += 1) {
         var targetContext = buildFormulaContext(battle, skill, target, efficiency);
         var simultaneousGroupId = normalizedTargetMode === 'allEnemies'
@@ -1349,6 +1375,7 @@ var RULE_ENGINE_SHARED = (function() {
       var selfDamage = Number(rule.selfDamage || 0) + Number(rule.failPenalty && rule.failPenalty.selfDamageOnUse || 0);
       selfDamage = Math.max(0, Math.round(evaluateFormula(selfDamage, context, options)));
       battle.player.hp = Math.max(0, Number(battle.player.hp || 0) - selfDamage);
+      reviveAfterDamage(battle.player, battle);
       battle.lastTurnEvents.push({ actor: 'player', type: 'selfDamage', skillId: skill.skillId || '', damage: selfDamage, hpDamage: selfDamage, message: (skill.name || '스킬') + '의 반동으로 ' + selfDamage + ' 피해를 받았습니다.' });
     }
     trackSkillTags(battle, skill);
@@ -1433,6 +1460,7 @@ var RULE_ENGINE_SHARED = (function() {
   }
 
   return {
+    reviveAfterDamage:reviveAfterDamage,
     effectStacks:effectStacks, consumeEffectStacks:consumeEffectStacks, transferEffectStacks:transferEffectStacks,
     removeCombatEffect:removeCombatEffect, readCombatBehavior:readCombatBehavior,
     combatRuntime:combatRuntime, beginCombatAction:beginCombatAction, recordCombatEvent:recordCombatEvent,

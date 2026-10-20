@@ -1156,7 +1156,9 @@ function decideMonsterItemDrop_(battle, dropId, claim) {
 
 function validateMonsterDropsForCommit_(run, serverBattle, receivedBattle) {
   var initial=serverBattle.monsterItemDrops || {},received=receivedBattle.monsterItemDrops || {};
-  var expectedItems=normalizeOwnedItems_(safeJsonParse_(run.itemsJson,[]));
+  // The run inventory may already include this battle's drops after an earlier save.
+  var startingItems=serverBattle.itemDropStartingItems;
+  var expectedItems=normalizeOwnedItems_(Array.isArray(startingItems) ? startingItems : safeJsonParse_(run.itemsJson,[]));
   var simulation={battleId:serverBattle.battleId || receivedBattle.battleId,stage:serverBattle.stage || receivedBattle.stage,
     player:{items:expectedItems},itemDropStartingItems:normalizeOwnedItems_(serverBattle.itemDropStartingItems || expectedItems),
     monsterItemDrops:JSON.parse(JSON.stringify(initial))};
@@ -1171,7 +1173,7 @@ function validateMonsterDropsForCommit_(run, serverBattle, receivedBattle) {
       (canonical.status==='none' ? status!=='none' : ['pending','claimed','ignored'].indexOf(status)<0))throw new Error('아이템 드롭 기록이 올바르지 않습니다.');
     var previous=initial[id] && initial[id].status;
     if((previous==='claimed' || previous==='ignored') && previous!==status)throw new Error('이미 결정한 아이템입니다.');
-    if(status==='claimed' && previous!=='claimed'){
+    if(status==='claimed' && (Array.isArray(startingItems) || previous!=='claimed')){
       var existing=expectedItems.filter(function(item){return item.itemId===canonical.reward.targetId;})[0];
       if(existing)existing.count+=1;else expectedItems=addItemToOwnedItems_(expectedItems,canonical.reward.targetId);
     }

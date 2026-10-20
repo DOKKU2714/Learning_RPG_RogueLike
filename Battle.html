@@ -831,7 +831,8 @@
       preloadMissingBattleQuestionCache();
       startWorkbookDeadlineMonitor();
       renderBattle(currentView);
-      if (window.LearningRpgGameStart && window.LearningRpgGameStart.isEmbedded()) {
+      var loadingEntry = window.LearningRpgGameStart && window.LearningRpgGameStart.isEmbedded();
+      if (loadingEntry) {
         setBattleInputLocked(true);
         await waitForInitialBattleLoading();
         await window.LearningRpgGameStart.ready();
@@ -858,7 +859,7 @@
         finishBattleStartFade();
         showDefeatSequence();
       } else {
-        startBattleEntrance();
+        startBattleEntrance(loadingEntry);
       }
     }
 
@@ -1206,12 +1207,12 @@
       pushLog('이곳은 아무도 없습니다. 행동을 선택하세요');
     }
 
-    function startBattleEntrance() {
+    function startBattleEntrance(replayIntro) {
       if (isFloorIntermissionView(currentView)) {
         startFloorIntermissionEntrance();
         return;
       }
-      if (hasSeenStageEntranceIntro()) {
+      if (!replayIntro && hasSeenStageEntranceIntro()) {
         skipStageEntranceIntro();
         return;
       }
@@ -1292,6 +1293,7 @@
     }
 
     function bindHoverTooltips() {
+      bindGlossaryTooltips();
       function alignSkillDetail(event) {
         var target=event.target.closest && event.target.closest('.skill-button, .action-detail-button, .reward-choice-card');
         if(!target)return;
@@ -1395,6 +1397,79 @@
       }
     }
 
+    function bindGlossaryTooltips() {
+      var selector = '.skill-button, .action-detail-button, .reward-choice-card, .reward-upgrade-panel, .battle-stat-row, .item-card, [data-stat-reward]';
+      var panel = document.createElement('aside'), activeCard = null, hideTimer = null;
+      panel.id = 'glossaryTooltip';
+      panel.className = 'glossary-tooltip';
+      panel.setAttribute('role', 'tooltip');
+      panel.setAttribute('aria-hidden', 'true');
+      document.body.appendChild(panel);
+      function hide() {
+        window.clearTimeout(hideTimer);
+        panel.classList.remove('active');
+        panel.setAttribute('aria-hidden', 'true');
+        if (activeCard) {
+          var ids = (activeCard.getAttribute('aria-describedby') || '').split(/\s+/).filter(function(id) { return id && id !== panel.id; });
+          if (ids.length) activeCard.setAttribute('aria-describedby', ids.join(' '));
+          else activeCard.removeAttribute('aria-describedby');
+        }
+        activeCard = null;
+      }
+      function show(event) {
+        if (panel.contains(event.target)) { window.clearTimeout(hideTimer); return; }
+        var card = event.target.closest && event.target.closest(selector);
+        if (!card) return;
+        window.clearTimeout(hideTimer);
+        if (card === activeCard && panel.classList.contains('active')) return;
+        hide();
+        var entries = currentView && currentView.clientConfig && currentView.clientConfig.glossary || [];
+        var text = card.textContent, seen = Object.create(null);
+        var matches = entries.filter(function(entry) {
+          if (!entry.keyword || !entry.description || seen[entry.keyword] || text.indexOf(entry.keyword) < 0) return false;
+          seen[entry.keyword] = true;
+          return true;
+        });
+        if (!matches.length) return;
+        activeCard = card;
+        panel.innerHTML = matches.map(function(entry) {
+          return '<section><strong>' + escapeHtml(entry.keyword) + '</strong><p>' + escapeHtml(entry.description) + '</p></section>';
+        }).join('');
+        panel.classList.add('active');
+        panel.setAttribute('aria-hidden', 'false');
+        card.setAttribute('aria-describedby', ((card.getAttribute('aria-describedby') || '') + ' ' + panel.id).trim());
+        window.requestAnimationFrame(function() {
+          if (activeCard !== card) return;
+          var detail = card.querySelector('.skill-detail-card, .reward-detail-card');
+          var anchor = detail && window.getComputedStyle(detail).visibility !== 'hidden' && Number(window.getComputedStyle(detail).opacity) > 0 ? detail : card;
+          var rect = anchor.getBoundingClientRect();
+          panel.style.width = Math.min(210, Math.max(140, rect.width * 0.8)) + 'px';
+          var width = panel.offsetWidth, height = panel.offsetHeight;
+          var right = window.innerWidth - rect.right - 12, left = rect.left - 12;
+          var x = right >= width ? rect.right + 12 : left >= width ? rect.left - width - 12 : rect.left;
+          var y = right >= width || left >= width ? rect.top : rect.bottom + 12;
+          if (y + height > window.innerHeight - 8) y = Math.max(8, rect.top - height - 12);
+          panel.style.left = Math.max(8, Math.min(window.innerWidth - width - 8, x)) + 'px';
+          panel.style.top = Math.max(8, Math.min(window.innerHeight - height - 8, y)) + 'px';
+        });
+      }
+      document.addEventListener('mouseover', show);
+      document.addEventListener('focusin', show);
+      document.addEventListener('mouseout', function(event) {
+        if (!activeCard) return;
+        var next = event.relatedTarget;
+        if (next && (activeCard.contains(next) || panel.contains(next))) return;
+        hideTimer = window.setTimeout(hide, 180);
+      });
+      document.addEventListener('focusout', function(event) {
+        if (activeCard && !activeCard.contains(event.relatedTarget)) hide();
+      });
+      document.addEventListener('keydown', function(event) { if (event.key === 'Escape') hide(); });
+      document.addEventListener('click', function(event) { if (!panel.contains(event.target)) hide(); });
+      window.addEventListener('resize', hide);
+      window.addEventListener('scroll', function(event) { if (!panel.contains(event.target)) hide(); }, true);
+    }
+
     function positionHoverTooltip(tooltip, target, event, stackIndex) {
       if (!tooltip) return;
       var width = tooltip.offsetWidth || 220;
@@ -1417,7 +1492,7 @@
     }
 
     function hideActiveHoverTooltips() {
-      ['hoverTooltip', 'statHoverTooltip'].forEach(function(id) {
+      ['hoverTooltip', 'statHoverTooltip', 'glossaryTooltip'].forEach(function(id) {
         var tooltip = document.getElementById(id);
         if (!tooltip) return;
         tooltip.setAttribute('aria-hidden', 'true');
@@ -2533,7 +2608,8 @@
         if (!status) return;
         var category = getDisplayStatusCategory(status, fallbackCategory);
         if (category !== 'buff' && category !== 'debuff') return;
-        var key = category + ':' + String(status.effectId || status.id || status.name || groups.buffs.length + groups.debuffs.length);
+        var displayId = status.monsterKitEffect ? String(status.effectId).replace(/_\d+$/, '') + ':' + String(status.durationType || '') + ':' + String(status.remainingTurns || '') : status.effectId || status.id || status.name;
+        var key = category + ':' + String(displayId || groups.buffs.length + groups.debuffs.length);
         var next = Object.assign({}, status, { category: category });
         if (seen[key]) {
           Object.assign(seen[key], next);
@@ -3026,7 +3102,7 @@
       for (var i = 0; i < max; i += 1) {
         icons += '<span class="ap-pip ' + (i < current ? 'filled' : 'empty') + '" data-ap-index="' + i + '" aria-hidden="true"></span>';
       }
-      var html = '<span class="ap-icons">' + icons + '</span><strong>' + current + ' / ' + max + '</strong><span class="ap-cost-preview" aria-live="polite"></span>';
+      var html = '<span class="ap-label">행동력</span><span class="ap-icons">' + icons + '</span><span class="ap-cost-preview" aria-live="polite"></span>';
       ['actionPanelApGauge'].forEach(function(id) {
         var element = document.getElementById(id);
         if (element) { element.innerHTML = html; element.setAttribute('aria-label', '행동력 ' + current + ' / ' + max); }
@@ -3214,7 +3290,7 @@
         });
       var icon = document.getElementById('battleInventoryIcon');
       if (icon) {
-        var src = ASSET_BASE_URL + '/Resources/InGameMenu/' + (inventoryOpen ? 'Backpack_Open.png' : 'Backpack_Close.png');
+        var src = ASSET_BASE_URL + '/Resources/InGameMenu/' + (inventoryOpen || Number(icon.dataset.pickupCount || 0) > 0 ? 'Backpack_Open.png' : 'Backpack_Close.png');
         if (icon.getAttribute('src') !== src) icon.setAttribute('src', src);
       }
     }
@@ -3393,19 +3469,45 @@
       y=Math.max(edge+48,Math.min(window.innerHeight-edge,y));
       var liftX=Math.min(32,window.innerWidth-edge-x);
       node.style.left = x + 'px'; node.style.top = y + 'px';
+      var bagOpen = false;
       try {
         if (node.animate) {
           var reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
           var dx = destination.left + destination.width/2 - x, dy = destination.top + destination.height/2 - y;
           await node.animate(reduced ? [{opacity:1},{opacity:0}] : [
             {transform:'translate(0,0) scale(.5)',opacity:0},
-            {transform:'translate('+liftX+'px,-48px) scale(1.1)',opacity:1,offset:.23},
-            {transform:'translate('+liftX+'px,-36px) scale(1)',opacity:1,offset:.68},
-            {transform:'translate(' + dx + 'px,' + dy + 'px) scale(.2)',opacity:0}
-          ], {duration:reduced ? 80 : (rarity==='legendary' || rarity==='unique' ? 2100 : 1250),easing:'ease-in-out',fill:'forwards'}).finished;
+            {transform:'translate('+liftX+'px,-48px) scale(1.1)',opacity:1,offset:.3},
+            {transform:'translate('+liftX+'px,-36px) scale(1)',opacity:1}
+          ], {duration:reduced ? 80 : (rarity==='legendary' || rarity==='unique' ? 2200 : 1400),easing:'ease-in-out',fill:'forwards'}).finished;
+          if (!reduced) {
+            if (target.id === 'battleInventoryIcon') {
+              target.dataset.pickupCount = Number(target.dataset.pickupCount || 0) + 1;
+              bagOpen = true;
+              renderBattleQuickAccessIcons();
+            }
+            await Promise.all([
+              node.animate([
+                {transform:'translate('+liftX+'px,-36px) scale(1)',opacity:1},
+                {transform:'translate(' + dx + 'px,' + dy + 'px) scale(.2)',opacity:0}
+              ], {duration:900,easing:'ease-in-out',fill:'forwards'}).finished,
+              bagOpen ? target.animate([
+                {transform:'scale(1) rotate(0deg)'},
+                {transform:'scale(1.16) rotate(-7deg)',offset:.25},
+                {transform:'scale(1.16) rotate(7deg)',offset:.5},
+                {transform:'scale(1.12) rotate(-5deg)',offset:.75},
+                {transform:'scale(1) rotate(0deg)'}
+              ], {duration:1150,easing:'ease-in-out'}).finished : Promise.resolve()
+            ]);
+          }
         }
       } catch (error) { /* A cancelled animation still releases the reward queue. */ }
-      finally { node.remove(); }
+      finally {
+        node.remove();
+        if (bagOpen) {
+          target.dataset.pickupCount = Math.max(0, Number(target.dataset.pickupCount || 0) - 1);
+          renderBattleQuickAccessIcons();
+        }
+      }
     }
 
     var monsterDropActive = false;
@@ -7530,6 +7632,9 @@
       var enemyBurnTotal = aliveBurnTargets.reduce(function(sum,m) { return sum + burnStacks(m); },0);
       Object.assign(context, {targetBurn:burnStacks(burnTarget),selectedBurn:burnStacks(burnTarget),selfBurn:burnStacks(player),
         enemyBurnTotal:enemyBurnTotal,allBurnTotal:enemyBurnTotal+burnStacks(player),selectedMaxHp:Number(burnTarget && burnTarget.maxHp || 0)});
+      function shockStacks(target) { return (target && target.effects || []).reduce(function(sum,e) { return sum + (e.effectId === 'effect_v2_shock' ? Number(e.stacks || 0) : 0); },0); }
+      context.targetShock = shockStacks(burnTarget);
+      context.enemyShockTotal = aliveBurnTargets.reduce(function(sum,m) { return sum + shockStacks(m); },0);
       var previewRange = getSkillPreviewDamageRange(skill);
       var formulaRange = getSkillFormulaDamageRange(rule, context);
       var formulaShieldRange = getSkillFormulaShieldRange(rule, context);
@@ -9211,19 +9316,21 @@
         element.style.fontSize = '';
         element.style.whiteSpace = '';
         element.style.overflowWrap = '';
+        var skillTitle = element.matches('.reward-inline-skill .reward-choice-heading');
+        if (skillTitle) element.style.whiteSpace = 'nowrap';
         var baseSize = parseFloat(window.getComputedStyle(element).fontSize) || 20;
         var card = element.closest('.reward-choice-card');
         var cardStyle = card && window.getComputedStyle(card);
         var availableWidth = card ? Math.min(element.clientWidth, card.clientWidth - (parseFloat(cardStyle.paddingLeft) || 0) - (parseFloat(cardStyle.paddingRight) || 0)) : element.clientWidth;
         if (availableWidth <= 0) return;
-        var minSize = element.classList.contains('reward-choice-heading') ? 14 : 10;
+        var minSize = skillTitle ? 1 : element.classList.contains('reward-choice-heading') ? 14 : 10;
         var size = baseSize;
         element.style.fontSize = size + 'px';
         while (element.scrollWidth > availableWidth && size > minSize) {
           size = Math.max(minSize, size - 1);
           element.style.fontSize = size + 'px';
         }
-        if (element.scrollWidth > availableWidth) {
+        if (!skillTitle && element.scrollWidth > availableWidth) {
           element.style.whiteSpace = 'normal';
           element.style.overflowWrap = 'anywhere';
         }
@@ -9295,13 +9402,12 @@
       });
       var title = afterSkill.name || fallbackName || '스킬';
       return '<span class="reward-detail-card reward-upgrade-compare-card rarity-' + escapeHtml(rarity) + '" aria-hidden="true">' +
-        buildSkillUpgradeChangeSummary(beforeSkill, afterSkill) +
         '<span class="reward-upgrade-panel">' +
           renderSkillUpgradeComparePanel(beforeSkill, reward, rarity, title, '현재') +
         '</span>' +
         '<span class="reward-upgrade-arrow" aria-hidden="true">&gt;&gt;</span>' +
         '<span class="reward-upgrade-panel reward-upgrade-after">' +
-          renderSkillUpgradeComparePanel(afterSkill, reward, rarity, title, '강화 후') +
+          renderSkillUpgradeComparePanel(afterSkill, reward, rarity, title, '강화 후', beforeSkill) +
         '</span>' +
       '</span>';
     }
@@ -9346,16 +9452,32 @@
         changes.map(function(change) { return '<span>' + change + '</span>'; }).join('') + '</span>';
     }
 
-    function renderSkillUpgradeComparePanel(skill, reward, rarity, title, label) {
+    function highlightSkillUpgradeNumbers(beforeHtml, afterHtml) {
+      function numbers(html) { return html.replace(/<[^>]*>/g, '').match(/\d+(?:\.\d+)?%?/g) || []; }
+      var previous = numbers(beforeHtml), index = 0;
+      return afterHtml.split(/(<[^>]*>)/g).map(function(part) {
+        if (part.charAt(0) === '<') return part;
+        return part.replace(/\d+(?:\.\d+)?%?/g, function(value) {
+          return previous[index++] === value ? value : '<span class="reward-upgrade-number">' + value + '</span>';
+        });
+      }).join('');
+    }
+
+    function renderSkillUpgradeComparePanel(skill, reward, rarity, title, label, beforeSkill) {
       var meta = escapeHtml(skill.rarityLabel || reward.rarityLabel || getRewardRarityLabel(rarity)) + ' / Lv.' + escapeHtml(skill.level || 1);
       var description = buildSkillDetailDescription(skill, skill.description || reward.detailDescription || reward.description || '-');
+      var detailLines = buildRewardSkillDetailLines(skill);
+      if (beforeSkill) {
+        description = highlightSkillUpgradeNumbers(buildSkillDetailDescription(beforeSkill, beforeSkill.description || reward.detailDescription || reward.description || '-'), description);
+        detailLines = highlightSkillUpgradeNumbers(buildRewardSkillDetailLines(beforeSkill), detailLines);
+      }
       return '<span class="reward-upgrade-skill-icon"><img src="'+escapeHtml(getRewardIconUrl('skill',reward))+'" alt=""></span><span class="skill-detail-header">' +
           '<strong class="skill-detail-name">' + escapeHtml(title) + '</strong>' +
           renderSkillActionPointGauge(getSkillActionPointCost(skill)) +
         '</span>' +
         '<span class="skill-detail-meta reward-upgrade-state-label">' + escapeHtml(label) + ' / ' + meta + '</span>' +
         '<span class="skill-detail-description">' + description + '</span>' +
-        buildRewardSkillDetailLines(skill) +
+        detailLines +
         buildSkillFlavorDescription(skill, reward.detailDescription || reward.description);
     }
 

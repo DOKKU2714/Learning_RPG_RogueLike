@@ -1,10 +1,11 @@
 const test=require('node:test'),assert=require('node:assert/strict'),vm=require('node:vm');
 const {context,copy}=require('./run-session.test.cjs');
 const pack=require('../scripts/build-shock-pack.cjs'),old=require('./fixtures/skill-rework-2026-10-17.json');
-function game(mode='server'){
+function game(mode='server',revivalFormula){
   const x=context(),c=x.c,ids=pack.effects.map(e=>e.effectId);
   const definitions=old.effects.filter(e=>!ids.includes(e.effectId)).concat(pack.effects);
   const rules=old.effectRules.filter(r=>!ids.includes(r.effectId)).concat(pack.effectRules);
+  if(revivalFormula){const index=rules.findIndex(r=>r.effectId==='effect_v2_shock_aed');rules[index]={...rules[index],valueFormula:JSON.stringify({hpFormula:revivalFormula})};}
   x.seed(c.DB_SHEETS.SKILLS,pack.skills);x.seed(c.DB_SHEETS.EFFECTS,definitions);x.seed(c.DB_SHEETS.EFFECT_RULES,rules);c.Math.random=()=>.4;
   const snapshot={skills:pack.skills,effects:copy(c.readTable_(c.DB_SHEETS.EFFECTS)),effectRules:rules};
   const local=vm.runInNewContext(c.getLocalRunEngineSource_(),{Date:c.Date,Math:c.Math}),engine=c.getSharedRuleEngine_();
@@ -22,8 +23,8 @@ function game(mode='server'){
   return {x,c,b,p:b.player,a:b.monsters[0],snapshot,engine,use,shock,stacks,damage,incoming,trigger,end};
 }
 for(const mode of ['server','browser']){
- test(`shock ${mode}: twelve skills execute at levels 1 and 3 without warnings`,()=>{
-   for(let n=1;n<=12;n++)for(const level of [1,3]){const g=game(mode);g.shock(g.a,8);g.use(n,level);g.end();assert.deepEqual(copy(g.b.skillRuleWarnings||[]),[],pack.skills[n-1].name);}
+ test(`shock ${mode}: all skills execute at levels 1 and 3 without warnings`,()=>{
+   for(let n=1;n<=pack.skills.length;n++)for(const level of [1,3]){const g=game(mode);g.shock(g.a,8);g.use(n,level);g.end();assert.deepEqual(copy(g.b.skillRuleWarnings||[]),[],pack.skills[n-1].name);}
  });
  test(`shock ${mode}: direct-only current-attack damage, one stack consumed, no accuracy penalty or natural decay`,()=>{
    const g=game(mode);g.shock(g.a,5);assert.equal(g.engine.getEffectiveStat(g.a,'accuracy'),100);
@@ -39,16 +40,23 @@ for(const mode of ['server','browser']){
    const g=game(mode);g.shock(g.a,2);g.a.effects[0].rules.find(r=>r.operation==='directHitDamage').valueFormula='10+0.5*attack';
    g.damage(1);assert.equal(g.a.currentHp,979);assert.equal(g.stacks(g.a),1);
  });
- test(`shock ${mode}: static grant happens after hit and conductor expires after three turns`,()=>{
-   const g=game(mode);g.use(1);assert.equal(g.a.currentHp,982);assert.equal(g.stacks(g.a),4);
-   g.use(2);assert.equal(g.a.currentHp,953);assert.equal(g.stacks(g.a),3);
-   g.use(1);assert.equal(g.stacks(g.a),8); // old 3 - direct trigger 1 + round(4*1.6)
+ test(`shock ${mode}: rare static only grants stacks and conductor expires after three turns`,()=>{
+   const g=game(mode);g.use(1);assert.equal(g.a.currentHp,1000);assert.equal(g.stacks(g.a),4);
+   g.use(2);assert.equal(g.a.currentHp,971);assert.equal(g.stacks(g.a),3);
+   g.use(1);assert.equal(g.stacks(g.a),9);
    g.end();g.end();g.end();assert(!g.a.effects.some(e=>e.effectId==='effect_v2_shock_received'));
  });
  test(`shock ${mode}: insulator only mitigates shocked attackers and scales with level`,()=>{
    const g=game(mode);g.use(3);assert.equal(g.p.shield,18);g.shock(g.a,2);
    g.incoming(20);assert.equal(g.p.shield,3);g.incoming(20,g.b.monsters[1]);assert.equal(g.p.hp,83);
    const max=game(mode);max.use(3,30);max.shock(max.a,1);max.incoming(100);assert.equal(max.p.hp,100);
+ });
+ test(`shock ${mode}: insulator lasts through the next turn then expires`,()=>{
+   const g=game(mode);g.use(3);g.p.shield=0;g.shock(g.a,2);
+   g.incoming(20);assert.equal(g.p.hp,85);
+   g.end();g.incoming(20);assert.equal(g.p.hp,70);
+   g.end();assert(!g.p.effects.some(e=>e.effectId==='effect_v2_shock_insulator'));
+   g.incoming(20);assert.equal(g.p.hp,50);
  });
  test(`shock ${mode}: rod waits until next turn and damages using pre-grant stacks exactly once`,()=>{
    const g=game(mode);g.shock(g.a,3);g.use(4);g.trigger('onTurnStart');assert.equal(g.a.currentHp,1000);assert.equal(g.stacks(g.a),3);
@@ -81,8 +89,33 @@ for(const mode of ['server','browser']){
    assert.deepEqual(g.b.monsters.map(m=>m.currentHp),[973,992,1000]);assert.deepEqual(g.b.monsters.map(g.stacks),[0,0,0]);
    const energy=game(mode);energy.shock(energy.a,7);energy.use(12,3);assert.equal(energy.p.shield,42);assert.equal(energy.stacks(energy.a),0);assert.equal(energy.a.currentHp,1000);
  });
+ test(`shock ${mode}: million volts snapshots each target hit count and never hits clean enemies`,()=>{
+   const g=game(mode);g.shock(g.a,3);g.shock(g.b.monsters[1],1);g.use(13);
+   assert.deepEqual(g.b.monsters.map(m=>m.currentHp),[970,990,1000]);
+   assert.deepEqual(g.b.monsters.map(g.stacks),[0,0,0]);
+   const hits=g.b.lastTurnEvents.filter(e=>e.actor==='player' && e.type==='skill' && e.damage>0);
+   assert.deepEqual(hits.map(e=>e.targetMonsterId),['a','a','a','b']);
+ });
+ test(`shock ${mode}: electromagnetic shield adds all alive enemy stacks without consuming them`,()=>{
+   const g=game(mode);g.shock(g.a,3);g.shock(g.b.monsters[1],2);g.shock(g.b.monsters[2],10);g.b.monsters[2].currentHp=0;
+   g.use(14,3);assert.equal(g.p.shield,51);assert.equal(g.stacks(g.a),3);assert.equal(g.stacks(g.b.monsters[1]),2);
+ });
+ test(`shock ${mode}: AED revives once immediately or next turn, caps HP and then expires`,()=>{
+   for(const nextTurn of [false,true]){
+     const g=game(mode);g.use(15,3);if(nextTurn)g.end();g.incoming(500);
+     assert.equal(g.p.hp,50);assert(!g.p.effects.some(e=>e.effectId==='effect_v2_shock_aed'));
+     g.incoming(500);assert.equal(g.p.hp,0);
+   }
+   const expired=game(mode);expired.use(15);expired.end();expired.end();expired.incoming(500);assert.equal(expired.p.hp,0);
+   const capped=game(mode);capped.use(15,20);capped.incoming(500);assert.equal(capped.p.hp,100);
+ });
+ test(`shock ${mode}: AED also works on lethal stacked damage and revival formulas remain sheet authored`,()=>{
+   const g=game(mode,'maxHp*0.75');g.use(15);g.p.hp=1;g.shock(g.p,2);
+   const poison={...g.snapshot.effects.find(e=>e.effectId==='effect_v2_poison'),stacks:3};g.engine.applyEffect(g.p,poison,{},0);
+   g.end();assert.equal(g.p.hp,75);
+ });
 }
-test('shock: all twelve skill states match server and browser',()=>{
- for(let n=1;n<=12;n++){const a=game(),b=game('browser');a.shock(a.a,6);b.shock(b.a,6);a.use(n,3);b.use(n,3);a.end();b.end();
+test('shock: all skill states match server and browser',()=>{
+ for(let n=1;n<=pack.skills.length;n++){const a=game(),b=game('browser');a.shock(a.a,6);b.shock(b.a,6);a.use(n,3);b.use(n,3);a.end();b.end();
  for(const key of ['player','monsters','lastTurnEvents'])assert.deepEqual(copy(a.b[key]),copy(b.b[key]),pack.skills[n-1].name+' '+key);}
 });

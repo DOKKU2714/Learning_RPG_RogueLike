@@ -4,6 +4,22 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const html = fs.readFileSync('Battle.html','utf8');
 const fn = name => html.match(new RegExp('    function '+name+'\\([^]*?\\n    \\}'))[0];
+
+test('monster skill stat components share one icon without changing combat effects or other skills',()=>{
+ const c=vm.createContext({syncClientStatusBuckets(){}});
+ vm.runInContext(fn('getDisplayStatusCategory')+fn('getDisplayStatusGroups'),c);
+ const target={effects:[
+  {effectId:'mk_ms_broken_lock_0',monsterKitEffect:true,category:'buff',durationType:'stage',statKey:'attack',value:30},
+  {effectId:'mk_ms_broken_lock_1',monsterKitEffect:true,category:'buff',durationType:'stage',statKey:'defense',value:-5},
+  {effectId:'mk_ms_other_0',monsterKitEffect:true,category:'buff',durationType:'stage'},
+  {effectId:'buff_power',category:'buff'}]};
+ target.buffs=target.effects.slice();
+ const before=JSON.stringify(target);
+ assert.equal(c.getDisplayStatusGroups(target).buffs.length,3);
+ assert.equal(JSON.stringify(target),before);
+ target.effects.push({effectId:'mk_ms_broken_lock_2',monsterKitEffect:true,category:'buff',durationType:'turn',remainingTurns:2});
+ assert.equal(c.getDisplayStatusGroups(target).buffs.length,4,'different lifetimes remain separate');
+});
 test('target shortcuts use alive displayed order and cannot act while locked',()=>{
  const picked=[],c=vm.createContext({pendingTargetSelection:{},workbookDeadlineExpired:false,
   shouldLockBattleInput:()=>false,document:{querySelector:()=>null},

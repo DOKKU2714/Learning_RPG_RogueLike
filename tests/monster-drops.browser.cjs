@@ -13,7 +13,7 @@ b:{dropId:'b',monsterName:'보스',status:'pending',reward:{itemDetail:{itemId:'
 window.LearningRpgLocalRunEngine={itemDrops:()=>drops,skills:()=>[],decideDrop:(_,battle,id,claim)=>{drops[id].status=claim?'claimed':'ignored';decisions.push([id,claim]);if(claim)battle.player.items.push({itemId:id});}};
 function cssEscape(s){return CSS.escape(s);}function setBattleInputLocked(){}function renderBattle(){}function getRewardRarityLabel(){return '희귀';}
 function escapeHtml(s){return String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;');}
-${['animateMonsterItemPickup','presentMonsterItemDrops','renderOwnedItemCard','buildItemEffectDescription','buildItemFlavorDescription','normalizeRewardRarity','bindHoverTooltips','positionHoverTooltip','hideActiveHoverTooltips','refreshFinalVictoryRewardView','presentStageClear','openRewardAfterVictory','presentStageClearRegen','getVictoryRewardKey'].map(extract).join('\n')}
+${['animateMonsterItemPickup','presentMonsterItemDrops','renderOwnedItemCard','buildItemEffectDescription','buildItemFlavorDescription','normalizeRewardRarity','bindGlossaryTooltips','bindHoverTooltips','positionHoverTooltip','hideActiveHoverTooltips','refreshFinalVictoryRewardView','presentStageClear','openRewardAfterVictory','presentStageClearRegen','getVictoryRewardKey'].map(extract).join('\n')}
 bindHoverTooltips();
 `;
 (async()=>{

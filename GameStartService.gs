@@ -7,6 +7,7 @@ function getGameStartTips() {
   }).sort(function(a,b) {
     return Number(a.sortOrder || 0)-Number(b.sortOrder || 0) || String(a.tipId).localeCompare(String(b.tipId));
   }).map(function(row) {
-    return { tipId:String(row.tipId), text:String(row.text) };
+    var seconds = Number(row.displaySeconds);
+    return { tipId:String(row.tipId), text:String(row.text), displaySeconds:isFinite(seconds) && seconds > 0 ? seconds : 5 };
   });
 }

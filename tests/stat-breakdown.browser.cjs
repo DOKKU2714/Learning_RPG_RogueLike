@@ -2,7 +2,7 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
 const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
 const source=fs.readFileSync('Battle.html','utf8');
 const extract=name=>source.match(new RegExp('    function '+name+'\\([^]*?\\n    \\}'))[0];
-const funcs=['showBattleStats','getStatDescription','getBattleStatStartingStats','formatEffectiveStat','buildBattleStatTooltipContent','bindHoverTooltips','positionHoverTooltip'];
+const funcs=['showBattleStats','getStatDescription','getBattleStatStartingStats','formatEffectiveStat','buildBattleStatTooltipContent','bindGlossaryTooltips','bindHoverTooltips','positionHoverTooltip'];
 const output=path.resolve('.codex-temp/stat-breakdown');fs.mkdirSync(output,{recursive:true});
 const html='<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">'+fs.readFileSync('UiStyles.html','utf8')+fs.readFileSync('UiTouchInteractions.html','utf8')+'</head><body style="background:#182230;min-height:100vh"><div id="battleStatsPanel" class="battle-stats-panel battle-quick-panel hidden"></div><script>'+`
 var localGameDataSnapshot=null;

@@ -6,6 +6,7 @@ const tips=[{tipId:'rarity_order',text:'"일반-드문-희귀-영웅-전설-고�
 const parent=`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">${theme}</head><body style="margin:0;background:#25352b"><button id="start">게임 시작</button><div id="loadingModal">기존 로딩 화면</div><script>
 window.google={script:{run:{withSuccessHandler(fn){this.success=fn;return this},withFailureHandler(){return this},getGameStartTips(){this.success(${JSON.stringify(tips)})}}}};
 window.resetMainNavigation=()=>window.reset=true;
+Math.random=()=>0;
 </script>${manager}<script>document.getElementById('start').onclick=()=>{LearningRpgGameStart.begin();LearningRpgGameStart.navigate('https://entry.test/battle?entryToken=test');};</script></body></html>`;
 (async()=>{const browser=await chromium.launch({channel:'msedge',headless:true});try{
  const output=path.resolve('.tmp_spreadsheet/game-start-loading');fs.mkdirSync(output,{recursive:true});

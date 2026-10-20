@@ -20,7 +20,7 @@ rule(shock,'directHitDamage','onHit','2+0.1*attack','','flat','직접 공격으�
 rule(shock,'consumeStacks','onHit','1','','flat','추가 피해 발동마다 1중첩 소모. 자연 감소 없음.');
 const conductor=effect('effect_v2_shock_received','젓가락 꽂기','debuff',3,'3턴간 감전 중첩을 {value}% 더 받습니다.');
 rule(conductor,'modifyReceivedStacks','onApplyEffect','value',shock,'percent','받는 감전 중첩 증가. 소수 중첩은 반올림.');
-const insulator=effect('effect_v2_shock_insulator','비전도체 두르기','buff',0,'이번 스테이지에서 감전 상태의 적에게 받는 피해가 {value}% 감소합니다.');
+const insulator=effect('effect_v2_shock_insulator','비전도체 두르기','buff',1,'다음 턴까지 감전 상태의 적에게 받는 피해가 {value}% 감소합니다.',{decrementOnApplyTurn:false});
 rule(insulator,'incomingReductionIfEffect','passive','value',shock,'percent','공격자가 감전 상태일 때 받는 피해 감소. 최대 100%.');
 const rod=effect('effect_v2_shock_rod','피뢰침','buff',0,'다음 내 턴 시작에 모든 적에게 기존 감전 중첩당 피해를 주고 감전 중첩을 부여합니다.');
 rule(rod,'triggerActions','onTurnStart',{minTurnOffset:1,maxActivations:1,actions:[
@@ -31,20 +31,22 @@ rule(rub,'modifyAppliedStacks','onApplyEffect','100',shock,'percent','다음 감
 rule(rub,'consumeOnApply','onApplyEffect','1',shock,'flat','감전을 실제 부여할 때 1회 소모.');
 const coat=effect('effect_v2_shock_coat','전기외투','buff',3,'3턴간 방어막에 피해를 입힌 적에게 감전 2중첩을 부여합니다.');
 rule(coat,'triggerActions','onBlock',{actions:[apply('2')]},'','json','방어막에 실제 피해를 입힌 공격자에게 감전 2중첩.');
+const aed=effect('effect_v2_shock_aed','자동심장충격기 대기','buff',1,'사용 직후부터 다음 내 턴 종료까지 사망 시 최대 체력의 {value}%로 1회 부활합니다.',{decrementOnApplyTurn:false});
+rule(aed,'combatParameter','passive',{hpFormula:'maxHp*value/100'},'revive','json','사망 시 최대 체력 비례 부활. 발동 후 효과 소모.');
 function add(name,rarity,type,target,ap,cooldown,difficulty,description,config,options={}){
   skills.push({skillId:'skill_v2_shock_'+String(skills.length+1).padStart(2,'0'),name,hitCount:1,cooldown,actionPointCost:ap,rarity,
     conditionJson:JSON.stringify({...options.limit?{perBattleLimit:options.limit}:{},...options.fixed?{notUpgradable:true}:{}}),description,
     effectJson:JSON.stringify({targetMode:target==='self'?'self':target==='all'?'allEnemies':'singleEnemy',...config}),rewardEnabled:1,type,target,baseValue:0,difficultyBonus:difficulty,
     upgradeJson:JSON.stringify(options.fixed?{notUpgradable:true}:{}),tags:JSON.stringify(['shock','감전',type]),attackEffect:'shock',concept:'감전',
-    rarityLabel:{common:'일반',uncommon:'드문',rare:'희귀',epic:'영웅'}[rarity],role:type==='damage'?'공격':type==='shield'?'방어':'강화·전하',
+    rarityLabel:{common:'일반',uncommon:'드문',rare:'희귀',epic:'영웅',legendary:'전설',unique:'고유'}[rarity],role:type==='damage'?'공격':type==='shield'?'방어':'강화·전하',
     proposalOrigin:'사용자 감전 기획 (2026-10-19)',implementationStatus:'구현 완료 · 시트 기반 공통 엔진',mechanicIds:[shock,...options.effects||[]].join(','),
     upgradeDesign:options.fixed?'강화 불가.':'n=스킬 레벨(1부터 시작). level 수식으로 성장.',rewardPlanned:1});
 }
-add('정전기','common','damage','enemy',1,1,0,`적에게 ${C('0.6*attack+0.05*level+5+level')} 피해를 입히고 감전 ${C('3+level')}중첩을 부여한다.`,
-  {damageFormula:'0.6*attack+0.05*level+5+level',combat:{onEachHit:[apply('3+level')]}});
+add('정전기','rare','debuff','enemy',1,0,0,`적 하나에게 감전 ${C('3+level')}중첩을 부여한다.`,
+  {actions:[apply('3+level')]});
 add('젓가락 꽂기','common','damage','enemy',1,2,1,`적에게 ${C('attack+0.1*level+3+2*level')} 피해를 입힌다.\n적중한 적은 3턴간 감전 중첩을 ${C('50+10*level')}% 더 받는다.`,
   {damageFormula:'attack+0.1*level+3+2*level',combat:{onEachHit:[{operation:'applyEffect',effectId:conductor,valueFormula:'50+10*level'}]}},{effects:[conductor]});
-add('비전도체 두르기','common','shield','self',1,1,0,`방어막을 ${C('defense+6+2*level')} 얻는다.\n이번 스테이지에서 감전 상태의 적에게 받는 피해가 ${C('20+5*level|min:0|max:100')}% 감소한다.`,
+add('비전도체 두르기','common','shield','self',1,1,0,`방어막을 ${C('defense+6+2*level')} 얻는다.\n다음 턴까지 감전 상태의 적에게 받는 피해가 ${C('20+5*level|min:0|max:100')}% 감소한다.`,
   {shieldFormula:'defense+6+2*level',actions:[{operation:'applyEffect',effectId:insulator,target:'self',valueFormula:'20+5*level'}]},{effects:[insulator]});
 add('피뢰침 꽂기','common','buff','self',2,2,1,`1턴 후 모든 적에게 감전 ${C('4+level')}중첩을 부여한다.\n이미 감전 상태인 적에게는 부여 전 중첩당 ${C('4+level')} 피해를 준다.`,
   {actions:[{operation:'applyEffect',effectId:rod,target:'self'}]},{effects:[rod]});
@@ -64,6 +66,12 @@ add('전도체 투척','epic','damage','enemy',2,0,2,`적 하나에게 ${C('0.3*
   {damageFormula:'0.3*attack+3+2*level',actions:[consume('allEnemies'),{operation:'damage',target:'allEnemies',effectId:shock,damageKind:'additional',amountFormula:'2+0.1*attack',repeatFormula:'consumedStacks'}]},{limit:1});
 add('에너지 충전','epic','shield','enemy',1,2,1,`적 하나의 감전을 모두 소모하여 소모 중첩당 ${C('3+level')}만큼 방어막을 얻는다.`,
   {actions:[consume(),{operation:'shield',target:'self',amountFormula:'totalConsumedStacks*(3+level)'}]});
+add('백만볼트','legendary','damage','all',3,3,2,`모든 적에게 사용 시 각 적의 감전 중첩 수만큼 피해를 입힌다.\n중첩당 피해: ${C('0.2*attack+1+level')}. 감전이 없는 적은 타격하지 않는다.`,
+  {damageFormula:'0.2*attack+1+level',hitCount:'targetShock'});
+add('전자기장 생성','legendary','shield','self',1,3,0,`방어막을 획득한다.\n기본 방어막: ${C('defense+5+2*level')}.\n모든 생존 적의 감전 중첩당 방어막 ${C('3+level')} 추가.\n현재 총 방어막: ${C('defense+5+2*level+enemyShockTotal*(3+level)')}.`,
+  {shieldFormula:'defense+5+2*level+enemyShockTotal*(3+level)'});
+add('자동심장충격기(AED)','unique','buff','self',3,0,4,`사용 직후부터 다음 내 턴 종료까지 사망 시 1회 부활한다.\n부활 후 체력: 최대 체력의 ${C('20+10*level|max:100')}%.`,
+  {actions:[{operation:'applyEffect',effectId:aed,target:'self',valueFormula:'20+10*level'}]},{limit:1,effects:[aed]});
 const pack={source:'사용자 감전 스킬 기획 (2026-10-19)',skills,effects,effectRules};
 if(require.main===module){const file=path.resolve(__dirname,'../docs/skill-packs/shock-skills-2026-10-19.json');fs.writeFileSync(file,JSON.stringify(pack,null,2)+'\n');console.log(`${skills.length} skills, ${effects.length} effects, ${effectRules.length} rules -> ${file}`);}
 module.exports=pack;

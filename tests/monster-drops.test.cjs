@@ -111,3 +111,47 @@ test('monster drops: forged items and altered ignored decisions are rejected',()
   const forged=copy(original);forged.monsterItemDrops[original.monsters[0].instanceId].status='claimed';
   assert.throws(()=>g.c.validateMonsterDropsForCommit_(run,original,forged),/이미 결정/);
 });
+
+test('monster drops: repeated saves validate from the battle starting inventory',()=>{
+  const g=game(),battle=copy(g.battle);
+  battle.monsters[0].type='boss';battle.monsters[0].currentHp=0;
+  const original=copy(battle);
+  const drop=g.c.rollMonsterItemDrop_(battle,battle.monsters[0]);
+  g.c.decideMonsterItemDrop_(battle,drop.dropId,true);
+  const run={...g.view.localRunState,itemsJson:JSON.stringify(battle.player.items)};
+  for(const saved of [original,battle]){
+    const received=copy(battle);
+    assert.doesNotThrow(()=>g.c.validateMonsterDropsForCommit_(run,saved,received));
+    assert.deepEqual(copy(received.player.items),copy(battle.player.items));
+    received.player.items[0].count++;
+    assert.throws(()=>g.c.validateMonsterDropsForCommit_(run,saved,received),/보유 아이템/);
+  }
+});
+
+test('monster drops: inventory survives browser payloads across battles and intermission',()=>{
+  const g=game(),html=fs.readFileSync('Battle.html','utf8');
+  const ui=vm.createContext({copyStageResultValue:(v,f)=>copy(v===undefined?f:v),getBattleStatStartingStats:p=>p.startingStats || {}});
+  for(const name of ['buildStageResultBattlePayload','buildClientFloorIntermissionBattle'])
+    vm.runInContext(html.match(new RegExp('    function '+name+'\\([^]*?\\n    \\}'))[0],ui);
+  let view=g.view,run=view.localRunState,token=view.runSessionToken,journal=[],claims=0;
+  for(let step=0;step<8;step++){
+    const battle=copy(view.battle);battle.status='victory';battle.monsters.forEach(m=>m.currentHp=0);
+    const drops=g.engine.itemDrops(g.snapshot,battle);
+    for(const drop of Object.values(drops))if(drop.status==='pending'){g.engine.decideDrop(g.snapshot,battle,drop.dropId,true);claims++;}
+    ui.currentView={battle};
+    const payload={runId:view.runId,runSessionToken:token,localAdvanceEnabled:true,localTransitions:copy(journal),
+      battle:ui.buildStageResultBattlePayload(battle),stageState:copy(view.stageState),answerLogs:[]};
+    g.x.tick(5000);
+    const reward=g.c.previewRewardChoicesForStageResult(payload,'auth');
+    token=reward.runSessionToken;run=reward.localRunState;journal=[];
+    payload.stageState.reward=copy(reward);delete payload.localTransitions;delete payload.runSessionToken;
+    const choice=reward.choices.find(r=>r.type==='skillUpgrade') || reward.choices[0],selectedAtMs=g.c.Date.now();
+    const next=g.engine.advance(run,g.snapshot,payload,choice.rewardId,reward,{selectedAtMs});
+    journal.push({payload:copy(payload),rewardId:choice.rewardId,rewardToken:reward.localTransitionToken,selectedAtMs});
+    run=next.localRunState;
+    if(!next.battle){ui.currentView={battle};next.battle=ui.buildClientFloorIntermissionBattle(next.rewardView.intermissionStage,next.rewardView);}
+    assert.deepEqual(copy(next.battle.player.items),copy(battle.player.items));
+    view=next;
+  }
+  assert.ok(claims>0);
+});

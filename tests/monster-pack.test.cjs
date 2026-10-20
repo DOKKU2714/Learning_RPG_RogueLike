@@ -52,6 +52,24 @@ test('monster pack: 17 original IDs, 39 skills, no reward leakage, deterministic
 });
 
 for(const mode of ['server','browser']) {
+  test('monster pack: '+mode+' threshold skills show one activation while preserving every stat effect',()=>{
+    for(const definition of pack.Monsters){
+      const passive=pack.Skills.find(skill=>JSON.parse(definition.skillIds).includes(skill.skillId) && JSON.parse(skill.effectJson).monsterSkill.trigger==='hpBelow');
+      if(!passive)continue;
+      const g=setup(definition.monsterId,mode),id=passive.skillId;
+      g.monster.currentHp=Math.floor(g.monster.maxHp/2);
+      g.damage(1);
+      assert.equal(g.monster.monsterKit.used[id],1,id);
+      const events=g.battle.lastTurnEvents.filter(event=>event.skillId===id);
+      assert.equal(events.length,1,id+' activation event');
+      const stats=JSON.parse(passive.effectJson).monsterSkill.actions.filter(action=>action.op==='stat');
+      for(const action of stats)assert.ok(g.monster.effects.some(effect=>effect.statKey===action.stat && effect.value===action.value),id+' '+action.stat);
+      for(let i=0;i<2;i++){g.damage(1);g.intent();}
+      assert.equal(g.monster.monsterKit.used[id],1,id+' must stay once');
+      assert.equal(g.battle.lastTurnEvents.filter(event=>event.skillId===id).length,1,id+' must not repeat');
+    }
+  });
+
   test('monster pack: '+mode+' all 39 skills activate and survive checkpoint serialization',()=>{
     const activated=new Set();
     for(const definition of pack.Monsters){

@@ -4,13 +4,25 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const html = fs.readFileSync('Battle.html', 'utf8');
 const extract = name => html.match(new RegExp('    function ' + name + '\\([^]*?\\n    \\}'))[0];
+test('upgrade adaptation supplies the next level before direct rest and reroll previews',()=>{
+  const source=fs.readFileSync('RewardService.gs','utf8');
+  const c=vm.createContext({REWARD_TYPES:{SKILL:'skill',SKILL_UPGRADE:'skillUpgrade'},
+    normalizeOwnedSkills_:s=>s,hasOwnedSkill_:(s,id)=>s.some(x=>x.skillId===id),getRewardSkillName_:()=> 'Strike'});
+  for(const name of ['adaptRewardForChoice_','buildSkillUpgradeRewardView_'])
+    vm.runInContext(source.match(new RegExp('function '+name+'\\([^]*?\\n\\}'))[0],c);
+  for(const type of ['skill','skillUpgrade'])for(const level of [1,3]){
+    const reward=c.adaptRewardForChoice_({type,targetId:'strike',value:2},[{skillId:'strike',level}]);
+    assert.equal(reward.type,'skillUpgrade');assert.equal(reward.level,level+2);
+    assert.equal(c.adaptRewardForChoice_(reward,[{skillId:'strike',level}]).level,level+2);
+  }
+});
 function setup() {
   const c = vm.createContext({ currentView: { battle: { player: { stats: { attack: 10, defense: 2 } } } },
     getClientEffectiveStats: player => player.stats, escapeHtml: text => String(text),
   });
   for (const name of ['buildSkillUpgradeChangeSummary', 'getSkillDisplayMetrics', 'getClientSkillUpgradeValue',
     'safeJsonParseClient', 'evaluateSkillDisplayFormula', 'escapeRegExpClient', 'getSkillPreviewDamageRange',
-    'getSkillFormulaDamageRange', 'getSkillEffectDisplayMetrics', 'getSkillTagBonusDisplayMetrics',
+    'getSkillFormulaDamageRange', 'getSkillFormulaShieldRange', 'getSkillEffectDisplayMetrics', 'getSkillTagBonusDisplayMetrics',
     'getSkillDisplayShield', 'getSkillRuleDisplayShield', 'collectSkillRuleShieldFormulas',
     'appendSkillRuleShieldFormula', 'getSkillPreviewShieldValue', 'getSkillDisplayHeal',
     'getSkillDisplayHealPercent', 'getSkillHitCount']) vm.runInContext(extract(name), c);

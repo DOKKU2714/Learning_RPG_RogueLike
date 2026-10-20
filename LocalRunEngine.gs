@@ -241,8 +241,10 @@ function getLocalRunEngineAdapters_() {
     var view=localPermit.restViews && localPermit.restViews[localPermit.selectedRewardId];
     if (!view) throw new Error('서버에서 준비한 층 정비 보상이 없습니다.');
     state.reward=cloneLocal(view); localRun.stageStateJson=safeJsonStringify_(state);
+    var battle=state.battle || {battleId:generateId_('rest'),status:'victory',stage:view.intermissionStage,player:{hp:run.currentHp,stats:calculateStatsWithItemEffects_(safeJsonParse_(run.statsJson,{}),safeJsonParse_(run.itemsJson,[])),baseStats:safeJsonParse_(run.statsJson,{})},monsters:[]};
+    syncBattlePlayerItemsFromRun_(battle,run);
     return {showReward:true,runId:run.runId,workbookId:run.workbookId,workbookName:run.workbookName,
-      currency:run.currency,score:run.score,battle:state.battle || {battleId:generateId_('rest'),status:'victory',stage:view.intermissionStage,player:{hp:run.currentHp,stats:calculateStatsWithItemEffects_(safeJsonParse_(run.statsJson,{}),safeJsonParse_(run.itemsJson,[])),baseStats:safeJsonParse_(run.statsJson,{})},monsters:[]},
+      currency:run.currency,score:run.score,battle:battle,
       rewardView:cloneLocal(view),stageState:cloneLocal(state),clientConfig:getBattleClientConfig_()};
   }
   `;

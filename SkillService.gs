@@ -728,7 +728,8 @@ function executeSkillByRule_(battleState, skill, rule, efficiency, isCorrect) {
     if (!target || target.currentHp === undefined) {
       return;
     }
-    for (var i = 0; i < (randomPerHit ? 1 : hitCount); i += 1) {
+    var targetHitCount = randomPerHit ? 1 : rule.hitCount === undefined ? hitCount : Math.max(0, Math.round(evaluateSkillFormula_(rule.hitCount, buildSkillFormulaContext_(battleState, skill, target, efficiency), battleState, skill)));
+    for (var i = 0; i < targetHitCount; i += 1) {
       var damageTarget = target;
       if (Number(damageTarget.currentHp || 0) <= 0 && normalizedTargetMode !== 'allEnemies') {
         damageTarget = randomPerHit ? selectRandomAliveEnemy_(battleState) : getSkillTarget_(battleState, skill, skill.targetId || '');
@@ -762,7 +763,7 @@ function executeSkillByRule_(battleState, skill, rule, efficiency, isCorrect) {
           damage: 0,
           missed: true,
           hitChance: hit.chance,
-          simultaneousGroupId: normalizedTargetMode === 'allEnemies' ? skill.skillId + ':allEnemies:' + i : (hitCount > 1 ? skill.skillId + ':multiHit' : ''),
+          simultaneousGroupId: normalizedTargetMode === 'allEnemies' ? skill.skillId + ':allEnemies:' + i : (targetHitCount > 1 ? skill.skillId + ':multiHit' : ''),
           message: skill.name + '이 빗나갔습니다.',
         });
         continue;
@@ -796,7 +797,7 @@ function executeSkillByRule_(battleState, skill, rule, efficiency, isCorrect) {
         hpDamage: damageResult.hpDamage,
         isCritical: critical.isCritical,
         criticalMultiplier: critical.multiplier,
-        simultaneousGroupId: normalizedTargetMode === 'allEnemies' ? skill.skillId + ':allEnemies:' + i : (hitCount > 1 ? skill.skillId + ':multiHit' : ''),
+        simultaneousGroupId: normalizedTargetMode === 'allEnemies' ? skill.skillId + ':allEnemies:' + i : (targetHitCount > 1 ? skill.skillId + ':multiHit' : ''),
         message: critical.isCritical
           ? skill.name + ' 치명타! ' + damageResult.displayDamage + ' 피해!'
           : skill.name + '으로 ' + damageResult.displayDamage + ' 피해!',
@@ -1060,6 +1061,7 @@ function applySkillRuleSelfDamage_(battleState, skill, rule, context) {
   }
   var damage = Math.max(0, Math.round(evaluateSkillFormulaValue_(selfDamage, context, selfDamage, battleState, skill)));
   battleState.player.hp = Math.max(0, Number(battleState.player.hp || 0) - damage);
+  getSharedRuleEngine_().reviveAfterDamage(battleState.player, battleState);
   battleState.lastTurnEvents.push({ actor: 'player', type: 'selfDamage', skillId: skill.skillId, damage: damage, hpDamage: damage, message: skill.name + '의 반동으로 ' + damage + ' 피해를 받았습니다.' });
   if (damage > 0) processSkillTriggers_(battleState, 'onDamaged', {hpDamage:damage, damage:damage, actor:'player', selfTurn:true});
 }
@@ -1892,6 +1894,7 @@ function combatFormulaContext_(battle,skill,target) {
     selectedBurn:engine.effectStacks(selected,'effect_v2_burn'),selectedMaxHp:Number(selected && selected.maxHp || 0),
     poisonShield:Math.min(30,poison),poisonWeakPercent:-Math.min(30,2*engine.effectStacks(target,'effect_v2_poison')),targetPoison:engine.effectStacks(target,'effect_v2_poison'),
     targetCold:engine.effectStacks(target,'effect_v2_chill'),targetShock:engine.effectStacks(target,'effect_v2_shock'),
+    enemyShockTotal:getAliveMonsters_(battle).reduce(function(sum,m){return sum+engine.effectStacks(m,'effect_v2_shock');},0),
     lowHpBonus:Math.min(1,Math.max(0,(1-getHpPercent_(battle.player)/100)/0.7)),
     randomPower:Number(prepared.randomPower || 0),randomDoubles:prepared.doubles?1:0,
     unhurtMultiplier:engine.combatRuntime(battle).playerWasDamaged?1:1.5};
@@ -2028,6 +2031,7 @@ function finishCombatSkill_(battle,skill,rule,targets,context) {
   if(c.afterNotFrozenEffect && !prepared.wasFrozen && context.landedHits>0)executeCombatActions_(battle,skill,[{operation:'applyEffect',effectId:c.afterNotFrozenEffect,stacks:c.afterNotFrozenStacks || 1}],targets,context);
   if(c.randomShield){var high=Math.random()>=0.5;var amount=evaluateSkillFormula_(high?c.randomShield.high:c.randomShield.low,context,battle,skill);if(!combatShieldBlocked_(battle.player))battle.player.shield+=Math.round(amount*context.efficiency);if(!high)runtime.delayedShield={turn:Number(battle.turn)+1,amount:6};}
   if(c.recoilIfSurvives && targets[0] && targets[0].currentHp>0){var recoil=Math.round(battle.player.maxHp*c.recoilIfSurvives);battle.player.hp=Math.max(0,battle.player.hp-recoil);runtime.playerWasDamaged=true;}
+  getSharedRuleEngine_().reviveAfterDamage(battle.player,battle);
   if(battle.player.hp<=0)battle.status=STATUS.BATTLE_DEFEAT;
   if(c.combo && c.combo.resetAfter){var chain=combatChain_(battle);chain.count=0;chain.distinct=[];chain.stored=0;}
   if(c.oncePerTurn){battle.skillLastUsedTurn=battle.skillLastUsedTurn || {};battle.skillLastUsedTurn[skill.skillId]=battle.turn;}
@@ -3100,6 +3104,7 @@ function applyStackedDamageEffect_(target, effectId, battleState, actor, ruleOve
   getSharedRuleEngine_().spendRetainedShield(target, shieldDamage, previousShield);
   if (isMonster) target.currentHp = Math.max(0, currentHp - hpDamage);
   else target.hp = Math.max(0, currentHp - hpDamage);
+  getSharedRuleEngine_().reviveAfterDamage(target, battleState);
 
   var decay = damageRule ? (effect.decayTiming === 'onTrigger' ? Number(effect.decayStacks || 0) : 0) : 1;
   effect.stacks = stacks - (consumeStacks === false || dotModifiers.preserve ? 0 : decay);

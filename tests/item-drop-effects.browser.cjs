@@ -3,12 +3,28 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
 const html=fs.readFileSync('Battle.html','utf8'),styles=fs.readFileSync('UiStyles.html','utf8');
 const extract=name=>html.match(new RegExp('    (?:async )?function '+name+'\\([^]*?\\n    \\}'))[0];
 const art=fs.readFileSync('../Learning_RPG_LogueLike_Assets/Resources/Item.png');
-const script=`var ASSET_BASE_URL='https://assets.test',pickupAnimations=[],flights=[];
-${['animateMonsterItemPickup','normalizeRewardRarity'].map(extract).join('\n')}
+const script=`var ASSET_BASE_URL='https://assets.test',pickupAnimations=[],flights=[],battleQuickAccessState=null;
+${['animateMonsterItemPickup','normalizeRewardRarity','renderBattleQuickAccessIcons'].map(extract).join('\n')}
 var nativeAnimate=Element.prototype.animate;
 Element.prototype.animate=function(frames,options){var animation=nativeAnimate.call(this,frames,options);if(this.matches('.monster-item-pickup')){animation.pause();animation.currentTime=options.duration*.45;pickupAnimations.push(animation);}return animation;};
 function drop(rarity,x,y){flights.push(animateMonsterItemPickup({reward:{rarity:rarity}}, {left:x,top:y,width:0,height:0}));}
-async function finishDrops(){pickupAnimations.forEach(a=>a.finish());await Promise.all(flights);pickupAnimations=[];flights=[];}
+async function finishDrops(){
+ var reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
+ pickupAnimations.forEach(a=>a.finish());await Promise.resolve();await Promise.resolve();
+ var bag=document.getElementById('battleInventoryIcon');
+ if(!reduced){
+  if(!bag.getAttribute('src').endsWith('Backpack_Open.png'))throw Error('bag opens during flight');
+  if(pickupAnimations.at(-1).effect.getTiming().duration!==900)throw Error('slow flight duration');
+  renderBattleQuickAccessIcons();
+  if(!bag.getAttribute('src').endsWith('Backpack_Open.png'))throw Error('render preserves open bag');
+  if(!bag.getAnimations().some(a=>a.effect.getKeyframes().some(k=>k.transform.includes('rotate(-7deg)'))))throw Error('bag grows and shakes');
+ }
+ document.getAnimations().forEach(a=>{if(a.effect.getTiming().iterations!==Infinity)a.finish();});
+ await Promise.all(flights);
+ if(!bag.getAttribute('src').endsWith('Backpack_Close.png'))throw Error('bag closes after all arrivals');
+ if(Number(bag.dataset.pickupCount||0)!==0)throw Error('pickup count cleared');
+ pickupAnimations=[];flights=[];
+}
 `;
 (async()=>{
  const browser=await chromium.launch({channel:'msedge',headless:true});
@@ -23,7 +39,7 @@ async function finishDrops(){pickupAnimations.forEach(a=>a.finish());await Promi
     const result=await page.locator('.monster-item-pickup').evaluateAll(nodes=>nodes.map(n=>({size:parseFloat(getComputedStyle(n).width),aura:parseFloat(getComputedStyle(n.querySelector('.item-drop-aura')).width),pillar:getComputedStyle(n.querySelector('.item-drop-pillar')).display,height:parseFloat(getComputedStyle(n.querySelector('.item-drop-pillar')).height)})));
     assert.ok(result.every(r=>r.size===42*4));assert.deepEqual(result.map(r=>r.pillar),['none','none','none','none','block','block']);
     assert.ok(result.every((r,i)=>i===0 || r.aura>result[i-1].aura));assert.ok(result[4].height>=400 && result[5].height>result[4].height);
-    assert.deepEqual(await page.evaluate(()=>pickupAnimations.map(a=>a.effect.getTiming().duration)),[1250,1250,1250,1250,2100,2100]);
+    assert.deepEqual(await page.evaluate(()=>pickupAnimations.map(a=>a.effect.getTiming().duration)),[1400,1400,1400,1400,2200,2200]);
     await page.locator('.monster-item-pickup img').first().evaluate(i=>i.decode());
     await page.screenshot({path:path.join(output,'all-rarities.png')});
     await page.evaluate(()=>finishDrops());assert.equal(await page.locator('.monster-item-pickup').count(),0);
@@ -46,3 +62,4 @@ async function finishDrops(){pickupAnimations.forEach(a=>a.finish());await Promi
   console.log('Screenshots: '+output);
  }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});
+
