@@ -4,7 +4,7 @@ const source=fs.readFileSync('Battle.html','utf8'),styles=fs.readFileSync('UiSty
 const extract=name=>source.match(new RegExp('    function '+name+'\\([^]*?\\n    \\}'))[0];
 const hud=source.slice(source.indexOf('    <section class="battle-hud">'),source.indexOf('  </main>')).replace('<div class="battle-stage-hud">','<div id="hudMarker" class="battle-stage-hud" style="background:#224466">');
 const script=`
-var chosenSkills=[],skillPanelOpen=false,narrationAdvances=0,currentView={clientConfig:{glossary:[{keyword:'치명타',description:'치명타 피해와 확률을 설명합니다.'}]}};
+var chosenSkills=[],skillPanelOpen=false,narrationAdvances=0,MAX_QUESTION_DIFFICULTY=5,currentView={clientConfig:{glossary:[{keyword:'치명타',description:'치명타 피해와 확률을 설명합니다.'}]}};
 function chooseSkill(id){chosenSkills.push(id);closeSkillPanel();} function cancelTargetSelection(){}
 function advanceDescriptionByInput(){narrationAdvances++;return true;}
 function escapeHtml(v){return String(v)}function getCurrentActionPoint(){return 3}function getSkillActionPointCost(){return 1}
@@ -14,8 +14,8 @@ function getRewardRarityLabel(){return '희귀'}function normalizeRewardRarity(v
 function buildSkillDetailDescription(skill){return highlightSkillStatusNames(skill.description)}function buildSkillFlavorDescription(){return ''}
 function getRewardIconUrl(){return 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><path fill="gold" d="M50 0L90 90H10Z"/></svg>'.replaceAll('"','&quot;')}
 function getRewardSkillConcept(){return '타격'}function getRewardConceptClass(){return 'strike'}
-${['highlightSkillStatusNames','renderRewardActionPointBadge','renderRewardRarityGems','renderInlineRewardSkillDescription','buildRewardSkillDetailLines','renderSkillActionPointGauge','renderSkills','bindGlossaryTooltips','renderActionMode','toggleSkillPanel','closeSkillPanel','bindBattleLogReveal'].map(extract).join('\n')}
-renderSkills([{skillId:'s',name:'치명적인 일격',rarity:'rare',level:2,description:'고정 피해를 입힙니다. 행동력 1, 치명타 확률 10%, 치명타 피해 20% 증가.'}]);
+${['highlightSkillStatusNames','renderRewardActionPointBadge','renderRewardRarityGems','renderInlineRewardSkillDescription','renderSkillCardCornerMeta','renderDifficultyStars','buildRewardSkillDetailLines','renderSkillActionPointGauge','renderSkills','bindGlossaryTooltips','renderActionMode','toggleSkillPanel','closeSkillPanel','bindBattleLogReveal'].map(extract).join('\n')}
+renderSkills([{skillId:'s',name:'치명적인 일격',rarity:'rare',level:2,difficultyBonus:2,description:'고정 피해를 입힙니다. 행동력 1, 치명타 확률 10%, 치명타 피해 20% 증가.'}]);
 bindGlossaryTooltips();
 bindBattleLogReveal();
 `;
@@ -48,14 +48,22 @@ bindBattleLogReveal();
  const card=page.locator('#hudSkillPreview > .hud-skill-card');
  assert.equal(await card.isVisible(),true);
  assert.equal(await page.locator('.skill-button > .skill-detail-card').isVisible(),false);
- const box=await card.boundingBox();assert.ok(Math.abs(box.x+box.width/2-width/2)<2,JSON.stringify({width,box,style:await card.evaluate(el=>({transform:getComputedStyle(el).transform,left:getComputedStyle(el).left}))}));assert.ok(Math.abs(box.y+box.height/2-500)<2);
- assert.ok(Math.abs(box.width-Math.min(400,width-40))<2,'skill card is 25% wider where the viewport allows');
- assert.ok(box.height<460,'normal skill cards are shorter without removing their text');
- assert.match(await card.innerText(),/치명적인 일격/);assert.match(await card.innerText(),/쿨타임 2턴/);assert.match(await card.innerText(),/사용 횟수 2회/);assert.match(await card.innerText(),/난이도 \+1/);
+ const box=await card.boundingBox();if(width>1000)assert.ok(Math.abs(box.x+box.width/2-width/2)<2);assert.ok(Math.abs(box.y+box.height/2-500)<2);
+ if(width>1000)assert.ok(Math.abs(box.width-320)<2,'skill card uses its original width');
+ assert.ok(box.height<=600,'card keeps complete text within its maximum height');
+ assert.match(await card.innerText(),/치명적인 일격/);assert.match(await card.innerText(),/쿨타임 2턴/);assert.match(await card.innerText(),/2회 사용가능/);
+ assert.equal(await card.locator('.reward-skill-difficulty .difficulty-star').count(),2);
+ assert.equal(await card.locator('.reward-inline-meta').count(),0,'metadata moved from the footer');
+ const corner=await card.locator('.reward-skill-corner-meta').boundingBox(),heading=await card.locator('.reward-choice-heading').boundingBox();
+ assert.ok(corner.y+corner.height<=heading.y && corner.x>box.x+box.width/2,'metadata occupies the upper-right space without covering the title');
+ assert.ok(Math.abs((await card.locator(':scope > .reward-ap-badge').boundingBox()).width-57.2)<1,'upper-left AP badge is 10% larger');
  const terms=await card.locator('.skill-detail-description .skill-status-name').evaluateAll(els=>els.map(el=>({color:getComputedStyle(el).color,weight:getComputedStyle(el).fontWeight})));
  assert.deepEqual(terms.map(t=>t.color),['rgb(141, 85, 183)','rgb(255, 216, 74)','rgb(255, 216, 74)','rgb(255, 141, 54)']);assert.ok(terms.every(t=>Number(t.weight)>=800));
  assert.equal(await page.locator('#glossaryTooltip').isVisible(),true);
- if(width>1000)assert.ok((await page.locator('#glossaryTooltip').boundingBox()).x>=box.x+box.width);
+ const glossary=await page.locator('#glossaryTooltip').boundingBox();
+ assert.ok(glossary.x>=box.x+box.width || glossary.x+glossary.width<=box.x,'glossary stays strictly beside the skill card, including narrow screens');
+ assert.ok(glossary.y<box.y+box.height && glossary.y+glossary.height>box.y,'glossary never moves above or below the card');
+ assert.ok(glossary.x>=0 && glossary.x+glossary.width<=width);
  assert.equal(await page.locator('#hudSkillPreview').evaluate(el=>getComputedStyle(el,'::before').backgroundColor),'rgba(0, 0, 0, 0.42)');
  const hudAfter=await page.screenshot({clip:markerPixel});
  await page.screenshot({path:path.join(output,'hud-'+width+'.png')});
@@ -96,6 +104,15 @@ bindBattleLogReveal();
  await page.locator('.skill-button').tap({position:{x:4,y:10}});
  assert.equal(await page.locator('.touch-preview-panel').isVisible(),true);assert.equal(await card.isVisible(),false);assert.deepEqual(await page.evaluate(()=>chosenSkills),['s']);
  await page.locator('.skill-button').tap({position:{x:4,y:10}});assert.deepEqual(await page.evaluate(()=>chosenSkills),['s','touch']);
+ await page.evaluate(()=>{
+  currentView.clientConfig.glossary=[{keyword:'치명타',description:'치명타 설명'}];
+  const edge=document.createElement('div');edge.id='leftGlossaryAnchor';edge.className='battle-stat-row';edge.textContent='치명타';
+  edge.style.cssText='position:fixed;right:12px;top:100px;width:100px;height:40px;z-index:30000';document.body.appendChild(edge);
+ });
+ await page.locator('#leftGlossaryAnchor').hover();await page.waitForTimeout(30);
+ const edgeBox=await page.locator('#leftGlossaryAnchor').boundingBox(),leftGlossary=await page.locator('#glossaryTooltip').boundingBox();
+ assert.ok(leftGlossary.x+leftGlossary.width<=edgeBox.x,'right-edge anchors use the left side');
+ assert.ok(leftGlossary.y<edgeBox.y+edgeBox.height && leftGlossary.y+leftGlossary.height>edgeBox.y);
  assert.deepEqual(errors,[]);await page.close();
  }
  console.log('HUD: basic tooltips retained; centered skill cards replace old hover windows, preserve glossary and metadata, and close on Escape/panel hide (desktop/mobile).');

@@ -13,7 +13,7 @@ const preview = vm.createContext({ escapeHtml: text => String(text), getRewardRa
   getSkillDisplayMetrics: skill => ({ damage: 15 + (skill.level - 1) * 3,
     minDamage: 15 + (skill.level - 1) * 3, maxDamage: 15 + (skill.level - 1) * 3 }),
 });
-for (const name of ['renderRewardActionPointBadge', 'renderSkillActionPointGauge', 'renderSkillUpgradeCompareDetailCard', 'renderSkillUpgradeComparePanel', 'highlightSkillUpgradeNumbers', 'buildSkillUpgradeChangeSummary', 'buildSkillFlavorDescription'])
+for (const name of ['renderRewardActionPointBadge', 'renderSkillActionPointGauge', 'renderSkillUpgradeCompareDetailCard', 'renderSkillUpgradeComparePanel', 'highlightSkillUpgradeNumbers', 'buildSkillUpgradeChangeSummary', 'buildSkillFlavorDescription', 'formatSkillDescriptionMarkup'])
   vm.runInContext(extract(name), preview);
 const upgradeCard = preview.renderSkillUpgradeCompareDetailCard({ value: 1,
   skillDetail: { name: '강화 공격', level: 2 } }, 'common', '강화 공격');

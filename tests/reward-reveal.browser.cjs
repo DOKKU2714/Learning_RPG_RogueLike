@@ -3,9 +3,9 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
 const source=fs.readFileSync('Battle.html','utf8'),styles=fs.readFileSync('UiStyles.html','utf8');
 const extract=name=>source.match(new RegExp('    function '+name+'\\([^]*?\\n    \\}'))[0];
 const modal=source.slice(source.indexOf('  <div id="rewardModal"'),source.indexOf('  <div id="scoreModal"'));
-const names=['renderRewardChoices','selectRewardCandidate','handleRewardKeyboard','renderRewardActionPointBadge','getRewardConceptClass','getRewardSkillConcept','renderInlineRewardSkillDescription','buildSkillFlavorDescription','buildSkillDetailDescription','renderSkillDescriptionTemplate','replaceSkillDescriptionTokens','escapeRegExpClient','highlightSkillStatusNames'];
+const names=['renderRewardChoices','selectRewardCandidate','handleRewardKeyboard','renderRewardActionPointBadge','getRewardConceptClass','getRewardSkillConcept','renderInlineRewardSkillDescription','renderSkillCardCornerMeta','renderDifficultyStars','buildSkillFlavorDescription','buildSkillDetailDescription','renderSkillDescriptionTemplate','formatSkillDescriptionMarkup','replaceSkillDescriptionTokens','escapeRegExpClient','highlightSkillStatusNames'];
 const script=`
-var workbookDeadlineExpired=false,selectedRewardId='',rewardSelectionApplying=false;
+var workbookDeadlineExpired=false,selectedRewardId='',rewardSelectionApplying=false,MAX_QUESTION_DIFFICULTY=5;
 var currentView={clientConfig:{skillConceptKeywords:{burn:['발화','불씨'],shock:['감전','전류']}}};
 function animateStageClearRegen(){} function renderBattleBackground(){}
 ${extract('fitRewardCardText')}
@@ -14,6 +14,7 @@ function normalizeRewardRarity(r){return r;} function getRewardRarityLabel(r){re
 function getRewardDisplayTitle(){return '스킬 획득';} function renderRewardRarityGems(){return '';}
 function getSkillActionPointCost(s){return s.actionPointCost;} function getSkillDescriptionTemplateValues(){return {damage:27};}
 function buildRewardSkillDetailLines(){return '<span>쿨타임 2턴</span>';}
+function getSkillCooldownDisplayText(){return '쿨타임 2턴';}function getSkillUseLimitText(){return '전투 2/3회';}
 function buildSkillUpgradeChangeSummary(){return '<span class="reward-upgrade-changes">피해 20 → 27 (+7)</span>';}
 function renderRewardDetailCard(reward){if(reward.type!=='stat')throw Error('Skill selection must not create hover tooltips');return '';}
 function confirmRewardChoice(){window.confirmations=(window.confirmations||0)+1;}
@@ -48,7 +49,7 @@ document.addEventListener('keydown',handleRewardKeyboard);showCards(['common','r
      apCenterX:ab.left+ab.width/2-b.left,apCenterY:ab.top+ab.height/2-b.top,apSize:parseFloat(getComputedStyle(ap.querySelector('b')).fontSize),contained:db.left>=b.left && db.right<=b.right+1 && db.bottom<=b.bottom,
      rise:parseFloat(getComputedStyle(card).getPropertyValue('--aura-rise')),spread:parseFloat(getComputedStyle(card).getPropertyValue('--aura-spread'))};
    }));
-   assert.ok(before.every(r=>r.contained && r.font==='13px' && r.numberFont===r.font && Math.abs(r.apCenterX-8)<=2 && Math.abs(r.apCenterY-8)<=2 && r.apSize===23));
+   assert.ok(before.every(r=>r.contained && r.font==='13px' && r.numberFont===r.font && Math.abs(r.apCenterX-8)<=2 && Math.abs(r.apCenterY-8)<=2 && Math.abs(r.apSize-25.3)<.1));
    assert.equal(await page.locator('.reward-ap-badge .ap-pip.filled').count(),3);
    const numberFits=await page.evaluate(()=>[0,1,12,999].every(cost=>{
     const card=document.querySelector('.reward-choice-card'),original=card.querySelector('.reward-ap-badge');
@@ -61,9 +62,9 @@ document.addEventListener('keydown',handleRewardKeyboard);showCards(['common','r
    assert.ok(numberFits,'action-point digits stay inside the centered pip');
    const layout=await page.locator('.reward-choice-card').evaluateAll(cards=>cards.map(card=>{
     const heading=card.querySelector('.reward-choice-heading').getBoundingClientRect(),b=card.getBoundingClientRect();
-    const meta=card.querySelector('.reward-inline-meta'),flavor=card.querySelector('.skill-flavor-text'),description=card.querySelector('.reward-inline-description');
-    return {centered:Math.abs(heading.x+heading.width/2-b.x-b.width/2)<1,footer:meta.parentElement.classList.contains('reward-card-footer'),
-      separate:!description.contains(meta),quoteBelow:flavor.getBoundingClientRect().top>=meta.getBoundingClientRect().bottom,
+    const meta=card.querySelector('.reward-skill-corner-meta'),flavor=card.querySelector('.skill-flavor-text'),description=card.querySelector('.reward-inline-description');
+    return {centered:Math.abs(heading.x+heading.width/2-b.x-b.width/2)<1,footer:flavor.parentElement.classList.contains('reward-card-footer'),
+      separate:!description.contains(meta),quoteBelow:flavor.getBoundingClientRect().top>=description.getBoundingClientRect().bottom,
       quoteColor:getComputedStyle(flavor).color,quotedInDescription:description.textContent.includes('불꽃은 남는다')};
    }));
    assert.ok(layout.every(r=>r.centered && r.footer && r.separate && r.quoteBelow && !r.quotedInDescription && r.quoteColor==='rgb(146, 151, 146)'));
@@ -127,8 +128,7 @@ document.addEventListener('keydown',handleRewardKeyboard);showCards(['common','r
    await page.emulateMedia({reducedMotion:'reduce'});
    assert.equal(await first.locator('.reward-aura-intro').evaluate(n=>getComputedStyle(n).animationName),'none');
    await page.evaluate(()=>showCards(['common','rare','unique']));
-   if(width>1000)assert.equal(Math.round((await page.locator('.reward-modal').boundingBox()).width),1075,'reward cards gain approximately 25% width');
-   assert.ok((await first.boundingBox()).height<460,'normal skill card height is reduced');
+   if(width>1000)assert.equal(Math.round((await page.locator('.reward-modal').boundingBox()).width),860,'reward cards return to their original width');
    for(const height of width>1000?[768,720]:[844,640]){
     await page.setViewportSize({width,height});
     const confirm=await page.locator('#rewardConfirmButton').boundingBox();

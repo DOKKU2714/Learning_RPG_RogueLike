@@ -3705,7 +3705,7 @@
   }
 
   .stage-clear-reward-overlay .reward-modal {
-    width: min(1075px, 100%);
+    width: min(860px, 100%);
     border-color: rgba(238, 198, 76, 0.72);
     background: rgba(12, 12, 12, 0.94);
     box-shadow: 0 0 42px rgba(238, 198, 76, 0.12), inset 0 0 28px rgba(255, 255, 255, 0.03);
@@ -5540,7 +5540,7 @@
   .hud-skill-preview {display:contents;pointer-events:none;}
   .hud-skill-preview[hidden] {display:none;}
   .hud-skill-preview::before {content:'';position:fixed;inset:0;z-index:3;background:rgba(0,0,0,.42);pointer-events:none;}
-  .hud-skill-preview > .hud-skill-card.reward-choice-card {position:fixed;left:50%;top:50%;z-index:25;transform:translate(-50%,-50%);transition:none;width:min(400px,calc(100vw - 40px));max-height:min(600px,calc(100dvh - 80px));min-height:min(400px,calc(100dvh - 80px));overflow:visible;box-sizing:border-box;border:2px solid var(--reward-gem-color);pointer-events:auto;}
+  .hud-skill-preview > .hud-skill-card.reward-choice-card {position:fixed;left:50%;top:50%;z-index:25;transform:translate(-50%,-50%);transition:none;width:min(320px,calc(100vw - 40px));max-height:min(600px,calc(100dvh - 80px));min-height:min(400px,calc(100dvh - 80px));overflow:visible;box-sizing:border-box;border:2px solid var(--reward-gem-color);pointer-events:auto;}
   .hud-skill-preview .hud-skill-card .reward-choice-heading {white-space:normal;overflow-wrap:anywhere;}
   .hud-skill-preview .reward-inline-description {min-height:0;overflow-y:auto;}
   .hud-skill-preview .reward-card-footer {flex-shrink:0;}
@@ -5555,7 +5555,7 @@
   /* Skill reward descriptions stay inside the card; combat/item tooltips retain their layout. */
   .reward-choice-card.reward-inline-skill {
     display:flex; flex-direction:column; align-items:center; justify-content:flex-start;
-    min-height:400px; gap:8px; padding:16px 16px 36px;
+    min-height:400px; gap:8px; padding:76px 16px 36px;
     background:linear-gradient(155deg,#272925f5,#121713f5); border-radius:3px;
   }
   .reward-inline-skill .reward-choice-heading {box-sizing:border-box;width:100%;margin:0;padding:0 28px;white-space:nowrap;overflow-wrap:normal;font-size:clamp(18px,1.8vw,26px);line-height:1.25;text-align:center;}
@@ -5565,9 +5565,11 @@
   .reward-inline-description {display:flex;flex-direction:column;gap:8px;width:100%;min-width:0;margin-top:4px;text-align:left;color:#edf0ed;font-family:var(--font-readable);font-size:13px;line-height:1.65;}
   .reward-inline-description .skill-detail-description {display:block;white-space:normal;overflow-wrap:anywhere;font-size:inherit;line-height:inherit;color:inherit;padding:0;background:none;border:0;box-shadow:none;}
   .reward-inline-description .skill-detail-description strong {font:inherit;font-weight:800;line-height:inherit;}
-  .reward-card-footer {display:grid;grid-template-rows:minmax(28px,auto) minmax(28px,auto);gap:6px;align-self:stretch;margin-top:auto;padding-top:8px;border-top:1px solid #ffffff22;text-align:left;font-family:var(--font-readable);}
-  .reward-inline-meta {display:flex;flex-wrap:wrap;align-content:flex-start;gap:6px 12px;min-height:28px;color:#ffd84a;font-family:var(--font-pixel);font-weight:700;font-size:12px;line-height:1.5;}
-  .reward-inline-meta > .skill-detail-line {color:inherit;}
+  .reward-card-footer {display:block;align-self:stretch;margin-top:auto;padding-top:8px;border-top:1px solid #ffffff22;text-align:left;font-family:var(--font-readable);}
+  .reward-skill-corner-meta {position:absolute;top:10px;right:12px;display:flex;flex-direction:column;align-items:flex-end;gap:3px;max-width:calc(100% - 72px);text-align:right;font-family:var(--font-pixel);font-size:11px;line-height:1.35;color:#c4c9c2;}
+  .reward-skill-difficulty {display:flex;align-items:center;justify-content:flex-end;gap:5px;}
+  .reward-skill-difficulty-sign {font-family:var(--font-pixel);font-size:26px;font-weight:700;line-height:1;}
+  .reward-skill-difficulty .difficulty-stars {font-size:16px;color:inherit;text-shadow:none;flex-wrap:wrap;justify-content:flex-end;}
   .reward-card-footer .skill-flavor-text {display:block;min-height:28px;margin:0;padding:0;border:0;background:none;color:#929792;font-size:12px;line-height:1.5;}
   .reward-inline-description .reward-upgrade-changes {display:grid;gap:3px;margin:0;padding-top:8px;border-top:1px solid #ffffff22;font-size:12px;}
   .reward-inline-description .reward-upgrade-changes strong {font-family:inherit;font-size:inherit;}
@@ -5578,6 +5580,8 @@
   .glossary-tooltip strong {color:#ffd84a;font-size:13px;}
   .glossary-tooltip p {margin:3px 0 0;white-space:pre-wrap;overflow-wrap:anywhere;}
   .reward-choice-ap.reward-ap-badge {left:8px;right:auto;top:8px;width:52px;height:42px;transform:translate(-50%,-50%);z-index:4;}
+  .reward-inline-skill > .reward-ap-badge {width:57.2px;height:46.2px;}
+  .reward-inline-skill > .reward-ap-badge b {font-size:calc(var(--reward-ap-font-size,23px)*1.1);}
   .reward-ap-badge .reward-ap-symbol {position:absolute;inset:0;display:block;box-sizing:border-box;width:100%;height:100%;border-width:2px;filter:drop-shadow(0 3px 3px #0008);}
   .reward-ap-badge b {position:absolute;inset:0;display:flex;align-items:center;justify-content:center;box-sizing:border-box;padding:0 10px;font-family:var(--font-readable);font-size:var(--reward-ap-font-size,23px);line-height:1;white-space:nowrap;color:#302810;text-shadow:0 1px 0 #fff6;}
   .skill-ap-gauge > .reward-ap-badge {position:relative;left:auto;right:auto;top:auto;transform:none;width:40px;height:32px;}
@@ -5617,7 +5621,7 @@
   @keyframes reward-aura-intro {0%{opacity:0}14%,45%{opacity:.9}100%{opacity:0}}
   @keyframes reward-aura-flow {0%,100%{transform:scale(.96);opacity:.65}50%{transform:scale(1.04);opacity:1}}
   @keyframes reward-card-sheen {0%{left:-90%;opacity:0}15%,65%{opacity:.65}100%{left:140%;opacity:0}}
-  @media(max-width:760px){.reward-choice-card.reward-inline-skill{min-height:360px;padding:16px 14px 32px;}.reward-inline-skill .reward-choice-icon-wrap{width:72px;flex-basis:72px;}.reward-inline-description{font-size:13px;}}
+  @media(max-width:760px){.reward-choice-card.reward-inline-skill{min-height:360px;padding:76px 14px 32px;}.reward-inline-skill .reward-choice-icon-wrap{width:72px;flex-basis:72px;}.reward-inline-description{font-size:13px;}}
   @media(prefers-reduced-motion:reduce){.stage-clear-reward-overlay .reward-choice-card.reward-aura-card,.reward-aura-intro,.reward-aura-intro::after,.reward-aura-hover,.reward-card-sheen,.reward-aura-hover::after,.reward-aura-card:is(:hover,:focus-visible)>.reward-card-sheen::before{animation:none;}.reward-aura-intro{opacity:0;}.reward-aura-hover{transition:none;}.reward-aura-card:is(:hover,:focus-visible)>.reward-aura-hover{opacity:.35;}}
   #questionModal {padding:24px 24px 140px;background:rgba(0,0,0,.42);z-index:100;align-items:center;}
   #questionModal > .question-modal {width:min(1000px,100%);max-height:calc(100dvh - 164px);padding:8px;background:none;border:0;box-shadow:none;overflow-y:auto;overflow-x:hidden;scrollbar-width:none;display:grid;gap:18px;}
@@ -5650,6 +5654,7 @@
   #questionModal .question-understanding-buttons {display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:6px;}
   #questionModal .question-understanding-buttons button {font-size:11px;padding:8px 5px;}
   #questionModal .question-choice {position:relative;display:flex;align-items:center;gap:8px;min-height:56px;margin:0;box-sizing:border-box;padding:12px 16px;border:1px solid var(--line-dark);background:#161616;color:var(--text);transition:transform 180ms ease,box-shadow 180ms ease,border-color 180ms ease;}
+  #questionModal .question-choice.selected:not(.answer-correct):not(.answer-wrong) {border-color:#ffd84a;box-shadow:inset 0 0 0 1px #ffd84a;}
   #questionModal #shortAnswerInput {min-height:48px;padding:12px 16px;font-size:16px;}
   #questionModal .answer-correct,#questionModal #shortAnswerInput.answer-correct {opacity:1;transform:scale(1.025);border-color:#a7f9b0;background:#183c2a;box-shadow:0 0 16px #5ae78477,0 0 42px #5ae7843b;animation:question-answer-glow 650ms ease-out both;}
   #questionModal .question-efficiency-panel {position:fixed;margin:0;display:block;z-index:5;}
@@ -5663,7 +5668,7 @@
   .value-changing {animation:question-value-bounce 280ms cubic-bezier(.2,.8,.3,1);}
   #questionModal.question-solving #questionAnswerArea {animation:question-answer-enter 220ms ease-out both;}
   #questionSkillCast {position:fixed;inset:0;display:none;place-items:center;pointer-events:none;z-index:3;}
-  #questionSkillCast > .hud-skill-card {width:min(400px,calc(100vw - 40px));box-sizing:border-box;border:2px solid var(--reward-gem-color);}
+  #questionSkillCast > .hud-skill-card {width:min(320px,calc(100vw - 40px));box-sizing:border-box;border:2px solid var(--reward-gem-color);}
   #questionModal.skill-question-opening #questionSkillCast {display:grid;animation:question-card-flash 340ms ease-out both;}
   #questionModal.skill-question-opening > .question-modal {transform-origin:50% 50%;animation:question-unfold 330ms 300ms cubic-bezier(.2,.9,.25,1) both;}
   #questionModal.question-departing > .question-modal {opacity:0;transform:scale(.97);transition:opacity 150ms ease,transform 150ms ease;pointer-events:none;}
@@ -5678,4 +5683,5 @@
   @media(max-height:850px) and (min-width:601px){#questionModal .question-prompt-panel{min-height:180px;padding:40px 24px 12px;gap:10px;}#questionModal .question-answer-panel{padding:18px 24px;gap:10px;}}
   @media(max-height:650px) and (min-width:601px){#questionModal{padding-top:10px;padding-bottom:110px;}#questionModal>.question-modal{max-height:calc(100dvh - 120px);gap:12px;}#questionModal .question-prompt-panel{min-height:150px;padding-top:36px;}#questionModal .question-answer-panel{min-height:110px;padding:14px 24px;}}
   @media(prefers-reduced-motion:reduce){#questionModal .value-changing,#questionModal .answer-correct,#questionModal.skill-question-opening #questionSkillCast,#questionModal.skill-question-opening>.question-modal,#questionModal.question-solving #questionAnswerArea{animation:none;}#questionModal.skill-question-opening #questionSkillCast{display:none;}.question-modal{transition:none;}}
+  .skill-description-color, .skill-description-color * { color: var(--skill-description-color) !important; }
 </style>

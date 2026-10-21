@@ -346,6 +346,6 @@ test('coffin UI immediately ends the current turn, skips one owned turn, then th
  assert.ok(result.battle.lastTurnEvents.some(e=>e.type==='guard' && /빙하의 관/.test(e.message)));
  const textUi=vm.createContext({getSkillDisplayMetrics:()=>({shield:82})});
  vm.runInContext(clientSource.match(/    function buildSkillDetailDescription\([^]*?\n    \}/)[0],textUi);
- const description=textUi.buildSkillDetailDescription({...g.s('frost',13),level:3});
+ const description=textUi.buildSkillDetailDescription({...g.s('frost',13),level:3,description:''});
  assert.match(description,/82/);assert.match(description,/30%/);assert.match(description,/즉시 턴을 종료/);
 });

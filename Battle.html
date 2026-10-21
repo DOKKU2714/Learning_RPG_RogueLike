@@ -1468,14 +1468,21 @@
           var anchor = !preview.hidden ? preview.querySelector('.hud-skill-card') : (detail && window.getComputedStyle(detail).display !== 'none' && window.getComputedStyle(detail).visibility !== 'hidden' && Number(window.getComputedStyle(detail).opacity) > 0 ? detail : card);
           var rect = anchor.getBoundingClientRect();
           panel.style.width = Math.min(210, Math.max(140, rect.width * 0.8)) + 'px';
-          var width = panel.offsetWidth, height = panel.offsetHeight;
           var right = window.innerWidth - rect.right - 12, left = rect.left - 12;
-          var x = right >= width ? rect.right + 12 : left >= width ? rect.left - width - 12 : rect.left;
-          var y = right >= width || left >= width ? rect.top : rect.bottom + 12;
-          var bottom = source && list ? Math.min(window.innerHeight - 8, listTop - 12) : window.innerHeight - 8;
-          if (y + height > bottom) y = Math.max(8, rect.top - height - 12);
+          if (!preview.hidden && Math.max(right, left) < panel.offsetWidth) {
+            panel.style.width = Math.max(140, Math.min(210, window.innerWidth * 0.36)) + 'px';
+            anchor.style.width = Math.max(1, window.innerWidth - panel.offsetWidth - 36) + 'px';
+            anchor.style.left = '12px';
+            anchor.style.transform = 'translateY(-50%)';
+            if (list) anchor.style.top = Math.min(window.innerHeight / 2, listTop - 12 - anchor.offsetHeight / 2) + 'px';
+            rect = anchor.getBoundingClientRect();
+            right = window.innerWidth - rect.right - 12;
+            left = rect.left - 12;
+          }
+          var width = panel.offsetWidth, height = panel.offsetHeight;
+          var x = right >= width || right >= left && left < width ? rect.right + 12 : rect.left - width - 12;
           panel.style.left = Math.max(8, Math.min(window.innerWidth - width - 8, x)) + 'px';
-          panel.style.top = Math.max(8, Math.min(window.innerHeight - height - 8, y)) + 'px';
+          panel.style.top = Math.max(8, Math.min(window.innerHeight - height - 8, rect.top)) + 'px';
         });
       }
       document.addEventListener('mouseover', show);
@@ -7605,14 +7612,14 @@
     }
 
     function buildSkillDetailDescription(skill, fallbackText) {
+      var customDescription = String(skill && skill.description || '').trim();
+      if (customDescription) {
+        return renderSkillDescriptionTemplate(skill, customDescription);
+      }
       if(skill && skill.skillId==='skill_v2_frost_13') {
         var shield=getSkillDisplayMetrics(skill).shield;
         var healPercent=Math.min(100,20+5*(Math.max(1,Number(skill.level || 1))-1));
         return highlightSkillStatusNames('방어막 <strong class="skill-damage-number">' + shield + '</strong>을 얻고 자기 빙결됩니다. 즉시 턴을 종료하고 다음 내 턴 1회를 건너뜁니다. 그다음 내 턴 시작에 해제되며 잃은 체력의 <strong class="skill-damage-number">' + healPercent + '%</strong>를 회복합니다. 방어막은 빙결 중 유지되며 피격으로 빙결이 풀리지 않습니다.');
-      }
-      var customDescription = String(skill && skill.description || '').trim();
-      if (customDescription) {
-        return renderSkillDescriptionTemplate(skill, customDescription);
       }
       var metrics = getSkillDisplayMetrics(skill);
       var damage = metrics.damage;
@@ -7665,7 +7672,33 @@
         var value = getSkillDescriptionFormulaValue(expression, values.formulaContext);
         return '<strong class="skill-damage-number">' + escapeHtml(value) + '</strong>';
       });
-      return highlightSkillStatusNames(text);
+      return formatSkillDescriptionMarkup(highlightSkillStatusNames(text));
+    }
+
+    function formatSkillDescriptionMarkup(html) {
+      var stack = [];
+      var text = String(html).replace(/\[(\/?)(b|i|u|s|color)(?:=([^\]<>]*))?\]|\[br\]/gi, function(match, closing, tag, value) {
+        if (match.toLowerCase() === '[br]') return '<br>';
+        tag = tag.toLowerCase();
+        if (closing) {
+          if (value !== undefined || stack[stack.length - 1] !== tag) return match;
+          stack.pop();
+          return tag === 'color' ? '</span>' : '</' + ({b:'b',i:'i',u:'u',s:'s'})[tag] + '>';
+        }
+        if (tag === 'color') {
+          if (!/^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(value || '')) return match;
+          stack.push(tag);
+          return '<span class="skill-description-color" style="--skill-description-color:' + value + ';color:' + value + '">';
+        }
+        if (value !== undefined) return match;
+        stack.push(tag);
+        return '<' + tag + '>';
+      });
+      while (stack.length) {
+        var tag = stack.pop();
+        text += tag === 'color' ? '</span>' : '</' + tag + '>';
+      }
+      return text;
     }
 
     function highlightSkillStatusNames(html) {
@@ -7694,7 +7727,7 @@
       var quotes = description.match(/"[^"]+"|“[^”]+”/g) || [];
       if (!quotes.length) return '';
       return '<span class="skill-flavor-text">' + quotes.map(function(quote) {
-        return escapeHtml(quote);
+        return formatSkillDescriptionMarkup(escapeHtml(quote));
       }).join('<br>') + '</span>';
     }
 
@@ -9526,8 +9559,9 @@
       });
     }
 
-    function renderDifficultyStars(difficulty) {
-      var count = Math.max(1, Math.min(MAX_QUESTION_DIFFICULTY, Math.round(Number(difficulty || 1))));
+    function renderDifficultyStars(difficulty, exactCount) {
+      var count = Math.max(1, Math.round(Number(difficulty || 1)));
+      if (!exactCount) count = Math.min(MAX_QUESTION_DIFFICULTY, count);
       var stars = '';
       for (var i = 0; i < count; i += 1) {
         stars += '<span class="difficulty-star">&#9733;</span>';
@@ -9552,10 +9586,20 @@
         var before=Object.assign({},skill,{level:Math.max(1,Number(skill.level || 1)-Math.max(1,Number(reward.value || 1)))});
         changes=buildSkillUpgradeChangeSummary(before,skill);
       }
-      return '<span class="reward-inline-description"><span class="skill-detail-description">'+
+      var flavor = buildSkillFlavorDescription(skill,reward.detailDescription || reward.description);
+      return renderSkillCardCornerMeta(skill) + '<span class="reward-inline-description"><span class="skill-detail-description">'+
         buildSkillDetailDescription(skill,skill.description || reward.detailDescription || reward.description || '-')+
-        '</span>'+changes+'</span><span class="reward-card-footer"><span class="reward-inline-meta">'+buildRewardSkillDetailLines(skill)+'</span>'+
-        buildSkillFlavorDescription(skill,reward.detailDescription || reward.description)+'</span>';
+        '</span>'+changes+'</span>' + (flavor ? '<span class="reward-card-footer">'+flavor+'</span>' : '');
+    }
+
+    function renderSkillCardCornerMeta(skill) {
+      var bonus = Number(skill && skill.difficultyBonus || 0);
+      var cooldown = getSkillCooldownDisplayText(skill).match(/(\d+)\s*턴/);
+      var uses = getSkillUseLimitText(skill).match(/(\d+)(?:\s*\/\s*\d+)?\s*회/);
+      return '<span class="reward-skill-corner-meta">' +
+        (bonus ? '<span class="reward-skill-difficulty" aria-label="문제 난이도 ' + (bonus > 0 ? '+' : '') + escapeHtml(bonus) + '"><span class="reward-skill-difficulty-sign" aria-hidden="true">' + (bonus > 0 ? '+' : '−') + '</span>' + renderDifficultyStars(Math.abs(bonus), true) + '</span>' : '') +
+        '<span>쿨타임 ' + (cooldown ? cooldown[1] : '0') + '턴</span>' +
+        '<span>' + (uses ? uses[1] + '회 사용가능' : '사용 횟수 제한 없음') + '</span></span>';
     }
 
     function renderRewardDetailCard(reward, rarity, fallbackName) {
