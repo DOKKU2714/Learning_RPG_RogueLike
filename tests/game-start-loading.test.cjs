@@ -36,7 +36,7 @@ test('tip tags support nested bold, italic and hex colors while keeping HTML as 
 
 function loadingContext(embedded=false){
  const nodes={},intervals=[],timeouts=[],listeners={},created=[];let now=1000,success;
- const node=()=>({hidden:false,style:{},classList:{add(){},remove(){}},appendChild(){},replaceChildren(){}});
+ const node=()=>{const classes=new Set();return {hidden:false,style:{},classList:{add(...names){names.forEach(name=>classes.add(name));},remove(...names){names.forEach(name=>classes.delete(name));},contains:name=>classes.has(name)},appendChild(child){child.parentNode=this;},replaceChildren(){}};};
  const document={createElement:()=>{const value=node();created.push(value);return value;},createTextNode:text=>text,body:node(),documentElement:{},getElementById:id=>nodes[id]||(nodes[id]=node())};
  const math=Object.create(Math);math.random=()=>.75;
  const c=vm.createContext({document,Math:math,Date:{now:()=>now},sessionStorage:{getItem:()=>JSON.stringify([{tipId:'a',text:'A',displaySeconds:2},{tipId:'b',text:'B',displaySeconds:3}]),setItem(){}},
@@ -67,11 +67,25 @@ test('loading is hidden before the embedded battle is allowed to start its title
  const x=loadingContext();x.c.LearningRpgGameStart.begin();
  const navigation=x.c.LearningRpgGameStart.navigate('https://battle.test/');
  x.timeouts.find(timer=>timer.ms===4000).fn();await navigation;
- const overlay=x.created[0],frame=x.created[x.created.length-1];
+ const overlay=x.created.find(node=>node.id==='gameStartLoading'),frame=x.created[x.created.length-1];
+ assert.equal(frame.parentNode.id,'gameStartViewport');
+ assert.equal(frame.style.visibility,'hidden');
  frame.contentWindow={};frame.contentWindow.parent=frame.contentWindow;
- let started=false;frame.contentWindow.postMessage=()=>{assert.equal(overlay.hidden,true);started=true;};
+ let started=false;frame.contentWindow.postMessage=()=>{assert.equal(overlay.hidden,true);assert.equal(frame.style.visibility,'visible');started=true;};
  x.listeners.message({data:{type:'learningRpgBattleReady',channel: new URL(frame.src).searchParams.get('gameStartChannel')},source:frame.contentWindow,origin:'https://battle.test'});
  x.timeouts[x.timeouts.length-1].fn();await Promise.resolve();assert.equal(started,true);
+});
+
+test('loading and battle share a visible fullscreen surface; abort releases it',()=>{
+ const x=loadingContext(),viewport=x.created.find(node=>node.id==='gameStartViewport');
+ let requests=0;
+ viewport.requestFullscreen=()=>{assert.equal(viewport.hidden,false);requests++;return Promise.resolve();};
+ x.c.LearningRpgGameStart.begin();
+ assert.equal(requests,1);
+ assert.equal(x.created.find(node=>node.id==='gameStartLoading').parentNode,viewport);
+ x.c.LearningRpgGameStart.abort();assert.equal(viewport.hidden,true);
+ x.c.document.fullscreenElement={};
+ x.c.LearningRpgGameStart.begin();assert.equal(requests,1,'existing fullscreen is preserved');
 });
 test('page arrival and later intro share a handoff even when loading has already faded',async()=>{
  const x=loadingContext(true);let messages=0,finished=false;
@@ -92,9 +106,10 @@ test('battle page dismisses host loading before starting asynchronous data prepa
 });
 
 test('a late battle failure restores the dismissed loading error screen',()=>{
- const x=loadingContext();x.c.LearningRpgGameStart.begin();x.created[0].hidden=true;
+ const x=loadingContext();x.c.LearningRpgGameStart.begin();const overlay=x.created.find(node=>node.id==='gameStartLoading');overlay.hidden=true;overlay.classList.remove('active','finishing');
  x.c.LearningRpgGameStart.fail('준비 실패');
- assert.equal(x.created[0].hidden,false);assert.equal(x.nodes.gameStartLoadingError.hidden,false);
+ assert.equal(overlay.hidden,false);assert.equal(x.nodes.gameStartLoadingError.hidden,false);
+ assert.equal(overlay.classList.contains('active'),true,'a dismissed overlay becomes opaque again for errors');
 });
 
 test('initial loading waits for local questions and assets before starting the intro',async()=>{
