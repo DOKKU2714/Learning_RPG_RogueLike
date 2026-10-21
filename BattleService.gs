@@ -866,20 +866,20 @@ function submitActionAnswer(answerPayload) {
   battleState.lastTurnEvents = [];
   recordExperienceQuestion_(battleState,{question:question,efficiency:efficiency,isCorrect:isCorrect,wrongCount:Number(payload.wrongCountAfterTimeout || 0)});
   consumeActionPoint_(battleState, Number(pendingAction.actionPointCost !== undefined && pendingAction.actionPointCost !== '' ? pendingAction.actionPointCost : getActionPointCostForAction_(pendingAction.actionType, null)));
-  if (gaveUp) {
-    battleState.lastPlayerAction = { type: pendingAction.actionType, value: 0, efficiency: 0, gaveUp: true };
-    battleState.lastMessage = '문제를 포기했습니다. 행동력만 소모했습니다.';
-    battleState.lastTurnEvents.push({ actor: 'player', type: 'giveUp', message: battleState.lastMessage });
+  if (gaveUp || efficiency <= 0) {
+    battleState.lastPlayerAction = { type: pendingAction.actionType, value: 0, efficiency: 0, gaveUp: gaveUp };
+    battleState.lastMessage = gaveUp ? '문제를 포기했습니다. 행동력만 소모했습니다.' : '효율이 0%여서 행동이 발동하지 않았습니다.';
+    battleState.lastTurnEvents.push({ actor: 'player', type: gaveUp ? 'giveUp' : 'actionFailed', message: battleState.lastMessage });
   }
-  if (!gaveUp) {
+  if (!gaveUp && efficiency > 0) {
     tickEffectsOnPlayerAction(battleState);
     if (battleState.player.hp <= 0) {
       battleState.status = STATUS.BATTLE_DEFEAT;
       battleState.lastMessage = '지속 피해로 쓰러졌습니다.';
     }
   }
-  if (!gaveUp) processSkillTriggers_(battleState, isCorrect ? 'onCorrect' : 'onWrong', {isCorrect:isCorrect, efficiency:efficiency});
-  if (!gaveUp && battleState.player.hp > 0 && battleState.status === STATUS.BATTLE_ACTIVE) {
+  if (!gaveUp && (efficiency > 0 || !isCorrect)) processSkillTriggers_(battleState, isCorrect ? 'onCorrect' : 'onWrong', {isCorrect:isCorrect, efficiency:efficiency});
+  if (!gaveUp && efficiency > 0 && battleState.player.hp > 0 && battleState.status === STATUS.BATTLE_ACTIVE) {
     getSharedRuleEngine_().applyPerfectAnswerItems(battleState, efficiency, false);
     setActiveMonsterScoreContext_(battleState, pendingAction.questionId, efficiency);
     if (pendingAction.actionType === ACTION_TYPES.GUARD) {
@@ -1028,6 +1028,7 @@ function getAnswerEfficiencyRules_() {
 }
 
 function applyAttack(battleState, efficiency, targetId) {
+  if (Number(efficiency || 0) <= 0) return battleState;
   getSharedRuleEngine_().beginCombatAction(battleState, null);
   normalizeBattleStateEffects_(battleState);
   normalizeBattleMonsters_(battleState);
@@ -1129,6 +1130,7 @@ function rollHit_(attackerStats, defenderStats) {
 }
 
 function applyGuard(battleState, efficiency) {
+  if (Number(efficiency || 0) <= 0) return battleState;
   normalizeBattleStateEffects_(battleState);
   var effectiveStats = calculateEffectiveStats(battleState.player.stats || getConfiguredBasePlayerStats_(), battleState.player.effects || []);
   var defense = Number(effectiveStats.defense || 0);

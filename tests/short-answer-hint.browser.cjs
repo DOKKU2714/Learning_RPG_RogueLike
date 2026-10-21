@@ -5,14 +5,14 @@ const extract=name=>battle.match(new RegExp('    function '+name+'\\([^]*?\\n   
 const modal=battle.slice(battle.indexOf('  <div id="questionModal"'),battle.indexOf('  <div id="rewardModal"'));
 const helpers=['renderAnswerArea','getSelectedAnswer','submitQuestionAnswer','giveUpCurrentQuestion','showGivenUpAnswerInInput',
   'recordWrongQuestionAttempt','revealShortAnswerHint','getQuestionAnswerDisplayText','hasClientAnswer',
-  'recordRunQuestionAttempt','getRunQuestionStats','getQuestionSelectionStats','saveRunQuestionStats',
+  'recordRunQuestionAttempt','rollbackCurrentQuestionExposure','getRunQuestionStats','getQuestionSelectionStats','saveRunQuestionStats',
   'renderQuestionAccuracy','buildPendingStageAnswerLog','submitQuestionAnswerOnServer','setQuestionInputsDisabled',
-  'showQuestionGiveUpButton','hideQuestionGiveUpButton'];
+  'showQuestionGiveUpButton','hideQuestionGiveUpButton','getQuestionMaxAnswerEfficiency'];
 const fixture=`
 var currentView={runId:'hint-run',playerId:'p',battle:{stage:{}}},currentQuestionView;
 var runQuestionStats={},runQuestionStatsRunId='',pendingStageAnswerLogs=[],questionUnderstandingRatings={};
 var questionStartedAt,questionTimerId,wrongCountAfterTimeout=0,shortAnswerEnterSubmitLock=false;
-var workbookDeadlineExpired=false,currentDamageEfficiency=0;
+var workbookDeadlineExpired=false,currentDamageEfficiency=0,MAX_ANSWER_EFFICIENCY=1.25;
 var updateWorkbookCountdown=()=>{},getAuthToken=()=>'',isClientCorrectAnswer=(q,a)=>a.selectedAnswerText===q.answer;
 var hasClientFatalWrongAnswerPenalty=()=>false,showQuestionUnderstanding=()=>{};
 var calculateTimedEfficiency=()=>1,calculateWrongEfficiency=n=>Math.max(.1,.5-(n-1)*.1);
@@ -21,7 +21,7 @@ var animateQuestionEfficiencyPenalty=()=>{},markSelectedAnswerResult=()=>{},anim
 var applyClientQuestionCorrectEfficiencyModifiers=n=>n,setBattleInputLocked=()=>{};
 var startQuestionResultHold=()=>{currentQuestionView.resultHolding=true},buildOptimisticNextViewFromQuestion=()=>currentView;
 var receiveQuestionTurnView=()=>{},requestQuestionResultProceed=()=>{},safeJsonParseClient=(s,f)=>s?JSON.parse(s):f;
-var RULE_ENGINE_SHARED={consumeWrongProtection:()=>false};
+var RULE_ENGINE_SHARED={consumeWrongProtection:()=>false,capQuestionEfficiencyBonus:n=>n};
 function startFixture(){currentQuestionView={question:{questionId:'q',type:'shortAnswer',answer:'제안하다',answerAliases:'[]'},actionType:'attack',maxMs:10000,finalDifficulty:1};
 questionStartedAt=Date.now();wrongCountAfterTimeout=0;pendingStageAnswerLogs=[];runQuestionStats={};runQuestionStatsRunId='hint-run';
 document.getElementById('questionSubmitButton').disabled=false;renderAnswerArea(currentQuestionView.question);}
@@ -42,12 +42,12 @@ document.getElementById('questionSubmitButton').disabled=false;renderAnswerArea(
    for(const [i,wrong] of ['제안','제한하다','제안해'].entries()){
     await page.locator('#shortAnswerInput').fill(wrong);
     await page.locator('#shortAnswerInput').press('Enter');
-    assert.equal(await page.evaluate(()=>getRunQuestionStats('q').totalCount),i+1);
+     assert.equal(await page.evaluate(()=>getRunQuestionStats('q').totalCount),i+1,errors.join('\n'));
     assert.equal(await page.locator('#shortAnswerHint').innerText(),['힌트: 제***','힌트: 제안**','힌트: 제안하*'][i]);
    }
    await page.screenshot({path:path.join(output,width+'.png')});
    await page.locator('#shortAnswerInput').fill('제안하다');await page.locator('#questionSubmitButton').click();
-   assert.equal(await page.evaluate(()=>getRunQuestionStats('q').correctCount),1);
+   assert.equal(await page.evaluate(()=>getRunQuestionStats('q').correctCount),1,errors.join('\n'));
    assert.equal(await page.evaluate(()=>getRunQuestionStats('q').totalCount),4);
    assert.deepEqual(await page.evaluate(()=>pendingStageAnswerLogs.map(l=>l.selectedAnswerText)),['제안','제한하다','제안해','제안하다']);
    await page.evaluate(()=>startFixture());

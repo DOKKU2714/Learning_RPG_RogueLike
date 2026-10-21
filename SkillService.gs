@@ -347,19 +347,23 @@ function useSkill(runId, skillId, targetId, answerPayload) {
   recordExperienceQuestion_(battleState,{question:question,efficiency:efficiency,isCorrect:isCorrect,wrongCount:Number(payload.wrongCountAfterTimeout || 0)});
   consumeActionPoint_(battleState, Number(pendingAction.actionPointCost !== undefined && pendingAction.actionPointCost !== '' ? pendingAction.actionPointCost : getActionPointCostForAction_(ACTION_TYPES.SKILL, skill)));
   getSharedRuleEngine_().consumeSkillCostEffects(battleState.player, skill);
-  if (gaveUp) {
-    battleState.lastPlayerAction = { type: ACTION_TYPES.SKILL, skillId: skill.skillId, value: 0, efficiency: 0, gaveUp: true };
-    battleState.lastMessage = '문제를 포기했습니다. 행동력만 소모했습니다.';
-    battleState.lastTurnEvents.push({ actor: 'player', type: 'giveUp', skillId: skill.skillId, message: battleState.lastMessage });
+  if (gaveUp || efficiency <= 0) {
+    battleState.lastPlayerAction = { type: ACTION_TYPES.SKILL, skillId: skill.skillId, value: 0, efficiency: 0, gaveUp: gaveUp };
+    battleState.lastMessage = gaveUp ? '문제를 포기했습니다. 행동력만 소모했습니다.' : '효율이 0%여서 행동이 발동하지 않았습니다.';
+    battleState.lastTurnEvents.push({ actor: 'player', type: gaveUp ? 'giveUp' : 'actionFailed', skillId: skill.skillId, message: battleState.lastMessage });
   }
-  if (!gaveUp) {
+  if (!gaveUp && efficiency > 0) {
     tickEffectsOnPlayerAction(battleState);
     if (battleState.player.hp <= 0) {
       battleState.status = STATUS.BATTLE_DEFEAT;
       battleState.lastMessage = '지속 피해로 쓰러졌습니다.';
     }
   }
-  var skillWasUsed = !gaveUp && battleState.player.hp > 0 && battleState.status === STATUS.BATTLE_ACTIVE;
+  if (!gaveUp && efficiency <= 0 && !isCorrect) {
+    processSkillTriggers_(battleState, 'onWrong', {isCorrect:false, efficiency:efficiency});
+    processSkillFailPenaltyAfterAnswer_(battleState, skill, false);
+  }
+  var skillWasUsed = !gaveUp && efficiency > 0 && battleState.player.hp > 0 && battleState.status === STATUS.BATTLE_ACTIVE;
   if (skillWasUsed) {
     getSharedRuleEngine_().applyPerfectAnswerItems(battleState, efficiency, false);
     setActiveMonsterScoreContext_(battleState, pendingAction.questionId, efficiency);
@@ -411,6 +415,7 @@ function useSkill(runId, skillId, targetId, answerPayload) {
 }
 
 function applySkillEffect(battleState, skill, efficiency, isCorrect) {
+  if (Number(efficiency || 0) <= 0) return battleState;
   var skillRule = getSkillExecutionRule_(skill);
   if (shouldUseSkillRuleEngine_(skillRule)) {
     return executeSkillByRule_(battleState, skill, skillRule, efficiency, isCorrect);
@@ -1409,7 +1414,9 @@ function applySkillEffectRule_(battleState, skill, effectRule, targets, context)
     var configured=Object.assign({},applied,{sourceSkill:sourceSkill});
     if(configured.stackMode==='add')configured.stacks=modifyAppliedEffectStacks_(battleState,skill,target,configured,context);
     if(configured.stackMode==='add' && configured.stacks<=0)return;
+    var stacksBefore = getSharedRuleEngine_().effectStacks(target,configured.effectId);
     var appliedEffect = applyEffect(target, configured, { source: effectRule.target || 'rule', skillId: skill.skillId, turn: battleState && battleState.turn });
+    var appliedStacks = configured.stackMode === 'add' ? Math.max(0,getSharedRuleEngine_().effectStacks(target,configured.effectId)-stacksBefore) : 0;
     var effectType = String(appliedEffect && appliedEffect.category || applied.category || '').toLowerCase() === 'debuff' ? 'debuff' : 'buff';
     battleState.lastTurnEvents = battleState.lastTurnEvents || [];
     if (target && target.currentHp !== undefined) {
@@ -1418,6 +1425,8 @@ function applySkillEffectRule_(battleState, skill, effectRule, targets, context)
         type: effectType,
         skillId: skill.skillId,
         effectId: effectRule.effectId,
+        effectName: applied.name || effectRule.effectId,
+        appliedStacks: configured.stackMode === 'add' ? appliedStacks : undefined,
         statusSnapshot: {effects:JSON.parse(JSON.stringify(target.effects || []))},
         targetMonsterId: target.instanceId || target.monsterId,
         message: (target.name || '적') + '에게 ' + (skill.name || '스킬') + ' 효과!',
@@ -2124,7 +2133,8 @@ function modifyAppliedEffectStacks_(battle,skill,target,definition,context) {
     if(consume.length){cache.values[id]=Number(cache.values[id] || 0)+gain;consumed.push({effect:effect,count:consume.reduce(function(sum,r){return sum+engine.getEffectRuleValue(effect,r,battle.player);},0)});}
   });
   var received=(target.effects || []).reduce(function(sum,e){return sum+(e.rules || []).filter(function(r){return r.operation==='modifyReceivedStacks' && r.triggerTiming==='onApplyEffect' && r.statKey===id;}).reduce(function(n,r){return n+engine.getEffectRuleValue(e,r,target);},0);},0);
-  var count=Math.max(0,Math.round(Number(definition.stacks || 1)*(1+bonus/100)*(1+received/100)));
+  var efficiency=engine.getDebuffStackEfficiency(target,definition,context && context.efficiency);
+  var count=Math.max(0,Math.round(Number(definition.stacks || 1)*efficiency*(1+bonus/100)*(1+received/100)));
   if(count>0)consumed.forEach(function(entry){engine.consumeEffectStacks(battle.player,entry.effect.effectId,entry.count);});
   return count;
 }

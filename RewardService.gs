@@ -245,6 +245,7 @@ function previewRewardChoicesForStageResult(stagePayload, authToken) {
           || plan.localTransition.battleId !== planBattle.battleId
           || plan.stageId !== buildStageId_(planRun.currentFloor, planRun.currentStage)) throw new Error('보상 준비 정보가 현재 전투와 다릅니다.');
         view = refreshPreparedRewardView_(planRun, stagePayload, plan);
+        delete view.rerollQuestion;
         prepareRewardRerollQuestion_(view, planRun, stagePayload);
         finalizePreparedRewardTransitions_(view, planRun, stagePayload);
       } else {
@@ -285,11 +286,11 @@ function handleRewardReroll_(payload, authToken, cacheKey) {
   var record = records[key];
   if (!record) {
     if (payload.rewardRerollAction !== 'start' && !view.rerollQuestion) throw new Error('새로고침 문제를 먼저 받아 주세요.');
-    var question = view.rerollQuestion && Number(view.rerollQuestion.totalCount) > 0
+    var question = view.rerollQuestion
       ? view.rerollQuestion : pickRewardRerollQuestion_(getRewardRerollQuestions_(run, payload));
     if (!question) {
       view.rerollUnavailable = true;
-      view.rerollUnavailableReason = '아직 풀이 기록이 있는 문제가 없어 보상을 새로고침할 수 없습니다.';
+      view.rerollUnavailableReason = '이번 게임의 오답 문제나 미출제 문제가 없어 보상을 새로고침할 수 없습니다.';
       signLocalRewardView_(view);
       putChunkedRunCache_(cacheKey, safeJsonStringify_(view));
       return { rerollStatus: 'unavailable', rerollMessage: view.rerollUnavailableReason, rewardView: view };
@@ -346,13 +347,13 @@ function prepareRewardRerollQuestion_(view, run, payload) {
     return view;
   }
   if((view.choices || []).some(function(r){return r.type==='stageContinue';}))return view;
-  if (!view.rerollUsed && (!view.rerollQuestion || !(Number(view.rerollQuestion.totalCount) > 0))) {
+  if (!view.rerollUsed && !view.rerollQuestion) {
     var question;
     // Optional preloading must not prevent claiming normal rewards when the question sheet is unavailable.
     try { question = pickRewardRerollQuestion_(getRewardRerollQuestions_(run, payload)); }
     catch (error) { return view; }
     view.rerollUnavailable = !question;
-    view.rerollUnavailableReason = question ? '' : '아직 풀이 기록이 있는 문제가 없어 보상을 새로고침할 수 없습니다.';
+    view.rerollUnavailableReason = question ? '' : '이번 게임의 오답 문제나 미출제 문제가 없어 보상을 새로고침할 수 없습니다.';
     if (question) view.rerollQuestion = sanitizeQuestionForBattleCache_(question, run.playerId);
     else delete view.rerollQuestion;
   }
@@ -393,6 +394,8 @@ function getRewardRerollQuestions_(run, payload) {
   return questions.map(function(question) {
     var tally = counts[question.questionId] || { total: 0, correct: 0 };
     return Object.assign({}, question, {
+      runTotalCount: tally.total,
+      runCorrectCount: tally.correct,
       totalCount: Number(question.totalCount || 0) + tally.total,
       correctCount: Number(question.correctCount || 0) + tally.correct,
     });
@@ -400,8 +403,14 @@ function getRewardRerollQuestions_(run, payload) {
 }
 
 function pickRewardRerollQuestion_(questions) {
+  var approved = (questions || []).filter(function(question) { return question.status === STATUS.QUESTION_APPROVED; });
+  var wrong = approved.filter(function(question) { return Number(question.runTotalCount || 0) > Number(question.runCorrectCount || 0); });
+  if (!wrong.length) {
+    var unseen = approved.filter(function(question) { return !Number(question.runTotalCount || 0); });
+    return unseen.length ? pickRandom_(unseen) : null;
+  }
   var pool = [], lowest = Infinity;
-  (questions || []).forEach(function(question) {
+  wrong.forEach(function(question) {
     if (question.status !== STATUS.QUESTION_APPROVED) return;
     var total = Math.max(0, Number(question.totalCount || 0));
     if (!isFinite(total) || total <= 0) return;

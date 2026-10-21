@@ -1,6 +1,9 @@
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const fs = require('node:fs');
 const assert = require('node:assert/strict');
+const vm = require('node:vm');
+const sharedContext=vm.createContext({});vm.runInContext(fs.readFileSync('SharedRuleEngine.gs','utf8'),sharedContext);
+const sharedSource=sharedContext.getSharedRuleEngineSource_();
 const html = fs.readFileSync('Battle.html', 'utf8');
 const extract = name => html.match(new RegExp('    function ' + name + '\\([^]*?\\n    \\}'))[0];
 const modals = html.slice(html.indexOf('  <div id="questionModal"'), html.indexOf('  <div id="scoreModal"'));
@@ -10,9 +13,9 @@ const modals = html.slice(html.indexOf('  <div id="questionModal"'), html.indexO
   try {
     const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
     const errors = []; page.on('pageerror', error => errors.push(error.message));
-    await page.setContent('<html><head>' + fs.readFileSync('UiStyles.html', 'utf8') + '</head><body>' + modals + '<script>' + `
+    await page.setContent('<html><head>' + fs.readFileSync('UiStyles.html', 'utf8') + '</head><body>' + modals + '<script>' + sharedSource + `
       var rewardRerollBusy=false,rewardRerollQuestion=null,rewardRerollAnswer=null,rewardSelectionApplying=false,workbookDeadlineExpired=false,victoryRewardPreload=null;
-      var currentQuestionView=null,questionTimerId=null,questionStartedAt=0,wrongCountAfterTimeout=0,shortAnswerEnterSubmitLock=false,pendingActionPointVisualCost=0;
+      var currentQuestionView=null,questionTimerId=null,questionPresentationTimer=null,questionStartedAt=0,wrongCountAfterTimeout=0,shortAnswerEnterSubmitLock=false,pendingActionPointVisualCost=0;
       var currentView={},calls=[],renderCount=0,bridgeMode='normal',MIN_ANSWER_EFFICIENCY=.1,MAX_ANSWER_EFFICIENCY=1.25;
       var currentRewardView={localTransitionToken:'signed',choices:[{description:'기존 보상'}],rerollQuestion:{questionId:'weak',prompt:'정답률이 가장 낮은 문제',type:'multipleChoice',choice1:'오답',choice2:'정답',answer:'2',answerAliases:'[]',difficulty:5}};
       function resetQuestionResultHold(){} function resetQuestionEfficiencyFeedback(){} function renderQuestionMetadata(){}
@@ -41,13 +44,15 @@ const modals = html.slice(html.indexOf('  <div id="questionModal"'), html.indexO
       }};var google={script:{run:bridge}};
     ` + ['openQuestionModal', 'renderAnswerArea', 'getSelectedAnswer', 'isClientCorrectAnswer', 'normalizeClientAnswer', 'normalizeClientShortAnswer',
       'setQuestionInputsDisabled', 'tickQuestionTimer', 'getQuestionMaxAnswerEfficiency', 'updateQuestionEfficiencyMeter', 'closeQuestionModal',
+      'prepareQuestionPresentation','syncQuestionEfficiencyDock','startQuestionSolving','getQuestionActionValueText','updateQuestionActionValueText',
       'openRewardRerollQuestion', 'startRewardReroll', 'finishRewardReroll', 'submitRewardRerollAnswer', 'requestRewardReroll', 'submitQuestionAnswer'].map(extract).join('\n') +
       ';renderRewardChoices(currentRewardView);</script></body></html>');
     await page.locator('#rewardRerollButton').click();
     assert.equal(await page.locator('#questionModal').evaluate(el => el.classList.contains('active')), true);
     assert.equal(await page.evaluate(() => calls.length), 0, 'question opens without a server request');
+    await page.locator('#questionStartButton').click();
     await page.locator('[data-choice-value="1"]').click();
-    assert.equal(await page.locator('#questionEfficiencyPercent').innerText(), '0%');
+    assert.equal(await page.locator('#questionEfficiencyPercent').innerText(), '0%', errors.join('\n'));
     assert.equal(await page.locator('input[name="questionChoice"]:enabled').count(), 0);
     await page.evaluate(() => tickQuestionTimer());
     assert.equal(await page.locator('#questionEfficiencyPercent').innerText(), '0%');
@@ -59,6 +64,7 @@ const modals = html.slice(html.indexOf('  <div id="questionModal"'), html.indexO
     assert.equal(await page.locator('#rewardChoices').innerText(), '기존 보상');
     await page.evaluate(() => {currentRewardView.rerollUsed=false;currentRewardView.rerollQuestion={questionId:'weak',prompt:'문제',type:'multipleChoice',choice1:'오답',choice2:'정답',answer:'2',answerAliases:'[]',difficulty:5};renderRewardChoices(currentRewardView);});
     await page.locator('#rewardRerollButton').click();
+    await page.locator('#questionStartButton').click();
     await page.locator('[data-choice-value="2"]').click();
     await page.waitForFunction(() => currentQuestionView.rerollComplete);
     await page.locator('#questionSubmitButton').click();
@@ -75,6 +81,7 @@ const modals = html.slice(html.indexOf('  <div id="questionModal"'), html.indexO
     await page.waitForFunction(()=>currentQuestionView && currentQuestionView.isRewardReroll);
     assert.equal(await page.locator('#questionTitle').innerText(),'보상 새로고침 문제');
     assert.equal(await page.evaluate(()=>renderCount),renders,'server-fetched challenge does not redraw old cards');
+    await page.locator('#questionStartButton').click();
     await page.locator('[data-choice-value="2"]').click();
     await page.waitForFunction(()=>currentQuestionView.rerollComplete);
     await page.locator('#questionSubmitButton').click();

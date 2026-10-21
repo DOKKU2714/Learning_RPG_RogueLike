@@ -203,6 +203,13 @@ var RULE_ENGINE_SHARED = (function() {
     return category;
   }
 
+  function getDebuffStackEfficiency(target, effect, efficiency) {
+    if (!target || target.currentHp === undefined || getEffectCategory(effect) !== 'debuff'
+      || !isTruthy(effect.stackable)
+      || (effect.durationClock !== 'stacks' && effect.durationType === 'turn' && Number(effect.durationTurns || 1) === 1)) return 1;
+    return efficiency === undefined ? 1 : Math.max(0, Number(efficiency || 0));
+  }
+
   function mergeStatusEffects(target) {
     var merged = [];
     var seen = {};
@@ -1217,7 +1224,11 @@ var RULE_ENGINE_SHARED = (function() {
       if (effectRule.stacksFormula !== undefined) effect.stacks = Math.max(1, Math.round(evaluateFormula(effectRule.stacksFormula, context, options)));
       var effectTargets = effectRule.target === 'self' ? [battle.player] : (effectRule.target === 'allEnemies' ? getAliveMonsters(battle) : targets);
       effectTargets.filter(Boolean).forEach(function(target) {
-        var applied = applyEffect(target, effect, { source: effectRule.target || 'rule', skillId: skill && skill.skillId || '' }, battle.turn);
+        var configured = Object.assign({}, effect);
+        var stackEfficiency = getDebuffStackEfficiency(target, effect, context.efficiency);
+        if (stackEfficiency !== 1) configured.stacks = Math.max(0, Math.round(Number(effect.stacks || 1) * stackEfficiency));
+        if (configured.stacks === 0) return;
+        var applied = applyEffect(target, configured, { source: effectRule.target || 'rule', skillId: skill && skill.skillId || '' }, battle.turn);
         var type = String(applied && applied.category || '').toLowerCase() === 'debuff' ? 'debuff' : 'buff';
         battle.lastTurnEvents.push({
           actor: 'player',
@@ -1253,6 +1264,7 @@ var RULE_ENGINE_SHARED = (function() {
     var efficiency = Number(args.efficiency || 0);
     var options = { random: args.random || Math.random, warn: args.warn, effectResolver: args.effectResolver };
     if (!shouldUseSkillRuleEngine(rule)) return false;
+    if (efficiency <= 0) return true;
     validateSkillRule(rule, options);
     battle.lastTurnEvents = battle.lastTurnEvents || [];
     if (rule.requireCondition && rule.requireCondition.requireEfficiencyAtLeast && efficiency < Number(rule.requireCondition.requireEfficiencyAtLeast)) {
@@ -1490,6 +1502,7 @@ var RULE_ENGINE_SHARED = (function() {
     isTruthy: isTruthy,
     randomInt: randomInt,
     applyEffect: applyEffect,
+    getDebuffStackEfficiency: getDebuffStackEfficiency,
     syncStatusBuckets: syncStatusBuckets,
     getEffectiveStat: getEffectiveStat,
     calculateEffectiveStats: calculateEffectiveStats,

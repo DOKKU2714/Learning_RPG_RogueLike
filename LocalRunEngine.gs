@@ -38,7 +38,7 @@ function getLocalRunEngineSource_() {
     ALLOWED_REWARD_STAT_KEYS_: ALLOWED_REWARD_STAT_KEYS_, MASTER_ITEMS: MASTER_ITEMS,
     MASTER_EFFECTS: MASTER_EFFECTS, MASTER_MONSTERS: MASTER_MONSTERS, MASTER_SETTINGS: MASTER_SETTINGS, MASTER_SKILLS: MASTER_SKILLS };
   var declarations = Object.keys(constants).map(function(name) { return 'var ' + name + '=' + JSON.stringify(constants[name]) + ';'; }).join('\n');
-   var source = '(function(nativeDate,nativeMath){\n' + declarations + '\n' + adapters + '\n' + getSharedRuleEngineSource_() + '\n' + sources.join('\n') + '\nreturn {advance: advanceLocalRun, reward: refreshLocalReward, rerollReward: rerollLocalReward, skill: applyLocalBattleSkill, trigger: processLocalBattleTrigger, tick: tickLocalBattleEffects, skills: getLocalBattleSkills, damage:applyLocalCombatDamage, playerDamage:applyLocalPlayerDamage, actorTurn:beginLocalActorTurn, hitStats:localCombatHitStats, monsterIntent:localMonsterIntent, monsterAction:localMonsterAction, experienceQuestion:recordExperienceQuestion_, settleExperience:settleMonsterExperience_, levelOptions:getLevelStatOptions_, statRewardChoices:localLevelStatChoices, claimStatReward:localLevelStatReward, pendingStatRewards:getPendingLevelStatRewards_, rerollStatReward:localLevelStatReroll, levelRequired:levelExperienceRequired_, allocate:allocateLocalLevelStats, rewardChoices:localLevelRewardChoices, claimLevelReward:localLevelReward, rerollLevelReward:localLevelRewardReroll, upgradeOptions:localLevelUpgradeOptions, upgrade:localLevelUpgrade, itemDrops:localMonsterItemDrops, decideDrop:localDecideMonsterItemDrop};\n})(Date,Math)';
+   var source = '(function(nativeDate,nativeMath){\n' + declarations + '\n' + adapters + '\n' + getSharedRuleEngineSource_() + '\n' + sources.join('\n') + '\nreturn {advance: advanceLocalRun, reward: refreshLocalReward, rerollReward: rerollLocalReward, skill: applyLocalBattleSkill, previewSkill: previewLocalBattleSkill, trigger: processLocalBattleTrigger, tick: tickLocalBattleEffects, skills: getLocalBattleSkills, damage:applyLocalCombatDamage, playerDamage:applyLocalPlayerDamage, actorTurn:beginLocalActorTurn, hitStats:localCombatHitStats, monsterIntent:localMonsterIntent, monsterAction:localMonsterAction, experienceQuestion:recordExperienceQuestion_, settleExperience:settleMonsterExperience_, levelOptions:getLevelStatOptions_, statRewardChoices:localLevelStatChoices, claimStatReward:localLevelStatReward, pendingStatRewards:getPendingLevelStatRewards_, rerollStatReward:localLevelStatReroll, levelRequired:levelExperienceRequired_, allocate:allocateLocalLevelStats, rewardChoices:localLevelRewardChoices, claimLevelReward:localLevelReward, rerollLevelReward:localLevelRewardReroll, upgradeOptions:localLevelUpgradeOptions, upgrade:localLevelUpgrade, itemDrops:localMonsterItemDrops, decideDrop:localDecideMonsterItemDrop};\n})(Date,Math)';
   if (/\b(?:SpreadsheetApp|PropertiesService|CacheService|LockService|UrlFetchApp|ScriptApp)\b/.test(source)) throw new Error('클라이언트 전투 규칙에 서버 의존성이 남아 있습니다.');
   return source;
 }
@@ -77,6 +77,35 @@ function getLocalRunEngineAdapters_() {
   }
   function localLevelStatChoices(snapshot,battle) {
     return withLocalBattleRules(snapshot,battle,function(){return getLevelStatRewardChoices_(battle);});
+  }
+  function previewLocalBattleSkill(snapshot, battle, skill, targetId, efficiency, actionPointCost) {
+    var copy = cloneLocal(battle);
+    copy.lastTurnEvents = [];
+    if (Number(efficiency || 0) <= 0) return copy;
+    return withLocalBattleRules(snapshot, copy, function() {
+      var hit = rollHit_, critical = rollCriticalDamage_;
+      try {
+        // Preview a normal landed hit; the committed result replaces it before release.
+        rollHit_ = function() { return {hit:true,chance:100}; };
+        rollCriticalDamage_ = function(damage, stats, bonus) { return critical(damage,Object.assign({},stats,{criticalRate:0}),bonus); };
+        Math.random = function() { return 0.5; };
+        copy.player.currentActionPoint = Math.max(0,Number(copy.player.currentActionPoint || 0)-Number(actionPointCost || 0));
+        getSharedRuleEngine_().consumeQuestionEffects(copy.player);
+        getSharedRuleEngine_().consumeSkillCostEffects(copy.player,skill);
+        tickEffectsOnPlayerAction(copy);
+        if (copy.player.hp <= 0) return copy;
+        getSharedRuleEngine_().applyPerfectAnswerItems(copy,efficiency,false);
+        processSkillTriggers_(copy,'onCorrect',{efficiency:efficiency,isCorrect:true});
+        var master = findCachedRowByKey_(DB_SHEETS.SKILLS,'skillId',skill.skillId);
+        var hydrated = hydrateSkill_(master || skill,skill.level);
+        applySkillEffect(copy,Object.assign({},hydrated,{targetId:targetId || '',secondaryTargetId:skill.secondaryTargetId || '',cooldownTargetSkillId:skill.cooldownTargetSkillId || ''}),efficiency,true);
+        return copy;
+      } finally {
+        rollHit_ = hit;
+        rollCriticalDamage_ = critical;
+        Math.random = nativeMath.random;
+      }
+    });
   }
   function localLevelStatReward(snapshot,battle,rewardId) {
     return withLocalBattleRules(snapshot,battle,function(){return applyLevelStatReward_(battle,rewardId);});
@@ -146,7 +175,7 @@ function getLocalRunEngineAdapters_() {
   }
   function rerollLocalReward(run, snapshot, payload, view, answer) {
     if (!view || view.preparedDuringBattle || !view.localTransition || view.rerollUsed) throw new Error('현재 보상은 새로고침할 수 없습니다.');
-    if (!view.rerollQuestion || !(Number(view.rerollQuestion.totalCount)>0)) throw new Error('새로고침 문제가 없습니다.');
+    if (!view.rerollQuestion) throw new Error('새로고침 문제가 없습니다.');
     answer=answer || {};
     localRun=cloneLocal(run);localSnapshot=snapshot;
     var next=cloneLocal(view),correct=!answer.giveUp && isCorrectAnswer_(view.rerollQuestion,answer.selectedAnswer,answer.selectedChoiceIndex,answer.selectedAnswerText);

@@ -115,3 +115,10 @@ test('local reroll: UI state carries the answer into the next progress payload',
   ui.ensureClientRewardState({stageId:'s',rerollUsed:true,localRerollAnswer:answer,choices:[]});
   assert.deepEqual(copy(ui.buildStageResultPayload().localRewardRerollAnswer),answer);
 });
+
+test('local reroll: accepts an unseen question with zero historical attempts',()=>{
+  const g=game();
+  g.view.rerollQuestion.totalCount=0;
+  const result=g.engine.rerollReward(g.view.localRunState,g.initial.gameDataSnapshot,g.payload,g.view,{selectedChoiceIndex:2});
+  assert.equal(result.rerollStatus,'success');
+});

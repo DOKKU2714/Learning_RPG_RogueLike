@@ -168,6 +168,7 @@
   </div>
 
   <div id="questionModal" class="question-modal-overlay" aria-hidden="true">
+    <div id="questionSkillCast" aria-hidden="true"></div>
     <section class="question-modal" role="dialog" aria-modal="true" aria-labelledby="questionTitle">
       <div class="question-frame question-prompt-panel">
         <div class="question-corner-badge question-difficulty-badge">
@@ -178,8 +179,6 @@
         <h2 id="questionTitle">문제</h2>
         <div id="questionMetadata" class="question-metadata" aria-label="문제 정보"></div>
         <p id="questionPrompt">문제 본문</p>
-      </div>
-
       <div id="questionReactionBar" class="question-reaction-bar" aria-label="문제 반응">
         <span id="questionAccuracy" class="question-accuracy" aria-live="polite"></span>
         <button id="questionLikeButton" class="question-reaction-button question-like-button" type="button" onclick="chooseQuestionReaction('like')">
@@ -191,24 +190,11 @@
           <strong id="questionDislikeCount">0</strong>
         </button>
       </div>
+      </div>
 
       <div class="question-frame question-answer-panel">
+        <button id="questionStartButton" class="question-start-button" type="button" onclick="startQuestionSolving()" hidden><strong>풀이 시작</strong><span>Enter ↵</span></button>
         <div id="questionAnswerArea"></div>
-      </div>
-
-      <div class="question-efficiency-panel">
-        <span id="questionMaxTime" class="question-max-time">10.0s</span>
-        <div id="questionEfficiencyMeter" class="efficiency-meter">
-          <span id="questionEfficiencyText" class="question-efficiency-text" aria-live="polite">
-            <strong id="questionEfficiencyPercent">125%</strong>
-            <span id="questionEfficiencyBonus" class="question-efficiency-bonus"></span>
-            <span id="questionEfficiencyActionValue" class="question-efficiency-action-value">(0)</span>
-          </span>
-          <span id="questionEfficiencyFill" class="meter-fill" style="width:100%;"></span>
-          <span id="questionEfficiencyBonusFill" class="meter-bonus-fill" aria-hidden="true"></span>
-        </div>
-        <div id="questionRemainingTime" class="question-time-left">10.0s</div>
-      </div>
 
       <div id="questionMessage" class="message"></div>
       <div class="inline-actions question-submit-actions" style="justify-content:flex-end; margin-top:14px;">
@@ -226,10 +212,21 @@
         <button id="questionGiveUpButton" class="secondary hidden" type="button" onclick="giveUpCurrentQuestion()">포기</button>
         <button id="questionSubmitButton" onclick="submitQuestionAnswer()">확인</button>
       </div>
+      </div>
       <div id="questionResultHold" class="question-result-hold hidden" aria-hidden="true">
         <span id="questionResultHoldFill"></span>
       </div>
     </section>
+    <div class="question-efficiency-panel">
+      <span id="questionEfficiencyActionValue" class="question-efficiency-action-value" aria-live="polite">0피해</span>
+      <span id="questionMaxTime" class="question-max-time">10.0s</span>
+      <div id="questionEfficiencyMeter" class="efficiency-meter">
+        <span id="questionEfficiencyText" class="question-efficiency-text"><strong id="questionEfficiencyPercent">125%</strong><span id="questionEfficiencyBonus" hidden></span></span>
+        <span id="questionEfficiencyFill" class="meter-fill" style="width:100%;"></span>
+        <span id="questionEfficiencyBonusFill" class="meter-bonus-fill" aria-hidden="true"></span>
+      </div>
+      <div id="questionRemainingTime" class="question-time-left">10.0s</div>
+    </div>
   </div>
 
   <div id="rewardModal" class="question-modal-overlay" aria-hidden="true">
@@ -240,7 +237,7 @@
       </div>
       <div id="rewardChoices" class="reward-choice-grid"></div>
       <div class="reward-reroll-row">
-        <span class="reward-reroll-control" data-tooltip-placement="above" data-tooltip="보상 전체 새로고침 · 스테이지마다 1회&#10;난이도와 관계없이 정답률이 가장 낮은 문제 중 하나가 출제됩니다.&#10;정답: 보상 전체 새로고침&#10;오답·포기: 효율 0%, 기존 보상 유지&#10;성공·실패 모두 해당 스테이지의 기회를 소모합니다.">
+        <span class="reward-reroll-control" data-tooltip-placement="above" data-tooltip="보상 전체 새로고침 · 스테이지마다 1회&#10;이번 게임에서 한 번이라도 틀린 문제 중 정답률이 가장 낮은 문제가 출제됩니다. 없으면 미출제 문제가 나옵니다.&#10;정답: 보상 전체 새로고침&#10;오답·포기: 효율 0%, 기존 보상 유지&#10;성공·실패 모두 해당 스테이지의 기회를 소모합니다.">
         <button id="rewardRerollButton" type="button" onclick="startRewardReroll()" aria-label="문제를 맞히면 새로고침 · 1회" title="문제를 맞히면 새로고침 · 1회">
           <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 6.1A8 8 0 0 1 20 12M4 12a8 8 0 0 0 13.9 5.9"/></svg>
         </button>
@@ -348,6 +345,7 @@
     var currentDamageEfficiency = null;
     var questionStartedAt = 0;
     var questionTimerId = null;
+    var questionPresentationTimer = null;
     var isDummyMode = false;
     var isPlayerTurn = true;
     var battleQuickAccessState = null;
@@ -1408,23 +1406,30 @@
       panel.setAttribute('role', 'tooltip');
       panel.setAttribute('aria-hidden', 'true');
       document.body.appendChild(panel);
+      var preview = document.createElement('div');
+      preview.id = 'hudSkillPreview';
+      preview.className = 'hud-skill-preview';
+      preview.hidden = true;
+      preview.setAttribute('role', 'tooltip');
+      (document.getElementById('battleShell') || document.body).appendChild(preview);
       function hide() {
         window.clearTimeout(hideTimer);
         panel.classList.remove('active');
         panel.setAttribute('aria-hidden', 'true');
+        preview.hidden = true;
         if (activeCard) {
-          var ids = (activeCard.getAttribute('aria-describedby') || '').split(/\s+/).filter(function(id) { return id && id !== panel.id; });
+          var ids = (activeCard.getAttribute('aria-describedby') || '').split(/\s+/).filter(function(id) { return id && id !== panel.id && id !== preview.id; });
           if (ids.length) activeCard.setAttribute('aria-describedby', ids.join(' '));
           else activeCard.removeAttribute('aria-describedby');
         }
         activeCard = null;
       }
       function show(event) {
-        if (panel.contains(event.target)) { window.clearTimeout(hideTimer); return; }
+        if (panel.contains(event.target) || preview.contains(event.target)) { window.clearTimeout(hideTimer); return; }
         var card = event.target.closest && event.target.closest(selector);
         if (!card) return;
         window.clearTimeout(hideTimer);
-        if (card === activeCard && panel.classList.contains('active')) return;
+        if (card === activeCard && (panel.classList.contains('active') || !preview.hidden)) return;
         hide();
         var entries = currentView && currentView.clientConfig && currentView.clientConfig.glossary || [];
         var text = card.textContent, seen = Object.create(null);
@@ -1433,8 +1438,15 @@
           seen[entry.keyword] = true;
           return true;
         });
-        if (!matches.length) return;
+        var source = card.querySelector('.hud-skill-card-source');
+        if (!matches.length && !source) return;
         activeCard = card;
+        if (source && !document.documentElement.classList.contains('touch-preview-mode')) {
+          preview.innerHTML = source.innerHTML;
+          preview.hidden = false;
+          card.setAttribute('aria-describedby', ((card.getAttribute('aria-describedby') || '') + ' ' + preview.id).trim());
+        }
+        if (!matches.length) return;
         panel.innerHTML = matches.map(function(entry) {
           return '<section><strong>' + escapeHtml(entry.keyword) + '</strong><p>' + escapeHtml(entry.description) + '</p></section>';
         }).join('');
@@ -1444,7 +1456,7 @@
         window.requestAnimationFrame(function() {
           if (activeCard !== card) return;
           var detail = card.querySelector('.skill-detail-card, .reward-detail-card');
-          var anchor = detail && window.getComputedStyle(detail).visibility !== 'hidden' && Number(window.getComputedStyle(detail).opacity) > 0 ? detail : card;
+          var anchor = !preview.hidden ? preview.querySelector('.hud-skill-card') : (detail && window.getComputedStyle(detail).display !== 'none' && window.getComputedStyle(detail).visibility !== 'hidden' && Number(window.getComputedStyle(detail).opacity) > 0 ? detail : card);
           var rect = anchor.getBoundingClientRect();
           panel.style.width = Math.min(210, Math.max(140, rect.width * 0.8)) + 'px';
           var width = panel.offsetWidth, height = panel.offsetHeight;
@@ -1461,16 +1473,21 @@
       document.addEventListener('mouseout', function(event) {
         if (!activeCard) return;
         var next = event.relatedTarget;
-        if (next && (activeCard.contains(next) || panel.contains(next))) return;
+        if (next && (activeCard.contains(next) || panel.contains(next) || preview.contains(next))) return;
         hideTimer = window.setTimeout(hide, 180);
       });
       document.addEventListener('focusout', function(event) {
-        if (activeCard && !activeCard.contains(event.relatedTarget)) hide();
+        if (activeCard && !activeCard.contains(event.relatedTarget) && !panel.contains(event.relatedTarget) && !preview.contains(event.relatedTarget)) hide();
       });
       document.addEventListener('keydown', function(event) { if (event.key === 'Escape') hide(); });
-      document.addEventListener('click', function(event) { if (!panel.contains(event.target)) hide(); });
+      document.addEventListener('pointerdown', function(event) { if (event.pointerType === 'touch') hide(); }, true);
+      document.addEventListener('click', function(event) { if (!panel.contains(event.target) && !preview.contains(event.target)) hide(); });
       window.addEventListener('resize', hide);
-      window.addEventListener('scroll', function(event) { if (!panel.contains(event.target)) hide(); }, true);
+      window.addEventListener('scroll', function(event) { if (!panel.contains(event.target) && !preview.contains(event.target)) hide(); }, true);
+      var skillPanel = document.getElementById('skillPanel');
+      if (skillPanel) new MutationObserver(function() {
+        if (activeCard && activeCard.matches('.skill-button') && (!activeCard.isConnected || skillPanel.classList.contains('hidden'))) hide();
+      }).observe(skillPanel, {childList:true, attributes:true, attributeFilter:['class']});
     }
 
     function positionHoverTooltip(tooltip, target, event, stackIndex) {
@@ -1741,30 +1758,22 @@
         hasUsableZeroCostSkill = hasUsableZeroCostSkill || shouldHighlightZeroCostSkill;
         var disabled = isDisabled ? ' disabled' : '';
         var reason = !hasAp ? '행동력이 부족합니다.' : (!canUseNow ? skill.unavailableReason : (skill.description || ''));
-        var cooldown = getSkillCooldownDisplayText(skill);
-        var useLimitText = getSkillUseLimitText(skill);
-        var difficultyBonusText = getSkillDifficultyBonusText(skill);
-        var description = skill.description || '';
         var rarity = getRewardRarityLabel(skill.rarity || 'common');
         var rarityClass = normalizeRewardRarity(skill.rarity);
-        var reasonText = reason || description || '';
-        var detailDescription = buildSkillDetailDescription(skill, description || reasonText || '-');
+        var reward = {type:'skill',skillDetail:skill,rarity:skill.rarity};
         return '<button class="skill-button rarity-' + escapeHtml(rarityClass) + (shouldHighlightZeroCostSkill ? ' zero-cost-skill-attention' : '') + '" data-ap-cost="' + escapeHtml(apCost) + '" data-skill-id="' + escapeHtml(skill.skillId) + '" data-skill-disabled="' + escapeHtml(isDisabled ? 'true' : 'false') + '" data-unavailable-reason="' + escapeHtml(reason || '') + '"' + disabled + '>' +
           '<span class="skill-button-name">' + escapeHtml(skill.name) + '</span>' +
           renderSkillActionPointGauge(apCost) +
-          '<span class="skill-detail-card hud-skill-detail rarity-' + escapeHtml(rarityClass) + '" aria-hidden="true">' +
+          '<span class="skill-detail-card hud-skill-card-source" aria-hidden="true">' +
+          '<span class="reward-choice-card reward-inline-skill hud-skill-card rarity-' + escapeHtml(rarityClass) + '">' +
             renderRewardActionPointBadge(apCost) +
-            '<span class="skill-detail-header">' +
-              '<strong class="skill-detail-name">' + escapeHtml(skill.name) + '</strong>' +
-            '</span>' +
-            '<span class="skill-detail-meta">' + escapeHtml(rarity) + ' / Lv.' + escapeHtml(skill.level || 1) + '</span>' +
-            '<span class="skill-detail-description">' + detailDescription + '</span>' +
-            '<span class="hud-skill-footer">' +
-            (difficultyBonusText ? '<span class="' + escapeHtml(getSkillDifficultyBonusClass(skill)) + '">' + escapeHtml(difficultyBonusText) + '</span>' : '') +
-            (useLimitText ? '<span class="skill-detail-line">' + escapeHtml(useLimitText) + '</span>' : '') +
-            (cooldown ? '<span class="skill-detail-line">' + escapeHtml(cooldown) + '</span>' : '') +
-            buildSkillFlavorDescription(skill, description || reasonText) +
-            '</span>' +
+            renderRewardRarityGems(rarityClass) +
+            '<span class="reward-choice-heading">' + escapeHtml(skill.name) + '</span>' +
+            '<span class="reward-rarity-badge">' + escapeHtml(rarity) + ' / Lv.' + escapeHtml(skill.level || 1) + '</span>' +
+            '<span class="reward-choice-icon-wrap"><img class="reward-choice-icon" src="' + escapeHtml(getRewardIconUrl('skill',reward)) + '" alt=""></span>' +
+            '<span class="reward-choice-body"><strong class="reward-skill-concept skill-status-name skill-status-' + getRewardConceptClass(reward) + '">' + escapeHtml(getRewardSkillConcept(reward)) + '</strong></span>' +
+            renderInlineRewardSkillDescription(reward) +
+          '</span>' +
           '</span>' +
         '</button>';
       }).join('') + '<button class="secondary skill-cancel-button" type="button" onclick="closeSkillPanel()">취소</button>';
@@ -2978,7 +2987,7 @@
         var rerollQuestion=getLevelRewardRerollQuestion();
         currentRewardView={isLevelReward:true,levelRewardTargetView:view,runId:view.runId,choices:choices,
           rerollUsed:!!(progress.skillRewardRerolls || {})[level],rerollQuestion:rerollQuestion,
-          rerollUnavailable:!rerollQuestion,rerollUnavailableReason:rerollQuestion ? '' : '풀었던 문제가 없습니다.'};
+          rerollUnavailable:!rerollQuestion,rerollUnavailableReason:rerollQuestion ? '' : '이번 게임의 오답 문제나 미출제 문제가 없습니다.'};
         renderRewardChoices(currentRewardView);
         var selected=await new Promise(function(resolve){levelRewardResolve=resolve;levelAllocationCancel=function(){resolve(false);};});
         levelRewardResolve=null;levelAllocationCancel=null;
@@ -3056,7 +3065,7 @@
           var rerollQuestion=getLevelRewardRerollQuestion();
           currentRewardView={isLevelReward:true,isLevelStatReward:true,levelRewardTargetView:view,runId:view.runId,choices:choices,
             rerollUsed:!!(progress.statRewardRerolls || {})[level],rerollQuestion:rerollQuestion,
-            rerollUnavailable:!rerollQuestion,rerollUnavailableReason:rerollQuestion?'':'풀었던 문제가 없습니다.'};
+            rerollUnavailable:!rerollQuestion,rerollUnavailableReason:rerollQuestion?'':'이번 게임의 오답 문제나 미출제 문제가 없습니다.'};
           renderRewardChoices(currentRewardView);
           var selected=await new Promise(function(resolve){levelRewardResolve=resolve;levelAllocationCancel=function(){resolve(false);};});
           levelRewardResolve=null;levelAllocationCancel=null;
@@ -4680,7 +4689,8 @@
       currentQuestionView.isDummy = !!dummy;
       if (!dummy && !questionView.isRewardReroll) recordQuestionExposure(questionView.question);
       shortAnswerEnterSubmitLock = false;
-      questionStartedAt = Date.now();
+      questionStartedAt = 0;
+      currentQuestionView.solveStarted = false;
       wrongCountAfterTimeout = 0;
       clearInterval(questionTimerId);
       document.getElementById('questionSubmitButton').disabled = false;
@@ -4700,13 +4710,70 @@
       renderQuestionAccuracy(question);
       resetQuestionUnderstanding();
       renderQuestionReactionView(question, !!dummy);
-      renderAnswerArea(question);
-      if (question.type === 'shortAnswer') {
-        showQuestionGiveUpButton();
-      }
+      document.getElementById('questionAnswerArea').replaceChildren();
+      document.getElementById('questionAnswerArea').hidden = true;
+      document.querySelector('#questionModal .question-submit-actions').hidden = true;
+      document.getElementById('questionStartButton').hidden = false;
       document.getElementById('questionModal').classList.add('active');
       document.getElementById('questionModal').setAttribute('aria-hidden', 'false');
+      prepareQuestionPresentation(questionView);
+    }
+
+    function syncQuestionEfficiencyDock() {
+      var bar = document.querySelector('.player-hp-track');
+      var panel = document.querySelector('#questionModal .question-efficiency-panel');
+      if (!panel) return;
+      var rect = bar && bar.getBoundingClientRect();
+      panel.style.left = rect && rect.width > 0 ? rect.left + 'px' : '12px';
+      panel.style.top = rect && rect.width > 0 ? rect.top + 'px' : 'auto';
+      panel.style.bottom = rect && rect.width > 0 ? 'auto' : '12px';
+      panel.style.width = rect && rect.width > 0 ? rect.width + 'px' : 'calc(100vw - 24px)';
+      panel.style.height = rect && rect.height > 0 ? rect.height + 'px' : '42px';
+    }
+
+    function prepareQuestionPresentation(view) {
+      clearTimeout(questionPresentationTimer);
+      var modal = document.getElementById('questionModal');
+      var cast = document.getElementById('questionSkillCast');
+      var start = document.getElementById('questionStartButton');
+      modal.classList.remove('question-solving', 'question-departing', 'skill-question-opening');
+      cast.replaceChildren();
+      var source = view.actionType === 'skill' && document.querySelector('.skill-button[data-skill-id="' + cssEscape(view.skillId) + '"] .hud-skill-card-source');
+      if (source) {
+        cast.innerHTML = source.innerHTML;
+        void modal.offsetWidth;
+        modal.classList.add('skill-question-opening');
+      }
+      start.disabled = !!source;
+      view.presentationReady = !source;
+      syncQuestionEfficiencyDock();
+      document.getElementById('questionEfficiencyActionValue').title = '명중 시 기본 수치입니다. 치명타와 확률 효과는 정답 판정 후 실제 결과에 반영됩니다.';
+      document.body.classList.add('question-mode');
+      window.addEventListener('resize', syncQuestionEfficiencyDock);
+      updateQuestionEfficiencyMeter(getQuestionMaxAnswerEfficiency());
+      questionPresentationTimer = window.setTimeout(function() {
+        if (currentQuestionView !== view) return;
+        view.presentationReady = true;
+        start.disabled = false;
+        cast.replaceChildren();
+        modal.classList.remove('skill-question-opening');
+        start.focus();
+      }, source && !window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 650 : 0);
+    }
+
+    function startQuestionSolving() {
+      var view = currentQuestionView;
+      if (!view || view.solveStarted || !view.presentationReady || workbookDeadlineExpired) return;
+      view.solveStarted = true;
+      questionStartedAt = Date.now();
+      document.getElementById('questionStartButton').hidden = true;
+      document.getElementById('questionAnswerArea').hidden = false;
+      document.querySelector('#questionModal .question-submit-actions').hidden = false;
+      document.getElementById('questionModal').classList.add('question-solving');
+      renderAnswerArea(view.question);
+      if (view.question.type === 'shortAnswer') showQuestionGiveUpButton();
       tickQuestionTimer();
+      clearInterval(questionTimerId);
       questionTimerId = setInterval(tickQuestionTimer, 100);
     }
 
@@ -4768,7 +4835,7 @@
       if (!/^[1-4]$/.test(event.key)) return false;
       var modal = document.getElementById('questionModal');
       if (!modal || !modal.classList.contains('active') || !currentQuestionView
-          || currentQuestionView.resultHolding || currentQuestionView.question.type === 'shortAnswer') return false;
+          || currentQuestionView.solveStarted === false || currentQuestionView.resultHolding || currentQuestionView.question.type === 'shortAnswer') return false;
       var target = event.target || {};
       var tagName = String(target.tagName || '').toLowerCase();
       if (target.isContentEditable || tagName === 'textarea' || tagName === 'select'
@@ -4961,6 +5028,7 @@
       document.getElementById('questionUnderstandingStatus').textContent = durable
         ? '' : '브라우저 저장을 사용할 수 없어 새로고침하면 사라질 수 있습니다.';
       if (view.resultHolding) document.getElementById('questionSubmitButton').textContent = '확인';
+      if (view.resultHolding && view.solveStarted === true && !view.isFloorExperience && !view.isRewardReroll) requestQuestionResultProceed();
     }
 
     function renderQuestionMetadata(question) {
@@ -5162,6 +5230,7 @@
 
     function tickQuestionTimer() {
       if (!currentQuestionView) return;
+      if (currentQuestionView.solveStarted === false) return;
       if (currentQuestionView.efficiencyLocked) {
         updateQuestionEfficiencyMeter(Number(currentQuestionView.lockedEfficiency || 0));
         return;
@@ -5214,20 +5283,19 @@
       bonusPercent = bonusEfficiency*100;
       var maxEfficiency = getQuestionMaxAnswerEfficiency();
       var displayMaxEfficiency = Math.max(0.01, maxEfficiency + bonusEfficiency);
-      var percent = Math.round(baseEfficiency * 100);
+      var percent = Math.round(totalEfficiency * 100);
       var fill = document.getElementById('questionEfficiencyFill');
       var bonusFill = document.getElementById('questionEfficiencyBonusFill');
       var meter = document.getElementById('questionEfficiencyMeter');
       var percentText = document.getElementById('questionEfficiencyPercent');
       var bonusText = document.getElementById('questionEfficiencyBonus');
-      var actionValueText = document.getElementById('questionEfficiencyActionValue');
-      var actionValue = calculateQuestionActionActualValue(totalEfficiency);
+      var actionValue = getQuestionActionValueText(totalEfficiency);
       percentText.textContent = percent + '%';
-      bonusText.textContent = bonusPercent > 0 ? '(+' + Math.round(bonusPercent) + '%)' : '';
-      actionValueText.textContent = '(' + actionValue + (currentQuestionView && currentQuestionView.isFloorExperience ? ' EXP' : '') + ')';
+      bonusText.textContent = '';
+      updateQuestionActionValueText(actionValue,totalEfficiency);
       meter.dataset.efficiency = String(totalEfficiency);
       meter.dataset.baseEfficiency = String(baseEfficiency);
-      meter.setAttribute('aria-label', '효율 ' + percent + '퍼센트' + (bonusPercent > 0 ? ' 플러스 ' + Math.round(bonusPercent) + '퍼센트' : '') + ', 행동 수치 ' + actionValue);
+      meter.setAttribute('aria-label', '효율 ' + percent + '퍼센트, 행동 수치 ' + actionValue);
       var baseWidth = Math.max(0, Math.min(1, baseEfficiency / displayMaxEfficiency)) * 100;
       var bonusWidth = Math.max(0, Math.min(1, bonusEfficiency / displayMaxEfficiency)) * 100;
       fill.style.width = baseWidth + '%';
@@ -5272,11 +5340,73 @@
       return applyClientOutgoingItemDamageModifiers(battle, damage, { actionType: 'attack' });
     }
 
+    function formatQuestionActionEvents(events) {
+      var damage = {}, stacks = {}, shield = 0, heal = 0;
+      (events || []).forEach(function(event) {
+        if ((event.actor === 'player' || event.actor === 'effect') && (event.targetMonsterId || event.target === 'monster') && Number(event.damage) > 0) {
+          var target = event.targetMonsterId || 'enemy';
+          damage[target] = Number(damage[target] || 0) + Number(event.damage);
+        }
+        if (event.actor === 'player' && event.type === 'debuff' && event.targetMonsterId && event.appliedStacks !== undefined) {
+          var group = stacks[event.effectName || '디버프'] || (stacks[event.effectName || '디버프'] = {});
+          group[event.targetMonsterId] = Number(group[event.targetMonsterId] || 0) + Number(event.appliedStacks);
+        }
+        if (event.actor === 'player' && event.type === 'guard') shield += Number(event.shield || 0);
+        if (event.actor === 'player' && event.type === 'heal') heal += Number(event.heal || 0);
+      });
+      function amount(values, unit) {
+        var numbers = Object.keys(values).map(function(key) { return values[key]; });
+        if (!numbers.length) return '';
+        if (numbers.length === 1) return numbers[0] + unit;
+        return numbers.every(function(n) { return n === numbers[0]; }) ? '각 ' + numbers[0] + unit : '총 ' + numbers.reduce(function(sum,n) { return sum+n; },0) + unit;
+      }
+      var parts = [amount(damage,'피해')];
+      if (shield > 0) parts.push(shield + '방어막');
+      if (heal > 0) parts.push(heal + '회복');
+      Object.keys(stacks).forEach(function(name) { parts.push(name + ' ' + amount(stacks[name],'중첩')); });
+      return parts.filter(Boolean).join(' · ') || ((events || []).some(function(e) { return e.type === 'buff' || e.type === 'debuff' || e.type === 'cleanse'; }) ? '효과 발동' : '발동 없음');
+    }
+
+    function getQuestionActionValueText(efficiency) {
+      var view = currentQuestionView || {};
+      if (view.resolvedActionText) return view.resolvedActionText;
+      if (view.isFloorExperience) return Math.max(0,Math.round(efficiency*100)) + ' EXP';
+      if (view.isRewardReroll) return efficiency > 0 ? '보상 새로고침' : '발동 없음';
+      if (efficiency <= 0) return '발동 없음';
+      var engine = window.LearningRpgLocalRunEngine;
+      if (view.actionType === 'skill' && engine && engine.previewSkill) {
+        var key = Number(efficiency).toFixed(3);
+        if (view.actionPreviewKey === key) return view.actionPreviewText;
+        var skill = Object.assign({},findAvailableSkill(view.skillId),{secondaryTargetId:view.secondaryTargetId || '',cooldownTargetSkillId:view.cooldownTargetSkillId || ''});
+        var preview = engine.previewSkill(localGameDataSnapshot,currentView.battle,skill,view.targetId,efficiency,view.actionPointCost);
+        view.actionPreviewKey = key;
+        view.actionPreviewText = formatQuestionActionEvents(preview.lastTurnEvents);
+        return view.actionPreviewText;
+      }
+      return calculateQuestionActionActualValue(efficiency) + (view.actionType === 'guard' ? '방어막' : '피해');
+    }
+
+    function updateQuestionActionValueText(text, efficiency) {
+      var element = document.getElementById('questionEfficiencyActionValue');
+      if (!element) return;
+      var changed = element.dataset.value && element.dataset.value !== text;
+      element.textContent = text;
+      element.dataset.value = text;
+      element.style.setProperty('--action-value-brightness',String(0.45+0.55*Math.min(1,Math.max(0,efficiency)/getQuestionMaxAnswerEfficiency())));
+      if (changed) {
+        element.classList.remove('value-changing');
+        void element.offsetWidth;
+        element.classList.add('value-changing');
+      }
+    }
+
     function resetQuestionEfficiencyFeedback() {
       var meter = document.getElementById('questionEfficiencyMeter');
       if (!meter) return;
       meter.classList.remove('efficiency-correct', 'efficiency-penalty');
       meter.removeAttribute('data-efficiency');
+      var value = document.getElementById('questionEfficiencyActionValue');
+      if (value) { value.dataset.value = ''; value.classList.remove('value-changing'); }
       meter.querySelectorAll('.efficiency-damage-pop').forEach(function(pop) {
         pop.remove();
       });
@@ -5285,6 +5415,7 @@
     function animateQuestionEfficiencyCorrect() {
       var meter = document.getElementById('questionEfficiencyMeter');
       if (!meter) return;
+      meter.querySelectorAll('.efficiency-damage-pop').forEach(function(pop) { pop.remove(); });
       meter.classList.remove('efficiency-correct', 'efficiency-penalty');
       void meter.offsetWidth;
       meter.classList.add('efficiency-correct');
@@ -5316,6 +5447,7 @@
       updateWorkbookCountdown();
       if (workbookDeadlineExpired) return;
       if (!currentQuestionView) return;
+      if (currentQuestionView.solveStarted === false) { startQuestionSolving(); return; }
       if (currentQuestionView.isRewardReroll) { submitRewardRerollAnswer(false); return; }
       if (currentQuestionView.resultHolding) {
         requestQuestionResultProceed();
@@ -5435,6 +5567,7 @@
     }
 
     function giveUpCurrentQuestion() {
+      if (currentQuestionView && currentQuestionView.solveStarted === false) return;
       if (currentQuestionView && currentQuestionView.isRewardReroll) { submitRewardRerollAnswer(true); return; }
       if (!currentQuestionView || currentQuestionView.resultHolding) return;
       var question = currentQuestionView.question || {};
@@ -5641,6 +5774,11 @@
 
     function receiveQuestionTurnView(view) {
       var normalizedView = normalizeBattleView(view);
+      if (currentQuestionView && currentQuestionView.solveStarted === true && !currentQuestionView.isFloorExperience && !currentQuestionView.isRewardReroll) {
+        currentQuestionView.resolvedActionText = formatQuestionActionEvents(normalizedView.battle && normalizedView.battle.lastTurnEvents);
+        document.getElementById('questionEfficiencyActionValue').title = '이번 행동의 실제 적용 수치';
+        updateQuestionActionValueText(currentQuestionView.resolvedActionText,currentDamageEfficiency);
+      }
       if (currentQuestionView && currentQuestionView.resultHolding && !questionResultProceedRequested) {
         pendingQuestionTurnView = normalizedView;
         pendingQuestionTurnIsOptimistic = false;
@@ -5716,6 +5854,17 @@
     function continueAfterQuestionResult() {
       var nextView = pendingQuestionTurnView;
       if (!nextView) return;
+      if (currentQuestionView && currentQuestionView.solveStarted === true && !currentQuestionView.departureComplete) {
+        if (currentQuestionView.departureStarted) return;
+        var departing = currentQuestionView;
+        departing.departureStarted = true;
+        animateQuestionActionRelease().then(function() {
+          if (currentQuestionView !== departing) return;
+          departing.departureComplete = true;
+          continueAfterQuestionResult();
+        });
+        return;
+      }
       hideLoadingModal();
       resetQuestionResultHold(false);
       closeQuestionModal(false);
@@ -5730,6 +5879,28 @@
       window.setTimeout(function() {
         playTurnSequence(nextView);
       }, QUESTION_ACTION_START_DELAY_MS);
+    }
+
+    function animateQuestionActionRelease() {
+      var modal = document.getElementById('questionModal');
+      var value = document.getElementById('questionEfficiencyActionValue');
+      modal.classList.add('question-departing');
+      if (!value || Number(currentDamageEfficiency) <= 0 || currentQuestionView.giveUp || currentQuestionView.failedBySkillPenalty) return delay(180);
+      var rect = value.getBoundingClientRect();
+      var flight = document.createElement('div');
+      flight.className = 'question-action-flight';
+      flight.textContent = value.textContent;
+      flight.style.left = rect.left + rect.width/2 + 'px';
+      flight.style.top = rect.top + rect.height/2 + 'px';
+      flight.setAttribute('aria-hidden','true');
+      document.body.appendChild(flight);
+      var reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      var animation = flight.animate([
+        {transform:'translate(-50%,-50%) scale(1)',opacity:1},
+        {transform:'translate(-50%,-50%) scale(1.45)',offset:0.2,opacity:1},
+        {transform:'translate(calc(-50% + ' + (innerWidth/2-rect.left-rect.width/2) + 'px),calc(-50% + ' + (innerHeight*0.42-rect.top-rect.height/2) + 'px)) scale(2)',opacity:0}
+      ],{duration:reduced ? 100 : 480,easing:'cubic-bezier(.25,.8,.45,1)',fill:'forwards'});
+      return animation.finished.catch(function() {}).then(function() { flight.remove(); });
     }
 
     function applyPendingServerTurnSync() {
@@ -5833,7 +6004,9 @@
       var selectedLabel = document.querySelector('.question-choice.selected');
       if (!selectedLabel) {
         if (isCorrect) {
-          spawnAnswerCorrectBurst(document.getElementById('shortAnswerInput'));
+          var input = document.getElementById('shortAnswerInput');
+          if (input) input.classList.add('answer-correct');
+          spawnAnswerCorrectBurst(input);
         }
         return;
       }
@@ -7052,11 +7225,11 @@
       battle.player.currentActionPoint = Math.max(0, Number(battle.player.currentActionPoint || 0) - actionCost);
       if (questionView.actionType === 'skill') RULE_ENGINE_SHARED.consumeSkillCostEffects(battle.player, {skillId:questionView.skillId});
       RULE_ENGINE_SHARED.consumeQuestionEffects(battle.player);
-      if (questionView.giveUp) {
-        battle.lastPlayerAction = { type: questionView.actionType, value: 0, efficiency: 0, gaveUp: true };
-        battle.lastTurnEvents.push({ actor: 'player', type: 'giveUp', message: '문제를 포기했습니다. 행동력만 소모했습니다.' });
+      if (questionView.giveUp || (efficiency <= 0 && !questionView.failedBySkillPenalty)) {
+        battle.lastPlayerAction = { type: questionView.actionType, value: 0, efficiency: 0, gaveUp: !!questionView.giveUp };
+        battle.lastTurnEvents.push({ actor: 'player', type: questionView.giveUp ? 'giveUp' : 'actionFailed', message: questionView.giveUp ? '문제를 포기했습니다. 행동력만 소모했습니다.' : '효율이 0%여서 행동이 발동하지 않았습니다.' });
         battle.status = Number(battle.player.hp || 0) <= 0 ? 'defeat' : 'active';
-        battle.lastMessage = battle.status === 'defeat' ? '쓰러졌습니다.' : '문제를 포기했습니다. 행동을 선택하세요.';
+        battle.lastMessage = battle.status === 'defeat' ? '쓰러졌습니다.' : (questionView.giveUp ? '문제를 포기했습니다. 행동을 선택하세요.' : '효율이 0%여서 행동이 발동하지 않았습니다.');
         nextView.battle = battle;
         return normalizeBattleView(nextView);
       }
@@ -7274,6 +7447,7 @@
     }
 
     function applyOptimisticSkillAction(battle, questionView, efficiency) {
+      if (Number(efficiency || 0) <= 0 && !questionView.failedBySkillPenalty) return;
       var skill = findAvailableSkill(questionView.skillId) || {};
       if (hasLocalBattleSkillEngine()) {
         window.LearningRpgLocalRunEngine.skill(localGameDataSnapshot, battle, Object.assign({},skill,{secondaryTargetId:questionView.secondaryTargetId || '',cooldownTargetSkillId:questionView.cooldownTargetSkillId || ''}), questionView.targetId,
@@ -8947,11 +9121,19 @@
     var rewardRerollAnswer = null;
 
     function getLevelRewardRerollQuestion() {
-      var rows=typeof localWorkbookQuestions!=='undefined' ? localWorkbookQuestions : [];
+      var rows=(typeof localWorkbookQuestions!=='undefined' ? localWorkbookQuestions : []).filter(function(question){return !!question.snapshotSignature;});
+      var wrong=rows.filter(function(question){
+        var stats=getRunQuestionStats(question.questionId);
+        return Number(stats.totalCount || 0)>Number(stats.correctCount || 0);
+      });
       var lowest=Infinity,pool=[];
-      rows.forEach(function(question){
+      (wrong.length ? wrong : rows).forEach(function(question){
         if(!question.snapshotSignature)return;
         var stats=typeof getQuestionSelectionStats==='function' ? getQuestionSelectionStats(question) : question;
+        if(!wrong.length){
+          if(!Number(getRunQuestionStats(question.questionId).totalCount || 0))pool.push(question);
+          return;
+        }
         var total=Number(stats.totalCount || 0);if(total<=0)return;
         var rate=Number(stats.correctCount || 0)/total;
         if(rate<lowest){lowest=rate;pool=[];}if(rate===lowest)pool.push(question);
@@ -12018,6 +12200,11 @@
     function closeQuestionModal(clearPending) {
       if (currentQuestionView) pendingActionPointVisualCost = Number(currentQuestionView.actionPointCost !== undefined && currentQuestionView.actionPointCost !== '' ? currentQuestionView.actionPointCost : (currentQuestionView.actionType === 'skill' ? getSkillActionPointCost(findAvailableSkill(currentQuestionView.skillId)) : 1));
       clearInterval(questionTimerId);
+      clearTimeout(questionPresentationTimer);
+      window.removeEventListener('resize', syncQuestionEfficiencyDock);
+      document.body.classList.remove('question-mode');
+      document.getElementById('questionSkillCast').replaceChildren();
+      document.querySelectorAll('.question-action-flight').forEach(function(flight) { flight.remove(); });
       resetQuestionResultHold(clearPending);
       shortAnswerEnterSubmitLock = false;
       currentQuestionView = null;

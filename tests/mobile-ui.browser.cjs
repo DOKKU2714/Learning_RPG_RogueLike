@@ -18,7 +18,7 @@ const viewport = renderOutput('battle').output.metaTags.find(tag => tag.name ===
 assert.ok(viewport, 'WebApp.doGet must register a viewport; template meta tags are ignored');
 const html = '<!doctype html><html class="battle-page-root"><head><meta name="viewport" content="' + viewport.content + '">'
   + styles + touch + '</head><body class="battle-page-body">' + body + '<script>window.actions=0;window.chooseAction=()=>actions++;window.submissions=0;window.submitQuestionAnswer=()=>submissions++;'
-  + layout + ';bindMobileBattleLayout();</script></body></html>';
+  + layout + battle.match(/    function syncQuestionEfficiencyDock\([^]*?\n    \}/)[0] + ';bindMobileBattleLayout();</script></body></html>';
 
 async function populate(page,count) {
   await page.evaluate(({count,image})=>{
@@ -114,6 +114,7 @@ async function populate(page,count) {
     });
     for(const width of [360,390,430]) {
       await page.setViewportSize({width,height:844});
+      await page.evaluate(()=>syncQuestionEfficiencyDock());
       const gauge=await page.evaluate(()=>{
         const meter=document.getElementById('questionEfficiencyMeter');
         return {width:meter.getBoundingClientRect().width,panel:meter.parentElement.getBoundingClientRect().width,
@@ -133,8 +134,6 @@ async function populate(page,count) {
     const scrolling=await scrollBox.evaluate(e=>({height:e.clientHeight,scrollHeight:e.scrollHeight,overflow:getComputedStyle(e).overflowY}));
     assert.ok(scrolling.scrollHeight>scrolling.height);
     assert.equal(scrolling.overflow,'auto');
-    const confirm=await page.locator('#questionSubmitButton').boundingBox();
-    assert.ok(confirm.y>=0 && confirm.y+confirm.height<=844,'confirmation stays in view even with a long question');
     const cdp=await mobile.newCDPSession(page);
     await cdp.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x:195,y:600}]});
     for(let y=570;y>=270;y-=30) {
@@ -151,10 +150,13 @@ async function populate(page,count) {
       return e.stableScrollFrames>=6;
     },null,{polling:'raf'});
     assert.ok(await scrollBox.evaluate(e=>e.scrollTop)>0,'a real touch swipe scrolls the question dialog');
+    await page.locator('#questionSubmitButton').scrollIntoViewIfNeeded();
+    const confirm=await page.locator('#questionSubmitButton').boundingBox();
+    assert.ok(confirm.y>=0 && confirm.y+confirm.height<=844,'confirmation below the answers remains reachable in a long question');
     await page.locator('#questionSubmitButton').tap();
     assert.equal(await page.evaluate(()=>submissions),1,'visible confirmation remains operable');
     await page.screenshot({path:path.join(output,'long-question-scroll.png')});
-    console.log('Long mobile question: sticky confirmation and touch scrolling OK');
+    console.log('Long mobile question: confirmation below answers and touch scrolling OK');
     assert.deepEqual(errors,[]);
     const desktop=await browser.newContext({viewport:{width:1280,height:800},reducedMotion:'reduce'});
     const mouse=await desktop.newPage();await mouse.setContent(html);await populate(mouse,3);
