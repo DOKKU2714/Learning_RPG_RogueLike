@@ -5555,7 +5555,7 @@
   /* Skill reward descriptions stay inside the card; combat/item tooltips retain their layout. */
   .reward-choice-card.reward-inline-skill {
     display:flex; flex-direction:column; align-items:center; justify-content:flex-start;
-    min-height:400px; gap:8px; padding:76px 16px 36px;
+    min-height:400px; gap:8px; padding:92px 16px 36px;
     background:linear-gradient(155deg,#272925f5,#121713f5); border-radius:3px;
   }
   .reward-inline-skill .reward-choice-heading {box-sizing:border-box;width:100%;margin:0;padding:0 28px;white-space:nowrap;overflow-wrap:normal;font-size:clamp(18px,1.8vw,26px);line-height:1.25;text-align:center;}
@@ -5568,8 +5568,8 @@
   .reward-card-footer {display:block;align-self:stretch;margin-top:auto;padding-top:8px;border-top:1px solid #ffffff22;text-align:left;font-family:var(--font-readable);}
   .reward-skill-corner-meta {position:absolute;top:10px;right:12px;display:flex;flex-direction:column;align-items:flex-end;gap:3px;max-width:calc(100% - 72px);text-align:right;font-family:var(--font-pixel);font-size:11px;line-height:1.35;color:#c4c9c2;}
   .reward-skill-difficulty {display:flex;align-items:center;justify-content:flex-end;gap:5px;}
-  .reward-skill-difficulty-sign {font-family:var(--font-pixel);font-size:26px;font-weight:700;line-height:1;}
-  .reward-skill-difficulty .difficulty-stars {font-size:16px;color:inherit;text-shadow:none;flex-wrap:wrap;justify-content:flex-end;}
+  .reward-skill-difficulty-sign {font-family:var(--font-pixel);font-size:16px;font-weight:700;line-height:1;}
+  .reward-skill-difficulty .difficulty-stars {font-size:16px;flex-wrap:wrap;justify-content:flex-end;}
   .reward-card-footer .skill-flavor-text {display:block;min-height:28px;margin:0;padding:0;border:0;background:none;color:#929792;font-size:12px;line-height:1.5;}
   .reward-inline-description .reward-upgrade-changes {display:grid;gap:3px;margin:0;padding-top:8px;border-top:1px solid #ffffff22;font-size:12px;}
   .reward-inline-description .reward-upgrade-changes strong {font-family:inherit;font-size:inherit;}
@@ -5621,7 +5621,7 @@
   @keyframes reward-aura-intro {0%{opacity:0}14%,45%{opacity:.9}100%{opacity:0}}
   @keyframes reward-aura-flow {0%,100%{transform:scale(.96);opacity:.65}50%{transform:scale(1.04);opacity:1}}
   @keyframes reward-card-sheen {0%{left:-90%;opacity:0}15%,65%{opacity:.65}100%{left:140%;opacity:0}}
-  @media(max-width:760px){.reward-choice-card.reward-inline-skill{min-height:360px;padding:76px 14px 32px;}.reward-inline-skill .reward-choice-icon-wrap{width:72px;flex-basis:72px;}.reward-inline-description{font-size:13px;}}
+  @media(max-width:760px){.reward-choice-card.reward-inline-skill{min-height:360px;padding:92px 14px 32px;}.reward-inline-skill .reward-choice-icon-wrap{width:72px;flex-basis:72px;}.reward-inline-description{font-size:13px;}}
   @media(prefers-reduced-motion:reduce){.stage-clear-reward-overlay .reward-choice-card.reward-aura-card,.reward-aura-intro,.reward-aura-intro::after,.reward-aura-hover,.reward-card-sheen,.reward-aura-hover::after,.reward-aura-card:is(:hover,:focus-visible)>.reward-card-sheen::before{animation:none;}.reward-aura-intro{opacity:0;}.reward-aura-hover{transition:none;}.reward-aura-card:is(:hover,:focus-visible)>.reward-aura-hover{opacity:.35;}}
   #questionModal {padding:24px 24px 140px;background:rgba(0,0,0,.42);z-index:100;align-items:center;}
   #questionModal > .question-modal {width:min(1000px,100%);max-height:calc(100dvh - 164px);padding:8px;background:none;border:0;box-shadow:none;overflow-y:auto;overflow-x:hidden;scrollbar-width:none;display:grid;gap:18px;}
