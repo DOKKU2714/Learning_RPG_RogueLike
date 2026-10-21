@@ -126,6 +126,24 @@ document.addEventListener('keydown',handleRewardKeyboard);showCards(['common','r
    assert.deepEqual(statEffects.map(r=>r.delay),reveal.map(r=>r.revealTime),'stat and skill rewards share the reveal timing');
    await page.emulateMedia({reducedMotion:'reduce'});
    assert.equal(await first.locator('.reward-aura-intro').evaluate(n=>getComputedStyle(n).animationName),'none');
+   await page.evaluate(()=>showCards(['common','rare','unique']));
+   if(width>1000)assert.equal(Math.round((await page.locator('.reward-modal').boundingBox()).width),1075,'reward cards gain approximately 25% width');
+   assert.ok((await first.boundingBox()).height<460,'normal skill card height is reduced');
+   for(const height of width>1000?[768,720]:[844,640]){
+    await page.setViewportSize({width,height});
+    const confirm=await page.locator('#rewardConfirmButton').boundingBox();
+    assert.ok(confirm.y>=0 && confirm.y+confirm.height<=height,'confirmation remains on screen at '+width+'x'+height);
+   }
+   await page.evaluate(()=>{
+    document.querySelector('.reward-inline-description .skill-detail-description').textContent+=' 긴 스킬 설명도 끝까지 읽을 수 있어야 합니다.'.repeat(70);
+    document.querySelector('.reward-modal').scrollTop=0;
+   });
+   const longConfirm=await page.locator('#rewardConfirmButton').boundingBox();
+   assert.ok(longConfirm.y>=0 && longConfirm.y+longConfirm.height<=page.viewportSize().height,'long descriptions cannot push confirmation offscreen');
+   const descriptions=await page.locator('.reward-inline-description').evaluateAll(els=>els.map(el=>({overflow:getComputedStyle(el).overflowY,height:el.clientHeight,content:el.scrollHeight})));
+   assert.ok(descriptions.every(d=>d.overflow==='visible' && d.content<=d.height+1),'reward descriptions remain complete');
+   await page.locator('.reward-card-footer').last().scrollIntoViewIfNeeded();
+   await page.screenshot({path:path.join(output,'compact-cards-'+width+'.png')});
    assert.deepEqual(errors,[]);await page.close();console.log('Inline skill cards, AP, configurable concepts and rarity auras OK: '+width);
   }
   console.log('Screenshots: '+output);

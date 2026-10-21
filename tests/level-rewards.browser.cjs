@@ -21,6 +21,7 @@ const modal=html.slice(html.indexOf('  <div id="rewardModal"'),html.indexOf('  <
         function renderRewardDetailCard(){return '';} function renderRewardRarityGems(){return '';}
         var rewardRerollBusy=false,rewardRerollQuestion=null,rewardRerollAnswer=null;
         var localWorkbookQuestions=[{questionId:'reroll',workbookId:'w',snapshotSignature:'signed',totalCount:5,correctCount:1,difficulty:1}];
+        function getRunQuestionStats(){return {totalCount:1,correctCount:0};}
         function getCurrentFloorIntermissionRewardView(){return null;}
         function calculateClientLocalQuestionTimeMs(){return 10000;}
         function renderFloorRestDetailContent(){return '회복';}
@@ -42,7 +43,7 @@ const modal=html.slice(html.indexOf('  <div id="rewardModal"'),html.indexOf('  <
         window.LearningRpgLocalRunEngine.rerollStatReward=(_,b,record)=>{b.player.baseStats.levelProgress.statRewardRerolls[2]=record;return true;};
         window.LearningRpgLocalRunEngine.claimStatReward=(_,b,id)=>b.player.baseStats.levelProgress.statRewards.push(id);
         `+['getPlayerLevelProgress','getLevelRewardRerollQuestion','presentLevelSkillRewards','presentLevelStatAllocation','renderRewardChoices','selectRewardCandidate','handleRewardKeyboard','confirmRewardChoice','selectRewardChoice',
-          'renderFloorIntermissionActions','chooseFloorIntermissionAction','getFloorIntermissionChoice','submitQuestionAnswerOnServer','requestQuestionResultProceed','finishFloorExperienceSelection',
+          'renderFloorIntermissionActions','renderActionMode','closeSkillPanel','chooseFloorIntermissionAction','getFloorIntermissionChoice','submitQuestionAnswerOnServer','requestQuestionResultProceed','finishFloorExperienceSelection',
           'startRewardReroll','openRewardRerollQuestion','requestRewardReroll','finishRewardReroll','buildSignedQuestionResultSnapshot'].map(extract).join('\n')+
         ';document.addEventListener("keydown",handleRewardKeyboard);window.rewards=presentLevelSkillRewards(currentView);</script></body></html>');
       for(let i=0;i<2;i++){

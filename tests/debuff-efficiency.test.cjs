@@ -129,3 +129,19 @@ test('question preview reuses live stack modifiers without mutating battle state
   assert.equal(g.stacks('effect_v2_shock'),8);
   assert.equal(g.stacks('effect_v2_shock_next_application',g.battle.player),0);
 });
+
+test('question preview shows every hit and stack even when the first hit would kill the enemy', () => {
+  const g = game('browser',{damageFormula:'10',hitCount:3,combat:{onEachHit:[{operation:'applyEffect',effectId:'effect_v2_burn',stacks:3}]}});
+  g.enemy.currentHp = 1;
+  const before = copy(g.battle);
+  for (const [efficiency,damage,stacks] of [[.5,15,6],[1,30,9],[0,0,0]]) {
+    const preview = local.previewSkill(snapshot,g.battle,g.skill,'a',efficiency,1);
+    assert.equal(preview.lastTurnEvents.filter(e=>e.type==='skill').reduce((n,e)=>n+Number(e.displayDamage || e.damage || 0),0),damage);
+    assert.equal(preview.lastTurnEvents.filter(e=>e.effectId==='effect_v2_burn').reduce((n,e)=>n+Number(e.appliedStacks || 0),0),stacks);
+    assert.deepEqual(copy(g.battle),before);
+  }
+  g.use(1);
+  assert.equal(g.enemy.currentHp,0,'the actual action still kills the enemy');
+  assert.equal(g.battle.lastTurnEvents.filter(e=>e.type==='skill' && e.targetMonsterId==='a').reduce((n,e)=>n+Number(e.damage || 0),0),1,'preview damage override is restored');
+  assert.equal(g.stacks('effect_v2_burn'),0,'actual combat never applies stacks after death');
+});

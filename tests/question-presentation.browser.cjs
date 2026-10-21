@@ -4,7 +4,7 @@ const html=fs.readFileSync('Battle.html','utf8'),styles=fs.readFileSync('UiStyle
 const extract=name=>html.match(new RegExp('    (?:async )?function '+name+'\\([^]*?\\n    \\}'))[0];
 const modal=html.slice(html.indexOf('  <div id="questionModal"'),html.indexOf('  <div id="rewardModal"'));
 const keyboard=html.slice(html.indexOf("    document.addEventListener('keydown', function(event) {"),html.indexOf('    var CLIENT_BASE_GUARD_SHIELD'));
-const helpers=['openQuestionModal','prepareQuestionPresentation','syncQuestionEfficiencyDock','startQuestionSolving',
+const helpers=['formatSecond','openQuestionModal','prepareQuestionPresentation','syncQuestionEfficiencyDock','startQuestionSolving',
   'renderAnswerArea','selectQuestionChoiceByNumber','getSelectedAnswer','tickQuestionTimer','calculateTimedEfficiency',
   'getQuestionMinAnswerEfficiency','getQuestionMaxAnswerEfficiency','updateQuestionEfficiencyMeter','getQuestionActionValueText',
   'formatQuestionActionEvents','calculateQuestionActionActualValue','updateQuestionActionValueText','resetQuestionEfficiencyFeedback','calculateWrongEfficiency',
@@ -32,7 +32,7 @@ function setBattleInputLocked(){} function spawnAnswerCorrectBurst(){} function 
 function handleRewardKeyboard(){return false;} function handleTargetSelectionKeyboard(){return false;} function handleBattleActionKeyboard(){return false;} function advanceDescriptionByInput(){return false;}
 function startQuestionResultHold(){currentQuestionView.resultHolding=true;pendingTurnResolutionActive=true;questionResultProceedRequested=false;showQuestionUnderstanding();document.getElementById('questionSubmitButton').disabled=false;document.getElementById('questionSubmitButton').textContent='건너뛰기';}
 function playTurnSequence(v){plays++;currentView=v;} function delay(ms){return new Promise(r=>setTimeout(r,ms));}
-function submitQuestionAnswerOnServer(payload){submitted.push(payload);receiveQuestionTurnView({battle:{player:{hp:50,stats:{attack:10}},monsters:[{instanceId:'a',currentHp:88}],lastTurnEvents:[{actor:'player',type:'skill',targetMonsterId:'a',damage:12},{actor:'player',type:'debuff',targetMonsterId:'a',effectName:'발화',appliedStacks:4}]}});}
+function submitQuestionAnswerOnServer(payload){submitted.push(payload);receiveQuestionTurnView({battle:{player:{hp:50,stats:{attack:10}},monsters:[{instanceId:'a',currentHp:0}],lastTurnEvents:[{actor:'player',type:'skill',targetMonsterId:'a',damage:1,displayDamage:5}]}});}
 window.LearningRpgLocalRunEngine={previewSkill(snapshot,battle,skill,target,eff){return {lastTurnEvents:eff>0?[{actor:'player',type:'skill',targetMonsterId:'a',damage:Math.round(10*eff)},{actor:'player',type:'debuff',targetMonsterId:'a',effectName:'발화',appliedStacks:Math.round(5*eff)}]:[]};}};
 var RULE_ENGINE_SHARED={capQuestionEfficiencyBonus:n=>n,consumeWrongProtection:()=>false};
 function openFixture(type='multipleChoice',skill=true){
@@ -54,12 +54,26 @@ function openFixture(type='multipleChoice',skill=true){
    const initial=await page.locator('#questionEfficiencyPercent').innerText();
    await page.waitForTimeout(760);assert.equal(await page.locator('#questionEfficiencyPercent').innerText(),initial,'reading time never consumes efficiency');
    assert.equal(await page.evaluate(()=>questionStartedAt),0);
+   const appearance=await page.evaluate(()=>{
+    const style=id=>getComputedStyle(document.getElementById(id));
+    return {promptFont:style('questionPrompt').fontFamily,accuracyFont:style('questionAccuracy').fontFamily,
+      valueFont:style('questionEfficiencyActionValue').fontFamily,promptSize:parseFloat(style('questionPrompt').fontSize),
+      backdrop:style('questionModal').backgroundColor,startFill:style('questionStartButton').backgroundImage,
+      scrollbars:getComputedStyle(document.querySelector('#questionModal>.question-modal')).scrollbarWidth};
+   });
+   assert.equal(appearance.promptFont,appearance.accuracyFont);assert.equal(appearance.valueFont,appearance.accuracyFont);
+   assert.ok(appearance.promptSize<=18);assert.equal(appearance.backdrop,'rgba(0, 0, 0, 0.42)');
+   assert.equal(appearance.startFill,'none');assert.equal(appearance.scrollbars,'none');
    await page.screenshot({path:path.join(output,`reading-${width}.png`)});
    await page.keyboard.press('1');assert.equal(await page.locator('input[name=questionChoice]:checked').count(),0);
    await page.keyboard.press('Enter');assert.equal(await page.locator('#questionStartButton').isVisible(),false);
    assert.equal(await page.locator('.question-choice').count(),4);
    await page.waitForTimeout(220);assert.ok(Number((await page.locator('#questionEfficiencyPercent').innerText()).replace('%',''))<125);
-   assert.match(await page.locator('#questionEfficiencyActionValue').innerText(),/피해.*발화.*중첩/);
+   assert.match(await page.locator('#questionEfficiencyActionValue').innerText(),/피해량 : \d+, 발화 중첩 : \d+/);
+   const remaining=await page.locator('#questionRemainingTime').innerText();
+   assert.match(remaining,/^\d+\.\ds$/);assert.ok(parseFloat(remaining)<1.5);
+   const timerBox=await page.locator('#questionRemainingTime').boundingBox();
+   assert.ok(timerBox.x>width/2 && timerBox.x+timerBox.width<width,'live timer stays on the right of the meter');
    assert.match(await page.locator('#questionEfficiencyText').innerText(),/^\d+%$/);
    const dock=await page.locator('#questionEfficiencyMeter').boundingBox();assert.ok(Math.abs(dock.y-(height-50))<2);assert.ok(Math.abs(dock.width-(width-24))<2);
    await page.keyboard.press('1');await page.locator('#questionSubmitButton').click();
@@ -68,7 +82,9 @@ function openFixture(type='multipleChoice',skill=true){
    assert.equal(await page.locator('#questionEfficiencyActionValue').evaluate(el=>el.classList.contains('value-changing')),true);
    await page.keyboard.press('2');await page.locator('#questionSubmitButton').click();
    assert.equal(await page.locator('.question-choice.answer-correct').count(),1);assert.equal(await page.locator('#questionUnderstanding').isVisible(),true);
-   assert.equal(await page.locator('#questionEfficiencyActionValue').innerText(),'12피해 · 발화 4중첩','committed results replace the normal-hit preview');
+   assert.equal(await page.locator('#questionEfficiencyActionValue').innerText(),'피해량 : 5, 발화 중첩 : 3','enemy HP and death never truncate the action values');
+   const color=await page.locator('#questionEfficiencyActionValue').evaluate(el=>({base:getComputedStyle(el).color,brightness:Number(el.style.getPropertyValue('--action-value-brightness'))}));
+   assert.equal(color.base,'rgb(255, 255, 255)');assert.ok(color.brightness<1 && color.brightness>=.45,'white action text fades to gray');
    assert.equal(await page.evaluate(()=>plays),0,'survey holds action presentation');
    await page.screenshot({path:path.join(output,`correct-${width}.png`)});
    await page.locator('#questionSubmitButton').click();

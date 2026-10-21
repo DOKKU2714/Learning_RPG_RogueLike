@@ -84,8 +84,15 @@ function getLocalRunEngineAdapters_() {
     if (Number(efficiency || 0) <= 0) return copy;
     return withLocalBattleRules(snapshot, copy, function() {
       var hit = rollHit_, critical = rollCriticalDamage_;
+      var engine = getSharedRuleEngine_(), dealDamage = engine.dealDamageToMonster;
       try {
-        // Preview a normal landed hit; the committed result replaces it before release.
+        // Keep preview targets alive so overkill cannot hide later hits or debuff stacks.
+        engine.dealDamageToMonster = function(monster, amount, state, context) {
+          var result = dealDamage(monster,amount,state,context);
+          monster.currentHp = monster.hp = Math.max(1,monster.currentHp);
+          result.damage = result.displayDamage;
+          return result;
+        };
         rollHit_ = function() { return {hit:true,chance:100}; };
         rollCriticalDamage_ = function(damage, stats, bonus) { return critical(damage,Object.assign({},stats,{criticalRate:0}),bonus); };
         Math.random = function() { return 0.5; };
@@ -101,6 +108,7 @@ function getLocalRunEngineAdapters_() {
         applySkillEffect(copy,Object.assign({},hydrated,{targetId:targetId || '',secondaryTargetId:skill.secondaryTargetId || '',cooldownTargetSkillId:skill.cooldownTargetSkillId || ''}),efficiency,true);
         return copy;
       } finally {
+        engine.dealDamageToMonster = dealDamage;
         rollHit_ = hit;
         rollCriticalDamage_ = critical;
         Math.random = nativeMath.random;

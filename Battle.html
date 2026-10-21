@@ -89,6 +89,7 @@
       <div class="battle-stage-hud"><span>현재 스테이지</span><strong id="battleStageText">5층 1스테이지</strong></div>
       <div class="battle-log-compact">
         <div id="battleLog" class="battle-log">전투 시작!</div>
+        <div id="skillPanel" class="skill-panel hidden"></div>
         <button id="rewardLoadRetryButton" class="secondary" type="button" hidden onclick="retryVictoryRewards()">보상 다시 불러오기</button>
       </div>
 
@@ -116,9 +117,8 @@
             <span class="hud-skill-footer"><span class="skill-detail-meta">기본 행동 / 자신 대상</span><span class="skill-detail-line">문제 풀이 효율에 따라 방어막 수치가 변합니다.</span></span>
           </span>
         </button>
-        <button id="skillToggleButton" class="combat-icon-button" aria-label="스킬" type="button" onclick="toggleSkillPanel()"><span class="action-shortcut-number" aria-hidden="true">3</span><svg class="combat-action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m14 2-9 12h7l-2 8 9-12h-7Z"/></svg><span class="action-button-label">스킬</span></button>
+        <button id="skillToggleButton" class="combat-icon-button" aria-label="스킬" aria-controls="skillPanel" aria-expanded="false" type="button" onclick="toggleSkillPanel()"><span class="action-shortcut-number" aria-hidden="true">3</span><svg class="combat-action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m14 2-9 12h7l-2 8 9-12h-7Z"/></svg><span class="action-button-label">스킬</span></button>
         <button id="passTurnButton" class="combat-icon-button" aria-label="턴 종료" type="button" onclick="passTurn()"><span class="action-shortcut-number" aria-hidden="true">4</span><svg class="combat-action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5a9 9 0 1 1-2 10 M5 2v6H1 M12 6v6l4 2"/></svg><span class="action-button-label">턴 종료</span></button>
-        <div id="skillPanel" class="skill-panel hidden"></div>
       </div>
 
       <div class="player-compact-panel">
@@ -218,7 +218,7 @@
       </div>
     </section>
     <div class="question-efficiency-panel">
-      <span id="questionEfficiencyActionValue" class="question-efficiency-action-value" aria-live="polite">0피해</span>
+      <span id="questionEfficiencyActionValue" class="question-efficiency-action-value" aria-live="polite">피해량 : 0</span>
       <span id="questionMaxTime" class="question-max-time">10.0s</span>
       <div id="questionEfficiencyMeter" class="efficiency-meter">
         <span id="questionEfficiencyText" class="question-efficiency-text"><strong id="questionEfficiencyPercent">125%</strong><span id="questionEfficiencyBonus" hidden></span></span>
@@ -237,7 +237,7 @@
       </div>
       <div id="rewardChoices" class="reward-choice-grid"></div>
       <div class="reward-reroll-row">
-        <span class="reward-reroll-control" data-tooltip-placement="above" data-tooltip="보상 전체 새로고침 · 스테이지마다 1회&#10;이번 게임에서 한 번이라도 틀린 문제 중 정답률이 가장 낮은 문제가 출제됩니다. 없으면 미출제 문제가 나옵니다.&#10;정답: 보상 전체 새로고침&#10;오답·포기: 효율 0%, 기존 보상 유지&#10;성공·실패 모두 해당 스테이지의 기회를 소모합니다.">
+        <span class="reward-reroll-control" data-tooltip-placement="above" data-tooltip="문제를 풀어 보상 목록을 새로고침 합니다.">
         <button id="rewardRerollButton" type="button" onclick="startRewardReroll()" aria-label="문제를 맞히면 새로고침 · 1회" title="문제를 맞히면 새로고침 · 1회">
           <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 6.1A8 8 0 0 1 20 12M4 12a8 8 0 0 0 13.9 5.9"/></svg>
         </button>
@@ -1444,6 +1444,15 @@
         if (source && !document.documentElement.classList.contains('touch-preview-mode')) {
           preview.innerHTML = source.innerHTML;
           preview.hidden = false;
+          var list = card.closest('.skill-panel');
+          if (list) {
+            var listTop = list.getBoundingClientRect().top;
+            var previewCard = preview.firstElementChild;
+            var maxHeight = Math.max(0, Math.min(600, listTop - 24));
+            previewCard.style.maxHeight = maxHeight + 'px';
+            previewCard.style.minHeight = Math.min(400, maxHeight) + 'px';
+            previewCard.style.top = Math.min(window.innerHeight / 2, listTop - 12 - previewCard.offsetHeight / 2) + 'px';
+          }
           card.setAttribute('aria-describedby', ((card.getAttribute('aria-describedby') || '') + ' ' + preview.id).trim());
         }
         if (!matches.length) return;
@@ -1463,7 +1472,8 @@
           var right = window.innerWidth - rect.right - 12, left = rect.left - 12;
           var x = right >= width ? rect.right + 12 : left >= width ? rect.left - width - 12 : rect.left;
           var y = right >= width || left >= width ? rect.top : rect.bottom + 12;
-          if (y + height > window.innerHeight - 8) y = Math.max(8, rect.top - height - 12);
+          var bottom = source && list ? Math.min(window.innerHeight - 8, listTop - 12) : window.innerHeight - 8;
+          if (y + height > bottom) y = Math.max(8, rect.top - height - 12);
           panel.style.left = Math.max(8, Math.min(window.innerWidth - width - 8, x)) + 'px';
           panel.style.top = Math.max(8, Math.min(window.innerHeight - height - 8, y)) + 'px';
         });
@@ -1731,13 +1741,7 @@
     }
 
     function renderSkillActionPointGauge(cost) {
-      cost = Math.max(0, Math.round(Number(cost) || 0));
-      var icons = '';
-      for (var i = 0; i < Math.max(3, cost); i += 1) {
-        icons += '<span class="ap-pip ' + (i < cost ? 'filled' : 'empty') + '" aria-hidden="true"></span>';
-      }
-      return '<span class="skill-ap-gauge" role="img" aria-label="행동력 ' + cost + ' 소비">' +
-        '<span class="ap-icons" aria-hidden="true">' + icons + '</span></span>';
+      return '<span class="skill-ap-gauge">' + renderRewardActionPointBadge(cost) + '</span>';
     }
 
     function renderSkills(skills) {
@@ -1858,9 +1862,11 @@
     }
 
     function renderActionMode() {
-      var panel = document.getElementById('actionPanel');
+      var panel = document.querySelector('.battle-log-compact');
       if (!panel) return;
       panel.classList.toggle('skill-select-mode', skillPanelOpen);
+      var toggle = document.getElementById('skillToggleButton');
+      if (toggle) toggle.setAttribute('aria-expanded', String(skillPanelOpen));
       var skillPanel = document.getElementById('skillPanel');
       if (skillPanel) {
         skillPanel.classList.toggle('hidden', !skillPanelOpen);
@@ -1893,7 +1899,7 @@
           '<span id="floorRestDetail" class="skill-detail-card action-detail-card" role="tooltip">' + renderFloorRestDetailContent() + '</span></button>' +
         '<button id="floorExperienceButton" type="button" onclick="chooseFloorIntermissionAction(\'experience\')">경험치 획득</button>' +
         '<button id="floorRewardButton" type="button" onclick="chooseFloorIntermissionAction(\'upgrade\')">스킬 강화</button>';
-      skillPanelOpen = false;
+      closeSkillPanel();
     }
 
     function renderFloorRestDetailContent() {
@@ -2116,7 +2122,8 @@
     function bindBattleLogReveal() {
       var logBox = document.querySelector('.battle-log-compact');
       if (!logBox) return;
-      logBox.addEventListener('click', function() {
+      logBox.addEventListener('click', function(event) {
+        if (event.target.closest('.skill-panel')) return;
         if (advanceDescriptionByInput()) return;
         if (isAnimatingTurn) {
           skipCurrentAutoDelay();
@@ -4703,6 +4710,7 @@
       document.getElementById('questionPrompt').textContent = question.prompt;
       document.getElementById('questionDifficulty').innerHTML = renderDifficultyStars(questionView.finalDifficulty);
       document.getElementById('questionMaxTime').textContent = formatSecond(questionView.maxMs);
+      document.getElementById('questionRemainingTime').textContent = formatSecond(questionView.maxMs);
       document.getElementById('questionCreatorBadge').textContent = '출제자: ' + (question.creatorName || '알 수 없음');
       document.getElementById('questionCreatorBadge').style.visibility = (questionView.isOtherPlayerQuestion || question.creatorId) ? 'visible' : 'hidden';
       document.getElementById('questionMessage').textContent = '';
@@ -4747,7 +4755,7 @@
       start.disabled = !!source;
       view.presentationReady = !source;
       syncQuestionEfficiencyDock();
-      document.getElementById('questionEfficiencyActionValue').title = '명중 시 기본 수치입니다. 치명타와 확률 효과는 정답 판정 후 실제 결과에 반영됩니다.';
+      document.getElementById('questionEfficiencyActionValue').title = '현재 효율의 일반 명중 기준 행동 수치입니다. 적의 남은 체력으로 제한하지 않습니다.';
       document.body.classList.add('question-mode');
       window.addEventListener('resize', syncQuestionEfficiencyDock);
       updateQuestionEfficiencyMeter(getQuestionMaxAnswerEfficiency());
@@ -4893,7 +4901,6 @@
           });
           label.classList.add('selected');
           label.querySelector('input').checked = true;
-          if (currentQuestionView && currentQuestionView.isRewardReroll) submitQuestionAnswer();
         });
       });
     }
@@ -5343,9 +5350,10 @@
     function formatQuestionActionEvents(events) {
       var damage = {}, stacks = {}, shield = 0, heal = 0;
       (events || []).forEach(function(event) {
-        if ((event.actor === 'player' || event.actor === 'effect') && (event.targetMonsterId || event.target === 'monster') && Number(event.damage) > 0) {
+        var hitDamage = Number(event.displayDamage === undefined ? event.damage || 0 : event.displayDamage);
+        if ((event.actor === 'player' || event.actor === 'effect') && (event.targetMonsterId || event.target === 'monster') && hitDamage > 0) {
           var target = event.targetMonsterId || 'enemy';
-          damage[target] = Number(damage[target] || 0) + Number(event.damage);
+          damage[target] = Number(damage[target] || 0) + hitDamage;
         }
         if (event.actor === 'player' && event.type === 'debuff' && event.targetMonsterId && event.appliedStacks !== undefined) {
           var group = stacks[event.effectName || '디버프'] || (stacks[event.effectName || '디버프'] = {});
@@ -5354,22 +5362,22 @@
         if (event.actor === 'player' && event.type === 'guard') shield += Number(event.shield || 0);
         if (event.actor === 'player' && event.type === 'heal') heal += Number(event.heal || 0);
       });
-      function amount(values, unit) {
+      function amount(values) {
         var numbers = Object.keys(values).map(function(key) { return values[key]; });
         if (!numbers.length) return '';
-        if (numbers.length === 1) return numbers[0] + unit;
-        return numbers.every(function(n) { return n === numbers[0]; }) ? '각 ' + numbers[0] + unit : '총 ' + numbers.reduce(function(sum,n) { return sum+n; },0) + unit;
+        if (numbers.length === 1) return String(numbers[0]);
+        return numbers.every(function(n) { return n === numbers[0]; }) ? '각 ' + numbers[0] : '총 ' + numbers.reduce(function(sum,n) { return sum+n; },0);
       }
-      var parts = [amount(damage,'피해')];
-      if (shield > 0) parts.push(shield + '방어막');
-      if (heal > 0) parts.push(heal + '회복');
-      Object.keys(stacks).forEach(function(name) { parts.push(name + ' ' + amount(stacks[name],'중첩')); });
-      return parts.filter(Boolean).join(' · ') || ((events || []).some(function(e) { return e.type === 'buff' || e.type === 'debuff' || e.type === 'cleanse'; }) ? '효과 발동' : '발동 없음');
+      var parts = Object.keys(damage).length ? ['피해량 : ' + amount(damage)] : [];
+      if (shield > 0) parts.push('방어막 : ' + shield);
+      if (heal > 0) parts.push('회복량 : ' + heal);
+      var names = Object.keys(stacks);
+      names.forEach(function(name) { parts.push(name + ' 중첩 : ' + amount(stacks[name])); });
+      return parts.join(', ') || ((events || []).some(function(e) { return e.type === 'buff' || e.type === 'debuff' || e.type === 'cleanse'; }) ? '효과 발동' : '발동 없음');
     }
 
     function getQuestionActionValueText(efficiency) {
       var view = currentQuestionView || {};
-      if (view.resolvedActionText) return view.resolvedActionText;
       if (view.isFloorExperience) return Math.max(0,Math.round(efficiency*100)) + ' EXP';
       if (view.isRewardReroll) return efficiency > 0 ? '보상 새로고침' : '발동 없음';
       if (efficiency <= 0) return '발동 없음';
@@ -5383,7 +5391,7 @@
         view.actionPreviewText = formatQuestionActionEvents(preview.lastTurnEvents);
         return view.actionPreviewText;
       }
-      return calculateQuestionActionActualValue(efficiency) + (view.actionType === 'guard' ? '방어막' : '피해');
+      return (view.actionType === 'guard' ? '방어막 : ' : '피해량 : ') + calculateQuestionActionActualValue(efficiency);
     }
 
     function updateQuestionActionValueText(text, efficiency) {
@@ -5774,11 +5782,6 @@
 
     function receiveQuestionTurnView(view) {
       var normalizedView = normalizeBattleView(view);
-      if (currentQuestionView && currentQuestionView.solveStarted === true && !currentQuestionView.isFloorExperience && !currentQuestionView.isRewardReroll) {
-        currentQuestionView.resolvedActionText = formatQuestionActionEvents(normalizedView.battle && normalizedView.battle.lastTurnEvents);
-        document.getElementById('questionEfficiencyActionValue').title = '이번 행동의 실제 적용 수치';
-        updateQuestionActionValueText(currentQuestionView.resolvedActionText,currentDamageEfficiency);
-      }
       if (currentQuestionView && currentQuestionView.resultHolding && !questionResultProceedRequested) {
         pendingQuestionTurnView = normalizedView;
         pendingQuestionTurnIsOptimistic = false;
@@ -5890,6 +5893,7 @@
       var flight = document.createElement('div');
       flight.className = 'question-action-flight';
       flight.textContent = value.textContent;
+      flight.style.filter = window.getComputedStyle(value).filter;
       flight.style.left = rect.left + rect.width/2 + 'px';
       flight.style.top = rect.top + rect.height/2 + 'px';
       flight.setAttribute('aria-hidden','true');

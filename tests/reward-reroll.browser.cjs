@@ -7,6 +7,7 @@ const sharedSource=sharedContext.getSharedRuleEngineSource_();
 const html = fs.readFileSync('Battle.html', 'utf8');
 const extract = name => html.match(new RegExp('    function ' + name + '\\([^]*?\\n    \\}'))[0];
 const modals = html.slice(html.indexOf('  <div id="questionModal"'), html.indexOf('  <div id="scoreModal"'));
+const keyboard=html.slice(html.indexOf("    document.addEventListener('keydown', function(event) {"),html.indexOf('    var CLIENT_BASE_GUARD_SHIELD'));
 
 (async () => {
   const browser = await chromium.launch({ channel: 'msedge', headless: true });
@@ -26,6 +27,8 @@ const modals = html.slice(html.indexOf('  <div id="questionModal"'), html.indexO
       function showQuestionGiveUpButton(){} function markSelectedAnswerResult(){} function updateWorkbookCountdown(){}
       function calculateTimedEfficiency(){return 1;} function calculateQuestionActionActualValue(e){return e;}
       function calculateClientLocalQuestionTimeMs(){return 10000;} function shuffleArray(a){return a;}
+      function handleRewardKeyboard(){return false;} function handleTargetSelectionKeyboard(){return false;}
+      function handleBattleActionKeyboard(){return false;} function advanceDescriptionByInput(){return false;}
       function rememberRunSession(){} function ensureClientRewardState(){} function getAuthToken(){return 'auth';}
       function buildStageResultPayload(){return {};} function safeJsonParseClient(s,d){try{return JSON.parse(s);}catch{return d;}}
       function escapeHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');}
@@ -42,16 +45,20 @@ const modals = html.slice(html.indexOf('  <div id="questionModal"'), html.indexO
           callback({rerollStatus:correct?'success':'failed',rewardView:{localTransitionToken:'signed',rerollUsed:true,choices:[{description:correct?'새 보상':'기존 보상'}]}});
         },500);
       }};var google={script:{run:bridge}};
-    ` + ['openQuestionModal', 'renderAnswerArea', 'getSelectedAnswer', 'isClientCorrectAnswer', 'normalizeClientAnswer', 'normalizeClientShortAnswer',
+    ` + ['openQuestionModal', 'renderAnswerArea', 'selectQuestionChoiceByNumber', 'getSelectedAnswer', 'isClientCorrectAnswer', 'normalizeClientAnswer', 'normalizeClientShortAnswer',
       'setQuestionInputsDisabled', 'tickQuestionTimer', 'getQuestionMaxAnswerEfficiency', 'updateQuestionEfficiencyMeter', 'closeQuestionModal',
       'prepareQuestionPresentation','syncQuestionEfficiencyDock','startQuestionSolving','getQuestionActionValueText','updateQuestionActionValueText',
       'openRewardRerollQuestion', 'startRewardReroll', 'finishRewardReroll', 'submitRewardRerollAnswer', 'requestRewardReroll', 'submitQuestionAnswer'].map(extract).join('\n') +
-      ';renderRewardChoices(currentRewardView);</script></body></html>');
+      keyboard+';renderRewardChoices(currentRewardView);</script></body></html>');
     await page.locator('#rewardRerollButton').click();
     assert.equal(await page.locator('#questionModal').evaluate(el => el.classList.contains('active')), true);
     assert.equal(await page.evaluate(() => calls.length), 0, 'question opens without a server request');
     await page.locator('#questionStartButton').click();
     await page.locator('[data-choice-value="1"]').click();
+    assert.equal(await page.evaluate(() => calls.length),0,'selecting an answer never submits it');
+    await page.locator('[data-choice-value="2"]').click();
+    await page.locator('[data-choice-value="1"]').click();
+    await page.locator('#questionSubmitButton').click();
     assert.equal(await page.locator('#questionEfficiencyPercent').innerText(), '0%', errors.join('\n'));
     assert.equal(await page.locator('input[name="questionChoice"]:enabled').count(), 0);
     await page.evaluate(() => tickQuestionTimer());
@@ -66,8 +73,10 @@ const modals = html.slice(html.indexOf('  <div id="questionModal"'), html.indexO
     await page.locator('#rewardRerollButton').click();
     await page.locator('#questionStartButton').click();
     await page.locator('[data-choice-value="2"]').click();
+    assert.equal(await page.evaluate(() => calls.length),1,'the answer can be changed until confirmed');
+    await page.keyboard.press('Enter');
     await page.waitForFunction(() => currentQuestionView.rerollComplete);
-    await page.locator('#questionSubmitButton').click();
+    await page.keyboard.press('Enter');
     assert.equal(await page.locator('#rewardChoices').innerText(), '새 보상');
 
     const reset = async mode => page.evaluate(mode=>{
@@ -82,7 +91,10 @@ const modals = html.slice(html.indexOf('  <div id="questionModal"'), html.indexO
     assert.equal(await page.locator('#questionTitle').innerText(),'보상 새로고침 문제');
     assert.equal(await page.evaluate(()=>renderCount),renders,'server-fetched challenge does not redraw old cards');
     await page.locator('#questionStartButton').click();
-    await page.locator('[data-choice-value="2"]').click();
+    const beforeAnswerCalls=await page.evaluate(()=>calls.length);
+    await page.keyboard.press('2');
+    assert.equal(await page.evaluate(()=>calls.length),beforeAnswerCalls,'number keys select without submitting');
+    await page.locator('#questionSubmitButton').click();
     await page.waitForFunction(()=>currentQuestionView.rerollComplete);
     await page.locator('#questionSubmitButton').click();
     assert.equal(await page.locator('#rewardChoices').innerText(),'새 보상');
