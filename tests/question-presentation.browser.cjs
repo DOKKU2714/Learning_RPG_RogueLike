@@ -62,7 +62,7 @@ function openFixture(type='multipleChoice',skill=true){
       scrollbars:getComputedStyle(document.querySelector('#questionModal>.question-modal')).scrollbarWidth};
    });
    assert.equal(appearance.promptFont,appearance.accuracyFont);assert.equal(appearance.valueFont,appearance.accuracyFont);
-   assert.ok(appearance.promptSize<=18);assert.equal(appearance.backdrop,'rgba(0, 0, 0, 0.42)');
+   assert.ok(appearance.promptSize<=18);assert.equal(appearance.backdrop,'rgba(0, 0, 0, 0.52)');
    assert.equal(appearance.startFill,'none');assert.equal(appearance.scrollbars,'none');
    await page.screenshot({path:path.join(output,`reading-${width}.png`)});
    await page.keyboard.press('1');assert.equal(await page.locator('input[name=questionChoice]:checked').count(),0);
@@ -82,9 +82,12 @@ function openFixture(type='multipleChoice',skill=true){
    assert.equal(await page.locator('#questionEfficiencyActionValue').evaluate(el=>el.classList.contains('value-changing')),true);
    await page.keyboard.press('2');await page.locator('#questionSubmitButton').click();
    assert.equal(await page.locator('.question-choice.answer-correct').count(),1);assert.equal(await page.locator('#questionUnderstanding').isVisible(),true);
+   assert.equal(await page.locator('#questionEfficiencyActionValue').evaluate(el=>el.classList.contains('value-correct')),true);
+   await page.waitForTimeout(260);
+   assert.ok(await page.locator('#questionEfficiencyActionValue').evaluate(el=>new DOMMatrixReadOnly(getComputedStyle(el).transform).m42<0),'correct action values rise above the efficiency meter');
    assert.equal(await page.locator('#questionEfficiencyActionValue').innerText(),'피해량 : 5, 발화 중첩 : 3','enemy HP and death never truncate the action values');
    const color=await page.locator('#questionEfficiencyActionValue').evaluate(el=>({base:getComputedStyle(el).color,brightness:Number(el.style.getPropertyValue('--action-value-brightness'))}));
-   assert.equal(color.base,'rgb(255, 255, 255)');assert.ok(color.brightness<1 && color.brightness>=.45,'white action text fades to gray');
+   assert.equal(color.base,'rgb(255, 255, 255)');assert.ok(color.brightness<1 && color.brightness>=.8,'white action text fades to gray');
    assert.equal(await page.evaluate(()=>plays),0,'survey holds action presentation');
    await page.screenshot({path:path.join(output,`correct-${width}.png`)});
    await page.locator('#questionSubmitButton').click();

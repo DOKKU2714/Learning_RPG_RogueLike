@@ -1042,9 +1042,6 @@ function getNextStagePositionForPreload_(run) {
   if (floor >= GAME_RULES.FLOOR_COUNT && stage >= GAME_RULES.STAGES_PER_FLOOR) {
     return null;
   }
-  if (stage === GAME_RULES.STAGES_PER_FLOOR && floor < GAME_RULES.FLOOR_COUNT) {
-    return { floor: floor, stage: GAME_RULES.FLOOR_REST_STAGE };
-  }
   if (stage === GAME_RULES.FLOOR_REST_STAGE || stage + 1 > GAME_RULES.STAGES_PER_FLOOR) {
     return { floor: floor + 1, stage: 1 };
   }
@@ -1559,9 +1556,7 @@ function buildNextStageMoveForRun_(run, stageState) {
 
   var nextFloor = floor;
   var nextStage = stage + 1;
-  if (stage === GAME_RULES.STAGES_PER_FLOOR && floor < GAME_RULES.FLOOR_COUNT) {
-    nextStage = GAME_RULES.FLOOR_REST_STAGE;
-  } else if (stage === GAME_RULES.FLOOR_REST_STAGE || nextStage > GAME_RULES.STAGES_PER_FLOOR) {
+  if (nextStage > GAME_RULES.STAGES_PER_FLOOR) {
     nextFloor += 1;
     nextStage = 1;
   }
@@ -1586,6 +1581,7 @@ function buildNextStageMoveForRun_(run, stageState) {
       scoreState: scoreState,
     }),
   };
+  if (nextFloor !== floor) patch.currentHp = previewFloorRestHeal_(run, null).nextHp;
   return {
     patch: patch,
     run: Object.assign({}, run, patch),
@@ -1906,7 +1902,7 @@ function getAvailableSkillRewardPool_(rarity, ownedSkills, config) {
     if (config && config.onlyOwnedSkills && !ownedMap[skillId]) {
       return false;
     }
-    if (ownedMap[skillId] && !(config && config.onlyOwnedSkills)) return false;
+    if (ownedMap[skillId] && !isSkillUpgradable_(skill)) return false;
     return true;
   });
   return pool;

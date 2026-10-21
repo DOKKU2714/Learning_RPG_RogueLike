@@ -535,6 +535,7 @@ function normalizePlayerActionPointFields_(player) {
 function startBattle(runId) {
   var run = requireRun_(runId);
   requireRunBeforeWorkbookDeadline_(run);
+  if (Number(run.currentStage) === GAME_RULES.FLOOR_REST_STAGE && Number(run.currentFloor) < GAME_RULES.FLOOR_COUNT) run = moveToNextStageForRun_(run);
   var workbookContext = getRunWorkbookContext_(run);
   var stageState = getStageState_(run);
   var stage = loadStage(stageState.stageId || buildStageId_(run.currentFloor, run.currentStage));
@@ -2306,7 +2307,7 @@ function getLevelRewardChoices_(runId, level, ownedSkills, battle, options) {
     for(var rank=rarities.indexOf(rarity);rank>=0 && !candidates.length;rank--) candidates=pool.filter(function(s){return normalizeRarity_(s.rarity)===rarities[rank];});
     if(!candidates.length)candidates=pool;
     var row=pick(candidates,getSkillAffinityWeights_(candidates,ownedSkills,firstConcept));
-    var reward=attachRewardRarity_(buildAutoSkillReward_(row));
+    var reward=attachRewardRarity_(adaptRewardForChoice_(buildAutoSkillReward_(row),ownedSkills));
     choices.push(battle ? sanitizeRewardForClient_(reward,battle) : reward);
     pool=pool.filter(function(s){return s.skillId!==row.skillId;});
   }
@@ -2338,7 +2339,8 @@ function applyLevelSkillReward_(battle, skills, rewardId) {
   var reward=getLevelRewardChoices_(battle.runId,history.length+2,skills,battle).filter(function(r){return r.rewardId===rewardId;})[0];
   if(!reward)throw new Error('레벨업 스킬 보상 후보가 아닙니다.');
   var state={skills:normalizeOwnedSkills_(skills)};
-  applySkillReward(state,reward);
+  if(reward.type===REWARD_TYPES.SKILL_UPGRADE)applySkillUpgradeReward_(state,reward);
+  else applySkillReward(state,reward);
   progress.skillRewards=history.concat([reward.targetId]);
   return normalizeOwnedSkills_(state.skills);
 }
@@ -2544,7 +2546,10 @@ function validateLevelSkillUpgrades_(run, progress) {
     var level=oldRewards.length+index+2;
     var reward=getLevelRewardChoices_(run.runId,level,owned,null,{firstSkillId:rewards[0],reroll:rerolls[level]}).filter(function(r){return r.targetId===id;})[0];
     if(!reward)throw new Error('레벨업 스킬 보상 후보가 아닙니다.');
-    var state={skills:owned};applySkillReward(state,reward);owned=state.skills;
+    var state={skills:owned};
+    if(reward.type===REWARD_TYPES.SKILL_UPGRADE)applySkillUpgradeReward_(state,reward);
+    else applySkillReward(state,reward);
+    owned=state.skills;
   });
   Object.keys(before).concat(Object.keys(after)).filter(function(key,i,all){return all.indexOf(key)===i;}).forEach(function(id) {
     var count = Number(after[id] || 0), old = Number(before[id] || 0);

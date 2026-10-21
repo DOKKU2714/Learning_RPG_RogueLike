@@ -6,7 +6,7 @@ const source = fs.readFileSync('RewardService.gs', 'utf8');
 const client = fs.readFileSync('Battle.html', 'utf8');
 const extract = name => source.match(new RegExp('function ' + name + '\\([^]*?\\n\\}'))[0];
 
-test('initial draws and rerolls only offer unowned skills, even with legacy weights', () => {
+test('skill draws and rerolls exclude the previous offers, even with legacy weights', () => {
   const pool = Array.from({length: 12}, (_, i) => ({skillId: 's' + i}));
   const c = vm.createContext({
     REWARD_TYPES: {SKILL:'skill',SKILL_UPGRADE:'skillUpgrade',ITEM:'item'},
@@ -25,6 +25,18 @@ test('initial draws and rerolls only offer unowned skills, even with legacy weig
   assert.equal(first.length,3); assert.equal(reroll.length,3);
   assert.ok([...first,...reroll].every(r=>r.type==='skill'));
   assert.ok(reroll.every(r=>!first.some(old=>old.targetId===r.targetId)));
+});
+
+test('the shared reward pool includes owned upgradable skills and marks duplicates as upgrades',()=>{
+  const rows=[{skillId:'new',rarity:'common'},{skillId:'owned',rarity:'common'},{skillId:'fixed',rarity:'common'}];
+  const owned=[{skillId:'owned',level:2},{skillId:'fixed',level:1}];
+  const c=vm.createContext({REWARD_TYPES:{SKILL:'skill',SKILL_UPGRADE:'skillUpgrade'},RARITIES:{COMMON:'common'},
+    normalizeOwnedSkills_:s=>s,normalizeRarity_:s=>s,getSkillRowsForRewards_:()=>rows,
+    isSkillExcludedFromAutoRewards_:()=>false,isSkillUpgradable_:s=>s.skillId!=='fixed',getRewardSkillName_:id=>id});
+  for(const name of ['getAvailableSkillRewardPool_','adaptRewardForChoice_','hasOwnedSkill_','buildSkillUpgradeRewardView_'])vm.runInContext(extract(name),c);
+  assert.deepEqual(Array.from(c.getAvailableSkillRewardPool_('',owned,{excludeOwnedSkills:false}),s=>s.skillId),['new','owned']);
+  const reward=c.adaptRewardForChoice_({type:'skill',targetId:'owned',value:1},owned);
+  assert.equal(reward.type,'skillUpgrade');assert.equal(reward.level,3);
 });
 
 test('reward card concepts match all 105 planned skills', () => {

@@ -31,14 +31,14 @@ var markBattleQuickAccessRead=()=>{},renderBattleQuickAccessIcons=()=>{},formatS
    if(mobile)await row('공격력').tap();else await row('공격력').hover();
    const tooltip=page.locator(mobile?'.touch-preview-panel':'#hoverTooltip');
    assert.match(await tooltip.innerText(),/기본공격이나 스킬의 피해량을 높여주는 수치 입니다.*보상.*\+5.*아이템.*\+2.*버프·디버프.*\+4/s);
-   for(const [key,color]of [['reward','rgb(255, 224, 138)'],['item','rgb(120, 201, 255)'],['buff','rgb(153, 227, 164)']]){
+   for(const [key,color]of [['reward','rgb(120, 201, 255)'],['item','rgb(120, 201, 255)'],['buff','rgb(120, 201, 255)']]){
     assert.equal(await tooltip.locator('.stat-source-'+key).evaluate(e=>getComputedStyle(e).color),color);
    }
    const rect=await tooltip.boundingBox();assert.ok(rect.x>=0&&rect.x+rect.width<=(mobile?390:1280));
    await page.screenshot({path:path.join(output,mobile?'mobile.png':'desktop.png')});
    if(mobile)await page.locator('body').tap({position:{x:5,y:750}});else await page.mouse.move(20,750);
    if(mobile)await row('명중률').tap();else await row('명중률').hover();
-   assert.equal(await tooltip.locator('.stat-source-negative').innerText(),'-2%p');
+   assert.equal(await tooltip.locator('.stat-source-negative strong').innerText(),'-2%p');
    assert.equal(await tooltip.locator('.stat-source-negative').evaluate(e=>getComputedStyle(e).color),'rgb(255, 129, 124)');
    assert.equal(await row('행동력').getAttribute('data-stat-item'),'1');assert.equal(await row('행동력').getAttribute('data-stat-buff'),'1');
    // Reproduce an older run whose baseline object was overwritten by rewards.

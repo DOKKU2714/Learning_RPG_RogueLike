@@ -86,7 +86,7 @@
     <section class="battle-hud">
       <div id="playerStatusRow" class="status-row player-status-row" aria-label="플레이어 버프와 디버프"></div>
       <div id="actionPanelApGauge" class="action-point-gauge action-panel-ap-gauge" aria-label="행동력"></div>
-      <div class="battle-stage-hud"><span>현재 스테이지</span><strong id="battleStageText">5층 1스테이지</strong></div>
+      <div class="battle-stage-hud"><span>현재 스테이지</span><strong id="battleStageText">5층 1스테이지</strong><span class="battle-stage-difficulty-label">기본 난이도</span><span id="battleStageDifficulty"></span></div>
       <div class="battle-log-compact">
         <div id="battleLog" class="battle-log">전투 시작!</div>
         <div id="skillPanel" class="skill-panel hidden"></div>
@@ -103,7 +103,6 @@
               <strong class="skill-detail-name">기본 공격</strong>
             </span>
             <span class="skill-detail-description">적에게 약 <strong id="attackActionPreviewValue" class="skill-damage-number">0</strong> 피해를 입힙니다.</span>
-            <span class="hud-skill-footer"><span class="skill-detail-meta">기본 행동 / 적 대상</span><span class="skill-detail-line">문제 풀이 효율에 따라 피해량이 변합니다.</span></span>
           </span>
         </button>
         <button id="guardActionButton" class="combat-icon-button action-detail-button action-detail-guard" data-ap-cost="1" aria-label="수비" onclick="chooseAction('guard')"><span class="action-shortcut-number" aria-hidden="true">2</span>
@@ -114,7 +113,6 @@
               <strong class="skill-detail-name">기본 수비</strong>
             </span>
             <span class="skill-detail-description"><strong id="guardActionPreviewValue" class="skill-damage-number">0</strong> 방어막을 얻습니다.</span>
-            <span class="hud-skill-footer"><span class="skill-detail-meta">기본 행동 / 자신 대상</span><span class="skill-detail-line">문제 풀이 효율에 따라 방어막 수치가 변합니다.</span></span>
           </span>
         </button>
         <button id="skillToggleButton" class="combat-icon-button" aria-label="스킬" aria-controls="skillPanel" aria-expanded="false" type="button" onclick="toggleSkillPanel()"><span class="action-shortcut-number" aria-hidden="true">3</span><svg class="combat-action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m14 2-9 12h7l-2 8 9-12h-7Z"/></svg><span class="action-button-label">스킬</span></button>
@@ -1428,6 +1426,7 @@
         if (panel.contains(event.target) || preview.contains(event.target)) { window.clearTimeout(hideTimer); return; }
         var card = event.target.closest && event.target.closest(selector);
         if (!card) return;
+        if (card.id === 'attackActionButton' || card.id === 'guardActionButton') { hide(); return; }
         window.clearTimeout(hideTimer);
         if (card === activeCard && (panel.classList.contains('active') || !preview.hidden)) return;
         hide();
@@ -1725,6 +1724,8 @@
       renderBattleBackground(battle.stage);
       var stageLabel = document.getElementById('battleStageText');
       if (stageLabel) stageLabel.textContent = getDisplayFloorParts(battle.stage.floor).floorLabel + ' ' + Number(battle.stage.stage || 1) + '스테이지';
+      var stageDifficulty = document.getElementById('battleStageDifficulty');
+      if (stageDifficulty) stageDifficulty.innerHTML = renderDifficultyStars(battle.stage.baseDifficulty || 1);
       renderMonsters(battle.monsters);
       renderPlayerHud(battle.player);
       if (isFloorIntermissionBattle(battle)) {
@@ -1769,21 +1770,15 @@
         hasUsableZeroCostSkill = hasUsableZeroCostSkill || shouldHighlightZeroCostSkill;
         var disabled = isDisabled ? ' disabled' : '';
         var reason = !hasAp ? '행동력이 부족합니다.' : (!canUseNow ? skill.unavailableReason : (skill.description || ''));
-        var rarity = getRewardRarityLabel(skill.rarity || 'common');
         var rarityClass = normalizeRewardRarity(skill.rarity);
         var reward = {type:'skill',skillDetail:skill,rarity:skill.rarity};
+        var status = getSkillListStatusText(skill);
         return '<button class="skill-button rarity-' + escapeHtml(rarityClass) + (shouldHighlightZeroCostSkill ? ' zero-cost-skill-attention' : '') + '" data-ap-cost="' + escapeHtml(apCost) + '" data-skill-id="' + escapeHtml(skill.skillId) + '" data-skill-disabled="' + escapeHtml(isDisabled ? 'true' : 'false') + '" data-unavailable-reason="' + escapeHtml(reason || '') + '"' + disabled + '>' +
-          '<span class="skill-button-name">' + escapeHtml(skill.name) + '</span>' +
-          renderSkillActionPointGauge(apCost) +
+          '<span class="skill-button-name">' + escapeHtml(skill.name) + ' <span class="skill-button-concept skill-status-' + getRewardConceptClass(reward) + '">- ' + escapeHtml(getRewardSkillConcept(reward)) + '</span></span>' +
+          '<span class="skill-button-availability">' + (status ? '<span class="skill-button-status">' + escapeHtml(status) + '</span>' : '') + renderSkillActionPointGauge(apCost) + '</span>' +
           '<span class="skill-detail-card hud-skill-card-source" aria-hidden="true">' +
           '<span class="reward-choice-card reward-inline-skill hud-skill-card rarity-' + escapeHtml(rarityClass) + '">' +
-            renderRewardActionPointBadge(apCost) +
-            renderRewardRarityGems(rarityClass) +
-            '<span class="reward-choice-heading">' + escapeHtml(skill.name) + '</span>' +
-            '<span class="reward-rarity-badge">' + escapeHtml(rarity) + ' / Lv.' + escapeHtml(skill.level || 1) + '</span>' +
-            '<span class="reward-choice-icon-wrap"><img class="reward-choice-icon" src="' + escapeHtml(getRewardIconUrl('skill',reward)) + '" alt=""></span>' +
-            '<span class="reward-choice-body"><strong class="reward-skill-concept skill-status-name skill-status-' + getRewardConceptClass(reward) + '">' + escapeHtml(getRewardSkillConcept(reward)) + '</strong></span>' +
-            renderInlineRewardSkillDescription(reward) +
+            renderSkillCardContent(reward) +
           '</span>' +
           '</span>' +
         '</button>';
@@ -1796,6 +1791,16 @@
           chooseSkill(button.getAttribute('data-skill-id'));
         });
       });
+    }
+
+    function getSkillListStatusText(skill) {
+      var reason = String(skill.unavailableReason || '');
+      var uses = getSkillUseLimitText(skill).match(/(\d+)\s*\/\s*\d+\s*회/);
+      if (uses && Number(uses[1]) === 0 || /더.*사용|사용 횟수.*(?:없|초과)/.test(reason)) return '횟수 소진';
+      var cooldown = Number(currentView && currentView.battle && currentView.battle.skillCooldowns && currentView.battle.skillCooldowns[skill.skillId] || 0);
+      var match = reason.match(/쿨타임\s*(\d+)턴/);
+      cooldown = cooldown || Number(match && match[1] || 0);
+      return cooldown > 0 ? cooldown + '턴 남음' : '';
     }
 
     function updateZeroCostSkillAttention(shouldHighlight) {
@@ -1851,7 +1856,7 @@
       var rows = [['level', '레벨업 스탯'], ['reward', '보상'], ['item', '아이템'], ['buff', '버프·디버프']].map(function(source) {
         var amount = Math.round(Number(target.getAttribute('data-stat-' + source[0]) || 0) * 10) / 10;
         if (!isFinite(amount) || !amount) return '';
-        return '<div class="battle-stat-tooltip-source stat-source-' + source[0] + '"><span>' + source[1] + '</span><strong' + (amount < 0 ? ' class="stat-source-negative"' : '') + '>' + escapeHtml((amount > 0 ? '+' : '') + amount + suffix) + '</strong></div>';
+        return '<div class="battle-stat-tooltip-source stat-source-' + source[0] + (amount < 0 ? ' stat-source-negative' : ' stat-source-positive') + '"><span>' + source[1] + '</span><strong>' + escapeHtml((amount > 0 ? '+' : '') + amount + suffix) + '</strong></div>';
       }).filter(Boolean).join('');
       return '<div>' + escapeHtml(target.getAttribute('data-tooltip') || '') + '</div>' +
         (rows ? '<div class="battle-stat-tooltip-breakdown">' + rows + '</div>' : '');
@@ -1872,6 +1877,8 @@
       var panel = document.querySelector('.battle-log-compact');
       if (!panel) return;
       panel.classList.toggle('skill-select-mode', skillPanelOpen);
+      var actions = document.getElementById('actionPanel');
+      if (actions) actions.classList.toggle('skill-select-hidden', skillPanelOpen);
       var toggle = document.getElementById('skillToggleButton');
       if (toggle) toggle.setAttribute('aria-expanded', String(skillPanelOpen));
       var skillPanel = document.getElementById('skillPanel');
@@ -1959,12 +1966,38 @@
       for(var i=0;i<3;i++){
         var bolt=document.createElement('i');bolt.className='shock-idle-bolt';
         bolt.style.setProperty('--idle-bolt-index',String(i));
-        bolt.innerHTML='<svg viewBox="0 0 20 42"><path d="M13 2 5 17 13 19 7 39 18 21 11 17Z"/></svg>';
+        bolt.innerHTML=getPixelConceptSvg('shock',i);
         overlay.appendChild(bolt);
       }
       var art=scope.querySelector('.monster-art');
       if(art){var box=scope.getBoundingClientRect(),imageBox=art.getBoundingClientRect();overlay.style.left=(imageBox.left-box.left)+'px';overlay.style.top=(imageBox.top-box.top)+'px';overlay.style.width=imageBox.width+'px';overlay.style.height=imageBox.height+'px';}
       scope.appendChild(overlay);
+    }
+
+    function syncMonsterDebuffVisuals(monsterId, monster) {
+      var scope = document.querySelector('[data-monster-id="' + cssEscape(monsterId) + '"] .compact-monster');
+      if (!scope) return;
+      var alive = monster && Number(monster.currentHp !== undefined ? monster.currentHp : (monster.hp === undefined ? 1 : monster.hp)) > 0;
+      var effects = monster && (monster.effects || []).concat(monster.debuffs || []) || [];
+      ['poison','bleed','stun'].forEach(function(type) {
+        var active = alive && effects.some(function(effect) { return getDamageVisualType(effect.effectId) === type && (effect.stacks === undefined || Number(effect.stacks) > 0); });
+        var overlay = scope.querySelector('.element-vfx-' + type);
+        if (type === 'stun') {
+          var wasStunned = scope.classList.contains('monster-stunned');
+          scope.classList.toggle('monster-stunned', active);
+          if (active) setMonsterSpriteState(scope, 'hit');
+          else if (wasStunned && alive) resetMonsterSpriteState(scope);
+        }
+        if (!active) {
+          scope.querySelectorAll('.element-vfx-' + type + '.status-persistent').forEach(function(node) { node.remove(); });
+          return;
+        }
+        if (!overlay) {
+          playDamageTypeEffect(type, 'monster', monsterId);
+          overlay = scope.querySelector('.element-vfx-' + type);
+        }
+        if (overlay) overlay.classList.add('status-persistent');
+      });
     }
 
     function presentPlayerBurn(stacks) {
@@ -2012,6 +2045,7 @@
         particle.style.setProperty('--size', (18 + strength + i % 5 * 3) + 'px');
         particle.style.setProperty('--delay', (-i * 173) + 'ms');
         particle.style.setProperty('--drift', ((i % 2 ? 1 : -1) * (12 + strength * 2)) + 'px');
+        particle.innerHTML = getPixelConceptSvg('chill', i);
         overlay.appendChild(particle);
       }
     }
@@ -2110,7 +2144,7 @@
         var slot = layer.querySelector('[data-monster-id="' + cssEscape(recovery.id) + '"]');
         if (slot) spawnHpRecoveryFragment(slot.querySelector('.monster-hp-bar'), recovery.before, recovery.hp - recovery.before, Math.max(recovery.max, recovery.hp + recovery.shield), { text: slot.querySelector('.monster-hp-text'), shield: recovery.shield, max: recovery.max });
       });
-      monsters.forEach(function(monster) { syncMonsterFreezeVisual(monster.instanceId || monster.monsterId, monster); syncMonsterChillVisual(monster.instanceId || monster.monsterId, monster); syncMonsterBurnVisual(monster.instanceId || monster.monsterId, monster); syncMonsterShockVisual(monster.instanceId || monster.monsterId,monster); });
+      monsters.forEach(function(monster) { syncMonsterFreezeVisual(monster.instanceId || monster.monsterId, monster); syncMonsterChillVisual(monster.instanceId || monster.monsterId, monster); syncMonsterBurnVisual(monster.instanceId || monster.monsterId, monster); syncMonsterShockVisual(monster.instanceId || monster.monsterId,monster); syncMonsterDebuffVisuals(monster.instanceId || monster.monsterId,monster); });
       bindMonsterTargetClicks();
     }
 
@@ -2620,7 +2654,7 @@
       if (!statuses.length) return '';
       return '<div class="status-row monster-status-row">' + statuses.map(function(status) {
         var statTooltip = status.statTooltip ? ' data-stat-tooltip="' + escapeHtml(status.statTooltip) + '"' : '';
-        return '<span class="status-icon ' + escapeHtml(status.type) + '" tabindex="0" aria-label="' + escapeHtml(status.tooltip) + '" data-tooltip="' + escapeHtml(status.tooltip) + '"' + statTooltip + '>' + renderStatusSymbol(status) + renderStatusStack(status) + '</span>';
+        return '<span class="status-icon ' + escapeHtml(status.type) + (status.visualType ? ' status-concept-' + status.visualType : '') + '" tabindex="0" aria-label="' + escapeHtml(status.tooltip) + '" data-tooltip="' + escapeHtml(status.tooltip) + '"' + statTooltip + '>' + renderStatusSymbol(status) + renderStatusStack(status) + '</span>';
       }).join('') + '</div>';
     }
 
@@ -2672,6 +2706,7 @@
       var tooltip = buildStatusTooltip(status, type);
       return {
         type: type,
+        visualType: getDamageVisualType(status.effectId || status.id),
         iconKey: status.effectId || status.id || status.statKey || '',
         stacks: Math.max(1, Number(status.stacks || 1)),
         stackable: !!status.stackable,
@@ -3764,7 +3799,7 @@
         .concat(groupedStatuses.debuffs.map(function(status) { return buildStatusView(status, 'debuff'); }));
       row.innerHTML = statuses.map(function(status) {
         var statTooltip = status.statTooltip ? ' data-stat-tooltip="' + escapeHtml(status.statTooltip) + '"' : '';
-        return '<span class="status-icon ' + escapeHtml(status.type) + '" tabindex="0" aria-label="' + escapeHtml(status.tooltip) + '" data-tooltip="' + escapeHtml(status.tooltip) + '" data-tooltip-placement="above"' + statTooltip + '>' + renderStatusSymbol(status) + renderStatusStack(status) + '</span>';
+        return '<span class="status-icon ' + escapeHtml(status.type) + (status.visualType ? ' status-concept-' + status.visualType : '') + '" tabindex="0" aria-label="' + escapeHtml(status.tooltip) + '" data-tooltip="' + escapeHtml(status.tooltip) + '" data-tooltip-placement="above"' + statTooltip + '>' + renderStatusSymbol(status) + renderStatusStack(status) + '</span>';
       }).join('');
     }
 
@@ -3774,30 +3809,24 @@
     }
 
     function renderStatusSymbol(status) {
-      var shield = 'M12 2 20 6v6c0 5-8 10-8 10S4 17 4 12V6Z';
-      var fist = 'M6 13V7a2 2 0 0 1 4 0V5a2 2 0 0 1 4 0v2a2 2 0 0 1 4 0v5h2v5l-5 5H8l-5-7v-3h3M10 7v6m4-6v6m4-1v3';
-      var clock = 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18M12 7v5l4 2';
-      var book = 'M3 4h7l2 2 2-2h7v16h-7l-2 2-2-2H3ZM12 6v16';
-      var paths = {
-        buff_power: fist, attack: fist, buff_hard: shield, defense: shield,
-        buff_focus: 'M12 2v4m0 12v4M2 12h4m12 0h4M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10M10 12h4m-2-2v4',
-        buff_smart: book, buff_wisdom: clock, questionTime: clock,
-        debuff_bleed: 'M12 2S5 10 5 15a7 7 0 0 0 14 0C19 10 12 2 12 2ZM8 15c0 3 2 4 4 4',
-        debuff_poison: 'M9 2h6m-5 0v7l-5 9v3h14v-3l-5-9V2M7 15h10m-7 3h.1m4-1h.1',
-        debuff_freeze: 'M12 2v20M3 7l18 10M3 17 21 7M9 4l3 3 3-3M9 20l3-3 3 3M3 10l4-1-1-4M21 14l-4 1 1 4',
-        debuff_burn: 'M12 2c2 6 7 7 7 13a7 7 0 0 1-14 0c0-3 2-5 4-7v5c4-3 4-7 3-11ZM12 13c-3 3-3 7 0 8 3-1 3-5 0-8',
-        effect_v2_burn: 'M12 2c2 6 7 7 7 13a7 7 0 0 1-14 0c0-3 2-5 4-7v5c4-3 4-7 3-11ZM12 13c-3 3-3 7 0 8 3-1 3-5 0-8',
-        effect_ignition: 'M12 2c2 6 7 7 7 13a7 7 0 0 1-14 0c0-3 2-5 4-7v5c4-3 4-7 3-11ZM12 13c-3 3-3 7 0 8 3-1 3-5 0-8',
-        debuff_stun: 'm12 2 3 6 7 1-5 5 1 7-6-3-6 3 1-7-5-5 7-1Z',
-        debuff_weak: 'M12 3v17m-6-6 6 6 6-6M6 5h12',
-        debuff_corrosion: shield + 'M13 4 9 11l6 2-5 7',
-        debuff_dazed: clock + 'M4 4 20 20',
-        debuff_foolish: 'M8 7a4 4 0 1 1 7 3l-3 3v3M12 20h.1',
-        questionDifficulty: book,
-      };
       var key = status.iconKey || (status.type.indexOf('shield-status') !== -1 ? 'buff_hard' : '');
-      var path = paths[key] || (status.type.indexOf('buff') === 0 ? 'M12 20V4m-6 6 6-6 6 6' : 'M12 4v16m-6-6 6 6 6-6');
-      return '<svg class="status-symbol" viewBox="0 0 24 24" aria-hidden="true"><path d="' + path + '"/></svg>';
+      var concept = getDamageVisualType(key);
+      if (concept) return getPixelConceptSvg(concept, 0);
+      var shield = 'M4 2H20V14H18V18H16V20H14V22H10V20H8V18H6V14H4ZM10 6H14V14H10Z';
+      var fist = 'M4 10H6V4H10V2H14V4H18V8H22V16H20V20H16V22H8V20H4V16H2V12H4ZM8 8V14M12 6V14M16 8V14';
+      var clock = 'M6 2H18V4H22V8H24V16H22V20H18V22H6V20H2V16H0V8H2V4H6ZM12 6V12H18';
+      var book = 'M2 4H8V6H16V4H22V20H16V22H8V20H2ZM12 6V20';
+      var paths = {
+        buff_power:fist, attack:fist, buff_hard:shield, defense:shield,
+        buff_focus:'M10 0H14V4H10ZM10 20H14V24H10ZM0 10H4V14H0ZM20 10H24V14H20ZM8 6H16V8H18V16H16V18H8V16H6V8H8ZM10 10H14V14H10Z',
+        buff_smart:book, buff_wisdom:clock, questionTime:clock, questionDifficulty:book,
+        debuff_weak:'M10 2H14V14H20V18H16V22H8V18H4V14H10Z',
+        debuff_corrosion:shield+'M16 4H12V10H16V14H10V20',
+        debuff_dazed:clock+'M4 4H8V8H12V12H16V16H20V20',
+        debuff_foolish:'M6 4H8V2H16V4H20V10H18V12H14V16H10V10H14V8H16V6H10V8H6ZM10 20H14V24H10Z'
+      };
+      var path = paths[key] || (status.type.indexOf('buff') === 0 ? 'M10 22V10H4V6H8V2H16V6H20V10H14V22Z' : 'M10 2H14V14H20V18H16V22H8V18H4V14H10Z');
+      return '<svg class="status-symbol" viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><path d="' + path + '"/></svg>';
     }
 
     function setPlayerTurn(active) {
@@ -4751,6 +4780,7 @@
       var modal = document.getElementById('questionModal');
       var cast = document.getElementById('questionSkillCast');
       var start = document.getElementById('questionStartButton');
+      start.querySelector('strong').textContent = '풀이 시작';
       modal.classList.remove('question-solving', 'question-departing', 'skill-question-opening');
       cast.replaceChildren();
       var source = view.actionType === 'skill' && document.querySelector('.skill-button[data-skill-id="' + cssEscape(view.skillId) + '"] .hud-skill-card-source');
@@ -4773,12 +4803,22 @@
         cast.replaceChildren();
         modal.classList.remove('skill-question-opening');
         start.focus();
+        var remaining = 3;
+        function countDown() {
+          if (currentQuestionView !== view || view.solveStarted || workbookDeadlineExpired) return;
+          if (remaining === 0) { startQuestionSolving(); return; }
+          start.querySelector('strong').textContent = '풀이 시작 (' + remaining + ')';
+          remaining--;
+          questionPresentationTimer = window.setTimeout(countDown, 1000);
+        }
+        countDown();
       }, source && !window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 650 : 0);
     }
 
     function startQuestionSolving() {
       var view = currentQuestionView;
       if (!view || view.solveStarted || !view.presentationReady || workbookDeadlineExpired) return;
+      clearTimeout(questionPresentationTimer);
       view.solveStarted = true;
       questionStartedAt = Date.now();
       document.getElementById('questionStartButton').hidden = true;
@@ -5407,7 +5447,7 @@
       var changed = element.dataset.value && element.dataset.value !== text;
       element.textContent = text;
       element.dataset.value = text;
-      element.style.setProperty('--action-value-brightness',String(0.45+0.55*Math.min(1,Math.max(0,efficiency)/getQuestionMaxAnswerEfficiency())));
+      element.style.setProperty('--action-value-brightness',String(0.8+0.2*Math.min(1,Math.max(0,efficiency)/getQuestionMaxAnswerEfficiency())));
       if (changed) {
         element.classList.remove('value-changing');
         void element.offsetWidth;
@@ -5421,7 +5461,7 @@
       meter.classList.remove('efficiency-correct', 'efficiency-penalty');
       meter.removeAttribute('data-efficiency');
       var value = document.getElementById('questionEfficiencyActionValue');
-      if (value) { value.dataset.value = ''; value.classList.remove('value-changing'); }
+      if (value) { value.dataset.value = ''; value.classList.remove('value-changing', 'value-correct'); }
       meter.querySelectorAll('.efficiency-damage-pop').forEach(function(pop) {
         pop.remove();
       });
@@ -5434,6 +5474,12 @@
       meter.classList.remove('efficiency-correct', 'efficiency-penalty');
       void meter.offsetWidth;
       meter.classList.add('efficiency-correct');
+      var value = document.getElementById('questionEfficiencyActionValue');
+      if (value) {
+        value.classList.remove('value-changing', 'value-correct');
+        void value.offsetWidth;
+        value.classList.add('value-correct');
+      }
     }
 
     function animateQuestionEfficiencyPenalty(previousEfficiency, nextEfficiency) {
@@ -6167,6 +6213,7 @@
       syncMonsterChillVisual(targetId, statusTarget);
       syncMonsterBurnVisual(targetId, statusTarget);
       syncMonsterShockVisual(targetId,statusTarget);
+      syncMonsterDebuffVisuals(targetId,statusTarget);
     }
 
     async function playTurnEffectEvent(event) {
@@ -6176,6 +6223,7 @@
           event.targetMonsterId = event.targetMonsterId || getFirstAliveMonsterId(currentView && currentView.battle);
           if (event.statusSnapshot) syncMonsterChillVisual(event.targetMonsterId, event.statusSnapshot);
           if (event.statusSnapshot) syncMonsterShockVisual(event.targetMonsterId,event.statusSnapshot);
+          if (event.statusSnapshot) syncMonsterDebuffVisuals(event.targetMonsterId,event.statusSnapshot);
           var elementalHit = playDamageTypeEffect(getDamageVisualType(event.damageKind) || event.effectId, 'monster', event.targetMonsterId);
           if (!elementalHit && !event.effectId && event.attackEffect) {
             await animatePlayerAttack(event.targetMonsterId, event.attackEffect);
@@ -9091,7 +9139,7 @@
         var title = reward.displayTitle || getRewardDisplayTitle(reward.type);
         var name = reward.description || reward.rewardId;
         var inlineSkill=!!reward.skillDetail && (reward.type==='skill' || reward.type==='skillUpgrade');
-        var detailCard = inlineSkill ? renderInlineRewardSkillDescription(reward) : (reward.type==='stat'?'':renderRewardDetailCard(reward, rarity, name));
+        var detailCard = inlineSkill || reward.type==='stat' ? '' : renderRewardDetailCard(reward, rarity, name);
         if (reward.type === 'stat') {
           title = reward.description || name;
           var statValue = Number(reward.value || 0);
@@ -9104,26 +9152,24 @@
             ? getRewardSkillConcept(reward) : getRewardDisplayTitle(reward.type);
         }
         var rarityBadge = reward.type === 'rest' ? '회복' : (reward.rarityLabel || getRewardRarityLabel(rarity));
-        return '<button type="button" aria-pressed="false" class="reward-choice-card reward-aura-card'+(inlineSkill?' reward-inline-skill':'')+' rarity-' + escapeHtml(rarity) + '" data-reward-id="' + escapeHtml(reward.rewardId) + '">' +
+        return '<button type="button" aria-pressed="false" class="reward-choice-card reward-aura-card'+(inlineSkill?' reward-inline-skill':'')+(reward.type==='skillUpgrade'?' reward-skill-upgrade':'')+' rarity-' + escapeHtml(rarity) + '" data-reward-id="' + escapeHtml(reward.rewardId) + '">' +
+          (reward.type==='skillUpgrade'?'<span class="reward-upgrade-label">스킬 강화</span>':'') +
           '<span class="reward-reveal-effect reward-charge-light" aria-hidden="true"><span class="reward-charge-star"></span><span class="reward-charge-spectrum"></span></span>' +
           '<span class="reward-reveal-effect reward-reveal-flash" aria-hidden="true"><span class="reward-light-card"></span></span>' +
           '<span class="reward-reveal-effect reward-card-aura reward-aura-intro" aria-hidden="true"></span>' +
           '<span class="reward-reveal-effect reward-card-aura reward-aura-idle" aria-hidden="true"></span>' +
           '<span class="reward-reveal-effect reward-card-aura reward-aura-hover" aria-hidden="true"></span>' +
           '<span class="reward-reveal-effect reward-card-sheen" aria-hidden="true"></span>' +
-          (reward.skillDetail ? renderRewardActionPointBadge(getSkillActionPointCost(reward.skillDetail)) : '') +
-          '<span class="reward-choice-shortcut" aria-hidden="true">' + (index + 1) + '</span>' +
+          (/^(skill|skillUpgrade|stat)$/.test(reward.type) ? '' : '<span class="reward-choice-shortcut" aria-hidden="true">' + (index + 1) + '</span>') +
           '<span class="reward-choice-selected-label" aria-hidden="true">✓ 선택됨</span>' +
-          renderRewardRarityGems(rarity) +
+          (inlineSkill ? renderSkillCardContent(reward) : renderRewardRarityGems(rarity) +
           '<span class="reward-choice-heading">' + escapeHtml(title) + '</span>' +
           '<span class="reward-rarity-badge">' + escapeHtml(rarityBadge) + '</span>' +
           '<span class="reward-choice-icon-wrap">' +
             '<img class="reward-choice-icon" src="' + escapeHtml(iconUrl) + '" alt="" onerror="this.remove();">' +
           '</span>' +
-          '<span class="reward-choice-body">' +
-            (inlineSkill ? '<strong class="reward-skill-concept skill-status-name skill-status-'+getRewardConceptClass(reward)+'">'+escapeHtml(name)+'</strong>' : '<strong'+(reward.type==='stat'?' class="reward-stat-increase"':'')+'>' + escapeHtml(name) + '</strong>') +
-          '</span>' +
-          detailCard +
+          '<span class="reward-choice-body"><strong'+(reward.type==='stat'?' class="reward-stat-increase"':'')+'>' + escapeHtml(name) + '</strong></span>' +
+          detailCard) +
         '</button>';
       }).join('');
       Array.prototype.forEach.call(rewardContainer.querySelectorAll('.reward-choice-card'), function(button) {
@@ -9580,6 +9626,16 @@
       return names[getRewardSkillConcept(reward)] || 'common';
     }
 
+    function renderSkillCardContent(reward) {
+      var skill = reward.skillDetail;
+      var rarity = normalizeRewardRarity(reward.rarity || skill.rarity);
+      return renderRewardActionPointBadge(getSkillActionPointCost(skill)) + renderRewardRarityGems(rarity) +
+        '<span class="reward-choice-heading">' + escapeHtml(skill.name) + '</span>' +
+        '<span class="reward-skill-header-meta"><span class="reward-rarity-badge">' + escapeHtml(reward.rarityLabel || skill.rarityLabel || getRewardRarityLabel(rarity)) + ' / Lv.' + escapeHtml(skill.level || 1) + '</span><strong class="reward-skill-concept skill-status-name skill-status-' + getRewardConceptClass(reward) + '">' + escapeHtml(getRewardSkillConcept(reward)) + '</strong></span>' +
+        '<span class="reward-choice-icon-wrap"><img class="reward-choice-icon" src="' + escapeHtml(getRewardIconUrl('skill',reward)) + '" alt="" onerror="this.remove();"></span>' +
+        renderInlineRewardSkillDescription(reward);
+    }
+
     function renderInlineRewardSkillDescription(reward) {
       var skill=reward.skillDetail,changes='';
       if(reward.type==='skillUpgrade') {
@@ -9597,9 +9653,9 @@
       var cooldown = getSkillCooldownDisplayText(skill).match(/(\d+)\s*턴/);
       var uses = getSkillUseLimitText(skill).match(/(\d+)(?:\s*\/\s*\d+)?\s*회/);
       return '<span class="reward-skill-corner-meta">' +
-        (bonus ? '<span class="reward-skill-difficulty" aria-label="문제 난이도 ' + (bonus > 0 ? '+' : '') + escapeHtml(bonus) + '"><span class="reward-skill-difficulty-sign" aria-hidden="true">' + (bonus > 0 ? '+' : '−') + '</span>' + renderDifficultyStars(Math.abs(bonus), true) + '</span>' : '') +
         '<span>쿨타임 ' + (cooldown ? cooldown[1] : '0') + '턴</span>' +
-        '<span>' + (uses ? uses[1] + '회 사용가능' : '사용 횟수 제한 없음') + '</span></span>';
+        (uses ? '<span>' + uses[1] + '회 사용가능</span>' : '') +
+        (bonus ? '<span class="reward-skill-difficulty" aria-label="추가난이도 ' + (bonus > 0 ? '+' : '') + escapeHtml(bonus) + '">추가난이도 <span class="reward-skill-difficulty-sign" aria-hidden="true">' + (bonus > 0 ? '+' : '−') + '</span>' + renderDifficultyStars(Math.abs(bonus), true) + '</span>' : '') + '</span>';
     }
 
     function renderRewardDetailCard(reward, rarity, fallbackName) {
@@ -11276,12 +11332,23 @@
       }
       applyMonsterDamageDelta(monsterId, visibleHpDamage, shieldDamage || 0);
       if (visibleHpDamage <= 0 && visibleShieldDamage <= 0) return Promise.resolve();
+      if (target.querySelector('.status-persistent,.chill-persistent,.shock-persistent')) {
+        target.classList.remove('status-damage-pulse'); void target.offsetWidth;
+        target.classList.add('status-damage-pulse');
+        var statusToken = String(Number(target.dataset.statusHitToken || 0) + 1);
+        target.dataset.statusHitToken = statusToken;
+        window.setTimeout(function() { if (target.dataset.statusHitToken === statusToken) target.classList.remove('status-damage-pulse'); }, 700);
+      }
       if(target.querySelector('.burn-persistent') && elementalHit!=='shock') {
         target.classList.remove('burn-damage-pulse');void target.offsetWidth;target.classList.add('burn-damage-pulse');
         var burnToken=String(Number(target.dataset.burnHitToken || 0)+1);target.dataset.burnHitToken=burnToken;
         window.setTimeout(function(){if(target.dataset.burnHitToken===burnToken)target.classList.remove('burn-damage-pulse');},700);
       }
       if (elementalHit) {
+        var hitColors = {poison:'#a84be8',bleed:'#f02f3c',chill:'#9be9ff',freeze:'#9be9ff',shock:'#64fff2',stun:'#ffe08a'};
+        target.style.setProperty('--status-hit-color', hitColors[elementalHit] || '#ff7628');
+        target.dataset.damageConcept = typeof elementalHit === 'string' ? elementalHit : '';
+        target.classList.toggle('monster-concept-hit', !!hitColors[elementalHit] && elementalHit !== 'shock');
         target.classList.remove('monster-hit-red','monster-hit-white');
         if(elementalHit==='shock')target.classList.remove('burn-damage-pulse');
         target.classList.toggle('monster-shock-hit',elementalHit==='shock');
@@ -11290,7 +11357,7 @@
         target.classList.remove('monster-dot-hit');void target.offsetWidth;target.classList.add('monster-dot-hit');
         if(visibleHpDamage>0)playBattleHitSound(false);
         var dotToken=String(Number(target.dataset.dotHitToken || 0)+1);target.dataset.dotHitToken=dotToken;
-        window.setTimeout(function(){if(target.dataset.dotHitToken===dotToken){target.classList.remove('monster-dot-hit','monster-shock-hit');if(!target.classList.contains('monster-state-death'))resetMonsterSpriteState(target);}},700);
+        window.setTimeout(function(){if(target.dataset.dotHitToken===dotToken){target.classList.remove('monster-dot-hit','monster-shock-hit','monster-concept-hit');if(!target.classList.contains('monster-state-death'))resetMonsterSpriteState(target);}},700);
         spawnFloatingDamage(elementalAnchor && elementalAnchor.querySelector('.monster-hp-text') || target, attackDamage, 'damage-white', false);
         return skippableAutoDelay(ATTACK_EFFECT_DELAY_MS).then(function(){
           if (isMonsterDefeatedInDom(monsterId)) { animateMonsterDeath(monsterId); return skippableAutoDelay(DEATH_STATE_HOLD_MS); }
@@ -11365,6 +11432,8 @@
       playBattleSound('kill');
       var target = slot.querySelector('.compact-monster');
       if (target) {
+        target.classList.remove('monster-stunned');
+        target.querySelectorAll('.status-persistent').forEach(function(node) { node.remove(); });
         setMonsterSpriteState(target, 'death');
         target.classList.remove('monster-hit', 'monster-hit-red', 'monster-hit-white');
       }
@@ -11378,7 +11447,7 @@
       if (!target) return;
       var image = target.querySelector('.monster-art');
       if (!image) return;
-      if (target.classList.contains('monster-frozen') && state !== 'death') state = 'hit';
+      if ((target.classList.contains('monster-frozen') || target.classList.contains('monster-stunned')) && state !== 'death') state = 'hit';
       var attr = state === 'attack' ? 'attackSrc' : (state === 'hit' ? 'hitSrc' : (state === 'death' ? 'deathSrc' : 'idleSrc'));
       var src = target.dataset[attr] || (state === 'death' ? target.dataset.hitSrc : '') || target.dataset.idleSrc || '';
       if (!src) return;
@@ -11397,7 +11466,7 @@
 
     function resetMonsterSpriteState(target) {
       if (!target) return;
-      if (target.classList.contains('monster-frozen')) { setMonsterSpriteState(target, 'hit'); return; }
+      if (target.classList.contains('monster-frozen') || target.classList.contains('monster-stunned')) { setMonsterSpriteState(target, 'hit'); return; }
       var image = target.querySelector('.monster-art');
       if (image && target.dataset.idleSrc) {
         image.src = target.dataset.idleSrc;
@@ -11495,10 +11564,12 @@
       var types = {
         debuff_burn:'burn', effect_v2_burn:'burn', effect_ignition:'burn', burn:'burn', fire:'burn',
         explosion:'explosion', effect_v2_explosion:'explosion',
-        effect_v2_chill:'chill', chill:'chill', cold:'chill',
+        debuff_chill:'chill', effect_v2_chill:'chill', chill:'chill', cold:'chill',
         debuff_freeze:'freeze', effect_v2_freeze:'freeze', freeze:'freeze', frozen:'freeze', shatter:'shatter',
         debuff_poison:'poison', effect_v2_poison:'poison', poison:'poison',
-        effect_v2_shock:'shock', shock:'shock'
+        debuff_shock:'shock', effect_v2_shock:'shock', shock:'shock',
+        debuff_bleed:'bleed', effect_v2_bleed:'bleed', bleed:'bleed',
+        debuff_stun:'stun', effect_v2_stun:'stun', stun:'stun'
       };
       return types[String(value || '').trim().toLowerCase()] || '';
     }
@@ -11510,6 +11581,33 @@
         'M5 0H7V6H9V10H11V6H13V14H15V22H13V26H11V28H5V26H3V24H1V14H3V10H5V16H7V10H5Z'
       ];
       return '<svg viewBox="0 0 16 28" shape-rendering="crispEdges" aria-hidden="true"><path fill="#df461b" d="' + outlines[variant % outlines.length] + '"/><path fill="#ff8b26" d="M7 8H9V14H11V12H13V22H11V26H5V24H3V18H5V20H7Z"/><path fill="#ffd65c" d="M7 16H9V20H11V24H9V26H5V22H7Z"/><path fill="#fff1b8" d="M7 22H9V26H7Z"/></svg>';
+    }
+
+    function getPixelConceptSvg(type, variant) {
+      if (type === 'burn') return getPixelFlameSvg(0).replace('<svg ', '<svg class="status-symbol pixel-concept-art" ');
+      var shapes = {
+        shock:'M14 0H22V4H20V8H16V10H22V14H18V18H14V22H10V24H6V20H8V16H10V14H4V10H8V6H12V2H14Z',
+        poison:'M8 2H16V4H14V8H16V10H18V12H20V20H18V22H6V20H4V12H6V10H8V8H10V4H8Z',
+        bleed:'M10 0H14V4H16V8H18V10H20V18H18V22H14V24H10V22H6V18H4V12H6V8H8V4H10Z',
+        chill:'M2 4H16V6H20V10H16V8H2ZM6 12H22V14H6ZM2 18H14V20H18V22H12V20H2Z',
+        freeze:'M10 0H14V6H16V4H20V8H18V10H24V14H18V16H20V20H16V18H14V24H10V18H8V20H4V16H6V14H0V10H6V8H4V4H8V6H10Z',
+        stun:'M10 2H14V6H16V8H22V12H18V16H16V22H12V18H8V20H4V14H2V10H8V6H10Z',
+        explosion:'M10 0H14V4H18V2H22V8H24V14H20V18H22V22H16V24H10V20H6V22H2V16H0V10H4V6H2V2H8V6H10Z'
+      };
+      var details = {
+        poison:'<path fill="#241039" d="M8 12H10V14H8ZM14 12H16V14H14ZM10 16H14V18H10Z"/>',
+        bleed:'<path fill="#ffd0d0" d="M8 12H10V18H14V20H8Z"/>',
+        shock:'<path fill="#eaffff" d="M14 4H18V6H14V10H10V8H14ZM12 14H16V16H12V20H10V18H12Z"/>',
+        chill:'<path fill="#efffff" d="M2 4H14V6H2ZM6 12H18V14H6Z"/>',
+        freeze:'<path fill="#efffff" d="M10 2H12V10H22V12H12V22H10V12H2V10H10Z"/>',
+        stun:'<path fill="#fff7d1" d="M10 8H14V10H16V14H12V16H8V12H10Z"/>',
+        explosion:'<path fill="#fff5c4" d="M10 6H14V10H18V14H14V18H10V14H6V10H10Z"/>'
+      };
+      if (type === 'poison' && variant) {
+        shapes.poison = 'M6 2H18V4H22V16H18V20H16V22H8V20H6V16H2V6H6Z';
+        details.poison = '<path fill="#241039" d="M6 8H10V12H6ZM14 8H18V12H14ZM10 14H14V16H10ZM8 18H10V20H8ZM14 18H16V20H14Z"/>';
+      }
+      return '<svg class="status-symbol pixel-concept-art" viewBox="0 0 24 24" shape-rendering="crispEdges" aria-hidden="true"><path fill="currentColor" d="' + (shapes[type] || shapes.stun) + '"/>' + (details[type] || '') + (variant % 2 ? '<path fill="#fff" opacity=".7" d="M10 10H12V12H10Z"/>' : '') + '</svg>';
     }
 
     function resetBurnParticle(particle, initial) {
@@ -11530,10 +11628,7 @@
 
     function playDamageTypeEffect(effectId, targetType, monsterId) {
       var type = getDamageVisualType(effectId);
-      if (!type) {
-        if (effectId === 'debuff_bleed') { playLegacyDamageTypeEffect(effectId,targetType,monsterId); return true; }
-        return false;
-      }
+      if (!type) return false;
       var scope = targetType === 'player'
         ? document.querySelector('.player-compact-panel') || document.getElementById('playerDamageAnchor')
         : document.querySelector('[data-monster-id="' + cssEscape(monsterId) + '"] .compact-monster');
@@ -11542,6 +11637,7 @@
       if (type === 'freeze' && scope.querySelector('.ice-persistent')) return true;
       if (type === 'chill' && scope.querySelector('.chill-persistent')) return true;
       if (type === 'burn' && scope.querySelector('.burn-persistent')) return true;
+      if (type === 'stun' && scope.querySelector('.element-vfx-stun.status-persistent')) return type;
       var art = scope.querySelector('.monster-art');
       var overlay = document.createElement('div');
       overlay.className = 'element-vfx element-vfx-' + type;
@@ -11553,15 +11649,15 @@
         overlay.style.top = (imageBox.top-box.top) + 'px';
         overlay.style.width = imageBox.width + 'px'; overlay.style.height = imageBox.height + 'px';
       }
-      var count = {burn:7,explosion:24,chill:18,freeze:12,poison:18,shock:10}[type];
-      var duration = {burn:3200,explosion:1600,chill:2600,freeze:2600,poison:3200,shock:2400}[type];
+      var count = {burn:7,explosion:24,chill:18,freeze:12,poison:10,shock:10,bleed:8,stun:3}[type];
+      var duration = {burn:3200,explosion:1600,chill:2600,freeze:2600,poison:3200,shock:2400,bleed:1800,stun:1800}[type];
       overlay.style.setProperty('--element-duration',duration+'ms');
       var random = function(min,max) { return min+Math.random()*(max-min); };
       if (type === 'freeze') {
-        overlay.innerHTML = '<svg class="element-ice" viewBox="0 0 100 120" preserveAspectRatio="none"><path class="ice-silhouette" d="M10 107 4 62 22 24 38 10 54 3 78 22 96 61 88 107 53 117Z"/><g stroke="#dcffff" stroke-opacity=".7" stroke-width=".6"><path fill="#b6faff99" d="M4 62 38 10 32 63 10 107Z"/><path fill="#519cdda0" d="M38 10 54 3 69 59 32 63Z"/><path fill="#e4ffffb0" d="M54 3 78 22 96 61 69 59Z"/><path fill="#3782c788" d="M32 63 69 59 53 117 10 107Z"/><path fill="#7bdcff99" d="M69 59 96 61 88 107 53 117Z"/></g><path d="M25 38 34 29M20 49 42 20M71 77 79 58M75 89 86 65" stroke="#fff" stroke-width="2" opacity=".85"/><path d="m50 35-6 19 14 13-8 20 13 11" fill="none" stroke="#efffff" stroke-width="1.2"/></svg>';
+        overlay.innerHTML = '<svg class="element-ice" viewBox="0 0 100 120" preserveAspectRatio="none" shape-rendering="crispEdges"><path class="ice-silhouette" d="M28 8H40V0H60V8H72V16H84V32H92V52H100V96H92V112H76V120H24V112H8V96H0V52H8V32H16V16H28Z"/><g fill="#b6faff99"><path d="M16 32H28V16H40V8H48V52H32V96H16Z"/><path fill="#efffff88" d="M60 16H72V24H80V40H88V60H72V44H64Z"/><path fill="#3782c788" d="M48 56H64V76H80V100H72V112H48Z"/><path fill="#e4ffffaa" d="M8 60H16V92H24V104H40V112H16V100H8Z"/></g><path d="M44 28V52H56V68H44V88H60V100" fill="none" stroke="#efffff" stroke-width="3"/><path fill="#fff" d="M24 28H28V44H24ZM20 48H24V56H20ZM76 72H80V92H76Z"/></svg>';
       }
       if (type === 'explosion') {
-        overlay.innerHTML = '<svg class="element-blast-core" viewBox="0 0 100 100"><path fill="#ff7a23" d="m50 0 8 25 19-16-7 27 30-1-23 18 20 21-29-4-6 30-15-24-19 21 4-29-30 2 24-18L6 33l29 5-7-28 17 17Z"/><path fill="#fff2a4" d="m50 17 8 21 21-8-14 20 17 15-25-4-9 24-8-25-24 3 20-15-8-22 17 13Z"/><circle cx="49" cy="49" r="13" fill="#fffef0"/></svg>';
+        overlay.innerHTML = getPixelConceptSvg('explosion',0).replace('status-symbol pixel-concept-art','element-blast-core pixel-concept-art');
       }
       for (var i=0;i<count;i++) {
         var p=document.createElement('i'); p.className='element-particle';
@@ -11576,11 +11672,8 @@
         if(type==='burn') {
           resetBurnParticle(p,true);
         }
-        if(type==='shock') {
-          // Two strokes: a soft cyan corona around a sharp white electric core.
-          var points=''; for(var j=0;j<8;j++) points+=(j? ' ':'')+(j%2?random(20,77):random(35,60)).toFixed(1)+','+(j*14);
-          p.innerHTML='<svg viewBox="0 0 100 100" preserveAspectRatio="none"><polyline class="bolt-corona" points="'+points+'"/><polyline class="bolt-core" points="'+points+'"/></svg>';
-        }
+        if (type !== 'burn') p.innerHTML = getPixelConceptSvg(type, i + 1);
+        if (type === 'stun') p.style.setProperty('--star-index',String(i));
         overlay.appendChild(p);
       }
       if(type==='burn')overlay.addEventListener('animationiteration',function(event) {
@@ -11588,7 +11681,7 @@
         if(event.animationName==='element-flame' && event.target.classList.contains('element-particle'))resetBurnParticle(event.target,false);
       });
       // Bound concurrent overlays on rapid multi-hit attacks without leaking timers.
-      var previous=scope.querySelectorAll('.element-vfx-'+type);
+      var previous=Array.prototype.filter.call(scope.querySelectorAll('.element-vfx-'+type),function(node){return !node.classList.contains('status-persistent');});
       if(previous.length>=3)previous[0].remove();
       scope.appendChild(overlay);
       if (type === 'freeze' && scope.classList.contains('monster-frozen')) overlay.classList.add('ice-persistent');
@@ -11602,46 +11695,10 @@
         tintTarget.dataset[tintKey]=token;
       }
       window.setTimeout(function(){
-        if (overlay.classList.contains('ice-persistent') || overlay.classList.contains('chill-persistent') || overlay.classList.contains('burn-persistent')) return;
-        overlay.remove();
-        if(token && tintTarget.dataset[tintKey]===token)tintTarget.classList.remove(tintClass);
+        if (!overlay.classList.contains('ice-persistent') && !overlay.classList.contains('chill-persistent') && !overlay.classList.contains('burn-persistent') && !overlay.classList.contains('status-persistent')) overlay.remove();
+        if(token && tintTarget.dataset[tintKey]===token && !overlay.classList.contains('ice-persistent'))tintTarget.classList.remove(tintClass);
       },duration);
       return type;
-    }
-
-    function playLegacyDamageTypeEffect(effectId, targetType, monsterId) {
-      var effectNames = {
-        debuff_bleed: 'bleed',
-        debuff_burn: 'burn',
-        debuff_poison: 'poison',
-      };
-      var effectName = effectNames[String(effectId || '')];
-      if (!effectName) return;
-
-      var isPlayerTarget = targetType === 'player';
-      var scope = isPlayerTarget
-        ? document.body
-        : document.querySelector('[data-monster-id="' + cssEscape(monsterId) + '"] .compact-monster');
-      if (!scope) return;
-
-      var overlay = document.createElement('div');
-      overlay.className = 'dot-effect-overlay dot-effect-' + effectName + (isPlayerTarget ? ' dot-effect-screen' : ' dot-effect-monster');
-      var particleCount = isPlayerTarget ? 12 : 8;
-      for (var i = 0; i < particleCount; i += 1) {
-        var particle = document.createElement('i');
-        particle.className = 'dot-effect-particle';
-        particle.style.left = ((i * 37 + 11) % 92 + 4) + '%';
-        particle.style.animationDelay = (-(i % 6) * 0.11) + 's';
-        particle.style.animationDuration = (0.78 + (i % 4) * 0.12) + 's';
-        if (effectName === 'burn') {
-          particle.style.bottom = (i % 4 * 3) + '%';
-        }
-        overlay.appendChild(particle);
-      }
-      scope.appendChild(overlay);
-      window.setTimeout(function() {
-        if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
-      }, 2600);
     }
 
     function animatePlayerHeal(heal) {

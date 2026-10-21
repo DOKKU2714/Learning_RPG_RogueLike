@@ -14,8 +14,9 @@ function getRewardRarityLabel(){return '희귀'}function normalizeRewardRarity(v
 function buildSkillDetailDescription(skill){return highlightSkillStatusNames(skill.description)}function buildSkillFlavorDescription(){return ''}
 function getRewardIconUrl(){return 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><path fill="gold" d="M50 0L90 90H10Z"/></svg>'.replaceAll('"','&quot;')}
 function getRewardSkillConcept(){return '타격'}function getRewardConceptClass(){return 'strike'}
-${['highlightSkillStatusNames','renderRewardActionPointBadge','renderRewardRarityGems','renderInlineRewardSkillDescription','renderSkillCardCornerMeta','renderDifficultyStars','buildRewardSkillDetailLines','renderSkillActionPointGauge','renderSkills','bindGlossaryTooltips','renderActionMode','toggleSkillPanel','closeSkillPanel','bindBattleLogReveal'].map(extract).join('\n')}
+${['highlightSkillStatusNames','renderRewardActionPointBadge','renderRewardRarityGems','renderSkillCardContent','getSkillListStatusText','renderInlineRewardSkillDescription','renderSkillCardCornerMeta','renderDifficultyStars','buildRewardSkillDetailLines','renderSkillActionPointGauge','renderSkills','bindGlossaryTooltips','renderActionMode','toggleSkillPanel','closeSkillPanel','bindBattleLogReveal'].map(extract).join('\n')}
 renderSkills([{skillId:'s',name:'치명적인 일격',rarity:'rare',level:2,difficultyBonus:2,description:'고정 피해를 입힙니다. 행동력 1, 치명타 확률 10%, 치명타 피해 20% 증가.'}]);
+document.getElementById('battleStageDifficulty').innerHTML=renderDifficultyStars(3);
 bindGlossaryTooltips();
 bindBattleLogReveal();
 `;
@@ -24,27 +25,31 @@ bindBattleLogReveal();
  for(const width of [1366,390]){
  const page=await browser.newPage({viewport:{width,height:1000},hasTouch:true}),errors=[];page.on('pageerror',e=>errors.push(e.message));
  await page.setContent('<html><head><meta charset="utf-8">'+styles+touch+'</head><body class="battle-page-body"><main id="battleShell" class="battle-shell battle-video-shell"><section class="battle-scene" style="background:#176a59"><button id="battleMenuButton" class="battle-menu-button">메뉴</button></section>'+hud+'</main><script>'+script+'</script></body></html>');
+ assert.equal(await page.locator('#battleStageDifficulty .difficulty-star').count(),3);
+ const stageBoxes=await page.locator('.battle-stage-hud').evaluate(el=>({label:el.querySelector('.battle-stage-difficulty-label').getBoundingClientRect().toJSON(),stars:el.querySelector('.difficulty-stars').getBoundingClientRect().toJSON()}));
+ assert.ok(stageBoxes.stars.y>=stageBoxes.label.bottom,'base difficulty stars use a separate line');
  for(const selector of ['#attackActionButton','#guardActionButton']){
  await page.locator(selector).hover();await page.waitForTimeout(250);
  const result=await page.locator(selector+' .hud-skill-detail').evaluate(card=>{
- const b=card.getBoundingClientRect(),ap=card.querySelector('.reward-ap-badge').getBoundingClientRect(),name=card.querySelector('.skill-detail-name'),footer=card.querySelector('.hud-skill-footer').getBoundingClientRect(),desc=card.querySelector('.skill-detail-description').getBoundingClientRect();
- return {apX:ap.x+ap.width/2-b.x-card.clientLeft,apY:ap.y+ap.height/2-b.y-card.clientTop,titleAlign:getComputedStyle(name).textAlign,footerBelow:footer.top>=desc.bottom,
- terms:[...card.querySelectorAll('.skill-status-name')].map(el=>({color:getComputedStyle(el).color,weight:getComputedStyle(el).fontWeight})),footer:card.querySelector('.hud-skill-footer').innerText};
+ const b=card.getBoundingClientRect(),ap=card.querySelector('.reward-ap-badge').getBoundingClientRect(),name=card.querySelector('.skill-detail-name');
+ return {apX:ap.x+ap.width/2-b.x-card.clientLeft,apY:ap.y+ap.height/2-b.y-card.clientTop,titleAlign:getComputedStyle(name).textAlign,
+ footer:card.querySelector('.hud-skill-footer')};
  });
  assert.ok(Math.abs(result.apX-8)<2&&Math.abs(result.apY-8)<2,'HUD pip matches reward-card corner offset: '+JSON.stringify(result));
- assert.equal(result.titleAlign,'right');assert.equal(result.footerBelow,true);
+ assert.equal(result.titleAlign,'right');assert.equal(result.footer,null);assert.equal(await page.locator('#glossaryTooltip').isVisible(),false);
  }
  await page.locator('#skillToggleButton').click();
  assert.equal(await page.locator('#battleLog').isVisible(),false);
- assert.equal(await page.locator('#attackActionButton').isVisible(),true);
+ assert.equal(await page.locator('#attackActionButton').isVisible(),false);
  assert.equal(await page.locator('#skillToggleButton').getAttribute('aria-expanded'),'true');
  assert.equal(await page.locator('#skillPanel').evaluate(el=>el.parentElement.classList.contains('battle-log-compact')),true);
- assert.equal(await page.locator('.skill-button > .skill-ap-gauge .reward-ap-badge b').innerText(),'1');
- assert.equal(await page.locator('.skill-button > .skill-ap-gauge .ap-icons').count(),0,'skill list uses a numeric AP badge');
+ assert.equal(await page.locator('.skill-button > .skill-button-availability .skill-ap-gauge .reward-ap-badge b').innerText(),'1');
+ assert.equal(await page.locator('.skill-button > .skill-button-availability .skill-ap-gauge .ap-icons').count(),0,'skill list uses a numeric AP badge');
  await page.waitForTimeout(450);
  const markerBox=await page.locator('#hudMarker').boundingBox(),markerPixel={x:Math.floor(markerBox.x+markerBox.width)-4,y:Math.ceil(markerBox.y)+3,width:1,height:1};
  const hudBefore=await page.screenshot({clip:markerPixel});
  await page.locator('.skill-button').hover();await page.waitForTimeout(60);
+ assert.equal(await page.locator('.skill-button-name .skill-button-concept').innerText(),'- 타격');
  const card=page.locator('#hudSkillPreview > .hud-skill-card');
  assert.equal(await card.isVisible(),true);
  assert.equal(await page.locator('.skill-button > .skill-detail-card').isVisible(),false);
@@ -52,12 +57,13 @@ bindBattleLogReveal();
  if(width>1000)assert.ok(Math.abs(box.width-320)<2,'skill card uses its original width');
  assert.ok(box.height<=600,'card keeps complete text within its maximum height');
  assert.match(await card.innerText(),/치명적인 일격/);assert.match(await card.innerText(),/쿨타임 2턴/);assert.match(await card.innerText(),/2회 사용가능/);
+ assert.equal(await card.locator('.reward-choice-heading').evaluate(el=>getComputedStyle(el).borderBottomWidth),'1px');
  assert.equal(await card.locator('.reward-skill-difficulty .difficulty-star').count(),2);
  assert.equal(await card.locator('.reward-skill-difficulty .difficulty-stars').evaluate(el=>getComputedStyle(el).color),'rgb(255, 216, 74)');
  assert.equal(await card.locator('.reward-skill-difficulty-sign').evaluate(el=>getComputedStyle(el).fontSize),'16px');
  assert.equal(await card.locator('.reward-inline-meta').count(),0,'metadata moved from the footer');
  const corner=await card.locator('.reward-skill-corner-meta').boundingBox(),heading=await card.locator('.reward-choice-heading').boundingBox();
- assert.ok(heading.y-(corner.y+corner.height)>=20 && corner.x>box.x+box.width/2,'metadata leaves at least 20px above the title: '+JSON.stringify({corner,heading,box}));
+ assert.ok(corner.y>heading.y+heading.height && Math.abs(corner.x+corner.width-(box.x+box.width-18))<5,'metadata sits at the lower right: '+JSON.stringify({corner,heading,box}));
  assert.ok(Math.abs((await card.locator(':scope > .reward-ap-badge').boundingBox()).width-57.2)<1,'upper-left AP badge is 10% larger');
  const terms=await card.locator('.skill-detail-description .skill-status-name').evaluateAll(els=>els.map(el=>({color:getComputedStyle(el).color,weight:getComputedStyle(el).fontWeight})));
  assert.deepEqual(terms.map(t=>t.color),['rgb(141, 85, 183)','rgb(255, 216, 74)','rgb(255, 216, 74)','rgb(255, 141, 54)']);assert.ok(terms.every(t=>Number(t.weight)>=800));
@@ -66,7 +72,7 @@ bindBattleLogReveal();
  assert.ok(glossary.x>=box.x+box.width || glossary.x+glossary.width<=box.x,'glossary stays strictly beside the skill card, including narrow screens');
  assert.ok(glossary.y<box.y+box.height && glossary.y+glossary.height>box.y,'glossary never moves above or below the card');
  assert.ok(glossary.x>=0 && glossary.x+glossary.width<=width);
- assert.equal(await page.locator('#hudSkillPreview').evaluate(el=>getComputedStyle(el,'::before').backgroundColor),'rgba(0, 0, 0, 0.42)');
+ assert.equal(await page.locator('#hudSkillPreview').evaluate(el=>getComputedStyle(el,'::before').backgroundColor),'rgba(0, 0, 0, 0.52)');
  const hudAfter=await page.screenshot({clip:markerPixel});
  await page.screenshot({path:path.join(output,'hud-'+width+'.png')});
  assert.equal(hudAfter.equals(hudBefore),true,'HUD remains undimmed '+width);
@@ -79,10 +85,14 @@ bindBattleLogReveal();
  await page.locator('.skill-button').click({position:{x:4,y:10}});assert.deepEqual(await page.evaluate(()=>chosenSkills),['s']);assert.equal(await card.isVisible(),false);
  assert.equal(await page.evaluate(()=>narrationAdvances),0,'choosing a skill never advances the narration underneath');
  assert.equal(await page.locator('#battleLog').isVisible(),true);
+ assert.equal(await page.locator('#attackActionButton').isVisible(),true);
  await page.locator('#battleLog').click();assert.equal(await page.evaluate(()=>narrationAdvances),1);
- await page.evaluate(()=>{isClientSkillAvailableNow=()=>false;renderSkills([{skillId:'locked',name:'사용 불가 스킬',rarity:'rare',description:'기절 1턴'}]);});
+ await page.evaluate(()=>{isClientSkillAvailableNow=()=>false;renderSkills([{skillId:'locked',name:'사용 불가 스킬',rarity:'rare',description:'기절 1턴',unavailableReason:'쿨타임 1턴 남았습니다.'}]);});
  await page.locator('#skillToggleButton').click();
+ assert.equal(await page.locator('.skill-button-availability .skill-button-status').innerText(),'1턴 남음');
  await page.locator('.skill-button').hover({position:{x:4,y:10}});assert.equal(await card.isVisible(),true);assert.match(await card.innerText(),/사용 불가 스킬/);
+ await page.evaluate(()=>renderSkills([{skillId:'used',name:'횟수 제한 스킬',rarity:'rare',description:'고정 피해',unavailableReason:'이번 전투에서 더 이상 사용할 수 없습니다.'}]));
+ assert.equal(await page.locator('.skill-button-availability .skill-button-status').innerText(),'횟수 소진');
  await page.evaluate(()=>renderSkills([{skillId:'long',name:'아주 긴 설명을 가진 스킬 카드',rarity:'rare',description:'적에게 기절과 고정 피해를 부여합니다. '.repeat(100)}]));
  await page.locator('.skill-button').hover({position:{x:4,y:10}});assert.equal(await card.isVisible(),true);
  assert.ok((await card.boundingBox()).height<=600,'long skill cards stay compact and scroll their complete descriptions');
@@ -117,5 +127,5 @@ bindBattleLogReveal();
  assert.ok(leftGlossary.y<edgeBox.y+edgeBox.height && leftGlossary.y+leftGlossary.height>edgeBox.y);
  assert.deepEqual(errors,[]);await page.close();
  }
- console.log('HUD: basic tooltips retained; centered skill cards replace old hover windows, preserve glossary and metadata, and close on Escape/panel hide (desktop/mobile).');
+ console.log('HUD: simplified basic tooltips; centered skill cards replace old hover windows, preserve glossary and metadata, and close on Escape/panel hide (desktop/mobile).');
 }finally{await browser.close()}})().catch(e=>{console.error(e);process.exitCode=1});

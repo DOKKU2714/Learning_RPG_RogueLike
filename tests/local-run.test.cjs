@@ -84,41 +84,6 @@ test('reward selection and next battle creation complete without any server oper
   assert.equal(g.journal.length,1);assert.equal(response.availableSkills.length,JSON.parse(g.run.skillsJson).length,'stage clears do not grant skills');
 });
 
-test('intermission experience replays once with the same levels and XP as the browser',()=>{
-  const g=localGame();
-  g.x.c.readRunQuestionsForBattle_=()=>[{questionId:'rest-q',workbookId:'w',creatorId:'p',type:'multipleChoice',status:'approved',
-    prompt:'One?',choice1:'1',choice2:'2',choice3:'3',choice4:'4',answer:'1',difficulty:2,totalCount:0,correctCount:0}];
-  for(let i=0;i<5;i++){g.prepare();g.choose();}
-  assert.equal(g.run.currentStage,6);
-  const {payload,reward}=g.prepare();
-  const xp=reward.choices.find(c=>c.type==='experience');
-  assert.equal(xp.questionView.finalDifficulty,2);
-  assert.equal(xp.questionView.question.questionId,'rest-q');
-  payload.floorExperienceAnswer={selectedAnswer:'1',selectedChoiceIndex:'1',elapsedMs:Math.round(xp.questionView.maxMs*.65),wrongCountAfterTimeout:0};
-  payload.answerLogs=[{...payload.floorExperienceAnswer,actionType:'floorExperience',questionId:'rest-q',
-    questionSnapshot:copy(xp.questionView.question),questionSignature:xp.questionView.question.snapshotSignature,
-    finalDifficulty:xp.questionView.finalDifficulty,maxTimeMs:xp.questionView.maxMs}];
-  const client=fs.readFileSync('Battle.html','utf8');
-  const ui=vm.createContext({currentView:g.view,currentQuestionView:xp.questionView,
-    getBattleStatStartingStats:p=>p.startingStats || {},copyStageResultValue:(value,fallback)=>copy(value===undefined ? fallback : value)});
-  for(const name of ['buildStageResultBattlePayload','buildStageResultAnswerLogPayload','buildSignedQuestionResultSnapshot'])
-    vm.runInContext(client.match(new RegExp('    function '+name+'\\([^]*?\\n    \\}'))[0],ui);
-  payload.battle=copy(ui.buildStageResultBattlePayload(payload.battle));
-  payload.answerLogs=payload.answerLogs.map(log=>copy(ui.buildStageResultAnswerLogPayload(log)));
-  const result=g.choose('experience');
-  assert.equal(result.selectedReward.experienceAmount,85);
-  assert.equal(result.battle.player.baseStats.levelProgress.level,3);
-  assert.equal(result.battle.player.baseStats.levelProgress.xp,17);
-  const checked=g.x.c.withRunSession_(g.run.runId,g.token,'auth',()=>{
-    g.x.c.replayLocalRunTransitions_(g.journal,'auth');return {run:copy(g.x.c.requireRun_(g.run.runId))};
-  });
-  assert.equal(checked.run.statsJson,g.run.statsJson);
-  const replayed=g.x.c.withRunSession_(g.run.runId,checked.runSessionToken,'auth',()=>{
-    g.x.c.replayLocalRunTransitions_(g.journal,'auth');return {run:copy(g.x.c.requireRun_(g.run.runId))};
-  });
-  assert.equal(replayed.run.statsJson,g.run.statsJson);
-});
-
 test('AP tradeoff items apply to the next battle and refill consistently with server rules',()=>{
   for(const [itemId,ap] of [['item_burning_timetable',4],['item_heavy_textbook',2]]){
     const g=localGame(),{payload,reward}=g.prepare();
@@ -165,7 +130,7 @@ test('HP, new skills, skill upgrades and item effects use exactly the previous r
   }
 });
 
-test('all 29 selections, rest healing, floor changes and victory settle only at the end',()=>{
+test('all 25 selections, automatic healing, floor changes and victory settle only at the end',()=>{
   const g=localGame();let count=0,rests=0,bossDrops=0;
   while(!g.view.cleared){
     g.x.writes.length=0;
@@ -179,9 +144,9 @@ test('all 29 selections, rest healing, floor changes and victory settle only at 
       assert.ok(response.bonusItemReward);
       assert.ok(JSON.parse(g.run.itemsJson).some(item=>item.itemId===response.bonusItemReward.targetId));
     }else assert.equal(response.bonusItemReward,null);
-    count++;assert.ok(count<=29);
+    count++;assert.ok(count<=25);
   }
-  assert.equal(count,29);assert.equal(rests,4);assert.equal(bossDrops,5);
+  assert.equal(count,25);assert.equal(rests,0);assert.equal(bossDrops,5);
   assert.equal(g.x.c.findRowByKeyUncached_('Runs','runId',g.run.runId).status,'active');
   g.x.c.readWorkbookQuestionTable_=()=>[{questionId:'review-q',status:'approved'}];
   const ratings=[{questionId:'review-q',rating:3,updatedAtMs:10,revision:'final-review'}];
@@ -247,7 +212,7 @@ test('boss detection excludes ordinary wins, defeats and floor rest; exhausted p
   const stages=c.buildStageSeedData_();
   const boss=stages.find(stage=>stage.bossMonsterId);
   const regular=stages.find(stage=>!stage.bossMonsterId&&!c.isFloorRestStage_(stage));
-  const rest=stages.find(stage=>c.isFloorRestStage_(stage));
+  const rest=c.buildSyntheticFloorRestStage_(1);
   assert.equal(c.isBossVictoryReward_(boss.stageId,{status:'victory',monsters:[]}),true);
   assert.equal(c.isBossVictoryReward_(boss.stageId,{status:'defeat',monsters:[]}),false);
   assert.equal(c.isBossVictoryReward_(regular.stageId,{status:'victory',monsters:[]}),false);
@@ -430,31 +395,30 @@ test('the browser chooses locally, keeps terminal saves and sends its journal on
 });
 
 
-test('stage 6 rest preview preserves payload HP and heals exactly once on transition',()=>{
+test('floor transitions skip stage 6 and heal exactly once on browser and server replay',()=>{
   const g=localGame();
+  let expected;
   for(let i=0;i<5;i++){
     const prepared=g.prepare();
-    if(i===4)prepared.payload.battle.player.hp=1;
-    g.choose('stat');
+    if(i===4){
+      prepared.payload.battle.player.hp=1;
+      const max=g.view.battle.player.maxHp;
+      expected=Math.min(max,1+Number(prepared.reward.regenAmount || 0)+Math.ceil(max*.25));
+    }
+    g.choose();
   }
-  assert.equal(g.view.battle.stage.stage,6);
-  const rest=g.view.rewardView.choices.find(c=>c.type==='rest');
-  const before=g.view.battle.player.hp;
-  let displayed;
-  const html=fs.readFileSync('Battle.html','utf8');
-  const start=html.indexOf('    function playFloorRestEffect('),end=html.indexOf('\n    function ',start+1);
-  const c={currentView:g.view,renderPlayerHud:p=>{displayed=p.hp;},playBattleSound(){},animatePlayerStatusEffect(){},spawnFloatingText(){},pushLog(){},document:{getElementById(){return {};}}};
-  vm.createContext(c);vm.runInContext(html.slice(start,end),c);c.playFloorRestEffect(rest);
-  assert.equal(g.view.battle.player.hp,before);
-  assert.equal(displayed,rest.currentHpAfterRest);
-  assert.ok(displayed>before);
-  const {payload,reward}=g.prepare();
-  assert.equal(payload.battle.player.hp,before);
-  const result=g.choose('rest');
-  assert.equal(result.localRunState.currentHp,rest.currentHpAfterRest);
-  const server=g.x.c.withRunSession_(g.run.runId,g.token,'auth',()=>{
+  assert.equal(g.run.currentFloor,2);
+  assert.equal(g.run.currentStage,1);
+  assert.equal(g.view.rewardView,undefined);
+  assert.equal(g.run.currentHp,expected);
+  const saved=g.x.c.withRunSession_(g.run.runId,g.token,'auth',()=>{
     g.x.c.replayLocalRunTransitions_(copy(g.journal),'auth');
     return {hp:g.x.c.requireRun_(g.run.runId).currentHp};
   });
-  assert.equal(server.hp,rest.currentHpAfterRest);
+  assert.equal(saved.hp,expected);
+  const again=g.x.c.withRunSession_(g.run.runId,saved.runSessionToken,'auth',()=>{
+    g.x.c.replayLocalRunTransitions_(copy(g.journal),'auth');
+    return {hp:g.x.c.requireRun_(g.run.runId).currentHp};
+  });
+  assert.equal(again.hp,expected);
 });

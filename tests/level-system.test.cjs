@@ -89,15 +89,27 @@ test('level system: level skill upgrade is limited, validated, saved once and re
   assert.throws(()=>g.c.validateLevelSkillUpgrades_(saved,{level:2,skillUpgrades:{}}));
 });
 
-test('level system: sixth stage offers rest and owned upgradable skills',()=>{
+test('level system: duplicate rewards upgrade owned skills and exclude fixed skills',()=>{
   const g=game();
   g.x.seed(g.c.DB_SHEETS.SKILLS,[{skillId:'upgradable',name:'강타',effectJson:'{}',upgradeJson:'{}'},
     {skillId:'fixed',conditionJson:'{"notUpgradable":true}',effectJson:'{}'}]);
   g.c.clearTableCache_(g.c.DB_SHEETS.SKILLS);
-  const choices=g.c.buildFloorRestChoices_(g.c.requireRun_(g.view.runId),g.battle,'',1,[{skillId:'upgradable',level:2},{skillId:'fixed',level:1}],[]);
-  assert.equal(choices[0].type,'rest');
-  assert.equal(choices[1].type,'experience');
-  assert.deepEqual(copy(choices.slice(2).map(r=>[r.type,r.targetId])),[['skillUpgrade','upgradable']]);
+  g.snapshot.skills=[{skillId:'upgradable',name:'강타',rarity:'common',tags:'["타격"]',description:'',target:'',type:'',effectJson:'{}',upgradeJson:'{}'},
+    {skillId:'fixed',rarity:'common',conditionJson:'{"notUpgradable":true}',effectJson:'{}'}];
+  g.x.seed(g.c.DB_SHEETS.SKILLS,g.snapshot.skills);g.c.clearTableCache_(g.c.DB_SHEETS.SKILLS);
+  const owned=[{skillId:'upgradable',level:2},{skillId:'fixed',level:1}];
+  g.battle.player.baseStats.levelProgress={level:2,xp:0,points:0,spent:{},skillRewards:[]};
+  const choices=g.engine.rewardChoices(g.snapshot,g.battle,owned);
+  assert.equal(choices.length,1);
+  assert.equal(choices[0].type,'skillUpgrade');
+  assert.equal(choices[0].skillDetail.level,3);
+  const server=g.c.getLevelRewardChoices_(g.view.runId,2,owned,g.battle);
+  assert.deepEqual(copy(choices),copy(server));
+  const result=g.engine.claimLevelReward(g.snapshot,g.battle,owned,choices[0].rewardId);
+  assert.equal(result.find(s=>s.skillId==='upgradable').level,3);
+  g.c.updateRowByKey_(g.c.DB_SHEETS.RUNS,'runId',g.view.runId,{skillsJson:JSON.stringify(owned)});
+  const validated=g.c.validateLevelSkillUpgrades_(g.c.requireRun_(g.view.runId),g.battle.player.baseStats.levelProgress);
+  assert.deepEqual(copy(validated),copy(result));
 });
 
 test('level system: allocations validate atomically and preserve fractional stat increments',()=>{

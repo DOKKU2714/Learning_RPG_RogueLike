@@ -190,7 +190,7 @@ for(const mode of ['server','browser']){
 test('ignition: canonical burn icons, reward art, affinity, and chance details are connected',()=>{
  const g=game('server'),html=fs.readFileSync('Battle.html','utf8'),extract=name=>html.match(new RegExp('    function '+name+'\\([^]*?\\n    \\}'))[0];
  const c=vm.createContext({ASSET_BASE_URL:'https://assets.example',escapeHtml:String});
- for(const name of ['getStatusIcon','renderStatusSymbol','renderStatusStack','getRewardSkillConcept','getRewardIconUrl'])vm.runInContext(extract(name),c);
+ for(const name of ['getDamageVisualType','getPixelFlameSvg','getPixelConceptSvg','getStatusIcon','renderStatusSymbol','renderStatusStack','getRewardSkillConcept','getRewardIconUrl'])vm.runInContext(extract(name),c);
  assert.equal(c.getStatusIcon('effect_v2_burn','debuff'),'BRN');
  const status={iconKey:'effect_v2_burn',stacks:4,stackable:true,type:'debuff',label:'BRN'};
  assert.match(c.renderStatusSymbol(status),/<svg/);assert.match(c.renderStatusStack(status),/>4</);

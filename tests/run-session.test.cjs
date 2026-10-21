@@ -162,7 +162,7 @@ test('normal defeat saves accumulated rewards, currency, score and progress once
   assert.equal(x.writes.length,writes);
 });
 
-test('all floors, rest choices and final victory retain existing rules and settle only once',()=>{
+test('all 25 stages and final victory and settle only once',()=>{
   const x=context(); let view=start(x), previousScore=100, count=0;
   const started=x.c.decodeRunSession_(view.runSessionToken).run.startedAt;
   while (!view.cleared) {
@@ -175,10 +175,10 @@ test('all floors, rest choices and final victory retain existing rules and settl
     if (!view.cleared) assert.equal(x.writes.filter(n=>progressSheets.includes(n)).length,0);
     assert.ok(count<=30);
   }
-  assert.equal(count,29);
+  assert.equal(count,25);
   const run=x.c.findRowByKeyUncached_('Runs','runId',view.run.runId);
   assert.equal(run.status,'cleared'); assert.equal(run.sessionSettled,true);
-  assert.equal(run.clearTimeMs,29*5000);
+  assert.equal(run.clearTimeMs,25*5000);
   assert.equal(x.c.findRowByKeyUncached_('PlayerData','playerId','p').bestScore,run.score);
   assert.equal(x.c.getWorkbookPlayerData_('w','p').maxFloor,5);
 });

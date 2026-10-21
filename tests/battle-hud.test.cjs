@@ -4,7 +4,7 @@ function context(cost,current){const pips=Array.from({length:3},(_,i)=>({getAttr
 
 test('player and monster status icons show one stack badge and keep duration in their tooltip',()=>{
  const row={innerHTML:''};
- const c={document:{getElementById:()=>row},escapeHtml:String,getStatusIcon:()=>'',
+ const c={document:{getElementById:()=>row},escapeHtml:String,getStatusIcon:()=>'',getDamageVisualType:()=>'',
    renderStatusSymbol:()=>'<svg></svg>',buildStatusDescription:()=>'',buildStatusStatTooltip:()=>'',
    getDisplayStatusGroups:()=>({buffs:[{name:'힘',remainingTurns:3,stackable:true,stacks:2}],
      debuffs:[{name:'출혈',remainingTurns:2,stackable:true,stacks:1}]})};

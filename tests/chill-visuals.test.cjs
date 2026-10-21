@@ -6,7 +6,7 @@ const style={setProperty:(key,value)=>values[key]=value};
 function makeParticle(){return {style:{setProperty(){}},remove(){particles.splice(particles.indexOf(this),1);}};}
 const c={document:{querySelector:()=>({querySelector:()=>overlay}),createElement:makeParticle},cssEscape:s=>s,
 playDamageTypeEffect:()=>{bursts++;overlay={dataset:{},classList:{add:name=>classes.add(name)},style,querySelectorAll:()=>particles.slice(),appendChild:p=>particles.push(p),remove:()=>overlay=null};}};
-vm.createContext(c);vm.runInContext(['getMonsterChillStacks','syncMonsterChillVisual'].map(extract).join('\n'),c);
+vm.createContext(c);vm.runInContext(['getPixelConceptSvg','getMonsterChillStacks','syncMonsterChillVisual'].map(extract).join('\n'),c);
 const monster=n=>({effects:[{effectId:'effect_v2_chill',stacks:n}]});
 c.syncMonsterChillVisual('m',monster(1));assert.ok(classes.has('chill-persistent'));assert.equal(particles.length,8);const weak=Number(values['--chill-opacity']);
 c.syncMonsterChillVisual('m',monster(8));assert.equal(particles.length,22);assert.ok(Number(values['--chill-opacity'])>weak);assert.equal(bursts,1);

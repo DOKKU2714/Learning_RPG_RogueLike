@@ -252,7 +252,7 @@ var SKILL_REWARD_CONFIG = Object.freeze({
     legendary: 2,
     unique: 1,
   }),
-  excludeOwnedSkills: true,
+  excludeOwnedSkills: false,
 });
 
 var SKILL_UPGRADE_REWARD_CONFIG = Object.freeze({

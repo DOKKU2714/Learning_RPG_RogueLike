@@ -14,7 +14,7 @@ const html=`<!doctype html><html><head><meta name="viewport" content="width=devi
 </head><body><h1>상태 효과 · Elemental VFX</h1><p>발화 / 폭발 / 냉기 / 빙결 / 중독 / 감전</p><div class="gallery">
 ${types.map((type,i)=>`<section class="tile"><h2>${labels[i]}</h2><div class="monster-slot" data-monster-id="${type}"><div class="compact-monster monster-image-sprite"><img class="monster-art" src="${art}"></div><div class="monster-hp-text"></div></div></section>`).join('')}
 </div><div class="player-compact-panel"><div id="playerHpText"></div></div><script>
-${['getDamageVisualType','getPixelFlameSvg','resetBurnParticle','playDamageTypeEffect','playLegacyDamageTypeEffect','playTurnEffectEvent','animateMonsterHit','animatePlayerHit','setMonsterSpriteState','resetMonsterSpriteState','syncMonsterBurnVisual','syncMonsterShockVisual','presentPlayerBurn'].map(extract).join('\n')}
+${['getDamageVisualType','getPixelFlameSvg','getPixelConceptSvg','syncMonsterDebuffVisuals','resetBurnParticle','playDamageTypeEffect','playTurnEffectEvent','animateMonsterHit','animatePlayerHit','setMonsterSpriteState','resetMonsterSpriteState','syncMonsterBurnVisual','syncMonsterShockVisual','presentPlayerBurn'].map(extract).join('\n')}
 var currentView={battle:{}};var ATTACK_EFFECT_DELAY_MS=0,DEATH_STATE_HOLD_MS=0;
 function cssEscape(v){return CSS.escape(v)}
 function pushLog(){} function finishActionDescription(){return Promise.resolve()}
@@ -26,12 +26,14 @@ function animatePlayerAttack(){throw Error('Generic weapon effect must not play 
 function playEfficientAttackSound(){throw Error('Generic hit effect must not play for elemental damage')}
 </script></body></html>`;
 (async()=>{
- const browser=await chromium.launch({channel:'msedge',headless:true});
+ const browser=await chromium.launch({channel:'msedge',headless:true,args:['--disable-gpu']});
  const output=process.env.ELEMENT_VFX_OUTPUT || fs.mkdtempSync(path.join(os.tmpdir(),'element-vfx-'));
  fs.mkdirSync(output,{recursive:true});
  try{
   for(const width of [1280,390]){
    const page=await browser.newPage({viewport:{width,height:width===390?1800:850}});
+   page.setDefaultTimeout(15000);
+   await page.route(/^https?:/,route=>route.abort());
    const errors=[];page.on('pageerror',e=>errors.push(e.message));
    await page.setContent(html);await page.locator('img').first().evaluate(i=>i.decode());
    await page.evaluate(()=>{
@@ -42,7 +44,7 @@ function playEfficientAttackSound(){throw Error('Generic hit effect must not pla
    });
    assert.equal(await page.locator('.element-vfx').count(),6);
    assert.equal(await page.locator('.element-ice').count(),1);
-   assert.equal(await page.locator('.bolt-core').count(),10);
+   assert.equal(await page.locator('.element-vfx-shock .pixel-concept-art').count(),10);
    assert.equal(await page.locator('.element-vfx-burn .element-particle svg').count(),7,'fire uses fewer, larger flame silhouettes');
    const burstFlames=await page.locator('.element-vfx-burn .element-particle').evaluateAll(nodes=>nodes.map(n=>({width:parseFloat(getComputedStyle(n).width),duration:parseFloat(getComputedStyle(n).animationDuration)})));
    assert.ok(burstFlames.every(p=>p.width>=24 && p.duration<=1.6));
@@ -114,5 +116,5 @@ function playEfficientAttackSound(){throw Error('Generic hit effect must not pla
    console.log('Element visuals, routing, cleanup, reduced motion OK: '+width);
   }
   console.log('Screenshots: '+output);
- }finally{await browser.close()}
+ }catch(error){console.error(error);throw error;}finally{await browser.close()}
 })().catch(e=>{console.error(e);process.exitCode=1});
